@@ -101,7 +101,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         ) {
             // when symbol capacity auto-scales, we also need to reload symbol map reader, as in
             // make it open different set of files altogether
-            long nextColumnNameTxn = writerAPI.getColumnVersionReader().getDefaultColumnNameTxn(columnIndex);
+            long nextColumnNameTxn = writerAPI.getColumnVersionReader().getSymbolTableNameTxn(columnIndex);
             if (nextColumnNameTxn != columnNameTxn) {
                 // reload
                 symbolMapReader.of(
@@ -147,7 +147,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         this.txReader = txReader;
         int symCount = readSymbolCount(denseSymbolIndex, false);
         // hold on to the column name txn so that we know when to reload
-        this.columnNameTxn = writerAPI.getColumnVersionReader().getDefaultColumnNameTxn(columnIndex);
+        this.columnNameTxn = writerAPI.getColumnVersionReader().getSymbolTableNameTxn(columnIndex);
         this.columnName = columnName;
         // yes, it is ok to store, ILP and this are friends
         this.pathToTableDir = pathToTableDir;

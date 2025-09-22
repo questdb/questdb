@@ -302,16 +302,18 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path.$())
             ) {
                 CVStringTable.setupColumnVersionWriter(w,
-                        "     pts  colIdx  colTxn  colTop\n" +
-                                "       0       2      -1      10\n" +
-                                "       0       3      -1      10\n" +
-                                "       0       5      -1      10\n" +
-                                "       1       0      -1      10\n" +
-                                "       1       2      -1      10\n" +
-                                "       2       2      -1      10\n" +
-                                "       2      11      -1      10\n" +
-                                "       2      15      -1      10\n" +
-                                "       3       0      -1      10\n"
+                        """
+                                     pts  colIdx  colTxn  colTop
+                                       0       2      -1      10
+                                       0       3      -1      10
+                                       0       5      -1      10
+                                       1       0      -1      10
+                                       1       2      -1      10
+                                       2       2      -1      10
+                                       2      11      -1      10
+                                       2      15      -1      10
+                                       3       0      -1      10
+                                """
                 );
 
                 w.commit();
@@ -319,13 +321,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.commit();
 
                 String expected =
-                        "     pts  colIdx  colTxn  colTop\n" +
-                                "       1       0      -1      10\n" +
-                                "       1       2      -1      10\n" +
-                                "       2       2      -1      10\n" +
-                                "       2      11      -1      10\n" +
-                                "       2      15      -1      10\n" +
-                                "       3       0      -1      10\n";
+                        """
+                                     pts  colIdx  colTxn  colTop
+                                       1       0      -1      10
+                                       1       2      -1      10
+                                       2       2      -1      10
+                                       2      11      -1      10
+                                       2      15      -1      10
+                                       3       0      -1      10
+                                """;
 
                 TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedColumnVersionList()));
                 r.readSafe(configuration.getMillisecondClock(), 1);
@@ -363,35 +367,41 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n" +
-                        "       4       7      -1      10\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       1       0      -1      10\n" +
-                        "       2       2       1     111\n" +
-                        "       2      11       2       1\n" +
-                        "       2      15       2    1001\n" +
-                        "       3       0       3     110\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0       3     110\n" +
-                        "       4       7      -1      10\n",
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2      -1      10
+                               0       3      -1      10
+                               0       5      -1      10
+                               1       0      -1      10
+                               1       2      -1      10
+                               2       2      -1      10
+                               2      11      -1      10
+                               2      15      -1      10
+                               3       0      -1      10
+                               4       7      -1      10
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                               1       0      -1      10
+                               2       2       1     111
+                               2      11       2       1
+                               2      15       2    1001
+                               3       0       3     110
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2      -1      10
+                               0       3      -1      10
+                               0       5      -1      10
+                               1       0      -1      10
+                               2       2      -1      10
+                               2      11      -1      10
+                               2      15      -1      10
+                               3       0       3     110
+                               4       7      -1      10
+                        """,
                 0, 2, 4
         );
     }
@@ -399,20 +409,26 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstContainsPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       0      99\n" +
-                        "       2      12       1      17\n" +
-                        "       3      11       1       8\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       5      12\n" +
-                        "       2      12       5      12\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       0      99\n" +
-                        "       2      12       1      17\n",
+                """
+                             pts  colIdx  colTxn  colTop
+                               2      11       0      99
+                               2      12       1      17
+                               3      11       1       8
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                               2      11       5      12
+                               2      12       5      12
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                               2      11       0      99
+                               2      12       1      17
+                        """,
                 2
         );
     }
@@ -420,15 +436,21 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionDstDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       1      10\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n" +
-                        "       2      11       1      10\n", // Gets added
+                """
+                             pts  colIdx  colTxn  colTop
+                               2      11       1      10
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                               2      11       1      10
+                        """, // Gets added
                 2
         );
     }
@@ -436,11 +458,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     @Test
     public void testUpsertPartitionSrcDoesNotContainPartition() throws Exception {
         assertUpsertPartitionFromSourceCV(
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       2      11       1      10\n",
-                "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2       3       1\n" +
-                        "       0       3       1     101\n",
+                """
+                             pts  colIdx  colTxn  colTop
+                               2      11       1      10
+                        """,
+                """
+                             pts  colIdx  colTxn  colTop
+                               0       2       3       1
+                               0       3       1     101
+                        """,
                 "     pts  colIdx  colTxn  colTop\n" + // No changes
                         "       0       2       3       1\n" +
                         "       0       3       1     101\n",

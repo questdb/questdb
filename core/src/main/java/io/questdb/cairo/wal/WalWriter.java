@@ -1248,7 +1248,7 @@ public class WalWriter implements TableWriterAPI {
 
                     if (initialized) {
                         int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
+                        long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
                         configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
                     } else {
                         // table on disk structure version does not match the structure version of the WalWriter

@@ -252,12 +252,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final IntList symbolRewriteMap = new IntList();
     private final TimestampDriver timestampDriver;
     private final int timestampType;
+    private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
-    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final StringSink utf16Sink = new StringSink();
-    private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -269,6 +269,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryCMR attachMetaMem;
     private TableWriterMetadata attachMetadata;
     private long attachMinTimestamp;
+    private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
@@ -337,7 +338,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
     private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
-    private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -1150,13 +1150,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 clearTodoLog();
 
                 // linking of the files has to be done after _todo is removed
-                hardLinkAndPurgeColumnFiles(
+                hardLinkAndPurgeColumnFiles2(
                         columnName,
                         columnIndex,
                         metadata.isIndexed(columnIndex),
-                        columnName,
-                        ColumnType.SYMBOL,
-                        true
+                        columnName
                 );
                 oldSymbolWriter.rebuildCapacity(
                         configuration,
@@ -1181,6 +1179,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 setStateForTimestamp(path, partitionTimestamp);
                 int plen = path.size();
+                // column name txn for partition columns would not change
+                // we updated only symbol table version
+                columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, transientRowCount, false);
                 path.trimTo(pathSize);
@@ -1429,7 +1430,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
                             // root symbol files use separate txn
-                            final long defaultColumnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
+                            final long defaultColumnNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
 
                             offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
                             if (!ff.exists(path.$())) {
@@ -2787,7 +2788,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -3501,7 +3502,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionCheckSymbolColumn(long partitionSize, long columnTop, String columnName, long columnNameTxn, Path partitionPath, long partitionTimestamp, int columnIndex) {
+    private void attachPartitionCheckSymbolColumn(
+            long partitionSize,
+            long columnTop,
+            String columnName,
+            long columnNameTxn,
+            Path partitionPath,
+            long partitionTimestamp,
+            int columnIndex
+    ) {
         long columnSize = partitionSize - columnTop;
         if (columnSize == 0) {
             return;
@@ -3576,6 +3585,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
+        if (notDots(pUtf8NameZ) && type == DT_FILE) {
+            tmpDirectUtf8StringZ.of(pUtf8NameZ);
+            int firstDot = Utf8s.indexOfAscii(tmpDirectUtf8StringZ, '.');
+            if (firstDot != -1) {
+                utf16Sink.clear();
+                utf16Sink.put(tmpDirectUtf8StringZ, 0, firstDot);
+                // all our column files have .d (or such) extensions
+                int columnIndex = metadata.getColumnIndexQuiet(utf16Sink);
+                if (columnIndex != -1) {
+                    // not a random file, we have column by this name
+                    int lastDot = Utf8s.lastIndexOfAscii(tmpDirectUtf8StringZ, '.');
+                    int len = Utf8s.length(tmpDirectUtf8StringZ);
+                    if (lastDot > 1 && lastDot < len - 1) {
+                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
+                        try {
+                            long nameTxn = Numbers.parseLong(tmpDirectUtf8StringZ, lastDot + 1, len);
+                            if (nameTxn > 0) {
+                                // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                            }
+                        } catch (NumericException ignore) {
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4037,7 +4075,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (type > -1) {
                 if (ColumnType.isSymbol(type)) {
                     final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
-                    long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
+                    long columnNameTxn = columnVersionWriter.getSymbolTableNameTxn(i);
                     SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                             configuration,
                             path.trimTo(pathSize),
@@ -5443,11 +5481,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
+    private void hardLinkAndPurgeColumnFiles(
+            String columnName,
+            int columnIndex,
+            boolean isIndexed,
+            CharSequence newName,
+            int columnType
+    ) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
-            long defaultColumnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
             if (PartitionBy.isPartitioned(partitionBy)) {
                 for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                     // Link files in each partition.
@@ -5469,43 +5512,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
+                long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
                 try {
                     linkFile(
                             ff,
-                            charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
+                            charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
                             charFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
                     );
-                    if (!symbolCapacityChange) {
-                        linkFile(
-                                ff,
-                                offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
-                                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
-                        );
-                        linkFile(
-                                ff,
-                                keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
-                                keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
-                        );
-                        linkFile(
-                                ff,
-                                valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
-                                valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
-                        );
-                    } else {
-                        // in case it's symbol capacity rebuild copy symbol offset file.
-                        // it's almost the same but the capacity in the file header is changed
-                        if (
-                                ff.copy(
-                                        offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn),
-                                        offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)) < 0
-                        ) {
-                            throw CairoException.critical(ff.errno())
-                                    .put("Could not copy [from=").put(path)
-                                    .put(", to=").put(path)
-                                    .put(']');
-
-                        }
-                    }
+                    linkFile(
+                            ff,
+                            offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                            offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                    );
+                    linkFile(
+                            ff,
+                            keyFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                            keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                    );
+                    linkFile(
+                            ff,
+                            valueFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                            valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                    );
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
@@ -5513,9 +5541,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     throw e;
                 }
-                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+                purgingOperator.add(columnIndex, columnName, columnType, isIndexed, symbolTableNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+                columnVersionWriter.upsertSymbolTableTxnName(columnIndex, newColumnNameTxn);
             }
-            long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
+            final long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
             columnVersionWriter.upsertDefaultTxnName(columnIndex, newColumnNameTxn, columnAddedPartition);
         } finally {
             path.trimTo(pathSize);
@@ -5537,6 +5566,52 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    private void hardLinkAndPurgeColumnFiles2(
+            String columnName,
+            int columnIndex,
+            boolean isIndexed,
+            CharSequence newName
+    ) {
+        try {
+            PurgingOperator purgingOperator = getPurgingOperator();
+            long newColumnNameTxn = getTxn();
+            long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
+            // Link .o, .c, .k, .v symbol files in the table root folder
+            try {
+                linkFile(
+                        ff,
+                        charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                        charFileName(other.trimTo(pathSize), newName, newColumnNameTxn)
+                );
+                // in case it's symbol capacity rebuild copy symbol offset file.
+                // it's almost the same but the capacity in the file header is changed
+                if (
+                        ff.copy(
+                                offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
+                                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)) < 0
+                ) {
+                    throw CairoException.critical(ff.errno())
+                            .put("Could not copy [from=").put(path)
+                            .put(", to=").put(path)
+                            .put(']');
+
+                }
+            } catch (Throwable e) {
+                ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                ff.removeQuiet(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                throw e;
+            }
+
+            purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, isIndexed, symbolTableNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
+            columnVersionWriter.upsertSymbolTableTxnName(columnIndex, newColumnNameTxn);
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     /**
@@ -6637,35 +6712,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void o3TimestampSetter(long timestamp) {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
-    }
-
-    private void attachPartitionPinColumnVersions(long pUtf8NameZ, int type) {
-        if (notDots(pUtf8NameZ) && type == DT_FILE) {
-            tmpDirectUtf8StringZ.of(pUtf8NameZ);
-            int firstDot = Utf8s.indexOfAscii(tmpDirectUtf8StringZ, '.');
-            if (firstDot != -1) {
-                utf16Sink.clear();
-                utf16Sink.put(tmpDirectUtf8StringZ, 0, firstDot);
-                // all our column files have .d (or such) extensions
-                int columnIndex = metadata.getColumnIndexQuiet(utf16Sink);
-                if (columnIndex != -1) {
-                    // not a random file, we have column by this name
-                    int lastDot = Utf8s.lastIndexOfAscii(tmpDirectUtf8StringZ, '.');
-                    int len = Utf8s.length(tmpDirectUtf8StringZ);
-                    if (lastDot > 1 && lastDot < len - 1) {
-                        // we are rejecting 'abc', '.abc' and 'abc.', but accepting 'a.xxx'
-                        try {
-                            long nameTxn = Numbers.parseLong(tmpDirectUtf8StringZ, lastDot + 1, len);
-                            if (nameTxn > 0) {
-                                // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
-                            }
-                        } catch (NumericException ignore) {
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -9003,21 +9049,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeColumnFiles(int columnIndex, String columnName, int columnType, boolean isIndexed) {
         PurgingOperator purgingOperator = getPurgingOperator();
-        long defaultNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    purgingOperator.add(
+                            columnIndex,
+                            columnName,
+                            columnType,
+                            isIndexed,
+                            columnNameTxn,
+                            partitionTimestamp,
+                            partitionNameTxn
+                    );
                 }
             }
         } else {
-            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, txWriter.getLastPartitionTimestamp(), -1);
+            purgingOperator.add(
+                    columnIndex,
+                    columnName,
+                    columnType,
+                    isIndexed,
+                    columnVersionWriter.getDefaultColumnNameTxn(columnIndex),
+                    txWriter.getLastPartitionTimestamp(),
+                    -1
+            );
         }
         if (ColumnType.isSymbol(columnType)) {
-            purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1);
+            purgingOperator.add(
+                    columnIndex,
+                    columnName,
+                    columnType,
+                    isIndexed,
+                    columnVersionWriter.getSymbolTableNameTxn(columnIndex),
+                    PurgingOperator.TABLE_ROOT_PARTITION,
+                    -1
+            );
         }
     }
 

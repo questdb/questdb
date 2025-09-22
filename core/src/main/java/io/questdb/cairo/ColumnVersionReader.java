@@ -59,6 +59,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final int OFFSET_OFFSET_B_64 = OFFSET_SIZE_A_64 + 8;
     public static final int OFFSET_SIZE_B_64 = OFFSET_OFFSET_B_64 + 8;
     public static final int HEADER_SIZE = OFFSET_SIZE_B_64 + 8;
+    public static final long SYMBOL_TABLE_VERSION_PARTITION = COL_TOP_DEFAULT_PARTITION + 1;
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedColumnVersionList = new LongList();
@@ -217,6 +218,22 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return -1;
     }
 
+    /**
+     * Symbol table files name txn - this is name suffix used to version the file group.
+     * Whenever symbol table capacity changes, its version is increased. Separate column version
+     * entry is used to store this version. Thus, decoupled from version of the columns.
+     * <p>
+     * Separate column version is optional however, when it is not present, this method will fall back to
+     * {@see #getDefaultColumnNameTxn}.
+     *
+     * @param columnIndex symbol column index
+     * @return version suffix
+     */
+    public long getSymbolTableNameTxn(int columnIndex) {
+        int index = getRecordIndex(SYMBOL_TABLE_VERSION_PARTITION, columnIndex);
+        return index > -1 ? getColumnNameTxnByIndex(index) : getDefaultColumnNameTxn(columnIndex);
+    }
+
     public long getVersion() {
         return version;
     }
@@ -318,21 +335,22 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 sink.put(",");
             }
             sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
-            boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
-            if (isDefaultPartition) {
+            if (timestamp == COL_TOP_DEFAULT_PARTITION) {
                 sink.putAscii("defaultNameTxn: ").put(columnNameTxn).putAscii(", ");
                 sink.putAscii("addedPartition: ");
                 sink.put(columnTop);
-                sink.putAscii('}');
+            } else if (timestamp == SYMBOL_TABLE_VERSION_PARTITION) {
+                sink.putAscii("symbolTableTxn: ").put(columnNameTxn);
             } else {
-                sink.put("nameTxn: ").put(columnNameTxn).putAscii(", ");
+                sink.putAscii("nameTxn: ").put(columnNameTxn).putAscii(", ");
                 sink.putAscii("partition: ");
                 sink.put(timestamp);
                 sink.putAscii(", ");
-                sink.putAscii("columnTop: ").put(columnTop).putAscii('}');
+                sink.putAscii("columnTop: ").put(columnTop);
             }
+            sink.putAscii('}');
         }
-        sink.put("\n]}");
+        sink.putAscii("\n]}");
         return sink.toString();
     }
 

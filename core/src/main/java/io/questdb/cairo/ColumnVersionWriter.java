@@ -183,14 +183,14 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     public void truncate() {
         if (cachedColumnVersionList.size() > 0) {
 
-            final long defaultPartitionTimestamp = COL_TOP_DEFAULT_PARTITION;
+            final long defaultPartitionTimestamp = SYMBOL_TABLE_VERSION_PARTITION;
             int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, Vect.BIN_SEARCH_SCAN_UP);
             if (from < 0) {
                 from = -from - 1;
             }
 
             if (partitioned) {
-                // Remove all partitions after COL_TOP_DEFAULT_PARTITION
+                // Remove all partitions after SYMBOL_TABLE_VERSION_PARTITION
                 if (from < cachedColumnVersionList.size()) {
                     cachedColumnVersionList.setPos(from);
                 }
@@ -297,6 +297,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     public void upsertDefaultTxnName(int columnIndex, long columnNameTxn, long partitionTimestamp) {
         // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
         upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, partitionTimestamp);
+    }
+
+    public void upsertSymbolTableTxnName(int columnIndex, long columnNameTxn) {
+        // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
+        upsert(SYMBOL_TABLE_VERSION_PARTITION, columnIndex, columnNameTxn, 0);
     }
 
     private void bumpFileSize(long size) {

@@ -632,7 +632,7 @@ public class CopyTask {
                                     cfg,
                                     path,
                                     column,
-                                    cvReader.getDefaultColumnNameTxn(tempTableColumnIndex),
+                                    cvReader.getSymbolTableNameTxn(tempTableColumnIndex),
                                     symbolCount
                             );
                             MemoryCMARW mem = Vm.getSmallCMARWInstance(
