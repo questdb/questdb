@@ -35,12 +35,12 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -48,13 +48,12 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -64,7 +63,11 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -79,10 +82,14 @@ import java.util.function.Function;
 import static io.questdb.cairo.AttachDetachStatus.*;
 import static io.questdb.cairo.TableUtils.*;
 
-
+@RunWith(Parameterized.class)
 public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachPartitionTest {
-
     private static O3PartitionPurgeJob purgeJob;
+    private final TestTimestampType timestampType;
+
+    public AlterTableDetachPartitionTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -94,6 +101,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public static void tearDownStatic() {
         purgeJob = Misc.free(purgeJob);
         AbstractCairoTest.tearDownStatic();
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
     }
 
     @Test
@@ -146,7 +160,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -158,8 +172,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    replaceTimestampSuffix("first\tts\n" +
+                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             assertFailure(
@@ -190,12 +204,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 DETACHED_DIR_MARKER
         );
         assertMemoryLeak(ff1, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
 
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -207,8 +221,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    replaceTimestampSuffix("first\tts\n" +
+                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
@@ -217,10 +231,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
 
             assertSql(
-                    "first\tts\n" +
+                    replaceTimestampSuffix("first\tts\n" +
                             "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                             "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -249,7 +263,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -261,8 +275,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    replaceTimestampSuffix("first\tts\n" +
+                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             assertFailure(
@@ -276,10 +290,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
-                    "first\tts\n" +
+                    replaceTimestampSuffix("first\tts\n" +
                             "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                             "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -287,10 +301,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
-                    src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                    src.col("sym", ColumnType.SYMBOL).timestamp("ts", timestampType.getTimestampType()),
                     3,
                     "2020-01-01",
                     1
@@ -299,11 +313,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
             assertSql(
-                    "first\tsym\n" +
-                            "2020-01-01T07:59:59.666666Z\tCPSW\n" +
-                            "2020-01-01T15:59:59.333332Z\tHYRX\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n" +
-                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "first\tsym\n" +
+                                    "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                    "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                    "2020-01-01T23:59:58.999998Z\t\n" +
+                                    "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                            : "first\tsym\n" +
+                            "2020-01-01T07:59:59.666666666Z\tCPSW\n" +
+                            "2020-01-01T15:59:59.333333332Z\tHYRX\n" +
+                            "2020-01-01T23:59:58.999999998Z\t\n" +
+                            "2020-01-02T23:59:59.000000000Z\tfoobar\n",
+                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
@@ -315,10 +336,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // No symbols are present.
             assertSql(
-                    "first\tsym\n" +
-                            "2020-01-01T07:59:59.666666Z\t\n" +
-                            "2020-01-01T15:59:59.333332Z\t\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "first\tsym\n" +
+                                    "2020-01-01T07:59:59.666666Z\t\n" +
+                                    "2020-01-01T15:59:59.333332Z\t\n" +
+                                    "2020-01-01T23:59:58.999998Z\t\n"
+                            : "first\tsym\n" +
+                            "2020-01-01T07:59:59.666666666Z\t\n" +
+                            "2020-01-01T15:59:59.333333332Z\t\n" +
+                            "2020-01-01T23:59:58.999999998Z\t\n",
+                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -326,12 +353,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionAfterTruncateKeepSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "testAttachPartitionAfterTruncateKeepSymbolTables";
             TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
             // It's important to have a symbol column here to make sure
             // that we don't wipe symbol tables on TRUNCATE.
             createPopulateTable(
-                    src.col("sym", ColumnType.SYMBOL).timestamp("ts"),
+                    src.col("sym", ColumnType.SYMBOL).timestamp("ts", timestampType.getTimestampType()),
                     3,
                     "2020-01-01",
                     1
@@ -340,11 +367,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("insert into " + tableName + " values ('foobar', '2020-01-02T23:59:59')");
 
             assertSql(
-                    "first\tsym\n" +
-                            "2020-01-01T07:59:59.666666Z\tCPSW\n" +
-                            "2020-01-01T15:59:59.333332Z\tHYRX\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n" +
-                            "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "first\tsym\n" +
+                                    "2020-01-01T07:59:59.666666Z\tCPSW\n" +
+                                    "2020-01-01T15:59:59.333332Z\tHYRX\n" +
+                                    "2020-01-01T23:59:58.999998Z\t\n" +
+                                    "2020-01-02T23:59:59.000000Z\tfoobar\n"
+                            : "first\tsym\n" +
+                            "2020-01-01T07:59:59.666666666Z\tCPSW\n" +
+                            "2020-01-01T15:59:59.333333332Z\tHYRX\n" +
+                            "2020-01-01T23:59:58.999999998Z\t\n" +
+                            "2020-01-02T23:59:59.000000000Z\tfoobar\n",
+                    "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             execute("alter table " + tableName + " detach partition list '2020-01-01'");
@@ -356,10 +390,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // All symbols are kept.
             assertSql(
-                    "first\tsym\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "first\tsym\n" +
                             "2020-01-01T07:59:59.666666Z\tCPSW\n" +
                             "2020-01-01T15:59:59.333332Z\tHYRX\n" +
-                            "2020-01-01T23:59:58.999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2020-01-01T23:59:58.999998Z\t\n" :
+                            "first\tsym\n" +
+                                    "2020-01-01T07:59:59.666666666Z\tCPSW\n" +
+                                    "2020-01-01T15:59:59.333333332Z\tHYRX\n" +
+                                    "2020-01-01T23:59:58.999999998Z\t\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -367,13 +405,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     5,
                     "2022-06-01",
                     4
@@ -384,16 +422,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             renameDetachedToAttachable(tableName, timestampDay);
 
+            TimestampDriver driver = timestampType.getDriver();
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-06-03T12:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(driver.parseFloorLiteral(timestampDay)));
             }
 
             assertContent(
@@ -412,14 +451,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionCommitsToSamePartition() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
                             .col("vch", ColumnType.VARCHAR)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     5,
                     "2022-06-01",
                     4
@@ -430,7 +469,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             renameDetachedToAttachable(tableName, timestampDay);
 
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+            TimestampDriver driver = timestampType.getDriver();
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T22:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -440,7 +480,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(IntervalUtils.parseFloorPartialTimestamp(timestampDay)));
+                Assert.assertEquals(AttachDetachStatus.ATTACH_ERR_PARTITION_EXISTS, writer.attachPartition(driver.parseFloorLiteral(timestampDay)));
             }
 
             assertContent(
@@ -458,13 +498,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionWithColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
 
             createPopulateTable(
                     src.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     100,
                     "2020-01-01",
                     2
@@ -480,20 +520,20 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
 
             assertSql(
-                    "first\tstr\n" +
+                    replaceTimestampSuffix("first\tstr\n" +
                             "2020-01-01T00:28:47.990000Z\t\n" +
                             "2020-01-04T00:19:59.000000Z\tb\n" +
                             "2020-01-04T00:39:59.000000Z\ta\n" +
                             "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2020-01-04T05:19:59.000000Z\tc\n"), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
             execute("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
 
             assertSql(
-                    "first\tstr\n" +
+                    replaceTimestampSuffix("first\tstr\n" +
                             "2020-01-01T00:28:47.990000Z\t\n" +
                             "2020-01-02T00:57:35.480000Z\t\n" +
                             "2020-01-02T23:59:59.000000Z\tc\n" +
@@ -505,7 +545,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-04T00:39:59.000000Z\ta\n" +
                             "2020-01-04T00:59:59.000000Z\tb\n" +
                             "2020-01-04T01:39:59.000000Z\t\n" +
-                            "2020-01-04T05:19:59.000000Z\tc\n", "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            "2020-01-04T05:19:59.000000Z\tc\n"), "select first(ts), str from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -521,25 +561,39 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             .col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
                             .col("vch", ColumnType.VARCHAR)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     timestampDay,
                     4
             );
             assertContent(
-                    "l\ti\tvch\tts\n" +
-                            "1\t1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                            "2\t2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                            "3\t3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                            "4\t4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                            "5\t5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                            "6\t6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                            "7\t7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                            "8\t8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                            "9\t9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                            "10\t10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                            "11\t11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                            "12\t12\t12\t2022-06-04T23:59:58.999992Z\n",
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tvch\tts\n" +
+                                    "1\t1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                    "2\t2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                    "3\t3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                    "4\t4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                    "5\t5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                    "6\t6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                    "7\t7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                    "8\t8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                    "9\t9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                    "10\t10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                    "11\t11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                    "12\t12\t12\t2022-06-04T23:59:58.999992Z\n"
+                            : "l\ti\tvch\tts\n" +
+                            "1\t1\t1\t2022-06-01T07:59:59.916666666Z\n" +
+                            "2\t2\t2\t2022-06-01T15:59:59.833333332Z\n" +
+                            "3\t3\t3\t2022-06-01T23:59:59.749999998Z\n" +
+                            "4\t4\t4\t2022-06-02T07:59:59.666666664Z\n" +
+                            "5\t5\t5\t2022-06-02T15:59:59.583333330Z\n" +
+                            "6\t6\t6\t2022-06-02T23:59:59.499999996Z\n" +
+                            "7\t7\t7\t2022-06-03T07:59:59.416666662Z\n" +
+                            "8\t8\t8\t2022-06-03T15:59:59.333333328Z\n" +
+                            "9\t9\t9\t2022-06-03T23:59:59.249999994Z\n" +
+                            "10\t10\t10\t2022-06-04T07:59:59.166666660Z\n" +
+                            "11\t11\t11\t2022-06-04T15:59:59.083333326Z\n" +
+                            "12\t12\t12\t2022-06-04T23:59:58.999999992Z\n",
                     tableName
             );
 
@@ -548,7 +602,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // insert data, which will create the partition again
             engine.clear();
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
+            TimestampDriver driver = timestampType.getDriver();
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T09:59:59.999999Z");
             try (TableWriter writer = getWriter(tableName)) {
                 TableWriter.Row row = writer.newRow(timestamp);
                 row.putLong(0, 137L);
@@ -556,7 +611,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 row.append();
                 writer.commit();
             }
-            String expected = "l\ti\tvch\tts\n" +
+            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tvch\tts\n" +
                     "137\t137\t\t2022-06-01T09:59:59.999999Z\n" +
                     "4\t4\t4\t2022-06-02T07:59:59.666664Z\n" +
                     "5\t5\t5\t2022-06-02T15:59:59.583330Z\n" +
@@ -566,30 +621,41 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "9\t9\t9\t2022-06-03T23:59:59.249994Z\n" +
                     "10\t10\t10\t2022-06-04T07:59:59.166660Z\n" +
                     "11\t11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                    "12\t12\t12\t2022-06-04T23:59:58.999992Z\n";
-            assertContent(expected, tableName);
+                    "12\t12\t12\t2022-06-04T23:59:58.999992Z\n"
+                    : "l\ti\tvch\tts\n" +
+                    "137\t137\t\t2022-06-01T09:59:59.999999000Z\n" +
+                    "4\t4\t4\t2022-06-02T07:59:59.666666664Z\n" +
+                    "5\t5\t5\t2022-06-02T15:59:59.583333330Z\n" +
+                    "6\t6\t6\t2022-06-02T23:59:59.499999996Z\n" +
+                    "7\t7\t7\t2022-06-03T07:59:59.416666662Z\n" +
+                    "8\t8\t8\t2022-06-03T15:59:59.333333328Z\n" +
+                    "9\t9\t9\t2022-06-03T23:59:59.249999994Z\n" +
+                    "10\t10\t10\t2022-06-04T07:59:59.166666660Z\n" +
+                    "11\t11\t11\t2022-06-04T15:59:59.083333326Z\n" +
+                    "12\t12\t12\t2022-06-04T23:59:58.999999992Z\n";
+            assertQuery(expected, tableName, null, "ts", true, true);
             renameDetachedToAttachable(tableName, timestampDay);
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                     "could not attach partition [table=tabTimeTravel2, detachStatus=ATTACH_ERR_PARTITION_EXISTS"
             );
-            assertContent(expected, tableName);
+            assertQuery(expected, tableName, null, "ts", true, true);
         });
     }
 
     @Test
     public void testCannotCopyColumnVersions() throws Exception {
-        assertCannotCopyMeta(testName.getMethodName(), 2);
+        assertCannotCopyMeta("testCannotCopyColumnVersions", 2);
     }
 
     @Test
     public void testCannotCopyMeta() throws Exception {
-        assertCannotCopyMeta(testName.getMethodName(), 1);
+        assertCannotCopyMeta("testCannotCopyMeta", 1);
     }
 
     @Test
     public void testCannotCopyTxn() throws Exception {
-        assertCannotCopyMeta(testName.getMethodName(), 3);
+        assertCannotCopyMeta("tab", 3);
     }
 
     @Test
@@ -617,11 +683,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         };
 
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -667,7 +733,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
                     createPopulateTable(
                             tab
-                                    .timestamp("ts")
+                                    .timestamp("ts", timestampType.getTimestampType())
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
                                     .col("vch", ColumnType.VARCHAR),
@@ -676,9 +742,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             4
                     );
 
-
                     engine.clear();
-                    long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                    TimestampDriver driver = timestampType.getDriver();
+                    long timestamp = driver.parseFloorLiteral("2022-06-01T00:00:00.000000Z");
                     try (TableWriter writer = getWriter(tableName)) {
                         AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                         Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
@@ -715,7 +781,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 ff1,
                 () -> {
                     node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
-                    String tableName = testName.getMethodName();
+                    String tableName = "tab";
                     node1.setProperty(
                             PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                             DETACHED_DIR_MARKER
@@ -724,7 +790,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
                     createPopulateTable(
                             tab
-                                    .timestamp("ts")
+                                    .timestamp("ts", timestampType.getTimestampType())
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -735,17 +801,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     );
                     execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                     assertSql(
-                            "first\tts\n" +
-                                    "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                            replaceTimestampSuffix("first\tts\n" +
+                                    "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                     );
 
                     for (int i = 0; i < 2; i++) {
                         execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                         assertSql(
-                                "first\tts\n" +
+                                replaceTimestampSuffix("first\tts\n" +
                                         "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                         "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                                        "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                         );
                         execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
@@ -776,16 +842,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 ff1,
                 () -> {
                     node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, true);
-                    String tableName = testName.getMethodName();
+                    String tableName = "testDetachAttachAnotherDriveFailsToCopy";
                     node1.setProperty(
                             PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX,
                             DETACHED_DIR_MARKER
                     );
 
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
-                    createPopulateTable(
-                            tab
-                                    .timestamp("ts")
+                    createPopulateTable(tab
+                                    .timestamp("ts", timestampType.getTimestampType())
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -816,11 +881,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(
                 ff1,
                 () -> {
-                    String tableName = testName.getMethodName();
+                    String tableName = "tab";
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
                     createPopulateTable(
                             tab
-                                    .timestamp("ts")
+                                    .timestamp("ts", timestampType.getTimestampType())
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -842,11 +907,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachAttachParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
-                    tab.timestamp("ts")
+                    tab.timestamp("ts", timestampType.getTimestampType())
                             .col("si", ColumnType.SYMBOL).indexed(true, 250)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -890,11 +955,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public void testDetachAttachPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    String tableName = testName.getMethodName();
+                    String tableName = "tab";
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
                     createPopulateTable(
                             1,
-                            tab.timestamp("ts")
+                            tab.timestamp("ts", timestampType.getTimestampType())
                                     .col("si", ColumnType.SYMBOL).indexed(true, 250)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -946,7 +1011,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 String timestampDay = "2022-06-01";
                 createPopulateTable(
                         1,
-                        tab.timestamp("ts")
+                        tab.timestamp("ts", timestampType.getTimestampType())
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 256)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
@@ -959,7 +1024,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         engine,
                         mem,
                         path,
-                        brokenMeta.timestamp("ts")
+                        brokenMeta.timestamp("ts", timestampType.getTimestampType())
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 256)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.INT)
@@ -998,7 +1063,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "tabBrokenTableId",
                 "tabBrokenTableId2",
                 brokenMeta -> brokenMeta
-                        .timestamp("ts")
+                        .timestamp("ts", timestampType.getTimestampType())
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG),
                 "insert into tabBrokenTableId2 " +
@@ -1021,7 +1086,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 brokenMeta -> brokenMeta
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG)
-                        .timestamp("ts"),
+                        .timestamp("ts", timestampType.getTimestampType()),
                 "insert into tabBrokenTimestampIdx2 " +
                         "select " +
                         "cast(x as int) i, " +
@@ -1040,7 +1105,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("si", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -1065,7 +1130,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -1114,7 +1179,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             String tableName = "tabPingPong";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
-                    tab.timestamp("ts")
+                    tab.timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -1139,9 +1204,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 try {
                     TestUtils.unchecked(() -> {
                         start.await();
+                        TimestampDriver driver = timestampType.getDriver();
                         while (isLive.get()) {
                             try (TableWriter writer = getWriter(tableName)) {
-                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                                long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * driver.fromDays(1);
                                 if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
                                     writer.detachPartition(partitionTimestamp);
                                     detachedCount.incrementAndGet();
@@ -1171,7 +1237,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 if (timestamps.hasNext()) {
                                     long partitionTimestamp = timestamps.next();
                                     try (TableWriter writer = getWriter(tableName)) {
-                                        renameDetachedToAttachable(tableName, partitionTimestamp);
+                                        renameDetachedToAttachable(tableName, TableUtils.getTimestampType(tab), partitionTimestamp);
                                         writer.attachPartition(partitionTimestamp);
                                         timestamps.remove();
                                         attachedCount.incrementAndGet();
@@ -1223,7 +1289,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -1234,17 +1300,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
-                    "first\tts\n" +
-                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                    replaceTimestampSuffix("first\tts\n" +
+                            "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             for (int i = 0; i < 2; i++) {
                 execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
-                        "first\tts\n" +
+                        replaceTimestampSuffix("first\tts\n" +
                                 "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                 "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
-                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
+                                "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n"), "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
                 execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
@@ -1256,13 +1322,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public void testDetachAttachSplitPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    String tableName = testName.getMethodName();
+                    String tableName = "testDetachAttachSplitPartition";
                     Overrides overrides = node1.getConfigurationOverrides();
                     overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 300);
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
                     TableToken token = createPopulateTable(
                             1,
-                            tab.timestamp("ts")
+                            tab.timestamp("ts", timestampType.getTimestampType())
                                     .col("si", ColumnType.SYMBOL).indexed(true, 250)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -1272,11 +1338,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             2
                     );
 
+                    assertSql(replaceTimestampSuffix("count\tmin\tmax\n" +
+                            "500\t2022-06-01T00:02:52.799000Z\t2022-06-01T23:59:59.500000Z\n"), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-01'");
+                    assertSql(replaceTimestampSuffix("count\tmin\tmax\n" +
+                            "500\t2022-06-02T00:02:52.299000Z\t2022-06-02T23:59:59.000000Z\n"), "select count(1), min(ts), max(ts) from " + tableName + " where ts in '2022-06-02'");
+
                     try (TableReader ignore = getReader(token)) {
                         // Split partition by committing O3 to "2022-06-01"
-                        execute("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * 1000000L from " + tableName, sqlExecutionContext);
+                        execute("insert into " + tableName + "(ts) select ts + 20 * 60 * 60 * " + (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "1000000L" : "1000000000L") + " from " + tableName, sqlExecutionContext);
 
-                        Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat("2022-06-01T200057-183001.1").concat("ts.d");
+                        Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "2022-06-01T200057-183001.1" : "2022-06-01T200057-183000001.1").concat("ts.d");
                         FilesFacade ff = configuration.getFilesFacade();
                         Assert.assertTrue(ff.exists(path.$()));
 
@@ -1285,8 +1356,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                     renameDetachedToAttachable(tableName, "2022-06-01");
                     execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
-                    assertSql("min\n" +
-                            "2022-06-01T00:02:52.799000Z\n", "select min(ts) from " + tableName);
+                    assertSql(replaceTimestampSuffix("min\n" +
+                            "2022-06-01T00:02:52.799000Z\n"), "select min(ts) from " + tableName);
                 });
     }
 
@@ -1294,11 +1365,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     public void testDetachNonPartitionedNotAllowed() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    String tableName = testName.getMethodName();
+                    String tableName = "tab";
                     TableModel tab = new TableModel(configuration, tableName, PartitionBy.NONE);
                     createPopulateTable(
                             tab
-                                    .timestamp("ts")
+                                    .timestamp("ts", timestampType.getTimestampType())
                                     .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
@@ -1317,30 +1388,31 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachPartitionCommits() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
                             .col("vch", ColumnType.VARCHAR)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     5,
                     "2022-06-01",
                     4
             );
 
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-02";
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-05-03T12:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-05-03T12:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.append();
 
-                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((driver.parseFloorLiteral(timestampDay))));
             }
 
             renameDetachedToAttachable(tableName, timestampDay);
@@ -1377,7 +1449,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 512)
                                 .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         12,
                         timestampDay,
                         4
@@ -1391,13 +1463,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL)
                                 .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         1,
                         brokenMeta.getTableName()
                 );
                 execute("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                TimestampDriver driver = timestampType.getDriver();
+                long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1417,19 +1490,33 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
 
                 assertContent(
-                        "l\ti\ts\tvch\tts\n" +
-                                "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666Z\n" +
-                                "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833332Z\n" +
-                                "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749998Z\n" +
-                                "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666664Z\n" +
-                                "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\n" +
-                                "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499996Z\n" +
-                                "7\t7\tVTJW\t\t2022-06-03T07:59:59.416662Z\n" +
-                                "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333328Z\n" +
-                                "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249994Z\n" +
-                                "10\t10\tHYRX\t\t2022-06-04T07:59:59.166660Z\n" +
-                                "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083326Z\n" +
-                                "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999992Z\n",
+                        ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                                "l\ti\ts\tvch\tts\n" +
+                                        "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666Z\n" +
+                                        "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833332Z\n" +
+                                        "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749998Z\n" +
+                                        "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666664Z\n" +
+                                        "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\n" +
+                                        "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499996Z\n" +
+                                        "7\t7\tVTJW\t\t2022-06-03T07:59:59.416662Z\n" +
+                                        "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333328Z\n" +
+                                        "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249994Z\n" +
+                                        "10\t10\tHYRX\t\t2022-06-04T07:59:59.166660Z\n" +
+                                        "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083326Z\n" +
+                                        "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999992Z\n"
+                                : "l\ti\ts\tvch\tts\n" +
+                                "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666666Z\n" +
+                                "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833333332Z\n" +
+                                "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749999998Z\n" +
+                                "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666666664Z\n" +
+                                "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583333330Z\n" +
+                                "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499999996Z\n" +
+                                "7\t7\tVTJW\t\t2022-06-03T07:59:59.416666662Z\n" +
+                                "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333333328Z\n" +
+                                "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249999994Z\n" +
+                                "10\t10\tHYRX\t\t2022-06-04T07:59:59.166666660Z\n" +
+                                "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083333326Z\n" +
+                                "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999999992Z\n",
                         tableName
                 );
             }
@@ -1454,7 +1541,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 512)
                                 .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         12,
                         timestampDay,
                         4
@@ -1469,13 +1556,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         1,
                         brokenMeta.getTableName()
                 );
                 execute("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                TimestampDriver driver = timestampType.getDriver();
+                long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1496,19 +1584,33 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
 
                 assertContent(
-                        "l\ti\ts\tvch\tts\n" +
-                                "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666Z\n" +
-                                "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833332Z\n" +
-                                "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749998Z\n" +
-                                "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666664Z\n" +
-                                "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\n" +
-                                "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499996Z\n" +
-                                "7\t7\tVTJW\t\t2022-06-03T07:59:59.416662Z\n" +
-                                "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333328Z\n" +
-                                "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249994Z\n" +
-                                "10\t10\tHYRX\t\t2022-06-04T07:59:59.166660Z\n" +
-                                "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083326Z\n" +
-                                "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999992Z\n",
+                        ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                                "l\ti\ts\tvch\tts\n" +
+                                        "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666Z\n" +
+                                        "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833332Z\n" +
+                                        "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749998Z\n" +
+                                        "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666664Z\n" +
+                                        "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583330Z\n" +
+                                        "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499996Z\n" +
+                                        "7\t7\tVTJW\t\t2022-06-03T07:59:59.416662Z\n" +
+                                        "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333328Z\n" +
+                                        "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249994Z\n" +
+                                        "10\t10\tHYRX\t\t2022-06-04T07:59:59.166660Z\n" +
+                                        "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083326Z\n" +
+                                        "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999992Z\n"
+                                : "l\ti\ts\tvch\tts\n" +
+                                "1\t1\tCPSW\těȞ鼷G\uD991\uDE7E\t2022-06-01T07:59:59.916666666Z\n" +
+                                "2\t2\t\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-01T15:59:59.833333332Z\n" +
+                                "3\t3\tPEHN\t\uF2C1ӍKB\t2022-06-01T23:59:59.749999998Z\n" +
+                                "4\t4\tPEHN\tK䰭\t2022-06-02T07:59:59.666666664Z\n" +
+                                "5\t5\tHYRX\tѱʜ\uDB8D\uDE4Eᯤ\\篸{\t2022-06-02T15:59:59.583333330Z\n" +
+                                "6\t6\tCPSW\tl\";&=RON\t2022-06-02T23:59:59.499999996Z\n" +
+                                "7\t7\tVTJW\t\t2022-06-03T07:59:59.416666662Z\n" +
+                                "8\t8\tPEHN\t\uDBAE\uDD12ɜ|\\軦۽\t2022-06-03T15:59:59.333333328Z\n" +
+                                "9\t9\tPEHN\t7=\t2022-06-03T23:59:59.249999994Z\n" +
+                                "10\t10\tHYRX\t\t2022-06-04T07:59:59.166666660Z\n" +
+                                "11\t11\tPEHN\txL?49M\t2022-06-04T15:59:59.083333326Z\n" +
+                                "12\t12\tCPSW\t鳓\t2022-06-04T23:59:58.999999992Z\n",
                         tableName
                 );
             }
@@ -1532,7 +1634,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         tab.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         12,
                         timestampDay,
                         4
@@ -1545,14 +1647,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         brokenMeta.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
+                                .timestamp("ts", timestampType.getTimestampType()),
                         3,
                         brokenMeta.getTableName()
                 );
 
                 execute("INSERT INTO " + brokenMeta.getName() + " SELECT * FROM " + tab.getName());
 
-                String expected = "l\ti\ts\tts\n" +
+                String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\ts\tts\n" +
                         "1\t1\tCPSW\t2022-06-01T07:59:59.916666Z\n" +
                         "2\t2\tHYRX\t2022-06-01T15:59:59.833332Z\n" +
                         "3\t3\t\t2022-06-01T23:59:59.749998Z\n" +
@@ -1564,12 +1666,26 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "9\t9\tCPSW\t2022-06-03T23:59:59.249994Z\n" +
                         "10\t10\t\t2022-06-04T07:59:59.166660Z\n" +
                         "11\t11\tPEHN\t2022-06-04T15:59:59.083326Z\n" +
-                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n";
+                        "12\t12\tCPSW\t2022-06-04T23:59:58.999992Z\n"
+                        : "l\ti\ts\tts\n" +
+                        "1\t1\tCPSW\t2022-06-01T07:59:59.916666666Z\n" +
+                        "2\t2\tHYRX\t2022-06-01T15:59:59.833333332Z\n" +
+                        "3\t3\t\t2022-06-01T23:59:59.749999998Z\n" +
+                        "4\t4\tVTJW\t2022-06-02T07:59:59.666666664Z\n" +
+                        "5\t5\tPEHN\t2022-06-02T15:59:59.583333330Z\n" +
+                        "6\t6\t\t2022-06-02T23:59:59.499999996Z\n" +
+                        "7\t7\tVTJW\t2022-06-03T07:59:59.416666662Z\n" +
+                        "8\t8\t\t2022-06-03T15:59:59.333333328Z\n" +
+                        "9\t9\tCPSW\t2022-06-03T23:59:59.249999994Z\n" +
+                        "10\t10\t\t2022-06-04T07:59:59.166666660Z\n" +
+                        "11\t11\tPEHN\t2022-06-04T15:59:59.083333326Z\n" +
+                        "12\t12\tCPSW\t2022-06-04T23:59:58.999999992Z\n";
 
                 assertContent(expected, tableName);
                 assertContent(expected, brokenTableName);
 
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                TimestampDriver driver = timestampType.getDriver();
+                long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
                 try (TableWriter writer = getWriter(brokenTableName)) {
                     writer.detachPartition(timestamp);
                 }
@@ -1606,21 +1722,22 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachPartitionLongerName() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     5,
                     "2022-06-01",
                     4
             );
 
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-02";
             try (TableWriter writer = getWriter(tableName)) {
-                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((IntervalUtils.parseFloorPartialTimestamp(timestampDay))));
+                Assert.assertEquals(AttachDetachStatus.OK, writer.detachPartition((driver.parseFloorLiteral(timestampDay))));
             }
             renameDetachedToAttachable(tableName, timestampDay);
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "T23:59:59.000000Z'", sqlExecutionContext);
@@ -1646,14 +1763,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
                             .col("vch", ColumnType.VARCHAR)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
             );
 
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-02";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T22:00:00.000000Z");
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T22:00:00.000000Z");
             Utf8StringSink utf8sink = new Utf8StringSink();
             utf8sink.put("33");
             try (TableWriter writer = getWriter(tableName)) {
@@ -1670,7 +1788,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 writer.commit();
             }
             assertContent(
-                    "l\ti\tvch\tts\tnew_column\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tvch\tts\tnew_column\n" +
                             "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666Z\tnull\n" +
                             "2\t2\t\t2022-06-01T15:59:59.833332Z\tnull\n" +
                             "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749998Z\tnull\n" +
@@ -1683,7 +1801,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t\t2022-06-03T23:59:59.249994Z\tnull\n" +
                             "10\t10\t\t2022-06-04T07:59:59.166660Z\tnull\n" +
                             "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n",
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "4\t4\t\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                            "5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                            "33\t33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                            "6\t6\tṟ\u1AD3ڎB\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                            "7\t7\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t䇜\"\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
 
@@ -1691,7 +1823,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
             assertContent(
-                    "l\ti\tvch\tts\tnew_column\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType())
+                            ? "l\ti\tvch\tts\tnew_column\n" +
                             "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666Z\tnull\n" +
                             "2\t2\t\t2022-06-01T15:59:59.833332Z\tnull\n" +
                             "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749998Z\tnull\n" +
@@ -1700,7 +1833,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t\t2022-06-03T23:59:59.249994Z\tnull\n" +
                             "10\t10\t\t2022-06-04T07:59:59.166660Z\tnull\n" +
                             "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n",
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "7\t7\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t䇜\"\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
 
@@ -1718,7 +1861,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 writer.commit();
             }
             assertContent(
-                    "l\ti\tvch\tts\tnew_column\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tvch\tts\tnew_column\n" +
                             "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666Z\tnull\n" +
                             "2\t2\t\t2022-06-01T15:59:59.833332Z\tnull\n" +
                             "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749998Z\tnull\n" +
@@ -1728,7 +1871,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t\t2022-06-03T23:59:59.249994Z\tnull\n" +
                             "10\t10\t\t2022-06-04T07:59:59.166660Z\tnull\n" +
                             "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n",
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "25160\t25160\t25160\t2022-06-02T22:00:00.000000Z\t25160\n" +
+                            "7\t7\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t䇜\"\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
 
@@ -1738,7 +1892,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             // reattach old version
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tvch\tts\tnew_column\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tvch\tts\tnew_column\n" +
                             "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666Z\tnull\n" +
                             "2\t2\t\t2022-06-01T15:59:59.833332Z\tnull\n" +
                             "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749998Z\tnull\n" +
@@ -1751,7 +1905,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t\t2022-06-03T23:59:59.249994Z\tnull\n" +
                             "10\t10\t\t2022-06-04T07:59:59.166660Z\tnull\n" +
                             "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n",
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tvch\tts\tnew_column\n" +
+                            "1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\těȞ鼷G\uD991\uDE7E\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "4\t4\t\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                            "5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                            "33\t33\t33\t2022-06-02T22:00:00.000000Z\t33\n" +
+                            "6\t6\tṟ\u1AD3ڎB\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                            "7\t7\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t䇜\"\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t(OFг\uDBAE\uDD12ɜ|\\軦۽㒾\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t\"+zM\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
         });
@@ -1764,7 +1932,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "tabBrokenIndexCapacity",
                 "tabBrokenIndexCapacity2",
                 brokenMeta -> brokenMeta
-                        .timestamp("ts")
+                        .timestamp("ts", timestampType.getTimestampType())
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG),
                 "insert into tabBrokenIndexCapacity2 " +
@@ -1787,15 +1955,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
             );
 
             engine.clear();
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -1807,19 +1976,33 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n",
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tts\tnew_column\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tts\tnew_column\n" +
+                            "1\t1\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
         });
@@ -1834,15 +2017,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
             );
 
             engine.clear();
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
                 // structural change
@@ -1854,19 +2038,33 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n",
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tts\tnew_column\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tts\tnew_column\n" +
+                            "1\t1\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
         });
@@ -1881,15 +2079,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
             );
 
             engine.clear();
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
@@ -1905,20 +2104,35 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tts\tnew_column\n" +
+                                    "33\t33\t2022-06-01T00:00:00.000000Z\tnull\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n"
+                            : "l\ti\tts\tnew_column\n" +
                             "33\t33\t2022-06-01T00:00:00.000000Z\tnull\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n",
+                            "1\t1\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                            "2\t2\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                            "3\t3\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
         });
@@ -1933,22 +2147,23 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
             );
 
             engine.clear();
+            TimestampDriver driver = timestampType.getDriver();
             String timestampDay = "2022-06-01";
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 writer.detachPartition(timestamp);
 
                 // structural change
                 writer.addColumn("new_column", ColumnType.INT);
 
-                TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2022-06-02T00:00:00.000000Z"));
+                TableWriter.Row row = writer.newRow(driver.parseFloorLiteral("2022-06-02T00:00:00.000000Z"));
                 row.putLong(0, 33L);
                 row.putInt(1, 33);
                 row.putInt(3, 333);
@@ -1962,20 +2177,35 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
             assertContent(
-                    "l\ti\tts\tnew_column\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
-                            "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n",
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tts\tnew_column\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666Z\tnull\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833332Z\tnull\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749998Z\tnull\n" +
+                                    "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666664Z\tnull\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583330Z\tnull\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499996Z\tnull\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416662Z\tnull\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333328Z\tnull\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249994Z\tnull\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166660Z\tnull\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083326Z\tnull\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999992Z\tnull\n" :
+                            "l\ti\tts\tnew_column\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666666Z\tnull\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833333332Z\tnull\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749999998Z\tnull\n" +
+                                    "33\t33\t2022-06-02T00:00:00.000000Z\t333\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666666664Z\tnull\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583333330Z\tnull\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499999996Z\tnull\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416666662Z\tnull\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333333328Z\tnull\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249999994Z\tnull\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166666660Z\tnull\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083333326Z\tnull\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999999992Z\tnull\n",
                     tableName
             );
         });
@@ -1991,25 +2221,39 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     tab
                             .col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     timestampDay,
                     4
             );
             assertContent(
-                    "l\ti\tts\n" +
-                            "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                            "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                            "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                            "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                            "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                            "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                            "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                            "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                            "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                            "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                            "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                            "l\ti\tts\n" +
+                                    "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                    "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                    "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                    "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                    "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                    "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                    "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                    "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                    "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                    "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                    "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                    "12\t12\t2022-06-04T23:59:58.999992Z\n"
+                            : "l\ti\tts\n" +
+                            "1\t1\t2022-06-01T07:59:59.916666666Z\n" +
+                            "2\t2\t2022-06-01T15:59:59.833333332Z\n" +
+                            "3\t3\t2022-06-01T23:59:59.749999998Z\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\n",
                     tableName
             );
 
@@ -2018,8 +2262,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             // insert data, which will create the partition again
             engine.clear();
-            long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
-            long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
+            TimestampDriver driver = timestampType.getDriver();
+            long timestamp = driver.parseFloorLiteral(timestampDay + "T00:00:00.000000Z");
+            long timestamp2 = driver.parseFloorLiteral("2022-06-01T09:59:59.999999Z");
             try (TableWriter writer = getWriter(tableName)) {
 
                 TableWriter.Row row = writer.newRow(timestamp2);
@@ -2034,8 +2279,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
                 writer.commit();
             }
-            assertContent(
-                    "l\ti\tts\n" +
+            assertQuery(
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tts\n" +
                             "2802\t2802\t2022-06-01T00:00:00.000000Z\n" +
                             "137\t137\t2022-06-01T09:59:59.999999Z\n" +
                             "4\t4\t2022-06-02T07:59:59.666664Z\n" +
@@ -2046,8 +2291,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t2022-06-03T23:59:59.249994Z\n" +
                             "10\t10\t2022-06-04T07:59:59.166660Z\n" +
                             "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\n",
-                    tableName
+                            "12\t12\t2022-06-04T23:59:58.999992Z\n"
+                            : "l\ti\tts\n" +
+                            "2802\t2802\t2022-06-01T00:00:00.000000000Z\n" +
+                            "137\t137\t2022-06-01T09:59:59.999999000Z\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\n",
+                    tableName,
+                    null, "ts", true, true
             );
 
             dropCurrentVersionOfPartition(tableName, timestampDay);
@@ -2056,7 +2314,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             // reattach old version
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
             assertContent(
-                    "l\ti\tts\n" +
+                    ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "l\ti\tts\n" +
                             "1\t1\t2022-06-01T07:59:59.916666Z\n" +
                             "2\t2\t2022-06-01T15:59:59.833332Z\n" +
                             "3\t3\t2022-06-01T23:59:59.749998Z\n" +
@@ -2068,7 +2326,20 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "9\t9\t2022-06-03T23:59:59.249994Z\n" +
                             "10\t10\t2022-06-04T07:59:59.166660Z\n" +
                             "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                            "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                            "12\t12\t2022-06-04T23:59:58.999992Z\n"
+                            : "l\ti\tts\n" +
+                            "1\t1\t2022-06-01T07:59:59.916666666Z\n" +
+                            "2\t2\t2022-06-01T15:59:59.833333332Z\n" +
+                            "3\t3\t2022-06-01T23:59:59.749999998Z\n" +
+                            "4\t4\t2022-06-02T07:59:59.666666664Z\n" +
+                            "5\t5\t2022-06-02T15:59:59.583333330Z\n" +
+                            "6\t6\t2022-06-02T23:59:59.499999996Z\n" +
+                            "7\t7\t2022-06-03T07:59:59.416666662Z\n" +
+                            "8\t8\t2022-06-03T15:59:59.333333328Z\n" +
+                            "9\t9\t2022-06-03T23:59:59.249999994Z\n" +
+                            "10\t10\t2022-06-04T07:59:59.166666660Z\n" +
+                            "11\t11\t2022-06-04T15:59:59.083333326Z\n" +
+                            "12\t12\t2022-06-04T23:59:58.999999992Z\n",
                     tableName
             );
         });
@@ -2077,13 +2348,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachPartitionsTimestampColumnTooShort() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
@@ -2116,13 +2387,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testDetachPartitionsWrongFolderName() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = "tab";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     1,
                     tab.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType.getTimestampType()),
                     12,
                     "2022-06-01",
                     4
@@ -2256,17 +2527,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         );
     }
 
-    private static void assertContent(String expected, String tableName) throws Exception {
-        engine.clear();
-        assertQuery(expected, tableName, null, "ts", true, true);
-    }
-
     private void assertCannotCopyMeta(String tableName, int copyCallId) throws Exception {
         assertMemoryLeak(() -> {
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("i", ColumnType.INT)
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("l", ColumnType.LONG)
@@ -2297,7 +2563,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 }
             };
             engine.clear(); // to recreate the writer with the new ff
-            long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+            TimestampDriver driver = timestampType.getDriver();
+            long timestamp = driver.parseFloorLiteral("2022-06-01T00:00:00.000000Z");
             try (TableWriter writer = getWriter(tableName)) {
                 AttachDetachStatus attachDetachStatus = writer.detachPartition(timestamp);
                 Assert.assertEquals(DETACH_ERR_COPY_META, attachDetachStatus);
@@ -2317,6 +2584,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    private void assertContent(String expected, String tableName) throws Exception {
+        engine.clear();
+        expected = replaceTimestampSuffix1(expected, timestampType.getTypeName());
+        assertQuery(expected, tableName, null, "ts", true, true);
+    }
+
     private void assertFailedAttachBecauseOfMetadata(
             int brokenMetaId,
             String tableName,
@@ -2334,7 +2607,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             ) {
                 createPopulateTable(
                         1,
-                        tab.timestamp("ts")
+                        tab.timestamp("ts", timestampType.getTimestampType())
                                 .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
@@ -2428,7 +2701,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab
-                            .timestamp("ts")
+                            .timestamp("ts", timestampType.getTimestampType())
                             .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
@@ -2467,11 +2740,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other.$(), path.$()));
     }
 
-    private void renameDetachedToAttachable(String tableName, long... partitions) {
+    private void renameDetachedToAttachable(String tableName, int timestampType, long... partitions) {
         TableToken tableToken = engine.verifyTableName(tableName);
         for (long partition : partitions) {
             TableUtils.setSinkForNativePartition(
                     path.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1
@@ -2479,6 +2753,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             path.put(DETACHED_DIR_MARKER).$();
             TableUtils.setSinkForNativePartition(
                     other.of(configuration.getDbRoot()).concat(tableToken),
+                    timestampType,
                     PartitionBy.DAY,
                     partition,
                     -1
@@ -2495,6 +2770,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             other.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
         }
+    }
+
+    private String replaceTimestampSuffix(String expected) {
+        return ColumnType.isTimestampNano(timestampType.getTimestampType()) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
     }
 
     private void runPartitionPurgeJobs() {

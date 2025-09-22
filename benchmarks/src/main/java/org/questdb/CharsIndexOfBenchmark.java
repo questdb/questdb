@@ -25,10 +25,18 @@
 package org.questdb;
 
 import io.questdb.std.Chars;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import org.openjdk.jmh.annotations.*;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;

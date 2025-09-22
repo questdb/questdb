@@ -46,7 +46,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -1303,7 +1303,7 @@ public class VectFuzzTest {
             int segmentCount = 1;
             int rowsPerCommit = 1 + rnd.nextInt(10000);
             int commits = 1;
-            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+            long increment = Math.min((long) (Micros.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
                     rnd.nextLong(123124512354523L),
@@ -1346,8 +1346,8 @@ public class VectFuzzTest {
             testSortAB(
                     10_000_000 - split,
                     split,
-                    -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
-                    rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                    -rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
+                    rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
                     0
             );
         });
@@ -1358,7 +1358,7 @@ public class VectFuzzTest {
         TestUtils.assertMemoryLeak(() -> {
             rnd = TestUtils.generateRandom(null);
             int split = rnd.nextInt(100);
-            long min = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+            long min = rnd.nextLong(Micros.DAY_MICROS * 365 * 10);
             testSortAB(
                     100 - split,
                     split,
@@ -1405,7 +1405,7 @@ public class VectFuzzTest {
         TestUtils.assertMemoryLeak(() -> {
             rnd = TestUtils.generateRandom(null);
             int split = rnd.nextInt(100);
-            long min = rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10);
+            long min = rnd.nextLong(Micros.DAY_MICROS * 365 * 10);
             long max = min + rnd.nextInt(260);
             testSortAB(
                     100 - split,
@@ -1423,8 +1423,8 @@ public class VectFuzzTest {
                 testSortAB(
                         10_000,
                         0,
-                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
-                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        -rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
+                        rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
                         0
                 )
         );
@@ -1436,8 +1436,8 @@ public class VectFuzzTest {
                 testSortAB(
                         1_000,
                         0,
-                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
-                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        -rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
+                        rnd.nextLong(Micros.DAY_MICROS * 365 * 10),
                         0
                 )
         );
@@ -1459,7 +1459,7 @@ public class VectFuzzTest {
             int segmentCount = 1 + rnd.nextInt(200);
             int rowsPerCommit = 1 + rnd.nextInt(10000);
             int commits = Math.min(rnd.nextInt(1000), Math.max(1, 1_000_000 / rowsPerCommit / segmentCount));
-            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+            long increment = Math.min((long) (Micros.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
                     rnd.nextLong(123124512354523L),
@@ -1502,7 +1502,7 @@ public class VectFuzzTest {
             int rowsPerCommit = 1 + rnd.nextInt(10000);
 
             int commits = 1 + Math.min(rnd.nextInt(1000), 1_000_000 / (rowsPerCommit * segmentCount));
-            long increment = Math.min((long) (Timestamps.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
+            long increment = Math.min((long) (Micros.DAY_MICROS * rnd.nextDouble()), (1L << 50) / rowsPerCommit / segmentCount);
 
             testSortManySegments(
                     rnd.nextLong(123124512354523L),
@@ -1797,7 +1797,7 @@ public class VectFuzzTest {
                     long idx = Unsafe.getUnsafe().getLong(buf1 + r * 2L * Long.BYTES + Long.BYTES);
 
                     if (ts < lastTs) {
-                        Assert.fail("Timestamps are not in order, row=" + r + ", actual=" + ts + ", last=" + lastTs);
+                        Assert.fail("Micros are not in order, row=" + r + ", actual=" + ts + ", last=" + lastTs);
                     }
                     lastTs = ts;
 

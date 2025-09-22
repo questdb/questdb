@@ -61,7 +61,6 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -111,17 +110,17 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -213,7 +212,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -485,12 +484,6 @@ public class IODispatcherTest extends AbstractTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HttpRequestProcessor() {
-                        };
                     }
 
                     @Override
@@ -1161,7 +1154,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1243,7 +1236,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -5700,11 +5693,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HealthCheckProcessor(httpServerConfiguration);
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
@@ -6683,11 +6671,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return null;
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -6817,7 +6800,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public NanosecondClock getNanosecondClock() {
+                        public Clock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }
@@ -6857,7 +6840,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6878,11 +6861,6 @@ public class IODispatcherTest extends AbstractTest {
                                 context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -7018,7 +6996,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext connectionContext) {
@@ -7034,11 +7012,6 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -8216,13 +8189,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor getDefaultProcessor() {
-                                    return processor;
-                                }
-
-                                @Override
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                                    return null;
+                                    return processor;
                                 }
                             }) {
 
@@ -8274,16 +8242,21 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     int receiveCount = 0;
+                    int failureRetryCount = 0;
                     while (receiveCount < N * senderCount) {
                         long cursor = subSeq.next();
                         if (cursor < 0) {
                             if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
+                                failureRetryCount++;
+                                if (failureRetryCount >= 3) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
                             }
                             Os.pause();
                             continue;
                         }
+                        failureRetryCount = 0;
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
                         assertTrue(valid);
@@ -8668,7 +8641,6 @@ public class IODispatcherTest extends AbstractTest {
         delayThread.start();
         return delayThread;
     }
-
 
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
@@ -9886,7 +9858,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

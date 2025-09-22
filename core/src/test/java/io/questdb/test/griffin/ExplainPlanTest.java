@@ -166,6 +166,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -184,6 +185,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
+        testNanoClock = StationaryNanosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -2349,7 +2351,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
             constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
             constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
-            constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
+            constFuncs.put(ColumnType.TIMESTAMP_MICRO, list(new TimestampConstant(86400000000L, ColumnType.TIMESTAMP_MICRO)));
+            constFuncs.put(ColumnType.TIMESTAMP_NANO, list(new TimestampConstant(86400000000000L, ColumnType.TIMESTAMP_NANO)));
             constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
             constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
             constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
@@ -2365,7 +2368,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
-            constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
+            constFuncs.put(ColumnType.INTERVAL_RAW, list(IntervalConstant.RAW_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, list(IntervalConstant.TIMESTAMP_NANO_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, list(IntervalConstant.TIMESTAMP_MICRO_NULL));
             constFuncs.put(ColumnType.ARRAY_STRING, list(new StringToStringArrayFunction(0, "{all}")));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -2389,7 +2394,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
             colFuncs.put(ColumnType.LONG, LongColumn.newInstance(1));
             colFuncs.put(ColumnType.DATE, DateColumn.newInstance(1));
-            colFuncs.put(ColumnType.TIMESTAMP, TimestampColumn.newInstance(1));
+            colFuncs.put(ColumnType.TIMESTAMP_MICRO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.TIMESTAMP_NANO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_NANO));
             colFuncs.put(ColumnType.FLOAT, FloatColumn.newInstance(1));
             colFuncs.put(ColumnType.DOUBLE, DoubleColumn.newInstance(1));
             colFuncs.put(ColumnType.STRING, new StrColumn(1));
@@ -2405,7 +2411,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
             colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
             colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
-            colFuncs.put(ColumnType.INTERVAL, IntervalColumn.newInstance(1));
+            colFuncs.put(ColumnType.INTERVAL_RAW, IntervalColumn.newInstance(1, ColumnType.INTERVAL_RAW));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_NANO));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2536,7 +2544,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("a"));
                                     args.add(new StrConstant("b"));
                                 } else if (factory instanceof EqIntervalFunctionFactory) {
-                                    args.add(IntervalConstant.NULL);
+                                    args.add(IntervalConstant.RAW_NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
                                     args.add(FloatColumn.newInstance(1));
                                     args.add(FloatColumn.newInstance(2));
@@ -2612,8 +2620,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof HydrateTableMetadataFunctionFactory) {
                                     args.add(new StrConstant("*"));
                                 } else if (factory instanceof InTimestampIntervalFunctionFactory) {
-                                    args.add(new TimestampConstant(123141));
-                                    args.add(new IntervalConstant(1231, 123146));
+                                    args.add(new TimestampConstant(123141, ColumnType.TIMESTAMP_MICRO));
+                                    args.add(new IntervalConstant(1231, 123146, ColumnType.INTERVAL_TIMESTAMP_MICRO));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
@@ -2644,8 +2652,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 sqlExecutionContext.configureWindowContext(
                                         null, null, null, false,
                                         PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
-                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20,
-                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
+                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20,
+                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -2685,7 +2693,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
                                 if (memUsedAfter > memUsedBefore) {
-                                    LOG.error().$("Memory leak detected in ").$(factory.getSignature()).$();
+                                    LOG.error().$("Memory leak detected in ").$safe(factory.getSignature()).$();
                                     Assert.fail("Memory leak detected in " + factory.getSignature());
                                 }
                             }
@@ -5941,10 +5949,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [915148800000000,null]\n" +
+                    "              functions: [1999-01-01T00:00:00.000000Z,null]\n" +
                     "                long_sequence count: 1\n" +
                     "        VirtualRecord\n" +
-                    "          functions: [1676851200000000,null]\n" +
+                    "          functions: [2023-02-20T00:00:00.000000Z,null]\n" +
                     "            long_sequence count: 1\n";
             assertPlanNoLeakCheck(query, expectedPlan);
             assertPlanNoLeakCheck(query + " order by timestamp", expectedPlan);
@@ -9467,7 +9475,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000)) [pre-touch]\n" +
+                        "  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z)) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9517,7 +9525,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 1583020800000000<ts [pre-touch]\n" +
+                        "  filter: 2020-03-01T00:00:00.000000Z<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9929,7 +9937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and ts=1640995200000000) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9981,7 +9989,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or 1609459200000000<ts) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -11864,8 +11872,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 return new LongConstant(val);
             case ColumnType.DATE:
                 return new DateConstant(val * 86_400_000L);
-            case ColumnType.TIMESTAMP:
-                return new TimestampConstant(val * 86_400_000L);
+            case ColumnType.TIMESTAMP_MICRO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_MICRO);
+            case ColumnType.TIMESTAMP_NANO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_NANO);
             default:
                 ObjList<Function> availableValues = values.get(type);
                 if (availableValues != null) {
