@@ -44,6 +44,11 @@ jobs:
         displayName: 'Validate semantic version format'
         condition: startsWith(variables['Build.SourceBranch'], 'refs/tags/')
 
+      - task: Docker@2
+        inputs:
+          command: 'login'
+          containerRegistry: quest_docker_hub
+
       - task: CmdLine@2
         displayName: Setup docker buildx
         inputs:
