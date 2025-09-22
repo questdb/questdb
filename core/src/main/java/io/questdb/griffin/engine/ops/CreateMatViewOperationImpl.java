@@ -446,7 +446,28 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
                 final String finalTimestamp = createTableOperation.getTimestampColumnName();
                 if (finalTimestamp != null) {
-                    if (!Chars.equalsIgnoreCase(finalTimestamp, baseTableTimestampColumn)) {
+                    boolean timestampMatches = Chars.equalsIgnoreCase(finalTimestamp, baseTableTimestampColumn);
+
+                    // If not directly matching
+                    if (!timestampMatches) {
+                        for (int i = 0, n = queryModel.getColumns().size(); i < n; i++) {
+                            final QueryColumn qc = queryModel.getColumns().getQuick(i);
+                            if (qc.getAlias() != null && Chars.equalsIgnoreCase(finalTimestamp, qc.getAlias())) {
+                                // Found the column with this alias
+                                ExpressionNode ast = qc.getAst();
+                                if (ast != null) {
+                                    String effectiveColumnName = findUnderlyingColumnName(ast);
+                                    if (effectiveColumnName != null
+                                            && Chars.equalsIgnoreCase(effectiveColumnName, baseTableTimestampColumn)) {
+                                        timestampMatches = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!timestampMatches) {
                         throw SqlException.position(timestampPos != 0 ? timestampPos : selectTextPosition)
                                 .put("materialized view query timestamp must match base table designated timestamp [")
                                 .put("base table timestamp=").put(baseTableTimestampColumn)
@@ -456,11 +477,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 } else {
                     final ExpressionNode queryTimestamp = queryModel.getTimestamp();
                     if (queryTimestamp != null && queryTimestamp.type == ExpressionNode.LITERAL) {
-                        if (!Chars.equalsIgnoreCase(queryTimestamp.token, baseTableTimestampColumn)) {
+                        String effectiveColumnName = queryTimestamp.token.toString();
+
+                        // Check if this is an aliased column
+                        for (int i = 0, n = queryModel.getColumns().size(); i < n; i++) {
+                            final QueryColumn qc = queryModel.getColumns().getQuick(i);
+                            if (qc.getAlias() != null && Chars.equalsIgnoreCase(queryTimestamp.token, qc.getAlias())) {
+                                // Found the column with this alias
+                                ExpressionNode ast = qc.getAst();
+                                if (ast != null) {
+                                    String foundColumnName = findUnderlyingColumnName(ast);
+                                    if (foundColumnName != null) {
+                                        effectiveColumnName = foundColumnName;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+
+                        if (!Chars.equalsIgnoreCase(effectiveColumnName, baseTableTimestampColumn)) {
                             throw SqlException.position(queryTimestamp.position)
                                     .put("materialized view query timestamp must match base table designated timestamp [")
                                     .put("base table timestamp=").put(baseTableTimestampColumn)
                                     .put(", query timestamp=").put(queryTimestamp.token)
+                                    .put(", effective column=").put(effectiveColumnName)
                                     .put(']');
                         }
                     }
@@ -473,7 +513,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (columnModel == null) {
                         throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
                     }
-                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
+                    copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName,
+                            baseTableMetadata);
                 }
             }
         }
@@ -676,5 +717,57 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }
+    }
+
+
+    /**
+     * Recursively searches for the underlying column name in an expression AST.
+     */
+    private static String findUnderlyingColumnName(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+
+        if (node.type == ExpressionNode.LITERAL) {
+            return node.token.toString();
+        }
+
+        // If this is a function, search its arguments for literals
+        if (node.type == ExpressionNode.FUNCTION) {
+            if (node.args != null && node.args.size() > 0) {
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    String result = findUnderlyingColumnName(node.args.getQuick(i));
+                    if (result != null) {
+                        return result;
+                    }
+                }
+            }
+
+            // Also check left and right sides for completeness
+            ExpressionNode rhs = node.rhs;
+            if (rhs != null) {
+                String result = findUnderlyingColumnName(rhs);
+                if (result != null) {
+                    return result;
+                }
+            }
+
+            // Check left side as well
+            ExpressionNode lhs = node.lhs;
+            if (lhs != null) {
+                String result = findUnderlyingColumnName(lhs);
+                if (result != null) {
+                    return result;
+                }
+            }
+        }
+
+        // Recursively search left and right nodes
+        String leftResult = findUnderlyingColumnName(node.lhs);
+        if (leftResult != null) {
+            return leftResult;
+        }
+
+        return findUnderlyingColumnName(node.rhs);
     }
 }
