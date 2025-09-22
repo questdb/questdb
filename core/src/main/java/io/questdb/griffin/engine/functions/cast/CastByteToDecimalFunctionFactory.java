@@ -61,7 +61,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
 
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         long maxUnscaledValue = targetScale >= targetPrecision ? 0 : Numbers.getMaxValue(targetPrecision - targetScale);
-        return new CastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
+        return new AbstractCastDecimalScaledFunc(position, targetType, maxUnscaledValue, arg);
     }
 
     public static Function newInstance(
@@ -318,11 +318,11 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimalScaledFunc extends CastToDecimalFunction {
+    private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
         private final byte maxUnscaledValue;
         private final byte minUnscaledValue;
 
-        public CastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
+        public AbstractCastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
             super(value, targetType, position);
             this.maxUnscaledValue = (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE);
             this.minUnscaledValue = (byte) Math.max(-maxUnscaledValue, Byte.MIN_VALUE);

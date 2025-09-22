@@ -31,13 +31,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ToDecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
-public abstract class CastToDecimalFunction extends ToDecimalFunction implements UnaryFunction {
+public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction implements UnaryFunction {
     protected final Function arg;
     protected final int position;
     protected final int precision;
     protected final int scale;
 
-    public CastToDecimalFunction(Function arg, int targetType, int position) {
+    public AbstractCastToDecimalFunction(Function arg, int targetType, int position) {
         super(targetType);
         this.arg = arg;
         this.position = position;

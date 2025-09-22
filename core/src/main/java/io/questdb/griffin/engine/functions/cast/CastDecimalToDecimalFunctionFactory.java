@@ -63,17 +63,17 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
         switch (Decimals.getStorageSizePow2(fromPrecision)) {
             case 0:
-                return new ScaledDecimal8Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal8FuncAbstract(position, targetType, arg, fromScale);
             case 1:
-                return new ScaledDecimal16Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal16FuncAbstract(position, targetType, arg, fromScale);
             case 2:
-                return new ScaledDecimal32Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal32FuncAbstract(position, targetType, arg, fromScale);
             case 3:
-                return new ScaledDecimal64Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal64FuncAbstract(position, targetType, arg, fromScale);
             case 4:
-                return new ScaledDecimal128Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal128FuncAbstract(position, targetType, arg, fromScale);
             default:
-                return new ScaledDecimal256Func(position, targetType, arg, fromScale);
+                return new ScaledDecimal256FuncAbstract(position, targetType, arg, fromScale);
         }
     }
 
@@ -142,38 +142,38 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         if (targetPrecision >= fromPrecision) {
             switch (Decimals.getStorageSizePow2(fromPrecision)) {
                 case 0:
-                    return new UnscaledWidenDecimal8UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal8UncheckedFuncAbstract(valuePosition, targetType, value);
                 case 1:
-                    return new UnscaledWidenDecimal16UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal16UncheckedFuncAbstract(valuePosition, targetType, value);
                 case 2:
-                    return new UnscaledWidenDecimal32UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal32UncheckedFuncAbstract(valuePosition, targetType, value);
                 case 3:
-                    return new UnscaledWidenDecimal64UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal64UncheckedFuncAbstract(valuePosition, targetType, value);
                 case 4:
-                    return new UnscaledWidenDecimal128UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal128UncheckedFuncAbstract(valuePosition, targetType, value);
                 default:
-                    return new UnscaledWidenDecimal256UncheckedFunc(valuePosition, targetType, value);
+                    return new UnscaledWidenDecimal256UncheckedFuncAbstract(valuePosition, targetType, value);
             }
         }
 
         switch (Decimals.getStorageSizePow2(fromPrecision)) {
             case 0:
-                return new UnscaledNarrowDecimal8Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal8FuncAbstract(valuePosition, targetType, value);
             case 1:
-                return new UnscaledNarrowDecimal16Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal16FuncAbstract(valuePosition, targetType, value);
             case 2:
-                return new UnscaledNarrowDecimal32Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal32FuncAbstract(valuePosition, targetType, value);
             case 3:
-                return new UnscaledNarrowDecimal64Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal64FuncAbstract(valuePosition, targetType, value);
             case 4:
-                return new UnscaledNarrowDecimal128Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal128FuncAbstract(valuePosition, targetType, value);
             default:
-                return new UnscaledNarrowDecimal256Func(valuePosition, targetType, value);
+                return new UnscaledNarrowDecimal256FuncAbstract(valuePosition, targetType, value);
         }
     }
 
-    private static class ScaledDecimal128Func extends ScaledDecimalFunction {
-        public ScaledDecimal128Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal128FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal128FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -189,8 +189,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ScaledDecimal16Func extends ScaledDecimalFunction {
-        public ScaledDecimal16Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal16FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal16FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -204,8 +204,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ScaledDecimal256Func extends ScaledDecimalFunction {
-        public ScaledDecimal256Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal256FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal256FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -222,8 +222,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ScaledDecimal32Func extends ScaledDecimalFunction {
-        public ScaledDecimal32Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal32FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal32FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -237,8 +237,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ScaledDecimal64Func extends ScaledDecimalFunction {
-        public ScaledDecimal64Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal64FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal64FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -252,8 +252,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ScaledDecimal8Func extends ScaledDecimalFunction {
-        public ScaledDecimal8Func(int position, int targetType, Function value, int fromScale) {
+    private static class ScaledDecimal8FuncAbstract extends ScaledDecimalFunctionAbstract {
+        public ScaledDecimal8FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
@@ -267,10 +267,10 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private abstract static class ScaledDecimalFunction extends CastToDecimalFunction {
+    private abstract static class ScaledDecimalFunctionAbstract extends AbstractCastToDecimalFunction {
         protected final int fromScale;
 
-        public ScaledDecimalFunction(Function arg, int targetType, int position, int fromScale) {
+        public ScaledDecimalFunctionAbstract(Function arg, int targetType, int position, int fromScale) {
             super(arg, targetType, position);
             this.fromScale = fromScale;
         }
@@ -299,8 +299,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         protected abstract boolean load(Record rec);
     }
 
-    private static class UnscaledNarrowDecimal128Func extends CastToDecimalFunction {
-        public UnscaledNarrowDecimal128Func(int position, int targetType, Function value) {
+    private static class UnscaledNarrowDecimal128FuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledNarrowDecimal128FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -319,11 +319,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal16Func extends CastToDecimalFunction {
+    private static class UnscaledNarrowDecimal16FuncAbstract extends AbstractCastToDecimalFunction {
         final short maxValue;
         final short minValue;
 
-        public UnscaledNarrowDecimal16Func(int position, int targetType, Function value) {
+        public UnscaledNarrowDecimal16FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
             maxValue = (short) Math.min(Numbers.getMaxValue(precision), Short.MAX_VALUE);
             minValue = (short) (maxValue == Short.MAX_VALUE ? Short.MIN_VALUE : -maxValue);
@@ -342,8 +342,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal256Func extends CastToDecimalFunction {
-        public UnscaledNarrowDecimal256Func(int position, int targetType, Function value) {
+    private static class UnscaledNarrowDecimal256FuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledNarrowDecimal256FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -363,11 +363,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal32Func extends CastToDecimalFunction {
+    private static class UnscaledNarrowDecimal32FuncAbstract extends AbstractCastToDecimalFunction {
         final int maxValue;
         final int minValue;
 
-        public UnscaledNarrowDecimal32Func(int position, int targetType, Function value) {
+        public UnscaledNarrowDecimal32FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
             maxValue = (int) Math.min(Numbers.getMaxValue(precision), Integer.MAX_VALUE);
             minValue = -maxValue;
@@ -386,11 +386,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal64Func extends CastToDecimalFunction {
+    private static class UnscaledNarrowDecimal64FuncAbstract extends AbstractCastToDecimalFunction {
         final long maxValue;
         final long minValue;
 
-        public UnscaledNarrowDecimal64Func(int position, int targetType, Function value) {
+        public UnscaledNarrowDecimal64FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
             maxValue = Numbers.getMaxValue(precision);
             minValue = -maxValue;
@@ -409,11 +409,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledNarrowDecimal8Func extends CastToDecimalFunction {
+    private static class UnscaledNarrowDecimal8FuncAbstract extends AbstractCastToDecimalFunction {
         final byte maxValue;
         final byte minValue;
 
-        public UnscaledNarrowDecimal8Func(int position, int targetType, Function value) {
+        public UnscaledNarrowDecimal8FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
             maxValue = (byte) Math.min(Numbers.getMaxValue(precision), Byte.MAX_VALUE);
             minValue = (byte) (maxValue == Byte.MAX_VALUE ? Byte.MIN_VALUE : -maxValue);
@@ -432,8 +432,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal128UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal128UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal128UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal128UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -449,8 +449,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal16UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal16UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal16UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal16UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -464,8 +464,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal256UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal256UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal256UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal256UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -482,8 +482,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal32UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal32UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal32UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal32UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -497,8 +497,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal64UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal64UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal64UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal64UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
@@ -512,8 +512,8 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class UnscaledWidenDecimal8UncheckedFunc extends CastToDecimalFunction {
-        public UnscaledWidenDecimal8UncheckedFunc(int position, int targetType, Function value) {
+    private static class UnscaledWidenDecimal8UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        public UnscaledWidenDecimal8UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 

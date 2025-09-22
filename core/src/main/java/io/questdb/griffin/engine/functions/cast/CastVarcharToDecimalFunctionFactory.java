@@ -93,7 +93,7 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
-    private static class Func extends CastToDecimalFunction {
+    private static class Func extends AbstractCastToDecimalFunction {
         public Func(Function value, int targetType, int position) {
             super(value, targetType, position);
         }

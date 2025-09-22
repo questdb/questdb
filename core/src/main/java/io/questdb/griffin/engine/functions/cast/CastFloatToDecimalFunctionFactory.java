@@ -55,7 +55,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1).getType(), argPositions.getQuick(0));
     }
 
-    private static class Func extends CastToDecimalFunction {
+    private static class Func extends AbstractCastToDecimalFunction {
         private final StringSink sink = new StringSink();
 
         public Func(Function value, int targetType, int position) {
