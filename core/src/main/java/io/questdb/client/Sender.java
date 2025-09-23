@@ -321,7 +321,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      * Note: This method is only available for HTTP transport. TCP transport doesn't support
      * this operation.
      *
-     * @see #reset(long)
      * @see #flush()
      */
     void reset();
