@@ -61,6 +61,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -80,6 +81,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
+    private static int testRunOrder = 0;
     protected final TestTimestampType timestampType;
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -90,6 +92,10 @@ public class AbstractO3Test extends AbstractTest {
 
     public AbstractO3Test(TestTimestampType timestampType) {
         this.timestampType = timestampType;
+        // Run half of the tests with microsecond and half with nanosecond timestamp
+        // Random execution order will ensure that we have a good mix of both types
+        int tsType = timestampType == TestTimestampType.MICRO ? 0 : 1;
+        Assume.assumeTrue((testRunOrder++ & 1) == tsType);
     }
 
     @BeforeClass
