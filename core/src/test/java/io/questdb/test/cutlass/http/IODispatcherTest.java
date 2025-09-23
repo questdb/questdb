@@ -61,7 +61,6 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -485,12 +484,6 @@ public class IODispatcherTest extends AbstractTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HttpRequestProcessor() {
-                        };
                     }
 
                     @Override
@@ -5735,11 +5728,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HealthCheckProcessor(httpServerConfiguration);
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return null;
                     }
@@ -6718,11 +6706,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return null;
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -6892,7 +6875,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6913,11 +6896,6 @@ public class IODispatcherTest extends AbstractTest {
                                 context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -7053,7 +7031,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext connectionContext) {
@@ -7069,11 +7047,6 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -8252,13 +8225,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor getDefaultProcessor() {
-                                    return processor;
-                                }
-
-                                @Override
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                                    return null;
+                                    return processor;
                                 }
                             }) {
 
@@ -8709,7 +8677,6 @@ public class IODispatcherTest extends AbstractTest {
         delayThread.start();
         return delayThread;
     }
-
 
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
