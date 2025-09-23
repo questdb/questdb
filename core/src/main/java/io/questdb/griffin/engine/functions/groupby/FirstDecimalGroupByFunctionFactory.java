@@ -122,7 +122,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
+                destValue.putShort(valueIndex + 1, srcValue.getDecimal16(valueIndex + 1));
             }
         }
     }
@@ -172,7 +172,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putInt(valueIndex + 1, srcValue.getInt(valueIndex + 1));
+                destValue.putInt(valueIndex + 1, srcValue.getDecimal32(valueIndex + 1));
             }
         }
     }
@@ -216,7 +216,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
+                destValue.putByte(valueIndex + 1, srcValue.getDecimal8(valueIndex + 1));
             }
         }
     }

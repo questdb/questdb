@@ -31,16 +31,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
+public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "last(Ξ)";
+        return "last_not_null(Ξ)";
     }
 
     @Override
@@ -81,25 +84,30 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final long high = arg.getDecimal128Hi(record);
+            final long low = arg.getDecimal128Lo(record);
+            if (!Decimal128.isNull(high, low)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDecimal128(valueIndex + 1, high, low);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal128(
-                        valueIndex + 1,
-                        srcValue.getDecimal128Hi(valueIndex + 1),
-                        srcValue.getDecimal128Lo(valueIndex + 1)
-                );
+            final long srcHigh = srcValue.getDecimal128Hi(valueIndex + 1);
+            final long srcLow = srcValue.getDecimal128Lo(valueIndex + 1);
+            if (!Decimal128.isNull(srcHigh, srcLow)) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putDecimal128(valueIndex + 1, srcHigh, srcLow);
+                }
             }
         }
     }
@@ -112,21 +120,28 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final short value = arg.getDecimal16(record);
+            if (value != Decimals.DECIMAL16_NULL) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putShort(valueIndex + 1, value);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putShort(valueIndex + 1, srcValue.getDecimal16(valueIndex + 1));
+            final short srcVal = srcValue.getDecimal16(valueIndex + 1);
+            if (srcVal != Decimals.DECIMAL16_NULL) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putShort(valueIndex + 1, srcVal);
+                }
             }
         }
     }
@@ -139,27 +154,34 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final long hh = mapValue.getDecimal256HH(valueIndex + 1);
+            final long hl = mapValue.getDecimal256HL(valueIndex + 1);
+            final long lh = mapValue.getDecimal256LH(valueIndex + 1);
+            final long ll = mapValue.getDecimal256LL(valueIndex + 1);
+            if (!Decimal256.isNull(hh, hl, lh, ll)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDecimal256(valueIndex + 1, hh, hl, lh, ll);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal256(
-                        valueIndex + 1,
-                        srcValue.getDecimal256HH(valueIndex + 1),
-                        srcValue.getDecimal256HL(valueIndex + 1),
-                        srcValue.getDecimal256LH(valueIndex + 1),
-                        srcValue.getDecimal256LL(valueIndex + 1)
-                );
+            final long srcHH = srcValue.getDecimal256HH(valueIndex + 1);
+            final long srcHL = srcValue.getDecimal256HL(valueIndex + 1);
+            final long srcLH = srcValue.getDecimal256LH(valueIndex + 1);
+            final long srcLL = srcValue.getDecimal256LL(valueIndex + 1);
+            if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putDecimal256(valueIndex + 1, srcHH, srcHL, srcLH, srcLL);
+                }
             }
         }
     }
@@ -172,21 +194,28 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final int value = mapValue.getDecimal32(valueIndex + 1);
+            if (value != Decimals.DECIMAL32_NULL) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putInt(valueIndex + 1, value);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putInt(valueIndex + 1, srcValue.getDecimal32(valueIndex + 1));
+            final int srcVal = srcValue.getDecimal32(valueIndex + 1);
+            if (srcVal != Decimals.DECIMAL32_NULL) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putInt(valueIndex + 1, srcVal);
+                }
             }
         }
     }
@@ -199,21 +228,28 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final long value = mapValue.getDecimal64(valueIndex + 1);
+            if (!Decimal64.isNull(value)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putLong(valueIndex + 1, value);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putLong(valueIndex + 1, srcValue.getDecimal64(valueIndex + 1));
+            final long srcVal = srcValue.getDecimal64(valueIndex + 1);
+            if (!Decimal64.isNull(srcVal)) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putLong(valueIndex + 1, srcVal);
+                }
             }
         }
     }
@@ -226,21 +262,28 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            computeFirst(mapValue, record, rowId);
+            final byte value = mapValue.getDecimal8(valueIndex + 1);
+            if (value != Decimals.DECIMAL8_NULL) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putByte(valueIndex + 1, value);
+            }
         }
 
         @Override
         public String getName() {
-            return "last";
+            return "last_not_null";
         }
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcRowId = srcValue.getLong(valueIndex);
-            final long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
-                destValue.putLong(valueIndex, srcRowId);
-                destValue.putByte(valueIndex + 1, srcValue.getDecimal8(valueIndex + 1));
+            final byte srcVal = srcValue.getDecimal8(valueIndex + 1);
+            if (srcVal != Decimals.DECIMAL8_NULL) {
+                final long srcRowId = srcValue.getLong(valueIndex);
+                final long destRowId = destValue.getLong(valueIndex);
+                if (srcRowId > destRowId) {
+                    destValue.putLong(valueIndex, srcRowId);
+                    destValue.putByte(valueIndex + 1, srcVal);
+                }
             }
         }
     }
