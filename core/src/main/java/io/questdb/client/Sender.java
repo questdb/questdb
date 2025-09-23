@@ -306,8 +306,24 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      */
     Sender longColumn(CharSequence name, long value);
 
-    void reset(long newFlushAfterNanos);
 
+    /**
+     * Clear the internal buffers, discarding any unsent data.
+     * <br>
+     * This method discards all buffered data that hasn't been sent to the server yet,
+     * allowing you to start fresh with new data. The auto-flush timer is reset and will
+     * restart based on the configured auto-flush interval when the next row is added.
+     * <br>
+     * This is useful for error recovery when you encounter a permanent error (e.g., invalid
+     * data format) and want to continue sending new data without retrying the problematic data.
+     * After calling this method, you can start building a new row by calling {@link #table(CharSequence)}.
+     * <br>
+     * Note: This method is only available for HTTP transport. TCP transport doesn't support
+     * this operation.
+     *
+     * @see #reset(long)
+     * @see #flush()
+     */
     void reset();
 
     /**

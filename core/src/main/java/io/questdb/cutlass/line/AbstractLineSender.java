@@ -323,11 +323,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public void reset(long newFlushAfterNanos) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void reset() {
         throw new UnsupportedOperationException();
     }

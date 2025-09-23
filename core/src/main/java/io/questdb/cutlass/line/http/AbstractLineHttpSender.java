@@ -498,13 +498,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     @Override
-    public void reset(long newFlushAfterNanos) {
-        pendingRows = 0;
-        flushAfterNanos = newFlushAfterNanos;
-        request = newRequest();
-    }
-
-    @Override
     public void reset() {
         reset(Long.MAX_VALUE);
     }
@@ -772,6 +765,12 @@ public abstract class AbstractLineHttpSender implements Sender {
         r.withContent();
         rowBookmark = r.getContentLength();
         return r;
+    }
+
+    private void reset(long newFlushAfterNanos) {
+        pendingRows = 0;
+        flushAfterNanos = newFlushAfterNanos;
+        request = newRequest();
     }
 
     private void rotateAddress() {
