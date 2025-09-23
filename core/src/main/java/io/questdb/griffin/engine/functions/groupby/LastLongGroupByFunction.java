@@ -47,8 +47,8 @@ public class LastLongGroupByFunction extends FirstLongGroupByFunction {
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcRowId = srcValue.getLong(valueIndex);
-        long destRowId = destValue.getLong(valueIndex);
+        final long srcRowId = srcValue.getLong(valueIndex);
+        final long destRowId = destValue.getLong(valueIndex);
         if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));

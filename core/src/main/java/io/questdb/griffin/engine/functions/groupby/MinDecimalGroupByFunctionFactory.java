@@ -193,11 +193,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final long high = arg.getDecimal128Hi(record);
             final long low = arg.getDecimal128Lo(record);
-            if (!Decimal128.isNull(high, low)) {
-                mapValue.putDecimal128(valueIndex, high, low);
-            } else {
-                mapValue.putDecimal128Null(valueIndex);
-            }
+            mapValue.putDecimal128(valueIndex, high, low);
         }
 
         @Override
@@ -265,11 +261,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final short value = arg.getDecimal16(record);
-            if (value != Decimals.DECIMAL16_NULL) {
-                mapValue.putShort(valueIndex, value);
-            } else {
-                mapValue.putShort(valueIndex, Decimals.DECIMAL16_NULL);
-            }
+            mapValue.putShort(valueIndex, value);
         }
 
         @Override
@@ -328,11 +320,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             final long hl = arg.getDecimal256HL(record);
             final long lh = arg.getDecimal256LH(record);
             final long ll = arg.getDecimal256LL(record);
-            if (!Decimal256.isNull(hh, hl, lh, ll)) {
-                mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
-            } else {
-                mapValue.putDecimal256Null(valueIndex);
-            }
+            mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
         }
 
         @Override
@@ -421,11 +409,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final int value = arg.getDecimal32(record);
-            if (value != Decimals.DECIMAL32_NULL) {
-                mapValue.putInt(valueIndex, value);
-            } else {
-                mapValue.putInt(valueIndex, Decimals.DECIMAL32_NULL);
-            }
+            mapValue.putInt(valueIndex, value);
         }
 
         @Override
@@ -481,11 +465,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final long value = arg.getDecimal64(record);
-            if (!Decimal64.isNull(value)) {
-                mapValue.putLong(valueIndex, value);
-            } else {
-                mapValue.putLong(valueIndex, Decimals.DECIMAL64_NULL);
-            }
+            mapValue.putLong(valueIndex, value);
         }
 
         @Override
@@ -541,11 +521,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final byte value = arg.getDecimal8(record);
-            if (value != Decimals.DECIMAL8_NULL) {
-                mapValue.putByte(valueIndex, value);
-            } else {
-                mapValue.putByte(valueIndex, Decimals.DECIMAL8_NULL);
-            }
+            mapValue.putByte(valueIndex, value);
         }
 
         @Override
