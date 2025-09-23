@@ -366,7 +366,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
         // Replace commits not yet supported with Parquet
         Assume.assumeFalse(convertToParquet);
-        Rnd rnd = generateRandomAndProps(1455175508700L, 1758298616801L);
+        Rnd rnd = generateRandomAndProps();
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -641,8 +641,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 for (int op = 0; op < size; op++) {
                     int dupStep = Math.max(2, transaction.operationList.size() / (1 + rnd.nextInt(10)));
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(op);
-                    if (operation instanceof FuzzInsertOperation) {
-                        FuzzInsertOperation insertOperation = (FuzzInsertOperation) operation;
+                    if (operation instanceof FuzzInsertOperation insertOperation) {
                         if (op % dupStep == 1) {
                             FuzzInsertOperation duplicate = new FuzzInsertOperation(
                                     rnd.nextLong(),
@@ -763,15 +762,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private CharSequence readStrValue(Record rec, int colType) {
-        switch (colType) {
-            case ColumnType.SYMBOL:
-                return rec.getSymA(2);
-            case ColumnType.STRING:
-                return rec.getStrA(2);
-            case ColumnType.VARCHAR:
-                return Utf8s.toString(rec.getVarcharA(2));
-        }
-        throw new IllegalArgumentException();
+        return switch (colType) {
+            case ColumnType.SYMBOL -> rec.getSymA(2);
+            case ColumnType.STRING -> rec.getStrA(2);
+            case ColumnType.VARCHAR -> Utf8s.toString(rec.getVarcharA(2));
+            default -> throw new IllegalArgumentException();
+        };
     }
 
     private void reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
@@ -780,7 +776,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("Re-inserting same data into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
-        String partitions = readTxnToString(tt, false, true, true);
+        String partitions = readTxnToString(tt, false, true, true, false);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
@@ -805,7 +801,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
 
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
-        String partitionsAfter = readTxnToString(tt, false, true, true);
+        String partitionsAfter = readTxnToString(tt, false, true, true, false);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
     }
 
@@ -815,8 +811,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             long initialDelta = Micros.MINUTE_MICROS * 15;
             int rndCount = rnd.nextInt(10);
             int strLen = 4 + rnd.nextInt(20);
-            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, strLen, tableName)).distinct()
-                    .collect(Collectors.toList());
+            List<String> distinctSymbols = Arrays
+                    .stream(generateSymbols(rnd, 1 + rndCount, strLen, tableName))
+                    .distinct()
+                    .toList();
             String[] symbols = new String[distinctSymbols.size()];
             distinctSymbols.toArray(symbols);
             String[] initialSymbols = symbols.length == 1

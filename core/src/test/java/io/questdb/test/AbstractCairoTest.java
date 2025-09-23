@@ -332,7 +332,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 boolean cursorExhausted = false;
                 for (int i = 0, n = target; i < n; i++) {
                     cursor.recordAt(factRec, rows.getQuick(i));
-                    // intentionally calling hasNext() twice: we want to adcanced the cursor position
+                    // intentionally calling hasNext() twice: we want to adcanced the cursor position,
                     // but we do *NOT* want to call it in step-lock with recordAt()
                     if (!cursorExhausted) {
                         cursorExhausted = !cursor.hasNext();
@@ -533,17 +533,23 @@ public abstract class AbstractCairoTest extends AbstractTest {
             rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), rdr.getTimestampType(), PartitionBy.DAY);
             rdr.unsafeLoadAll();
 
-            return txnToString(rdr, compareTxns, compareTruncateVersion, false);
+            return txnToString(rdr, compareTxns, compareTruncateVersion, false, true);
         }
     }
 
-    public static String readTxnToString(TableToken tt, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+    public static String readTxnToString(
+            TableToken tt,
+            boolean compareTxns,
+            boolean compareTruncateVersion,
+            boolean comparePartitionTxns,
+            boolean compareColumnVersions
+    ) {
         try (TxReader rdr = new TxReader(engine.getConfiguration().getFilesFacade())) {
             Path tempPath = Path.getThreadLocal(root);
             rdr.ofRO(tempPath.concat(tt).concat(TableUtils.TXN_FILE_NAME).$(), rdr.getTimestampType(), PartitionBy.DAY);
             rdr.unsafeLoadAll();
 
-            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns);
+            return txnToString(rdr, compareTxns, compareTruncateVersion, comparePartitionTxns, compareColumnVersions);
         }
     }
 
@@ -744,8 +750,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             String expected = symbolTableValueSnapshot[symbolColIndex][key + 1];
             TestUtils.assertEquals(expected, symbolTable.valueOf(key));
             // now test static symbol table
-            if (expected != null && symbolTable instanceof StaticSymbolTable) {
-                StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
+            if (expected != null && symbolTable instanceof StaticSymbolTable staticSymbolTable) {
                 Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
             }
         }
@@ -936,7 +941,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    private static String txnToString(TxReader txReader, boolean compareTxns, boolean compareTruncateVersion, boolean comparePartitionTxns) {
+    private static String txnToString(
+            TxReader txReader,
+            boolean compareTxns,
+            boolean compareTruncateVersion,
+            boolean comparePartitionTxns,
+            boolean compareColumnVersions
+    ) {
         // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
         StringSink sink = Misc.getThreadLocalSink();
         sink.put("{");
@@ -983,7 +994,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
             sink.put("', dataVersion: ").put(txReader.getDataVersion());
         }
         sink.put(", structureVersion: ").put(txReader.getColumnStructureVersion());
-        sink.put(", columnVersion: ").put(txReader.getColumnVersion());
+        if (compareColumnVersions) {
+            sink.put(", columnVersion: ").put(txReader.getColumnVersion());
+        }
         if (compareTruncateVersion) {
             sink.put(", truncateVersion: ").put(txReader.getTruncateVersion());
         }
@@ -1162,7 +1175,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
-        Assert.assertTrue(contains.length() > 0);
+        Assert.assertFalse(contains.isEmpty());
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext);
         } catch (Throwable e) {
@@ -1187,7 +1200,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
-        Assert.assertTrue("provide matching text", contains.length() > 0);
+        Assert.assertFalse("provide matching text", contains.isEmpty());
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
@@ -1425,7 +1438,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * expectedTimestamp can either be an exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
     protected static void assertTimestamp(CharSequence expectedTimestamp, RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expectedTimestamp == null || expectedTimestamp.length() == 0) {
+        if (expectedTimestamp == null || expectedTimestamp.isEmpty()) {
             int timestampIdx = factory.getMetadata().getTimestampIndex();
             if (timestampIdx != -1) {
                 Assert.fail("Expected no timestamp but found " + factory.getMetadata().getColumnName(timestampIdx) + ", idx=" + timestampIdx);
