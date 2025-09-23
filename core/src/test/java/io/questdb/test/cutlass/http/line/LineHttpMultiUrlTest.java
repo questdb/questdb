@@ -98,31 +98,16 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         TestUtils.unchecked(() -> createDummyConfiguration());
     }
 
-    public TestServerMain startInstancesWithoutConflict(String rootName, String host, int port, boolean readOnly) {
-        TestServerMain server;
-
-        for (int i = 0; i < 100; i++) {
-            try {
-                server = startWithEnvVariables(
-                        PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
-                        PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
-                        PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
-                        PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
-                        PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath + rootName,
-                        PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
-                        PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly)
-                );
-                return server;
-            } catch (CairoException | Bootstrap.BootstrapException e) {
-                if (e.getMessage().contains("cannot lock")/* || e.getMessage().contains("could not open")*/) {
-                    Os.sleep((i + 1) * 100);
-                    continue;
-                }
-                throw e;
-            }
-        }
-        Assert.fail();
-        return null;
+    public TestServerMain startInstance(String rootName, String host, int port, boolean readOnly) {
+        return startWithEnvVariables(
+                PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
+                PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
+                PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
+                PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
+                PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath + rootName,
+                PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
+                PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly)
+        );
     }
 
     @Test
@@ -130,9 +115,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         String root1 = "server1" + System.currentTimeMillis();
         String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, true)) {
+            try (final TestServerMain serverMain1 = startInstance(root1, HOST, PORT1, true)) {
                 serverMain1.start();
-                try (final TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false)) {
+                try (final TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false)) {
                     serverMain2.start();
 
                     try (Sender sender = Sender.builder(Sender.Transport.HTTP).address(HOST).port(PORT1).address(HOST).port(PORT2).build()) {
@@ -161,7 +146,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public void testFirstServerIsDown() throws Exception {
         String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false)) {
+            try (final TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false)) {
                 serverMain2.start();
                 try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                     sender.table("line").longColumn("foo", 123).atNow();
@@ -203,9 +188,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         String root1 = "server1" + System.currentTimeMillis();
         String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            TestServerMain serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
+            TestServerMain serverMain1 = startInstance(root1, HOST, PORT1, false);
             serverMain1.start();
-            TestServerMain serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
+            TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false);
             serverMain2.start();
 
             final @Nullable TxReader[] r1 = {null};
@@ -219,7 +204,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     if (i == 10_000) {
                         serverMain2.close();
                         if (serverMain1.hasBeenClosed()) {
-                            serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
+                            serverMain1 = startInstance(root1, HOST, PORT1, false);
                             serverMain1.start();
                         }
                     }
@@ -227,7 +212,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     if (i == 20_000) {
                         serverMain1.close();
                         if (serverMain2.hasBeenClosed()) {
-                            serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
+                            serverMain2 = startInstance(root2, HOST, PORT2, false);
                             serverMain2.start();
                         }
                     }
@@ -240,12 +225,12 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 sender.flush();
 
                 if (serverMain1.hasBeenClosed()) {
-                    serverMain1 = startInstancesWithoutConflict(root1, HOST, PORT1, false);
+                    serverMain1 = startInstance(root1, HOST, PORT1, false);
                     serverMain1.start();
                 }
 
                 if (serverMain2.hasBeenClosed()) {
-                    serverMain2 = startInstancesWithoutConflict(root2, HOST, PORT2, false);
+                    serverMain2 = startInstance(root2, HOST, PORT2, false);
                     serverMain2.start();
                 }
 
@@ -321,7 +306,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         assert delayMillis > jitterMillis;
 
         try {
-            serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+            serverMain = startInstance(rootName, host, port, readOnly);
 
             while (elapsedMillis < timeoutMillis) {
                 long startMillis = System.currentTimeMillis();
@@ -330,7 +315,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 int jitter = rnd.nextIntSync(jitterMillis) - jitterMillis / 2;
                 Os.sleep(1_500 + jitter); // enough time to give the client a chance to reconnect to a different server
 
-                serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+                serverMain = startInstance(rootName, host, port, readOnly);
                 serverMain.start();
                 assert serverMain.hasStarted();
 
@@ -342,9 +327,9 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             }
         } finally {
             if (serverMain == null || serverMain.hasBeenClosed()) {
-                serverMain = startInstancesWithoutConflict(rootName, host, port, readOnly);
+                serverMain = startInstance(rootName, host, port, readOnly);
                 serverMain.start();
-                Os.sleep(50);
+//                Os.sleep(50);
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
@@ -353,7 +338,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (tt != null) {
                     break;
                 }
-                Os.sleep(10);
+//                Os.sleep(10);
             }
             if (tt != null) {
                 assertThatWalIsDrained(serverMain.getEngine(), tt);
