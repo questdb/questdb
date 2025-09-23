@@ -87,7 +87,7 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public RejectProcessor reject(int rejectCode) {
-        LOG.error().$(rejectMessage).$(" [code=").$(rejectCode).I$();
+        LOG.error().$(rejectMessage).$("  [code=").$(rejectCode).I$();
         this.rejectCode = rejectCode;
         return this;
     }
