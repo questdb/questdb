@@ -1150,7 +1150,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 clearTodoLog();
 
                 // linking of the files has to be done after _todo is removed
-                hardLinkAndPurgeColumnFiles2(
+                hardLinkAndPurgeSymbolTableFiles(
                         columnName,
                         columnIndex,
                         metadata.isIndexed(columnIndex),
@@ -5568,7 +5568,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
-    private void hardLinkAndPurgeColumnFiles2(
+    private void hardLinkAndPurgeSymbolTableFiles(
             String columnName,
             int columnIndex,
             boolean isIndexed,

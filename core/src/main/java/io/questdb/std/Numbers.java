@@ -782,7 +782,7 @@ public final class Numbers {
         }
         int r = hexNumbers[c];
         if (r == -1) {
-            throw NumericException.instance().put("invalid hex character: '").put((char)c).put('\'');
+            throw NumericException.instance().put("invalid hex character: '").put((char) c).put('\'');
         }
         return r;
     }
@@ -1030,7 +1030,7 @@ public final class Numbers {
     }
 
     public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
-        if (sequence == null || sequence.length() == 0) {
+        if (sequence == null || sequence.isEmpty()) {
             return IPv4_NULL;
         }
         // discards quote marks around ip address
