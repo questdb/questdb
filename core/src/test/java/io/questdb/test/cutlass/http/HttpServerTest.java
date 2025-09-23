@@ -27,11 +27,9 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
-import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.Fragment;
@@ -60,33 +58,32 @@ import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static java.lang.Math.min;
+import static java.net.HttpURLConnection.HTTP_OK;
 import static org.junit.Assert.assertTrue;
 
 public class HttpServerTest extends AbstractTest {
+    private static final String SUCCESS = "Success";
+    private static final Utf8String SUCCESS_UTF8 = new Utf8String(SUCCESS);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     @Test
     public void testHttpServerBind() {
         try (HttpServerMock httpServer = new HttpServerMock(1, 9001)) {
-            httpServer.registerEndpoint("/service", new HttpRequestHandler() {
+            httpServer.registerEndpoint(requestHeader -> new HttpRequestProcessor() {
                 @Override
-                public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
-                    return new HttpRequestProcessor() {
-                        @Override
-                        public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-                            final HttpChunkedResponse response = context.getChunkedResponse();
-                            response.status(200, "text/plain");
-                            response.sendHeader();
-                            response.putAscii("Success");
-                            response.sendChunk(true);
-                        }
-                    };
+                public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                    context.simpleResponse().sendStatusTextContent(HTTP_OK, SUCCESS_UTF8, null);
+                }
+
+                @Override
+                public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                    context.simpleResponse().sendStatusTextContent(HTTP_OK, SUCCESS_UTF8, null);
                 }
             });
             httpServer.start();
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                assertExecRequest(httpClient, "/service", 200, "Success");
+                assertExecRequest(httpClient, "/service", 200, "Success\r\n");
                 assertExecRequest(httpClient, "/noHandler", 400, "No request handler for URI: /noHandler\r\n");
             }
         }
@@ -166,12 +163,12 @@ public class HttpServerTest extends AbstractTest {
             workerPool.start(LOG);
         }
 
-        private void registerEndpoint(String uri, HttpRequestHandler requestHandler) {
+        private void registerEndpoint(HttpRequestHandler requestHandler) {
             assert requestHandler != null;
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override
                 public ObjList<String> getUrls() {
-                    return new ObjList<>(uri);
+                    return new ObjList<>("/service");
                 }
 
                 @Override
