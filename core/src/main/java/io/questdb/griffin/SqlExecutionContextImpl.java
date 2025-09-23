@@ -40,8 +40,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntStack;
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -55,7 +54,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
-    private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> implicitAccessList = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -214,6 +213,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public ObjList<ViewDefinition> getReferencedViews() {
+        return referencedViews;
+    }
+
+    @Override
     public long getRequestFd() {
         return requestFd;
     }
@@ -298,8 +302,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void recordView(ViewDefinition viewDefinition) {
-        implicitAccessList.putAll(viewDefinition.getDependencies());
+    public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
+        referencedViews.addAll(viewDefinitions);
     }
 
     @Override
@@ -310,7 +314,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
         this.allowNonDeterministicFunction = true;
-        this.implicitAccessList.clear();
+        this.referencedViews.clear();
     }
 
     @Override
@@ -432,7 +436,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;
-        this.securityContext.setImplicitAccessList(implicitAccessList);
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;

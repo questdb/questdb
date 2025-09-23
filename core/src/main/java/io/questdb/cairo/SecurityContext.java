@@ -24,8 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.LowerCaseCharSequenceHashSet;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -87,6 +86,8 @@ public interface SecurityContext extends Mutable {
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
+
+    void authorizeSelect(ViewDefinition viewDefinition);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
@@ -170,7 +171,4 @@ public interface SecurityContext extends Mutable {
     }
 
     boolean isSystemAdmin();
-
-    default void setImplicitAccessList(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> implicitAccessList) {
-    }
 }

@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 
-class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
+public class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
     public ViewCompilerExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine, sharedQueryWorkerCount);
         this.securityContext = ReadOnlySecurityContext.INSTANCE;

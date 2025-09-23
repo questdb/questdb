@@ -27,6 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -136,6 +137,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeResumeWal(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSelect(ViewDefinition viewDefinition) {
     }
 
     @Override

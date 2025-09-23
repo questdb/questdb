@@ -111,6 +111,7 @@ public class SqlParser {
     private final ObjectPool<InsertModel> insertModelPool;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjList<ViewDefinition> recordedViews = new ObjList<>();
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
@@ -125,7 +126,6 @@ public class SqlParser {
     private final ObjectPool<GenericLexer> viewLexers;
     private final SqlParserCallback viewSqlParserCallback = new SqlParserCallback() {
     };
-    private final ObjList<CharSequence> views = new ObjList<>();
     private final ObjectPool<WindowColumn> windowColumnPool;
     private final ObjectPool<WithClauseModel> withClauseModelPool;
     private int digit;
@@ -446,11 +446,16 @@ public class SqlParser {
         }
     }
 
+    private void clearRecordedViews() {
+        recordedViews.clear();
+    }
+
     private void compileViewQuery(QueryModel model, TableToken viewToken, int viewPosition) throws SqlException {
         final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
         if (viewDefinition == null) {
             throw SqlException.viewDoesNotExist(viewPosition, viewToken.getTableName());
         }
+        recordedViews.add(viewDefinition);
 
         final QueryModel viewModel = compileViewQuery(viewDefinition, viewPosition);
         model.setNestedModel(viewModel);
@@ -774,7 +779,7 @@ public class SqlParser {
         return model;
     }
 
-    private ExecutionModel parseCompileView(SqlExecutionContext executionContext, GenericLexer lexer) throws SqlException {
+    private ExecutionModel parseCompileView(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "view");
         if (!configuration.isViewEnabled()) {
             throw SqlException.$(lexer.lastTokenPosition(), "views are disabled, set 'cairo.view.enabled=true' in the config to enable them");
@@ -796,7 +801,6 @@ public class SqlParser {
         model.setQueryModel(queryModel);
 
         compileViewQuery(queryModel, tt, lexer.lastTokenPosition());
-        recordViews(executionContext, queryModel);
         return model;
     }
 
@@ -2943,11 +2947,12 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        clearRecordedViews();
         lexer.unparseLast();
         final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
-            recordViews(executionContext, model.getQueryModel());
+            executionContext.recordViews(recordedViews);
             return model;
         }
         if (Chars.equals(tok, ":=")) {
@@ -3666,17 +3671,6 @@ public class SqlParser {
         return tok;
     }
 
-    private void recordViews(SqlExecutionContext executionContext, QueryModel model) {
-        final CairoEngine engine = executionContext.getCairoEngine();
-        views.clear();
-        SqlUtil.collectAllTableAndViewNames(model, views, true);
-        for (int i = 0; i < views.size(); i++) {
-            final TableToken viewToken = engine.getTableTokenIfExists(views.getQuick(i));
-            final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(viewToken);
-            executionContext.recordView(viewDefinition);
-        }
-    }
-
     private void rewriteCase(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCaseKeyword(node.token)) {
             tempExprNodes.clear();
@@ -4305,7 +4299,7 @@ public class SqlParser {
         }
 
         if (isCompileKeyword(tok)) {
-            return parseCompileView(executionContext, lexer);
+            return parseCompileView(lexer);
         }
 
         if (isFromKeyword(tok)) {

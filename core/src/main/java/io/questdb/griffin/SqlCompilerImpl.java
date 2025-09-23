@@ -77,6 +77,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewCompilerExecutionContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -185,6 +186,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BlockFileWriter blockFileWriter;
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ViewCompilerExecutionContext compileViewContext;
     private final CharSequenceObjHashMap<String> dropAllTablesFailedTableNames = new CharSequenceObjHashMap<>();
     private final GenericDropOperationBuilder dropOperationBuilder;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -219,9 +221,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.engine = engine;
-            this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-            this.queryBuilder = new QueryBuilder(this);
             this.configuration = engine.getConfiguration();
+            this.maxRecompileAttempts = configuration.getMaxSqlRecompileAttempts();
+            this.queryBuilder = new QueryBuilder(this);
             this.ff = configuration.getFilesFacade();
             this.messageBus = engine.getMessageBus();
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
@@ -273,6 +275,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
             blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
+            // we can pass 1 as worker count because actual query plan does not matter
+            // for COMPILE VIEW, what we care about is validating view dependencies
+            compileViewContext = new ViewCompilerExecutionContext(engine, 1);
         } catch (Throwable th) {
             close();
             throw th;
@@ -347,6 +352,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
         Misc.free(blockFileWriter);
+        Misc.free(compileViewContext);
     }
 
     @Override
@@ -3307,7 +3313,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.testCompileModel(viewDefinition.getViewSql(), executionContext);
+            compiler.testCompileModel(viewDefinition.getViewSql(), compileViewContext);
         } catch (SqlException | CairoException e) {
             // position would be reported from the view SQL, so we are overriding it with 14 which
             // points to the name of the view in 'COMPILE VIEW viewName'

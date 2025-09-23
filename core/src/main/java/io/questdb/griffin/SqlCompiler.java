@@ -75,7 +75,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     @TestOnly
     void setFullFatJoins(boolean fullFatJoins);
 
-    @TestOnly
     ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     @TestOnly

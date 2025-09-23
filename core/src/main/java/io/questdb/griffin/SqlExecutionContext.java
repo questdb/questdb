@@ -40,6 +40,7 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.CharSink;
@@ -134,6 +135,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
+    default ObjList<ViewDefinition> getReferencedViews() {
+        return null;
+    }
+
     long getRequestFd();
 
     @NotNull
@@ -209,7 +214,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
-    default void recordView(ViewDefinition viewDefinition) {
+    default void recordViews(ObjList<ViewDefinition> viewDefinitions) {
     }
 
     void reset();
