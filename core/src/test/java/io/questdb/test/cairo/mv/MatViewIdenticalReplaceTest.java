@@ -73,16 +73,12 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
             drainWalAndMatViewQueues();
             assertSql(
-                    replaceExpectedTimestamp(
-                            """
-                                            ts\tx\tv
-                                            2022-02-24T00:00:00.000000Z\t1\t123
-                                            2022-02-24T01:00:00.000000Z\t2\t
-                                            2022-02-24T02:00:00.000000Z\t3\t2345567
-                                    """
-                    ),
-                    "test_mv"
-            );
+                    replaceExpectedTimestamp("""
+                            ts\tx\tv
+                            2022-02-24T00:00:00.000000Z\t1\t123
+                            2022-02-24T01:00:00.000000Z\t2\t
+                            2022-02-24T02:00:00.000000Z\t3\t2345567
+                            """), "test_mv");
 
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("test"))) {
                 var row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24"));
