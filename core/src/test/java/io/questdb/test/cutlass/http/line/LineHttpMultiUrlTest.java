@@ -329,7 +329,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             if (serverMain == null || serverMain.hasBeenClosed()) {
                 serverMain = startInstance(rootName, host, port, readOnly);
                 serverMain.start();
-//                Os.sleep(50);
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
@@ -338,7 +337,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (tt != null) {
                     break;
                 }
-//                Os.sleep(10);
             }
             if (tt != null) {
                 assertThatWalIsDrained(serverMain.getEngine(), tt);
