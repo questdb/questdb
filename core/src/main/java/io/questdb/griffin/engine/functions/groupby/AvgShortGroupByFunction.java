@@ -111,18 +111,18 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcSum = srcValue.getLong(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        long destSum = destValue.getLong(valueIndex);
-        long destCount = destValue.getLong(valueIndex + 1);
-        if (destSum != Numbers.LONG_NULL) {
-            if (srcSum != Numbers.LONG_NULL) {
+        final long srcSum = srcValue.getLong(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
+            final long destSum = destValue.getLong(valueIndex);
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
                 destValue.putLong(valueIndex, destSum + srcSum);
                 destValue.putLong(valueIndex + 1, destCount + srcCount);
+            } else {
+                destValue.putLong(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
             }
-        } else {
-            destValue.putLong(valueIndex, srcSum);
-            destValue.putLong(valueIndex + 1, srcCount);
         }
     }
 

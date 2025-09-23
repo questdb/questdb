@@ -1646,6 +1646,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithBasicShortFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(ashort), max(ashort), round(avg(ashort)), sum(ashort), first(ashort), last(ashort) FROM tab",
+                "min\tmax\tround\tsum\tfirst\tlast\n" +
+                        "10\t1024\t513.0\t2050140\t788\t859\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithBindVariablesInFilter() throws Exception {
         testParallelGroupByAllTypes(
                 (sqlExecutionContext) -> {
