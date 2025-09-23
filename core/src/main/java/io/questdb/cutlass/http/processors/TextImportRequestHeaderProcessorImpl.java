@@ -17,13 +17,13 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static io.questdb.cutlass.http.processors.TextImportProcessor.sendErrorAndThrowDisconnect;
+import static io.questdb.cutlass.http.processors.ImportProcessor.sendErrorAndThrowDisconnect;
 
 public class TextImportRequestHeaderProcessorImpl implements TextImportRequestHeaderProcessor {
     private static final Utf8String PARTITION_BY_NONE = new Utf8String("NONE");
 
     @Override
-    public void processRequestHeader(HttpRequestHeader partHeader, HttpConnectionContext transientContext, TextImportProcessorState transientState)
+    public void processRequestHeader(HttpRequestHeader partHeader, HttpConnectionContext transientContext, ImportProcessorState transientState)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final HttpRequestHeader rh = transientContext.getRequestHeader();
         DirectUtf8Sequence name = rh.getUrlParam(URL_PARAM_NAME);
