@@ -80,7 +80,7 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getSharedNetworkPool(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedPoolNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedQueryWorkerCount()
         );
     }
@@ -146,20 +146,20 @@ public class Services {
         // - DEDICATED (6 worker) when ^ ^ is not set and host has > 16 cpus
         // - SHARED otherwise
 
-        // The writerPool is:
+        // The sharedPoolWrite is:
         // - DEDICATED when PropertyKey.LINE_TCP_WRITER_WORKER_COUNT is > 0
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool sharedPoolNetwork = workerPoolManager.getSharedPoolNetwork(
                 config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstanceWrite(
+        final WorkerPool sharedPoolWrite = workerPoolManager.getSharedPoolWrite(
                 config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, networkSharedPool, writerPool);
+        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite);
     }
 
     @Nullable
@@ -191,7 +191,7 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.HTTP_MIN_SERVER
         );
@@ -255,7 +255,7 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool networkSharedPool = workerPoolManager.getSharedNetworkPool(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.PG_WIRE_SERVER
         );

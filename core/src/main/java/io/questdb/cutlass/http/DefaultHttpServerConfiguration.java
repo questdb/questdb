@@ -33,18 +33,17 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.Clock;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -234,6 +233,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return ColumnType.TIMESTAMP_MICRO;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return PartitionBy.DAY;
         }
@@ -249,7 +253,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public io.questdb.std.datetime.Clock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
@@ -259,8 +263,8 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
+        public byte getTimestampUnit() {
+            return CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
 
         @Override
@@ -317,7 +321,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public NanosecondClock getNanosecondClock() {
+        public Clock getNanosecondClock() {
             return httpContextConfiguration.getNanosecondClock();
         }
     }

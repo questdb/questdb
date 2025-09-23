@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.window;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -182,12 +183,15 @@ public class WindowContextImpl implements WindowContext, Mutable {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUint,
             int rowsLoKindPos,
             long rowsHi,
+            char rowsHiUint,
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {
@@ -201,8 +205,14 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.baseSupportsRandomAccess = baseSupportsRandomAccess;
         this.framingMode = framingMode;
         this.rowsLo = rowsLo;
+        if (rowsLoUint != 0 && ColumnType.isTimestamp(timestampType)) {
+            this.rowsLo = ColumnType.getTimestampDriver(timestampType).from(rowsLo, rowsLoUint);
+        }
         this.rowsLoKindPos = rowsLoKindPos;
         this.rowsHi = rowsHi;
+        if (rowsHiUint != 0 && ColumnType.isTimestamp(timestampType)) {
+            this.rowsHi = ColumnType.getTimestampDriver(timestampType).from(rowsHi, rowsHiUint);
+        }
         this.rowsHiKindPos = rowsHiKindPos;
         this.exclusionKind = exclusionKind;
         this.exclusionKindPos = exclusionKindPos;

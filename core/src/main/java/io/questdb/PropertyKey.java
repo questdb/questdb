@@ -159,6 +159,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_ROWS_THRESHOLD("cairo.sql.jit.rows.threshold"),
     CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
+    CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD("cairo.sql.jit.max.in.list.size.threshold"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
     CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
@@ -388,6 +389,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED("line.tcp.undocumented.string.as.tag.supported"),
     LINE_FLOAT_DEFAULT_COLUMN_TYPE("line.float.default.column.type"),
     LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
+    LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE("line.timestamp.default.column.type"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
@@ -574,6 +576,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
     CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format"),
     DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true),
+    DEBUG_DB_LOG_NAME("debug.db.log.name", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
     CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");

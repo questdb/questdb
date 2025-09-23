@@ -26,8 +26,8 @@ package io.questdb.compat;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -50,7 +50,7 @@ import static io.questdb.compat.InfluxDBUtils.assertRequestErrorContains;
 public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testAppendErrors() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -93,7 +93,7 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testColumnsCanBeAddedWithoutCommit() throws Exception {
         int count = 10000;
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
@@ -124,7 +124,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testCreateTableError() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -177,7 +177,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testErrorDoesNotFitResponseBuffer() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096");
             put(PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "512");
         }})) {
@@ -207,7 +207,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testInsertWithIlpHttp() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -225,7 +225,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testInsertWithIlpHttpParallelManyTables() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -271,7 +271,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testInsertWithIlpHttpParallelOneTables() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -313,7 +313,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testInsertWithIlpHttpServerKeepAliveOff() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false");
         }})) {
@@ -333,7 +333,7 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testLastEmptyLineIsOk() throws Exception {
         int count = 10000;
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
@@ -362,7 +362,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testLineDoesNotFitBuffer() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "512");
             put(PropertyKey.HTTP_RECV_BUFFER_SIZE.getEnvVarName(), "128");
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15");
@@ -419,7 +419,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testMalformedLines() throws SqlException {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -490,7 +490,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testNoErrorLastLineNoLineBreak() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
@@ -511,7 +511,7 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testPing() {
         LOG.info().$("=== send fragmentation=").$(5).$();
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.LINE_HTTP_PING_VERSION.getEnvVarName(), "v2.2.2");
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
         }})) {
@@ -528,7 +528,7 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testRequestAtomicNoNewColumns() throws Exception {
         int count = 10000;
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
@@ -560,7 +560,7 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testRequestNewColumnAddedInMiddleOfRequest() throws Exception {
         int count = 10000;
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
@@ -591,7 +591,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testRestrictedCreateColumnsError() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false");
         }})) {
@@ -619,7 +619,7 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testRestrictedCreateTableError() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
             put(PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false");
             put(PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false");
@@ -647,14 +647,14 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testSymbolsWithQuotes() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
-                long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
+                long milliTime = MicrosTimestampDriver.floor("2022-02-24T05:00:00.000001Z");
                 influxDB.write(Point.measurement("m1")
                         .tag("tag1", "\"value1\"")
                         .addField("f1", 1)
@@ -675,40 +675,40 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testTimestampPrecisionSupport() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
-                long microTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T04:00:00.000001Z");
+                long microTime = MicrosTimestampDriver.floor("2022-02-24T04:00:00.000001Z");
                 List<String> points = new ArrayList<>();
                 points.add("m1,tag1=value1 f1=1i,y=12i " + microTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MICROSECONDS, points);
                 points.clear();
 
-                long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.001001Z") / 1000L;
+                long milliTime = MicrosTimestampDriver.floor("2022-02-24T05:00:00.001001Z") / 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + milliTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MILLISECONDS, points);
                 points.clear();
 
-                long nanoTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T06:00:00.000001") * 1000L;
+                long nanoTime = MicrosTimestampDriver.floor("2022-02-24T06:00:00.000001") * 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + nanoTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.NANOSECONDS, points);
                 points.clear();
 
-                long secondTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T07:00:01") / 1000L / 1000L;
+                long secondTime = MicrosTimestampDriver.floor("2022-02-24T07:00:01") / 1000L / 1000L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + secondTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.SECONDS, points);
                 points.clear();
 
-                long minuteTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T08:01") / 1000L / 1000L / 60L;
+                long minuteTime = MicrosTimestampDriver.floor("2022-02-24T08:01") / 1000L / 1000L / 60L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + minuteTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.MINUTES, points);
                 points.clear();
 
-                long hourTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T09") / 1000L / 1000L / 60L / 60L;
+                long hourTime = MicrosTimestampDriver.floor("2022-02-24T09") / 1000L / 1000L / 60L / 60L;
                 points.add("m1,tag1=value1 f1=1i,y=12i " + hourTime);
                 influxDB.write("db", "rp", InfluxDB.ConsistencyLevel.ANY, TimeUnit.HOURS, points);
                 points.clear();
@@ -731,7 +731,7 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
-        long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
+        long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
 
         try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {

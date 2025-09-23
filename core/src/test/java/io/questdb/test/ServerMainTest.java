@@ -494,6 +494,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.http.max.recv.buffer.size\tQDB_LINE_HTTP_MAX_RECV_BUFFER_SIZE\t1073741824\tdefault\tfalse\ttrue\n" +
                                     "line.http.ping.version\tQDB_LINE_HTTP_PING_VERSION\tv2.7.4\tdefault\tfalse\tfalse\n" +
                                     "line.integer.default.column.type\tQDB_LINE_INTEGER_DEFAULT_COLUMN_TYPE\tLONG\tdefault\tfalse\tfalse\n" +
+                                    "line.timestamp.default.column.type\tQDB_LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE\tTIMESTAMP\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.auth.db.path\tQDB_LINE_TCP_AUTH_DB_PATH\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.commit.interval.default\tQDB_LINE_TCP_COMMIT_INTERVAL_DEFAULT\t2000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.commit.interval.fraction\tQDB_LINE_TCP_COMMIT_INTERVAL_FRACTION\t0.5\tdefault\tfalse\tfalse\n" +
@@ -685,7 +686,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.settings.readonly\tQDB_HTTP_SETTINGS_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
-                                    "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse"
+                                    "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue"
                     )
                             .split("\n");
 

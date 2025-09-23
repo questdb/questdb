@@ -38,6 +38,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -339,19 +340,23 @@ public class TableTransactionLog implements Closeable {
                         txnMetaOffsetHi = ff.readNonNegativeLong(txnMetaIndexFd, maxStructureVersion * Long.BYTES);
 
                         if (txnMetaOffsetHi > txnMetaOffset) {
-                            txnMetaAddress = ff.mmap(
+                            long newAddr = ff.mmap(
                                     txnMetaFd,
                                     txnMetaOffsetHi,
                                     0L,
                                     Files.MAP_RO,
                                     MemoryTag.MMAP_TX_LOG_CURSOR
                             );
-                            if (txnMetaAddress < 0) {
-                                txnMetaAddress = 0;
-                                close();
-                            } else {
+                            if (newAddr != FilesFacade.MAP_FAILED) {
+                                txnMetaAddress = newAddr;
                                 txnMetaMem.of(txnMetaAddress, txnMetaOffsetHi);
                                 return;
+                            } else {
+                                close();
+                                throw CairoException.critical(Os.errno())
+                                        .put("cannot mmap table transaction log [path=").put(path)
+                                        .put(", txnMetaOffsetHi=").put(txnMetaOffsetHi)
+                                        .put(']');
                             }
                         }
                     }

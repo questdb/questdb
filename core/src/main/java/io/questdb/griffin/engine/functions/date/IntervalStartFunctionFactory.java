@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -51,13 +52,15 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        Function arg = args.getQuick(0);
+        return new Func(arg, IntervalUtils.getTimestampTypeByIntervalType(arg.getType()));
     }
 
     private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function intervalFunc;
 
-        public Func(Function intervalFunc) {
+        public Func(Function intervalFunc, int columnType) {
+            super(columnType);
             this.intervalFunc = intervalFunc;
         }
 

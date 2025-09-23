@@ -262,7 +262,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     @Override
-    public TxWriter ofRO(@Transient LPSZ path, int partitionBy) {
+    public TxWriter ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         throw new IllegalStateException();
     }
 
@@ -284,9 +284,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return this;
     }
 
-    public TxWriter ofRW(@Transient LPSZ path, int partitionBy) {
+    public TxWriter ofRW(@Transient LPSZ path, int timestampType, int partitionBy) {
         TxWriter t = ofRW(path);
-        t.initPartitionBy(partitionBy);
+        t.initPartitionBy(timestampType, partitionBy);
         return t;
     }
 
@@ -753,7 +753,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
                 // remove partitions
                 this.fixedRowCount -= rowCount;
-                this.maxTimestamp = getMaxTimestamp();
                 this.transientRowCount = getPartitionSize(maxTimestampPartitionIndex);
             }
         }

@@ -13,6 +13,8 @@ use parquet2::schema::Repetition;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
+const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
+
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
 /// Returns `None` if the metadata is not present.
@@ -128,10 +130,17 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Some(Timestamp {
                     unit: TimeUnit::Microseconds,
                     is_adjusted_to_utc: _,
-                })
-                | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+            (
+                PhysicalType::Int64,
+                Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
+                _,
+            ) => Some(ColumnType::new(
+                ColumnTypeTag::Timestamp,
+                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+            )),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
@@ -181,7 +190,10 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Some(ColumnType::new(ColumnTypeTag::Varchar, 0))
             }
             (PhysicalType::ByteArray, _, _) => Some(ColumnType::new(ColumnTypeTag::Binary, 0)),
-            (PhysicalType::Int96, _, None) => Some(ColumnType::new(ColumnTypeTag::Timestamp, 0)),
+            (PhysicalType::Int96, _, None) => Some(ColumnType::new(
+                ColumnTypeTag::Timestamp,
+                QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
+            )),
             (_, _, _) => None,
         }
     }
@@ -268,7 +280,7 @@ mod tests {
         let mut buffers_columns = Vec::new();
         let mut columns = Vec::new();
 
-        let cols: Vec<_> = ([
+        let cols: Vec<_> = [
             (ColumnTypeTag::Long128, size_of::<i64>() * 2, "col_long128"),
             (ColumnTypeTag::Long256, size_of::<i64>() * 4, "col_long256"),
             (ColumnTypeTag::Timestamp, size_of::<i64>(), "col_ts"),
@@ -287,7 +299,7 @@ mod tests {
             (ColumnTypeTag::GeoLong, size_of::<i64>(), "col_geo_long"),
             (ColumnTypeTag::IPv4, size_of::<i32>(), "col_geo_ipv4"),
             (ColumnTypeTag::Char, size_of::<u16>(), "col_char"),
-        ])
+        ]
         .iter()
         .map(|(tag, value_size, name)| (ColumnType::new(*tag, 0), *value_size, *name))
         .collect();

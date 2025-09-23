@@ -1144,6 +1144,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             QueryColumn thisColumn = bottomUpColumns.getQuick(i);
             if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
                 QueryColumn thatColumn = baseModel.getAliasToColumnMap().get(thisColumn.getAst().token);
+                // skip if baseModel does not have this column
+                if (thatColumn == null) {
+                    continue;
+                }
                 // We cannot mutate the column on this baseModel, because columns might be shared between
                 // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
                 // `thisColumn` alias should let us lookup, the column's reference
@@ -1540,21 +1544,34 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    private static void unitToSink(CharSink<?> sink, long timeUnit) {
-        if (timeUnit == WindowColumn.TIME_UNIT_MICROSECOND) {
-            sink.putAscii(" microsecond");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_MILLISECOND) {
-            sink.putAscii(" millisecond");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_SECOND) {
-            sink.putAscii(" second");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_MINUTE) {
-            sink.putAscii(" minute");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_HOUR) {
-            sink.putAscii(" hour");
-        } else if (timeUnit == WindowColumn.TIME_UNIT_DAY) {
-            sink.putAscii(" day");
-        } else {
-            sink.putAscii(" [unknown unit]");
+    private static void unitToSink(CharSink<?> sink, char timeUnit) {
+        switch (timeUnit) {
+            case 0:
+                break;
+            case WindowColumn.TIME_UNIT_NANOSECOND:
+                sink.putAscii(" nanosecond");
+                break;
+            case WindowColumn.TIME_UNIT_MICROSECOND:
+                sink.putAscii(" microsecond");
+                break;
+            case WindowColumn.TIME_UNIT_MILLISECOND:
+                sink.putAscii(" millisecond");
+                break;
+            case WindowColumn.TIME_UNIT_SECOND:
+                sink.putAscii(" second");
+                break;
+            case WindowColumn.TIME_UNIT_MINUTE:
+                sink.putAscii(" minute");
+                break;
+            case WindowColumn.TIME_UNIT_HOUR:
+                sink.putAscii(" hour");
+                break;
+            case WindowColumn.TIME_UNIT_DAY:
+                sink.putAscii(" day");
+                break;
+            default:
+                sink.putAscii(" [unknown unit]");
+                break;
         }
     }
 

@@ -33,6 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastByteToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Bn)";
@@ -46,12 +47,13 @@ public class CastByteToTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CastByteToTimestampFunction(args.getQuick(0));
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    public static class CastByteToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastByteToTimestampFunction(Function arg) {
-            super(arg);
+    public static class Func extends AbstractCastToTimestampFunction {
+
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

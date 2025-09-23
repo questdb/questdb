@@ -225,8 +225,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("worker_id", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("worker_pool", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("username", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("query_start", ColumnType.TIMESTAMP));
-        metadata.add(new TableColumnMetadata("state_change", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("query_start", ColumnType.TIMESTAMP_MICRO));
+        metadata.add(new TableColumnMetadata("state_change", ColumnType.TIMESTAMP_MICRO));
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
