@@ -1677,9 +1677,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithBasicDoubleFunctions() throws Exception {
         Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(adouble), max(adouble), round(avg(adouble)), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
+                "SELECT min(adouble), max(adouble), round(avg(adouble)*count(adouble)), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
                 "min\tmax\tround\tround1\tfirst\tlast\n" +
-                        "2.0456303844185175E-4\t0.9999182937007105\t1.0\t1679.0\t0.8799634725391621\t0.15322992873721464\n"
+                        "2.0456303844185175E-4\t0.9999182937007105\t1679.0\t1679.0\t0.8799634725391621\t0.15322992873721464\n"
         );
     }
 
@@ -1687,9 +1687,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithBasicFloatFunctions() throws Exception {
         Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(afloat), max(afloat), round(avg(afloat)), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
+                "SELECT min(afloat), max(afloat), round(avg(afloat)*count(afloat)), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
                 "min\tmax\tround\tround1\tfirst\tlast\n" +
-                        "1.6343594E-4\t0.9997715\t0.0\t1665.0\t0.87567717\t0.030083895\n"
+                        "1.6343594E-4\t0.9997715\t1665.0\t1665.0\t0.87567717\t0.030083895\n"
         );
     }
 
@@ -1697,9 +1697,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithBasicIntFunctions() throws Exception {
         Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(anint), max(anint), avg(anint), sum(anint), first(anint), last(anint) FROM tab",
-                "min\tmax\tavg\tsum\tfirst\tlast\n" +
-                        "-2147365666\t2146394077\t-1.2407828356E7\t-49631313424\t-85170055\t1033747429\n"
+                "SELECT min(anint), max(anint), round(avg(anint)*count(anint)), sum(anint), first(anint), last(anint) FROM tab",
+                "min\tmax\tround\tsum\tfirst\tlast\n" +
+                        "-2147365666\t2146394077\t-4.9631313424E10\t-49631313424\t-85170055\t1033747429\n"
         );
     }
 
@@ -1707,9 +1707,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithBasicLongFunctions() throws Exception {
         Assume.assumeFalse(enableJitCompiler);
         testParallelGroupByAllTypes(
-                "SELECT min(along), max(along), avg(along), sum(along), first(along), last(along) FROM tab",
-                "min\tmax\tavg\tsum\tfirst\tlast\n" +
-                        "-9220264229979566148\t9222440717001210457\t-4.3526545404198576E16\t-8085484953408325183\t8416773233910814357\t6812734169481155056\n"
+                "SELECT min(along), max(along), round(avg(along)*count(along)), sum(along), first(along), last(along) FROM tab",
+                "min\tmax\tround\tsum\tfirst\tlast\n" +
+                        "-9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056\n"
         );
     }
 
