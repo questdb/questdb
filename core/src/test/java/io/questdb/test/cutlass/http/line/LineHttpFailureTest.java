@@ -388,6 +388,9 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     public void testGzipEncoding() throws Exception {
         try (final TestServerMain serverMain = startWithEnvVariables()) {
             serverMain.start();
+            while (!serverMain.hasStarted()) {
+                continue;
+            }
 
             try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;protocol_version=1;auto_flush=off;")) {
                 sender.table("m1")
@@ -418,7 +421,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     for (int i = 0; i < outBytes.length; i++) {
                         request.put(outBytes[i]);
                     }
-                    HttpClient.ResponseHeaders response = request.send();
+                    HttpClient.ResponseHeaders response = request.send(30_000);
                     response.await();
                     Assert.assertEquals("204", response.getStatusCode().asAsciiCharSequence().toString());
                     response.close();
