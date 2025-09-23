@@ -10579,6 +10579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
 
+        @SuppressWarnings("unused")
         void putDecimalStr(int columnIndex, CharSequence value, Decimal256 decimal);
 
         void putDouble(int columnIndex, double value);
