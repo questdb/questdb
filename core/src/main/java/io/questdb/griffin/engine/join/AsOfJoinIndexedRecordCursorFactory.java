@@ -175,7 +175,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
                 RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowMax + rowLo);
 
-                // Check the first entry only. They are sorted descending by timestamp, so other entries are older.
+                // Check the first entry only. They are sorted descending by timestamp,
+                // so there aren't any entries more recent than the first one.
                 if (rowCursor.hasNext()) {
                     long rowId = rowCursor.next();
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
