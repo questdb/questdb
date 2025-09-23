@@ -15,6 +15,10 @@ schedules:
       include:
         - master
 
+# Define variable at the top level
+variables:
+  SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
+
 pool:
   vmImage: 'ubuntu-20.04'
 
@@ -29,6 +33,21 @@ jobs:
     timeoutInMinutes: 60
 
     steps:
+      - bash: |
+          tag=$(Build.SourceBranchName)
+          echo "Checking tag: $tag"
+          
+          if [[ ! $tag =~ ^\d+(\.\d+)*$ ]]; then
+            echo "Tag '$tag' is not a pure numeric version (x.y.z) - skipping build"
+            echo "Valid tags should only contain numbers and dots (e.g., 1.2.3, 10.0.5)"
+            echo "##vso[task.complete result=Succeeded;]Skipping build for non-numeric version tag"
+            exit 0
+          fi
+          
+          echo "Tag '$tag' is a valid numeric version, continuing with build"
+        displayName: 'Validate semantic version format'
+        condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
+
       - task: Docker@2
         inputs:
           command: 'login'

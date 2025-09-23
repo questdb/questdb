@@ -73,6 +73,7 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private final PGCircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    protected CharSequence username;
     private byte authType = AUTH_TYPE_NONE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
@@ -85,7 +86,6 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private long sendBufWritePos;
     private Socket socket;
     private State state = State.EXPECT_INIT_MESSAGE;
-    private CharSequence username;
 
     public PGCleartextPasswordAuthenticator(
             PGConfiguration configuration,
