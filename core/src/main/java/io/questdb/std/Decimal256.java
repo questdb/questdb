@@ -1303,14 +1303,16 @@ public class Decimal256 implements Sinkable {
         int hi = cs.length();
 
         boolean strict = false;
+        int ch = hi > 0 ? cs.charAt(hi - 1) | 32 : 0;
         // We don't want to parse the m suffix, we can safely skip it
-        if (hi > 0 && ((cs.charAt(hi - 1) | 32) == 'm')) {
+        if (ch == 'm') {
             strict = true;
             hi--;
+            ch = hi > 0 ? cs.charAt(hi - 1) | 32 : 0;
         }
 
         // We also need to skip 'd' and 'f' when parsing doubles/floats
-        if (hi > 0 && ((cs.charAt(hi - 1) | 32) == 'f' || (cs.charAt(hi - 1) | 32) == 'd')) {
+        if (ch == 'f' || ch == 'd') {
             hi--;
         }
 
@@ -1334,6 +1336,14 @@ public class Decimal256 implements Sinkable {
 
         if (lo == hi) {
             throw NumericException.instance().put("invalid decimal: empty value");
+        }
+
+        ch = cs.charAt(lo);
+        if (ch >= 'I') {
+            if (isNanOrInfinite((char) ch, cs, lo, hi)) {
+                ofNull();
+                return 0;
+            }
         }
 
         // Remove leading zeros
@@ -1739,6 +1749,21 @@ public class Decimal256 implements Sinkable {
 
     private static boolean isDigit(char c) {
         return '0' <= c && c <= '9';
+    }
+
+    /**
+     * Returns whether the given CharSequence starts with either NaN or Infinity.
+     *
+     * @param ch the character of the CharSequence at position lo
+     * @param cs the CharSequence to be parsed
+     * @param lo the index of the first character of the CharSequence
+     * @param hi the index of the last character of the CharSequence + 1
+     */
+    private static boolean isNanOrInfinite(char ch, CharSequence cs, int lo, int hi) {
+        return (ch == 'N' && lo + 2 < hi && cs.charAt(lo + 1) == 'a' && cs.charAt(lo + 2) == 'N') ||
+                (ch == 'I' && lo + 7 < hi && cs.charAt(lo + 1) == 'n' && cs.charAt(lo + 2) == 'f'
+                        && cs.charAt(lo + 3) == 'i' && cs.charAt(lo + 4) == 'n' && cs.charAt(lo + 5) == 'i'
+                        && cs.charAt(lo + 6) == 't' && cs.charAt(lo + 7) == 'y');
     }
 
     private static void putLongIntoBytes(byte[] bytes, int offset, long value) {

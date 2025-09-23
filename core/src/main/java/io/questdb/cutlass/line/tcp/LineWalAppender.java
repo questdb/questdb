@@ -36,8 +36,10 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -45,6 +47,7 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
@@ -54,9 +57,11 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 public class LineWalAppender {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
+    private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
     private final DirectUtf8Sink sink;
+    private final StringSink stringSink;
     private final boolean stringToCharCastAllowed;
     private byte timestampUnit;
 
@@ -65,6 +70,7 @@ public class LineWalAppender {
             boolean stringToCharCastAllowed,
             byte timestampUnit,
             DirectUtf8Sink sink,
+            StringSink stringSink,
             int maxFileNameLength
     ) {
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -72,7 +78,9 @@ public class LineWalAppender {
         this.maxFileNameLength = maxFileNameLength;
         this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
+        this.decimal256 = new Decimal256();
         this.sink = sink;
+        this.stringSink = stringSink;
     }
 
     public void appendToWal(
@@ -213,6 +221,28 @@ public class LineWalAppender {
                     }
                     case LineTcpParser.ENTITY_TYPE_INTEGER: {
                         switch (ColumnType.tagOf(colType)) {
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                decimal256.ofLong(ent.getLongValue(), 0);
+                                if (scale != 0) {
+                                    try {
+                                        decimal256.rescale(scale);
+                                    } catch (NumericException ignored) {
+                                        throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(),
+                                                writer.getMetadata().getColumnName(columnIndex));
+                                    }
+                                }
+                                if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                                    throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(),
+                                            writer.getMetadata().getColumnName(columnIndex));
+                                }
+                                DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                break;
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
@@ -279,12 +309,40 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (colType) {
+                        switch (ColumnType.tagOf(colType)) {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
                             case ColumnType.FLOAT:
                                 r.putFloat(columnIndex, (float) ent.getFloatValue());
+                                break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                final int precision = ColumnType.getDecimalPrecision(colType);
+                                final int scale = ColumnType.getDecimalScale(colType);
+                                try {
+                                    if (ent.isBinaryFormat()) {
+                                        double d = ent.getFloatValue();
+                                        if (Numbers.isNull(d)) {
+                                            DecimalUtil.storeNull(r, columnIndex, colType);
+                                            break;
+                                        } else {
+                                            stringSink.clear();
+                                            Numbers.append(stringSink, ent.getFloatValue());
+                                            decimal256.ofString(stringSink, precision, scale);
+                                            DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
+                                        }
+                                    } else {
+                                        decimal256.ofString(ent.getValue().asAsciiCharSequence(), precision, scale);
+                                        DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                    }
+                                } catch (NumericException ignored) {
+                                    throw castError(tud.getTableNameUtf16(), "FLOAT", colType, ent.getName());
+                                }
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
@@ -301,10 +359,9 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_STRING: {
-                        final int geoHashBits = ColumnType.getGeoHashBits(colType);
                         final DirectUtf8Sequence entityValue = ent.getValue();
-                        if (geoHashBits == 0) { // not geohash
-                            switch (colType) {
+                        if (!ColumnType.isGeoHash(colType)) { // not geohash
+                            switch (ColumnType.tagOf(colType)) {
                                 case ColumnType.IPv4:
                                     try {
                                         int value = Numbers.parseIPv4Nl(entityValue);
@@ -354,6 +411,21 @@ public class LineWalAppender {
                                         break;
                                     }
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                case ColumnType.DECIMAL8:
+                                case ColumnType.DECIMAL16:
+                                case ColumnType.DECIMAL32:
+                                case ColumnType.DECIMAL64:
+                                case ColumnType.DECIMAL128:
+                                case ColumnType.DECIMAL256:
+                                    final int precision = ColumnType.getDecimalPrecision(colType);
+                                    final int scale = ColumnType.getDecimalScale(colType);
+                                    try {
+                                        decimal256.ofString(entityValue.asAsciiCharSequence(), precision, scale);
+                                    } catch (NumericException ignored) {
+                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                    }
+                                    DecimalUtil.store(decimal256, r, columnIndex, colType);
+                                    break;
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
@@ -361,7 +433,7 @@ public class LineWalAppender {
                             long geoHash;
                             try {
                                 DirectUtf8Sequence value = ent.getValue();
-                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), geoHashBits);
+                                geoHash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), ColumnType.getGeoHashBits(colType));
                             } catch (NumericException e) {
                                 geoHash = GeoHashes.NULL;
                             }
