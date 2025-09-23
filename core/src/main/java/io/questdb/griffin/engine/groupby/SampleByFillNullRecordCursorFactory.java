@@ -34,8 +34,23 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.*;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRecordCursorFactory {
@@ -54,6 +69,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             ObjList<Function> recordFunctions,
             @Transient @NotNull IntList recordFunctionPositions,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -85,6 +101,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     recordFunctions,
                     createPlaceholderFunctions(recordFunctions, recordFunctionPositions),
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
@@ -143,7 +160,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             case ColumnType.UUID:
                 return UuidConstant.NULL;
             case ColumnType.TIMESTAMP:
-                return TimestampConstant.NULL;
+                return ColumnType.getTimestampDriver(type).getTimestampConstantNull();
             default:
                 throw SqlException.$(recordFunctionPositions.getQuick(index), "Unsupported type: ").put(ColumnType.nameOf(type));
         }

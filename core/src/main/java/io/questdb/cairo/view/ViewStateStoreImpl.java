@@ -31,7 +31,7 @@ import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 

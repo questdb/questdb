@@ -29,7 +29,11 @@ import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
@@ -42,12 +46,14 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.LongList;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -55,16 +61,32 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
-import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+import static io.questdb.test.cairo.mv.MatViewTest.parseFloorPartialTimestamp;
 import static io.questdb.test.tools.TestUtils.assertContains;
 
-
+@RunWith(Parameterized.class)
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+    private final TestTimestampType timestampType;
+
+    public MatViewReloadOnRestartTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Before
     public void setUp() {
@@ -80,10 +102,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false"
             )) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -103,10 +125,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            "sym\tprice\tts\n" +
-                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            replaceExpectedTimestamp(
+                                    "sym\tprice\tts\n" +
+                                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                             "price_1h order by ts, sym"
                     );
 
@@ -122,13 +145,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                    assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                    assertSql(main1, expected, "price_1h order by ts, sym");
+                    assertSql(main1, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                    assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
-                    assertLineError(Transport.HTTP, main1, refreshJob, expected);
+                    assertLineError(Transport.HTTP, main1, refreshJob, replaceExpectedTimestamp(expected));
                     // TODO(eugene): how to check the error for TCP/UDP?
-                    //assertLineError(Transport.TCP, main1, refreshJob, expected);
-                    //assertLineError(Transport.UDP, main1, refreshJob, expected);
+                    //assertLineError(Transport.UDP, main1, refreshJob, replaceExpectedTimestamp(expected));
+                    //assertLineError(Transport.TCP, main1, refreshJob, replaceExpectedTimestamp(expected));
                 }
 
                 new SendAndReceiveRequestBuilder().withPort(HTTP_PORT).execute(
@@ -165,21 +188,22 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsRefreshIntervalsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long now = TimestampFormatUtils.parseUTCTimestamp("2024-01-01T01:01:01.000001Z");
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(now);
+            final long now = parseFloorPartialTimestamp("2024-01-01T01:01:01.000001Z");
+            final TestMicroClock testClock = new TestMicroClock(now);
 
             final LongList expectedIntervals = new LongList();
-            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-11T12:01"), parseFloorPartialTimestamp("2024-09-11T12:02"));
-            expectedIntervals.add(parseFloorPartialTimestamp("2024-09-12T03:01"), parseFloorPartialTimestamp("2024-09-12T23:02"));
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-11T12:01"), timestampDriver.parseFloorLiteral("2024-09-11T12:02"));
+            expectedIntervals.add(timestampDriver.parseFloorLiteral("2024-09-12T03:01"), timestampDriver.parseFloorLiteral("2024-09-12T23:02"));
 
             try (final TestServerMain main1 = startMainPortsDisabled(
                     testClock,
                     PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD.getEnvVarName(), "10s"
             )) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -214,10 +238,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            "sym\tprice\tts\n" +
+                            replaceExpectedTimestamp("sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                             "price_1h order by ts, sym"
                     );
 
@@ -237,7 +261,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                     ",('jpyusd', 103.21, '2024-09-12T23:02')"
                     );
                     // tick timer job to enqueue caching task
-                    testClock.micros.addAndGet(Timestamps.MINUTE_MICROS);
+                    testClock.micros.addAndGet(Micros.MINUTE_MICROS);
                     drainMatViewTimerQueue(timerJob);
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
 
@@ -276,8 +300,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-12T13:00:00.000000Z\n" +
                         "jpyusd\t103.21\t2024-09-12T23:00:00.000000Z\n";
 
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
             }
         });
     }
@@ -286,10 +310,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -307,10 +331,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            "sym\tprice\tts\n" +
+                            replaceExpectedTimestamp("sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                             "price_1h order by ts, sym"
                     );
 
@@ -326,8 +350,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main1, expected, "price_1h order by ts, sym");
+                assertSql(main1, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
             }
 
             try (final TestServerMain main2 = startMainPortsDisabled()) {
@@ -336,8 +360,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
                 execute(
                         main2,
@@ -352,8 +376,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.327\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
             }
         });
     }
@@ -362,10 +386,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartAppliedAllWal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -384,10 +408,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            "sym\tprice\tts\n" +
+                            replaceExpectedTimestamp("sym\tprice\tts\n" +
                                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                             "price_1h order by ts, sym"
                     );
 
@@ -425,8 +449,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
                 execute(
                         main2,
@@ -441,8 +465,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.327\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, expected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
             }
         });
     }
@@ -452,10 +476,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             String viewDirName;
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -471,10 +495,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
-                        "sym\tprice\tts\n" +
+                        replaceExpectedTimestamp("sym\tprice\tts\n" +
                                 "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                                 "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                         "price_1h order by ts, sym"
                 );
 
@@ -502,10 +526,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartInvalidState() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -523,10 +547,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            "sym\tprice\tts\n" +
-                                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                            replaceExpectedTimestamp(
+                                    "sym\tprice\tts\n" +
+                                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                             "price_1h order by ts, sym"
                     );
 
@@ -543,8 +568,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-                    assertSql(main1, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                    assertSql(main1, expected, "price_1h order by ts, sym");
+                    assertSql(main1, replaceExpectedTimestamp(expected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                    assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
                     execute(main1, "truncate table base_price");
                     drainWalAndMatViewQueues(refreshJob, main1.getEngine());
@@ -591,10 +616,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartMissingBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -610,10 +635,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                        replaceExpectedTimestamp(
+                                "sym\tprice\tts\n" +
+                                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                         "price_1h order by ts, sym"
                 );
 
@@ -640,10 +666,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartNonWalBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startMainPortsDisabled()) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -659,10 +685,11 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 drainWalAndMatViewQueues(main1.getEngine());
                 assertSql(
                         main1,
-                        "sym\tprice\tts\n" +
-                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                        replaceExpectedTimestamp(
+                                "sym\tprice\tts\n" +
+                                        "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                        "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                        "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n"),
                         "price_1h order by ts, sym"
                 );
 
@@ -688,8 +715,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testPeriodMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long start = TimestampFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+            final long start = MicrosFormatUtils.parseUTCTimestamp("2024-12-12T00:00:00.000000Z");
+            final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -697,10 +724,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -725,15 +752,15 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            firstExpected,
+                            replaceExpectedTimestamp(firstExpected),
                             "price_1h order by ts, sym"
                     );
                 }
             }
 
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
-                assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, firstExpected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(firstExpected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(firstExpected), "price_1h order by ts, sym");
 
                 assertSql(
                         main2,
@@ -753,8 +780,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testTimerMatViewsReloadOnServerStart1() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
-            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start);
+            final long start = MicrosFormatUtils.parseUTCTimestamp(startStr);
+            final TestMicroClock testClock = new TestMicroClock(start);
 
             final String firstExpected = "sym\tprice\tts\n" +
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -762,10 +789,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -794,7 +821,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            firstExpected,
+                            replaceExpectedTimestamp(firstExpected),
                             "price_1h order by ts, sym"
                     );
 
@@ -804,13 +831,13 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                     assertSql(
                             main1,
-                            firstExpected,
+                            replaceExpectedTimestamp(firstExpected),
                             "price_1h_t order by ts, sym"
                     );
                 }
             }
 
-            testClock.micros.addAndGet(Timestamps.HOUR_MICROS);
+            testClock.micros.addAndGet(Micros.HOUR_MICROS);
             try (final TestServerMain main2 = startMainPortsDisabled(testClock)) {
                 assertSql(
                         main2,
@@ -825,9 +852,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                                 "order by view_name;"
                 );
 
-                assertSql(main2, firstExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, firstExpected, "price_1h order by ts, sym");
-                assertSql(main2, firstExpected, "price_1h_t order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(firstExpected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(firstExpected), "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(firstExpected), "price_1h_t order by ts, sym");
 
                 final String secondExpected = "sym\tprice\tts\n" +
                         "gbpusd\t1.333\t2024-09-10T12:00:00.000000Z\n" +
@@ -842,14 +869,14 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 drainWalAndMatViewQueues(main2.getEngine());
 
-                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(secondExpected), "price_1h order by ts, sym");
 
                 final MatViewTimerJob timerJob = new MatViewTimerJob(main2.getEngine());
                 drainMatViewTimerQueue(timerJob);
                 drainWalAndMatViewQueues(main2.getEngine());
 
-                assertSql(main2, secondExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, secondExpected, "price_1h_t order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(secondExpected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(secondExpected), "price_1h_t order by ts, sym");
             }
         });
     }
@@ -858,18 +885,18 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testTimerMatViewsReloadOnServerStart2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String startStr = "2024-12-12T00:00:00.000000Z";
-            final long start = TimestampFormatUtils.parseUTCTimestamp(startStr);
+            final long start = MicrosFormatUtils.parseUTCTimestamp(startStr);
             // Set the clock to an earlier timestamp.
-            final TestMicrosecondClock testClock = new TestMicrosecondClock(start - Timestamps.DAY_MICROS);
+            final TestMicroClock testClock = new TestMicroClock(start - Micros.DAY_MICROS);
 
             // Timer refresh should not kick in during the first server start.
             final String firstExpected = "sym\tprice\tts\n";
 
             try (final TestServerMain main1 = startMainPortsDisabled(testClock)) {
-                execute(
+                executeWithRewriteTimestamp(
                         main1,
                         "create table base_price (" +
-                                "sym varchar, price double, ts timestamp" +
+                                "sym varchar, price double, ts #TIMESTAMP" +
                                 ") timestamp(ts) partition by DAY WAL"
                 );
 
@@ -915,8 +942,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                         "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n";
 
-                assertSql(main2, secondExpected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-                assertSql(main2, secondExpected, "price_1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(secondExpected), "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
+                assertSql(main2, replaceExpectedTimestamp(secondExpected), "price_1h order by ts, sym");
             }
         });
     }
@@ -930,7 +957,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     }
 
     private static void execute(TestServerMain serverMain, final String sql) {
-        serverMain.ddl(sql);
+        serverMain.execute(sql);
     }
 
     private static Bootstrap newBootstrapWithClock(MicrosecondClock microsecondClock, Map<String, String> envs) {
@@ -967,6 +994,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @NotNull
     private static TestServerMain startMainPortsDisabled(MicrosecondClock microsecondClock, String... extraEnvs) {
         assert extraEnvs.length % 2 == 0;
+        ((MicrosTimestampDriver) (MicrosTimestampDriver.INSTANCE)).setTicker(microsecondClock);
+        ((NanosTimestampDriver) (NanosTimestampDriver.INSTANCE)).setTicker((NanosecondClock) () -> NanosTimestampDriver.INSTANCE.fromMicros(microsecondClock.getTicks()));
 
         final String[] disablePortsEnvs = new String[]{
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
@@ -1058,6 +1087,15 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         .port(HTTP_PORT)
                         .build();
         }
+    }
+
+    private void executeWithRewriteTimestamp(TestServerMain serverMain, String sql) {
+        sql = sql.replaceAll("#TIMESTAMP", timestampType.getTypeName());
+        execute(serverMain, sql);
+    }
+
+    private String replaceExpectedTimestamp(String expected) {
+        return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
     enum Transport {

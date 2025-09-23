@@ -55,6 +55,10 @@ public class IntrinsicModel implements Mutable {
         return runtimeIntervalBuilder.build();
     }
 
+    public void of(int timestampType, int partitionBy) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy);
+    }
+
     @Override
     public void clear() {
         keyColumn = null;

@@ -41,7 +41,7 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;

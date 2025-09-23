@@ -28,12 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.file.BlockFileReader;
@@ -61,9 +63,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -84,7 +84,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -120,17 +120,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 1);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 16);
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
-        testApply1RowCommitManyWriters(Timestamps.YEAR_10000 / 300, 265, 16);
+        testApply1RowCommitManyWriters(Micros.YEAR_10000 / 300, 265, 16);
     }
 
     @Test
@@ -336,7 +336,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal()
             );
 
-            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = 1000_0000L;
 
             int varcharSize = 20 * Numbers.SIZE_1MB;
@@ -394,7 +394,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             AtomicInteger error = new AtomicInteger();
 
-            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long initialTimestamp = MicrosTimestampDriver.floor("2022-02-24T00:40:00.000Z");
             long tsIncrement = rnd.nextLong(1000_0000L);
             for (int th = 0; th < threadCount; th++) {
                 Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
@@ -1068,8 +1068,8 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = Timestamps.MINUTE_MICROS;
+            long startTs = MicrosTimestampDriver.floor("2022-02-24");
+            long tsIncrement = Micros.MINUTE_MICROS;
 
             long ts = startTs;
             int totalRows = 2000;
@@ -1122,7 +1122,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
                     assertSql(
                             "count\tmin\tmax\n" +
-                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
+                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
                     );
                     assertSqlCursors("sm", "select * from sm order by id");
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
@@ -1936,7 +1936,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewDataInfo mvDataInfo = eventCursor.getMatViewDataInfo();
                 assertEquals(1, mvDataInfo.getLastRefreshBaseTableTxn());
-                assertEquals(2, mvDataInfo.getLastRefreshTimestamp());
+                assertEquals(2, mvDataInfo.getLastRefreshTimestampUs());
                 // last period value should be written along with replace range lo/hi timestamps
                 assertEquals(3, mvDataInfo.getLastPeriodHi());
                 assertEquals(4, mvDataInfo.getReplaceRangeTsLow());
@@ -1947,7 +1947,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final WalEventCursor.MatViewInvalidationInfo mvInfo = eventCursor.getMatViewInvalidationInfo();
                 assertEquals(6, mvInfo.getLastRefreshBaseTableTxn());
-                assertEquals(7, mvInfo.getLastRefreshTimestamp());
+                assertEquals(7, mvInfo.getLastRefreshTimestampUs());
                 assertTrue(mvInfo.isInvalid());
                 TestUtils.assertEquals("test", mvInfo.getInvalidationReason());
                 // last period and cached txn intervals values should be ignored
@@ -2153,6 +2153,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             final int rowsToInsertTotal = 100;
             final long pointer = Unsafe.malloc(rowsToInsertTotal, MemoryTag.NATIVE_DEFAULT);
+            final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
             try {
                 final long ts = Os.currentTimeMicros();
                 final Long256Impl long256 = new Long256Impl();
@@ -2201,7 +2202,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         stringSink.put("some rubbish to be ignored");
                         row.putLong256(20, stringSink, 2, strLen);
 
-                        row.putTimestamp(21, SqlUtil.implicitCastStrAsTimestamp("2022-06-10T09:13:46." + (i + 1)));
+                        row.putTimestamp(21, timestampDriver.implicitCast("2022-06-10T09:13:46." + (i + 1)));
 
                         row.putStr(22, (char) (65 + i % 26));
                         row.putStr(23, "abcdefghijklmnopqrstuvwxyz", 0, i % 26 + 1);
@@ -4138,7 +4139,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(segmentTxn, info.getStartRowID());
                         assertEquals(segmentTxn + 1, info.getEndRowID());
                         assertEquals(refreshTxn + segmentTxn, info.getLastRefreshBaseTableTxn());
-                        assertEquals(segmentTxn, info.getLastRefreshTimestamp());
+                        assertEquals(segmentTxn, info.getLastRefreshTimestampUs());
                     } else {
                         Assert.fail("MVData event should not be present in old format");
                     }
@@ -4365,7 +4366,7 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long ts = MicrosTimestampDriver.floor("2022-02-24");
             int symbolCount = 75;
 
             Utf8StringSink sink = new Utf8StringSink();
@@ -4424,7 +4425,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
             );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
