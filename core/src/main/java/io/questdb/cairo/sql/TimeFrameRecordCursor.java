@@ -46,15 +46,6 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
-     * Maps logical (query-level) column index to physical (table-level) column index.
-     * For example, we need this to access the index of a symbol column.
-     *
-     * @param logicalColumnIndex the logical column index from the query perspective
-     * @return the physical index of the column in the table
-     */
-    int getPhysicalColumnIndex(int logicalColumnIndex);
-
-    /**
      * @return record at current position
      */
     Record getRecord();

@@ -403,11 +403,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public int getPhysicalColumnIndex(int logicalColumnIndex) {
-            return baseCursor.getPhysicalColumnIndex(columnCrossIndex.getQuick(logicalColumnIndex));
-        }
-
-        @Override
         public Record getRecord() {
             return recordA;
         }
