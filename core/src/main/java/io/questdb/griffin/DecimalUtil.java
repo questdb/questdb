@@ -616,7 +616,7 @@ public final class DecimalUtil {
             case ColumnType.DECIMAL128:
                 row.putDecimal128(columnIndex, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
                 break;
-            case ColumnType.DECIMAL256:
+            default:
                 row.putDecimal256(
                         columnIndex,
                         Decimals.DECIMAL256_HH_NULL,
@@ -625,8 +625,6 @@ public final class DecimalUtil {
                         Decimals.DECIMAL256_LL_NULL
                 );
                 break;
-            default:
-                assert false;
         }
     }
 }

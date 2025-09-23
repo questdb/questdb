@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
@@ -41,10 +42,87 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DecimalUtilTest extends AbstractTest {
+
+    public static @NotNull TableWriter.Row getRowAsserter(int columnType, int columnIndex, @Nullable Decimal256 expectedValue) {
+        short toTag = ColumnType.tagOf(columnType);
+        return new RowAsserter() {
+            @Override
+            public void putByte(int col, byte value) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL8, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((byte) (expectedValue.isNull() ? Decimals.DECIMAL8_NULL : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putDecimal128(int col, long high, long low) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL128, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.isNull() ? Decimals.DECIMAL128_HI_NULL : expectedValue.getLh(), high);
+                    Assert.assertEquals(expectedValue.getLl(), low);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putDecimal256(int col, long hh, long hl, long lh, long ll) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL256, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.getHh(), hh);
+                    Assert.assertEquals(expectedValue.getHl(), hl);
+                    Assert.assertEquals(expectedValue.getLh(), lh);
+                    Assert.assertEquals(expectedValue.getLl(), ll);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putInt(int col, int value) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL32, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((int) (expectedValue.isNull() ? Decimals.DECIMAL32_NULL : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putLong(int col, long value) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL64, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals(expectedValue.isNull() ? Decimals.DECIMAL64_NULL : expectedValue.getLl(), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+
+            @Override
+            public void putShort(int col, short value) {
+                Assert.assertEquals(columnIndex, col);
+                Assert.assertEquals(ColumnType.DECIMAL16, toTag);
+                if (expectedValue != null) {
+                    Assert.assertEquals((short) (expectedValue.isNull() ? Decimals.DECIMAL16_NULL : expectedValue.getLl()), value);
+                } else {
+                    Assert.fail("Expected casting to fail");
+                }
+            }
+        };
+    }
 
     @Test
     public void testCreateDecimalConstantDecimal128() {
@@ -578,6 +656,34 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseScaleZero() throws SqlException {
         int scale = DecimalUtil.parseScale(0, "0", 0, 1);
         Assert.assertEquals(0, scale);
+    }
+
+    @Test
+    public void testStoreRow() {
+        Decimal256 value = new Decimal256();
+        value.ofNull();
+        for (int i = 1; i <= Decimals.MAX_PRECISION; i++) {
+            assertStoreRow(value, i);
+        }
+
+        value.ofLong(12, 0);
+        assertStoreRow(value, 2);
+        value.ofLong(1234, 0);
+        assertStoreRow(value, 4);
+        value.ofLong(12345678, 0);
+        assertStoreRow(value, 8);
+        value.ofLong(12345678901234L, 0);
+        assertStoreRow(value, 18);
+        value.ofLong(12345678901234L, 0);
+        assertStoreRow(value, 36);
+        value.ofLong(12345678901234L, 0);
+        assertStoreRow(value, 72);
+    }
+
+    private void assertStoreRow(Decimal256 value, int precision) {
+        int type = ColumnType.getDecimalType(precision, value.getScale());
+        TableWriter.Row row = getRowAsserter(type, -1, value);
+        DecimalUtil.store(value, row, -1, type);
     }
 
     private static class TestNonConstantDecimalFunction extends DecimalFunction {
