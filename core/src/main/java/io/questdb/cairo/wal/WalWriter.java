@@ -385,6 +385,7 @@ public class WalWriter implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            columnVersionReader = Misc.free(columnVersionReader);
         }
     }
 
@@ -1265,8 +1266,7 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         } finally {
-            Misc.free(columnVersionReader);
-            Misc.free(txReader);
+            txReader = Misc.free(txReader);
         }
     }
 

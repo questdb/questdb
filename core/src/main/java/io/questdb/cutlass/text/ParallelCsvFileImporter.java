@@ -1609,7 +1609,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int index = -1;
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 index++;
-                if (symbolColumnName.equals(columnNames.get(i))) {
+                if (Chars.equalsIgnoreCase(symbolColumnName, columnNames.get(i))) {
                     return index;
                 }
             }
@@ -1631,9 +1631,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 if (getColumnType(i) == ColumnType.SYMBOL) {
                     index++;
-                }
-                if (symbolColumnName.equals(columnNames.get(i))) {
-                    return index;
+                    if (Chars.equalsIgnoreCase(symbolColumnName, columnNames.get(i))) {
+                        return index;
+                    }
                 }
             }
             return -1;

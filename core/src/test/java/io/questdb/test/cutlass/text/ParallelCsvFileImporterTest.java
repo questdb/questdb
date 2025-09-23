@@ -207,22 +207,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "create table alltypes (\n" +
-                                    "  bo boolean,\n" +
-                                    "  by byte,\n" +
-                                    "  sh short,\n" +
-                                    "  ch char,\n" +
-                                    "  in_ int,\n" +
-                                    "  lo long,\n" +
-                                    "  dat date, \n" +
-                                    "  tstmp timestamp, \n" +
-                                    "  ft float,\n" +
-                                    "  db double,\n" +
-                                    "  str string,\n" +
-                                    "  sym symbol,\n" +
-                                    "  l256 long256," +
-                                    "  ge geohash(20b)" +
-                                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table alltypes (
+                                      bo boolean,
+                                      by byte,
+                                      sh short,
+                                      ch char,
+                                      in_ int,
+                                      lo long,
+                                      dat date,\s
+                                      tstmp timestamp,\s
+                                      ft float,
+                                      db double,
+                                      str string,
+                                      sym symbol,
+                                      l256 long256,\
+                                      ge geohash(20b)\
+                                    ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
@@ -231,17 +232,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
-                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
-                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
-                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
-                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
-                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                            """
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
+                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
+                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
+                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d
+                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
+                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
+                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d
+                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d
+                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
+                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d
+                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
+                                    """,
                             "select * from alltypes",
                             "tstmp",
                             true,
@@ -258,22 +261,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "create table alltypes (\n" +
-                                    "  bo boolean,\n" +
-                                    "  by byte,\n" +
-                                    "  sh short,\n" +
-                                    "  ch char,\n" +
-                                    "  in_ int,\n" +
-                                    "  lo long,\n" +
-                                    "  dat date, \n" +
-                                    "  tstmp timestamp, \n" +
-                                    "  ft float,\n" +
-                                    "  db double,\n" +
-                                    "  str string,\n" +
-                                    "  sym symbol index capacity 64,\n" +
-                                    "  l256 long256," +
-                                    "  ge geohash(20b)" +
-                                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table alltypes (
+                                      bo boolean,
+                                      by byte,
+                                      sh short,
+                                      ch char,
+                                      in_ int,
+                                      lo long,
+                                      dat date,\s
+                                      tstmp timestamp,\s
+                                      ft float,
+                                      db double,
+                                      str string,
+                                      sym symbol index capacity 64,
+                                      l256 long256,\
+                                      ge geohash(20b)\
+                                    ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
@@ -282,17 +286,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
-                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\n" +
-                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\n" +
-                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" +
-                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\n" +
-                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                            """
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
+                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
+                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
+                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d
+                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
+                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
+                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d
+                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d
+                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
+                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d
+                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
+                                    """,
                             "select * from alltypes", "tstmp", true, false, true
                     );
                 }
@@ -357,9 +363,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "Line\tTs\tD\tDescRipTION\n" +
-                                    "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
-                                    "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
+                            """
+                                    Line\tTs\tD\tDescRipTION
+                                    line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1
+                                    line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2
+                                    """,
                             "select * from tab24", "ts", true, false, true
                     );
                 }
@@ -379,17 +387,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                                    "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                                    "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                                    "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                                    "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                                    "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                                    "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                                    "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                                    "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                                    "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
+                                    line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
+                                    line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
+                                    line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994
+                                    line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995
+                                    line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996
+                                    line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997
+                                    line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
+                                    line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
+                                    line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
+                                    """,
                             "select line, ts, d, description from t limit -10",
                             "ts", true, false, true
                     );
@@ -410,17 +420,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                                    "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                                    "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                                    "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                                    "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                                    "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                                    "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                                    "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                                    "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                                    "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
+                                    line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
+                                    line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
+                                    line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994
+                                    line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995
+                                    line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996
+                                    line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997
+                                    line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
+                                    line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
+                                    line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
+                                    """,
                             "select line, ts, d, description from tab1 limit -10",
                             "ts", true, false, true
                     );
@@ -443,17 +455,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                                    "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                                    "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                                    "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                                    "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                                    "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                                    "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                                    "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                                    "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                                    "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
+                                    line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
+                                    line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
+                                    line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994
+                                    line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995
+                                    line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996
+                                    line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997
+                                    line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
+                                    line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
+                                    line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
+                                    """,
                             "select line, ts, d, description from " + tableName + " limit -10",
                             "ts", true, false, true
                     );
@@ -486,23 +500,27 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQuery(
-                            "cnt\n" +
-                                    "1000\n",
+                            """
+                                    cnt
+                                    1000
+                                    """,
                             "select count(*) cnt from " + tableName,
                             null, false, true
                     );
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                                    "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                                    "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                                    "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                                    "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                                    "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                                    "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                                    "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                                    "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                                    "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
+                                    line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
+                                    line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
+                                    line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994
+                                    line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995
+                                    line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996
+                                    line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997
+                                    line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
+                                    line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
+                                    line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
+                                    """,
                             "select * from " + tableName + " limit -10",
                             "ts", true, false, true
                     );
@@ -523,11 +541,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "CREATE TABLE reading (\n" +
-                                    "  readingTypeId SYMBOL,\n" +
-                                    "  value FLOAT,\n" +
-                                    "  readingDate TIMESTAMP\n" +
-                                    ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext
+                            """
+                                    CREATE TABLE reading (
+                                      readingTypeId SYMBOL,
+                                      value FLOAT,
+                                      readingDate TIMESTAMP
+                                    ) timestamp (readingDate) PARTITION BY DAY;""", sqlExecutionContext
                     );
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 3)) {
@@ -536,10 +555,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "readingTypeId\tvalue\treadingDate\n" +
-                                    "electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000001Z\n" +
-                                    "electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000002Z\n" +
-                                    "electricity.power.hour\t0.101\t2020-01-01T00:00:00.000003Z\n",
+                            """
+                                    readingTypeId\tvalue\treadingDate
+                                    electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000001Z
+                                    electricity.gbp.saving\t3600.0\t2020-01-01T00:00:00.000002Z
+                                    electricity.power.hour\t0.101\t2020-01-01T00:00:00.000003Z
+                                    """,
                             "select * from reading",
                             "readingDate", true, false, true
                     );
@@ -561,10 +582,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "other\ttxt\tline\tts\td\n" +
-                                    "\tsome text\r\nspanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11\n" +
-                                    "\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\tline2\t2022-05-11T11:52:00.000000Z\t222.22\n" +
-                                    "\tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33\n",
+                            """
+                                    other\ttxt\tline\tts\td
+                                    \tsome text\r
+                                    spanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11
+                                    \tsome text\r
+                                    spanning \r
+                                    many \r
+                                    many \r
+                                    many \r
+                                    lines\tline2\t2022-05-11T11:52:00.000000Z\t222.22
+                                    \tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33
+                                    """,
                             "select * from tab2 limit -10",
                             "ts", true, false, true
                     );
@@ -1076,10 +1105,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQuery(
-                            "line\tts\td\ttxt\n" +
-                                    "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
-                                    "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
-                                    "line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes\n",
+                            """
+                                    line\tts\td\ttxt
+                                    line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r
+                                    spanning two lines
+                                    line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r
+                                    spanning \r
+                                    many \r
+                                    many \r
+                                    many \r
+                                    lines
+                                    line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes
+                                    """,
                             "select * from tab38", "ts", true, true
                     );
                 }
@@ -1099,8 +1136,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "ts\tdescription\n" +
-                                    "2022-05-11T11:52:00.000000Z\tb\n",
+                            """
+                                    ts\tdescription
+                                    2022-05-11T11:52:00.000000Z\tb
+                                    """,
                             "select * from tab",
                             "ts", true, false, true
                     );
@@ -1361,9 +1400,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                         refreshTablesInBaseEngine();
                         assertQueryNoLeakCheck(
-                                "ts\tf3\tf3_\tf3__\tf4\n" +
-                                        "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
-                                        "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true
+                                """
+                                        ts\tf3\tf3_\tf3__\tf4
+                                        1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1
+                                        1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2
+                                        """, "select * from tab61", "ts", true, false, true
                         );
                     }
                 }
@@ -1467,22 +1508,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     compiler.compile(
-                            "create table alltypes (\n" +
-                                    "  bo boolean,\n" +
-                                    "  by byte,\n" +
-                                    "  sh short,\n" +
-                                    "  ch char,\n" +
-                                    "  in_ int,\n" +
-                                    "  lo long,\n" +
-                                    "  dat date, \n" +
-                                    "  tstmp timestamp, \n" +
-                                    "  ft float,\n" +
-                                    "  db double,\n" +
-                                    "  str string,\n" +
-                                    "  sym symbol index,\n" +
-                                    "  l256 long256," +
-                                    "  ge geohash(20b)" +
-                                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table alltypes (
+                                      bo boolean,
+                                      by byte,
+                                      sh short,
+                                      ch char,
+                                      in_ int,
+                                      lo long,
+                                      dat date,\s
+                                      tstmp timestamp,\s
+                                      ft float,
+                                      db double,
+                                      str string,
+                                      sym symbol index,
+                                      l256 long256,\
+                                      ge geohash(20b)\
+                                    ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
                         importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
@@ -1510,9 +1552,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     // run a query that uses the index
                     assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                            """
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
+                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
+                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
+                                    """,
                             "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true
                     );
                 }
@@ -1620,11 +1664,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportTimestampTypeToExistWithTypeMismatch3_specifyTimestampFormat() throws Exception {
         execute(
-                "CREATE TABLE 'timestamp_test' ( \n" +
-                        "    id INT,\n" +
-                        "    ts TIMESTAMP_NS,\n" +
-                        "    ts_ns TIMESTAMP\n" +
-                        ") timestamp(ts_ns) PARTITION BY DAY",
+                """
+                        CREATE TABLE 'timestamp_test' (\s
+                            id INT,
+                            ts TIMESTAMP_NS,
+                            ts_ns TIMESTAMP
+                        ) timestamp(ts_ns) PARTITION BY DAY""",
                 sqlExecutionContext
         );
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -1634,16 +1679,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertQueryNoLeakCheck(
-                "id\tts\tts_ns\n" +
-                        "1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z\n" +
-                        "2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z\n" +
-                        "3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z\n" +
-                        "4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z\n" +
-                        "5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z\n" +
-                        "6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z\n" +
-                        "7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z\n" +
-                        "8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z\n" +
-                        "9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z\n",
+                """
+                        id\tts\tts_ns
+                        1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z
+                        2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z
+                        3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z
+                        4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z
+                        5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z
+                        6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z
+                        7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z
+                        8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z
+                        9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z
+                        """,
                 "select * from timestamp_test",
                 "ts_ns",
                 true,
@@ -1832,17 +1879,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     }
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
-                                    "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
-                                    "line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8\n" +
-                                    "line7\t1972-09-21T00:00:00.000000Z\t0.207871778557\tdesc 7\n" +
-                                    "line6\t1972-09-22T00:00:00.000000Z\t0.341597834365\tdesc 6\n" +
-                                    "line5\t1972-09-23T00:00:00.000000Z\t0.5071712972\tdesc 5\n" +
-                                    "line4\t1972-09-24T00:00:00.000000Z\t0.426072974125\tdesc 4\n" +
-                                    "line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3\n" +
-                                    "line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2\n" +
-                                    "line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10
+                                    line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9
+                                    line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8
+                                    line7\t1972-09-21T00:00:00.000000Z\t0.207871778557\tdesc 7
+                                    line6\t1972-09-22T00:00:00.000000Z\t0.341597834365\tdesc 6
+                                    line5\t1972-09-23T00:00:00.000000Z\t0.5071712972\tdesc 5
+                                    line4\t1972-09-24T00:00:00.000000Z\t0.426072974125\tdesc 4
+                                    line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3
+                                    line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2
+                                    line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1
+                                    """,
                             "select * from " + tableName + " limit -10",
                             "ts", true, false, true
                     );
@@ -1858,10 +1907,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "create table x (\n" +
-                                    "  str varchar,\n" +
-                                    "  ts timestamp" +
-                                    ") timestamp(ts) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table x (
+                                      str varchar,
+                                      ts timestamp\
+                                    ) timestamp(ts) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 2)) {
                         importer.of("x", "test-varchar-double-quotes.csv", 1, PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
@@ -1870,13 +1920,15 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "str\tts\n" +
-                                    "foobar\t1970-01-02T00:00:00.000000Z\n" +
-                                    "foobar foobar foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
-                                    "foobar foobar \"foobar\" foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
-                                    "\"foobar\" foobar foobar foobar\t1970-01-02T00:00:00.000000Z\n" +
-                                    "foobar\"\"\t1970-01-02T00:00:00.000000Z\n" +
-                                    "фубар \"фубар\" фубар\t1970-01-02T00:00:00.000000Z\n",
+                            """
+                                    str\tts
+                                    foobar\t1970-01-02T00:00:00.000000Z
+                                    foobar foobar foobar foobar\t1970-01-02T00:00:00.000000Z
+                                    foobar foobar "foobar" foobar foobar\t1970-01-02T00:00:00.000000Z
+                                    "foobar" foobar foobar foobar\t1970-01-02T00:00:00.000000Z
+                                    foobar""\t1970-01-02T00:00:00.000000Z
+                                    фубар "фубар" фубар\t1970-01-02T00:00:00.000000Z
+                                    """,
                             "x",
                             "ts",
                             true,
@@ -1924,22 +1976,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         executeWithPool(
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     compiler.compile(
-                            "create table alltypes (\n" +
-                                    "  bo boolean,\n" +
-                                    "  by byte,\n" +
-                                    "  sh short,\n" +
-                                    "  ch char,\n" +
-                                    "  in_ int,\n" +
-                                    "  lo long,\n" +
-                                    "  dat date, \n" +
-                                    "  tstmp timestamp, \n" +
-                                    "  ft float,\n" +
-                                    "  db double,\n" +
-                                    "  str string,\n" +
-                                    "  sym symbol,\n" +
-                                    "  l256 long256," +
-                                    "  ge geohash(20b)" +
-                                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table alltypes (
+                                      bo boolean,
+                                      by byte,
+                                      sh short,
+                                      ch char,
+                                      in_ int,
+                                      lo long,
+                                      dat date,\s
+                                      tstmp timestamp,\s
+                                      ft float,
+                                      db double,
+                                      str string,
+                                      sym symbol,
+                                      l256 long256,\
+                                      ge geohash(20b)\
+                                    ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -1982,22 +2035,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "create table alltypes (\n" +
-                                    "  bo boolean,\n" +
-                                    "  by byte,\n" +
-                                    "  sh short,\n" +
-                                    "  ch char,\n" +
-                                    "  in_ int,\n" +
-                                    "  lo long,\n" +
-                                    "  dat date, \n" +
-                                    "  tstmp timestamp, \n" +
-                                    "  ft float,\n" +
-                                    "  db double,\n" +
-                                    "  str string,\n" +
-                                    "  sym symbol,\n" +
-                                    "  l256 long256," +
-                                    "  ge geohash(20b)" +
-                                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                            """
+                                    create table alltypes (
+                                      bo boolean,
+                                      by byte,
+                                      sh short,
+                                      ch char,
+                                      in_ int,
+                                      lo long,
+                                      dat date,\s
+                                      tstmp timestamp,\s
+                                      ft float,
+                                      db double,
+                                      str string,
+                                      sym symbol,
+                                      l256 long256,\
+                                      ge geohash(20b)\
+                                    ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
 
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -2007,12 +2061,14 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
-                                    "false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
-                                    "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
-                                    "false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" +
-                                    "false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" +
-                                    "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n", //date format discovery is flawed
+                            """
+                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
+                                    false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
+                                    false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
+                                    false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
+                                    false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
+                                    true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
+                                    """, //date format discovery is flawed
                             //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values
                             "select * from alltypes", "tstmp", true, false, true
                     );
@@ -2988,23 +3044,24 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
         execute(
                 compiler,
-                "create table alltypes (\n" +
-                        "  bo boolean,\n" +
-                        "  by byte,\n" +
-                        "  sh short,\n" +
-                        "  ch char,\n" +
-                        "  in_ int,\n" +
-                        "  lo long,\n" +
-                        "  dat date, \n" +
-                        "  tstmp timestamp, \n" +
-                        "  ft float,\n" +
-                        "  db double,\n" +
-                        "  str string,\n" +
-                        "  sym symbol,\n" +
-                        "  l256 long256," +
-                        "  ge geohash(20b)," +
-                        "  uid uuid" +
-                        ") timestamp(tstmp) partition by DAY;", sqlExecutionContext
+                """
+                        create table alltypes (
+                          bo boolean,
+                          by byte,
+                          sh short,
+                          ch char,
+                          in_ int,
+                          lo long,
+                          dat date,\s
+                          tstmp timestamp,\s
+                          ft float,
+                          db double,
+                          str string,
+                          sym symbol,
+                          l256 long256,\
+                          ge geohash(20b),\
+                          uid uuid\
+                        ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
         );
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
             importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
@@ -3013,17 +3070,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertQueryNoLeakCheck(
-                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
-                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\n" +
-                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\n" +
-                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\n" +
-                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\n" +
-                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\n" +
-                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\n" +
-                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\n" +
-                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\n" +
-                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\n" +
-                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\n",
+                """
+                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid
+                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111
+                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111
+                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111
+                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111
+                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111
+                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111
+                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111
+                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111
+                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111
+                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111
+                        """,
                 "select * from alltypes", "tstmp", true, false, true
         );
     }
@@ -3037,17 +3096,19 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         refreshTablesInBaseEngine();
 
         assertQuery(
-                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
-                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\n" +
-                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\n" +
-                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\n" +
-                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\n" +
-                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\n" +
-                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\n" +
-                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\n" +
-                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\n" +
-                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\n" +
-                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\n",
+                """
+                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid
+                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111
+                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111
+                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111
+                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111
+                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111
+                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111
+                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111
+                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111
+                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111
+                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111
+                        """,
                 "select * from alltypes",
                 "tstmp",
                 true,
@@ -3138,23 +3199,27 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQuery(
-                            "cnt\n" +
-                                    "1000\n",
+                            """
+                                    cnt
+                                    1000
+                                    """,
                             "select count(*) cnt from " + tableName,
                             null, false, true
                     );
                     assertQueryNoLeakCheck(
-                            "line\tts\td\tdescription\n" +
-                                    "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                                    "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                                    "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                                    "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                                    "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                                    "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                                    "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                                    "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                                    "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                                    "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            """
+                                    line\tts\td\tdescription
+                                    line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991
+                                    line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992
+                                    line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993
+                                    line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994
+                                    line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995
+                                    line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996
+                                    line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997
+                                    line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998
+                                    line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999
+                                    line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000
+                                    """,
                             "select * from " + tableName + " limit -10",
                             "ts", true, false, true
                     );
@@ -3197,16 +3262,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertQueryNoLeakCheck(
-                "id\tts\tts_ns\n" +
-                        "1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z\n" +
-                        "2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z\n" +
-                        "3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z\n" +
-                        "4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z\n" +
-                        "5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z\n" +
-                        "6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z\n" +
-                        "7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z\n" +
-                        "8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z\n" +
-                        "9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z\n",
+                """
+                        id\tts\tts_ns
+                        1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z
+                        2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z
+                        3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z
+                        4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z
+                        5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z
+                        6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z
+                        7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z
+                        8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z
+                        9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z
+                        """,
                 "select * from timestamp_test",
                 timestampColumn,
                 true,
@@ -3232,16 +3299,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertQueryNoLeakCheck(
-                "id\tts\tts_ns\n" +
-                        "1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z\n" +
-                        "2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z\n" +
-                        "3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z\n" +
-                        "4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z\n" +
-                        "5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z\n" +
-                        "6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z\n" +
-                        "7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z\n" +
-                        "8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z\n" +
-                        "9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z\n",
+                """
+                        id\tts\tts_ns
+                        1\t2025-08-05T00:00:00.000001000Z\t2025-08-05T00:00:00.000000Z
+                        2\t2025-08-06T00:00:00.000002000Z\t2025-08-06T00:00:00.000000Z
+                        3\t2025-08-07T00:00:00.000003000Z\t2025-08-07T00:00:00.000000Z
+                        4\t2025-08-08T00:00:00.000004000Z\t2025-08-08T00:00:00.000000Z
+                        5\t2025-08-09T00:00:00.000005000Z\t2025-08-09T00:00:00.000000Z
+                        6\t2025-08-10T00:00:00.000006000Z\t2025-08-10T00:00:00.000000Z
+                        7\t2025-08-11T00:00:00.000007000Z\t2025-08-11T00:00:00.000000Z
+                        8\t2025-08-12T00:00:00.000008000Z\t2025-08-12T00:00:00.000000Z
+                        9\t2025-08-13T00:00:00.000009000Z\t2025-08-13T00:00:00.000000Z
+                        """,
                 "select * from timestamp_test",
                 timestampColumn,
                 true,
@@ -3259,16 +3328,18 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         refreshTablesInBaseEngine();
 
         assertQuery(
-                "id\tts\tts_ns\n" +
-                        "1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z\n" +
-                        "2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z\n" +
-                        "3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z\n" +
-                        "4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z\n" +
-                        "5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z\n" +
-                        "6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z\n" +
-                        "7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z\n" +
-                        "8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z\n" +
-                        "9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z\n",
+                """
+                        id\tts\tts_ns
+                        1\t2025-08-05T00:00:00.000001Z\t2025-08-05T00:00:00.000000001Z
+                        2\t2025-08-06T00:00:00.000002Z\t2025-08-06T00:00:00.000000002Z
+                        3\t2025-08-07T00:00:00.000003Z\t2025-08-07T00:00:00.000000003Z
+                        4\t2025-08-08T00:00:00.000004Z\t2025-08-08T00:00:00.000000004Z
+                        5\t2025-08-09T00:00:00.000005Z\t2025-08-09T00:00:00.000000005Z
+                        6\t2025-08-10T00:00:00.000006Z\t2025-08-10T00:00:00.000000006Z
+                        7\t2025-08-11T00:00:00.000007Z\t2025-08-11T00:00:00.000000007Z
+                        8\t2025-08-12T00:00:00.000008Z\t2025-08-12T00:00:00.000000008Z
+                        9\t2025-08-13T00:00:00.000009Z\t2025-08-13T00:00:00.000000009Z
+                        """,
                 "select * from timestamp_test",
                 timestampColumn,
                 true,

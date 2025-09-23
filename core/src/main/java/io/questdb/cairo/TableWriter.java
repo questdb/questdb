@@ -1115,9 +1115,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
         int oldCapacity = oldSymbolWriter.getSymbolCapacity();
-        boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
 
         newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
+
+        if (oldCapacity == newSymbolCapacity) {
+            // Nothing to do.
+            return;
+        }
         try {
             TableUtils.validateSymbolCapacity(0, newSymbolCapacity);
         } catch (SqlException e) {
@@ -1134,13 +1138,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", from=").$(oldCapacity)
                 .$(", to=").$(newSymbolCapacity).I$();
 
-        if (oldCapacity == newSymbolCapacity) {
-            // Nothing to do.
-            return;
-        }
 
         try {
-            commit();
+            boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
             long columnNameTxn = getTxn();
             metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
             rewriteAndSwapMetadata(metadata);
@@ -9588,7 +9588,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnIndex > -1) {
                 int symbolCount = w.getSymbolCount();
                 int symbolCapacity = w.getSymbolCapacity();
-                if (symbolCount * 0.8 > symbolCapacity) {
+                // 80% using integer arithmetic
+                if ((long) symbolCount * 5 > (long) symbolCapacity * 4) {
                     changeSymbolCapacity(
                             metadata.getColumnName(w.getColumnIndex()),
                             symbolCapacity * 2, // symbol capacity is power of 2
