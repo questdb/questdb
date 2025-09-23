@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -153,25 +154,18 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // determine the integer key of the symbol to find in the slave table
             CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
             StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            int symbolKey;
-            if (masterSymbolValue == null) {
-                symbolKey = 0;
-            } else {
-                symbolKey = symbolTable.keyOf(masterSymbolValue);
-                if (symbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
-                    record.hasSlave(false);
-                    return;
-                }
-                symbolKey++;
+            int symbolKey = TableUtils.toIndexKey(symbolTable.keyOf(masterSymbolValue));
+            if (symbolKey < 0) {
+                record.hasSlave(false);
+                return;
             }
 
             // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
-            final int physicalSlaveSymbolColumnIndex = slaveTimeFrameCursor.getPhysicalColumnIndex(slaveSymbolColumnIndex);
             long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
                 BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
-                        physicalSlaveSymbolColumnIndex,
+                        slaveSymbolColumnIndex,
                         BitmapIndexReader.DIR_BACKWARD
                 );
                 // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
