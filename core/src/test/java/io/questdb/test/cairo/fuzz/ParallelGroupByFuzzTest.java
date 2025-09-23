@@ -331,16 +331,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
         Assume.assumeFalse(enableJitCompiler);
         testParallelDecimalKeyGroupBy(
-                "SELECT key, sum(price), avg(price), min(price), max(price), " +
+                "SELECT key, sum(price), avg(price), avg_decimal(price,4), min(price), max(price), " +
                         "  first(price), last(price), first_not_null(price), last_not_null(price) " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tsum\tavg\tmin\tmax\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +
-                        "0\t1602000.00\t2002.50\t5.00\t4000.00\t5.00\t4000.00\t5.00\t4000.00\n" +
-                        "1\t1598800.00\t1998.50\t1.00\t3996.00\t1.00\t3996.00\t1.00\t3996.00\n" +
-                        "2\t1599600.00\t1999.50\t2.00\t3997.00\t2.00\t3997.00\t2.00\t3997.00\n" +
-                        "3\t1600400.00\t2000.50\t3.00\t3998.00\t3.00\t3998.00\t3.00\t3998.00\n" +
-                        "4\t1601200.00\t2001.50\t4.00\t3999.00\t4.00\t3999.00\t4.00\t3999.00\n"
+                "key\tsum\tavg\tavg_decimal\tmin\tmax\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +
+                        "0\t1602000.00\t2002.50\t2002.5000\t5.00\t4000.00\t5.00\t4000.00\t5.00\t4000.00\n" +
+                        "1\t1598800.00\t1998.50\t1998.5000\t1.00\t3996.00\t1.00\t3996.00\t1.00\t3996.00\n" +
+                        "2\t1599600.00\t1999.50\t1999.5000\t2.00\t3997.00\t2.00\t3997.00\t2.00\t3997.00\n" +
+                        "3\t1600400.00\t2000.50\t2000.5000\t3.00\t3998.00\t3.00\t3998.00\t3.00\t3998.00\n" +
+                        "4\t1601200.00\t2001.50\t2001.5000\t4.00\t3999.00\t4.00\t3999.00\t4.00\t3999.00\n"
         );
     }
 
@@ -1560,11 +1560,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeFalse(convertToParquet);
         Assume.assumeFalse(enableJitCompiler);
         testParallelDecimalKeyGroupBy(
-                "SELECT sum(price), avg(price), min(price), max(price), " +
+                "SELECT sum(price), avg(price), avg_decimal(price,4), min(price), max(price), " +
                         "  first(price), last(price), first_not_null(price), last_not_null(price) " +
                         "FROM tab",
-                "sum\tavg\tmin\tmax\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +
-                        "8002000.00\t2000.50\t1.00\t4000.00\t1.00\t4000.00\t1.00\t4000.00\n"
+                "sum\tavg\tavg_decimal\tmin\tmax\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +
+                        "8002000.00\t2000.50\t2000.5000\t1.00\t4000.00\t1.00\t4000.00\t1.00\t4000.00\n"
         );
     }
 

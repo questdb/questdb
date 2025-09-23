@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -47,11 +48,11 @@ import org.jetbrains.annotations.NotNull;
 
 import java.math.RoundingMode;
 
-public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
+public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "avg(Ξ)";
+        return "avg_decimal(Ξi)";
     }
 
     @Override
@@ -66,28 +67,53 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
             @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0), position);
+    ) throws SqlException {
+        final int targetScale = args.getQuick(1).getInt(null);
+        final int scalePosition = argPositions.getQuick(1);
+        if (targetScale < 0) {
+            throw SqlException.$(scalePosition, "non-negative scale required: ").put(targetScale);
+        }
+        if (targetScale > Decimals.MAX_SCALE) {
+            throw SqlException.$(scalePosition, "scale exceeds maximum of ").put(Decimals.MAX_SCALE).put(": ").put(targetScale);
+        }
+        final Function arg = args.getQuick(0);
+        final int argPrecision = ColumnType.getDecimalPrecision(arg.getType());
+        final int argScale = ColumnType.getDecimalScale(arg.getType());
+        final int targetPrecision = argPrecision - argScale + targetScale;
+        if (targetPrecision > Decimals.MAX_PRECISION) {
+            throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ").put(Decimals.MAX_PRECISION)
+                    .put(": ").put(targetPrecision);
+        }
+
+        if (argScale >= targetScale) {
+            return new AvgDecimalGroupByFunctionFactory.Func(arg, position);
+        }
+        return new ScaledFunc(arg, targetPrecision, targetScale, position);
     }
 
-    static class Func extends DecimalFunction implements GroupByFunction, UnaryFunction {
+    private static class ScaledFunc extends DecimalFunction implements GroupByFunction, UnaryFunction {
         private final Function arg;
         private final Decimal256 decimal = new Decimal256();
         private final int position;
         private final int scale;
         private int valueIndex;
 
-        public Func(@NotNull Function arg, int position) {
-            super(arg.getType());
+        public ScaledFunc(@NotNull Function arg, int precision, int scale, int position) {
+            super(ColumnType.getDecimalType(precision, scale));
             this.arg = arg;
             this.position = position;
-            this.scale = ColumnType.getDecimalScale(type);
+            this.scale = scale;
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             DecimalUtil.load(decimal, arg, record);
             if (!decimal.isNull()) {
+                try {
+                    decimal.rescale(scale);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
+                }
                 mapValue.putDecimal256(valueIndex, decimal);
                 mapValue.putLong(valueIndex + 1, 1);
             } else {
@@ -105,9 +131,10 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
                 final long lh = mapValue.getDecimal256LH(valueIndex);
                 final long ll = mapValue.getDecimal256LL(valueIndex);
                 try {
+                    decimal.rescale(scale);
                     decimal.add(hh, hl, lh, ll, scale);
                 } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
                 }
                 mapValue.putDecimal256(valueIndex, decimal);
                 mapValue.addLong(valueIndex + 1, 1);
@@ -195,7 +222,7 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "avg";
+            return "avg_decimal";
         }
 
         @Override
@@ -246,7 +273,7 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
                         decimal.add(srcHH, srcHL, srcLH, srcLL, scale);
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position)
-                                .put('\'').put(getName()).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                                .put('\'').put(getName()).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
                     }
                     destValue.putDecimal256(valueIndex, decimal);
                     destValue.putLong(valueIndex + 1, destCount + srcCount);
@@ -285,7 +312,7 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
                 try {
                     decimal.divide(0, 0, 0, count, 0, scale, RoundingMode.HALF_EVEN);
                 } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
                 }
             } else {
                 decimal.ofNull();
