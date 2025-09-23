@@ -1179,9 +1179,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = newOffPoolReader(configuration, PRODUCT);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                String expected = replaceTimestampSuffix("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                String expected = replaceTimestampSuffix("""
+                        productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                        1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z
+                        null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z
+                        """, ColumnType.nameOf(timestampType));
                 assertCursor(expected, cursor, reader.getMetadata(), true);
             }
         });
@@ -2793,22 +2795,24 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             assertTable(
-                    replaceTimestampSuffix("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                            "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
-                            "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
-                            "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
-                            "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
-                            "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", ColumnType.nameOf(timestampType)),
+                    replaceTimestampSuffix("""
+                            productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                            1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z
+                            761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z
+                            2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z
+                            1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z
+                            68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            """, ColumnType.nameOf(timestampType)),
                     PRODUCT
             );
         });
@@ -3169,17 +3173,21 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.newRow(timestampDriver.fromHours(1) + 1).append();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("ts\n" +
-                "1970-01-01T00:00:00.000001Z\n" +
-                "1970-01-01T01:00:00.000001Z\n", ColumnType.nameOf(timestampType)), "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T00:00:00.000001Z
+                1970-01-01T01:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
             writer.enforceTtl();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("ts\n" +
-                "1970-01-01T01:00:00.000001Z\n" +
-                "1970-01-01T02:00:00.000001Z\n", ColumnType.nameOf(timestampType)), "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T01:00:00.000001Z
+                1970-01-01T02:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
     }
 
     @Test
@@ -3384,22 +3392,13 @@ public class TableWriterTest extends AbstractCairoTest {
             final Record record = cursor.getRecord();
             final int type = reader.getMetadata().getColumnType(0);
             Assert.assertTrue(cursor.hasNext());
-            final long actual;
+            final long actual = switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE -> record.getGeoByte(0);
+                case ColumnType.GEOSHORT -> record.getGeoShort(0);
+                case ColumnType.GEOINT -> record.getGeoInt(0);
+                default -> record.getGeoLong(0);
+            };
 
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    actual = record.getGeoByte(0);
-                    break;
-                case ColumnType.GEOSHORT:
-                    actual = record.getGeoShort(0);
-                    break;
-                case ColumnType.GEOINT:
-                    actual = record.getGeoInt(0);
-                    break;
-                default:
-                    actual = record.getGeoLong(0);
-                    break;
-            }
             Assert.assertEquals(expected, actual);
         }
     }

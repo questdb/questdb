@@ -1266,7 +1266,7 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         } finally {
-            txReader = Misc.free(txReader);
+            Misc.free(txReader);
         }
     }
 

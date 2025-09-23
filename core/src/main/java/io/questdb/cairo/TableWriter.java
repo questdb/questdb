@@ -9590,7 +9590,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int symbolCount = w.getSymbolCount();
                     int symbolCapacity = w.getSymbolCapacity();
                     // 80% using integer arithmetic
-                    if ((long) symbolCount * 5 > (long) symbolCapacity * 4) {
+                    if (symbolCount * 0.8 > symbolCapacity) {
                         changeSymbolCapacity(
                                 metadata.getColumnName(w.getColumnIndex()),
                                 symbolCapacity * 2, // symbol capacity is power of 2
