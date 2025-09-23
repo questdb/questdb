@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -523,6 +524,7 @@ public final class DecimalUtil {
                 default:
                     assert false;
             }
+            return;
         }
         switch (ColumnType.tagOf(targetType)) {
             case ColumnType.DECIMAL8:
@@ -546,6 +548,81 @@ public final class DecimalUtil {
                         decimal.getHl(),
                         decimal.getLh(),
                         decimal.getLl()
+                );
+                break;
+        }
+    }
+
+    /**
+     * Store a non-null Decimal256 to a row
+     */
+    public static void store(Decimal256 decimal, TableWriter.Row row, int columnIndex, int targetType) {
+        if (decimal.isNull()) {
+            storeNull(row, columnIndex, targetType);
+        } else {
+            storeNonNull(decimal, row, columnIndex, targetType);
+        }
+    }
+
+    /**
+     * Store a non-null Decimal256 to a row
+     */
+    public static void storeNonNull(Decimal256 decimal, TableWriter.Row row, int columnIndex, int targetType) {
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+                row.putByte(columnIndex, (byte) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(columnIndex, (short) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(columnIndex, (int) decimal.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(columnIndex, decimal.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(columnIndex, decimal.getLh(), decimal.getLl());
+                break;
+            default:
+                row.putDecimal256(
+                        columnIndex,
+                        decimal.getHh(),
+                        decimal.getHl(),
+                        decimal.getLh(),
+                        decimal.getLl()
+                );
+                break;
+        }
+    }
+
+    /**
+     * Store a Decimal256 to a row
+     */
+    public static void storeNull(TableWriter.Row row, int columnIndex, int targetType) {
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+                row.putByte(columnIndex, Decimals.DECIMAL8_NULL);
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(columnIndex, Decimals.DECIMAL16_NULL);
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(columnIndex, Decimals.DECIMAL32_NULL);
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(columnIndex, Decimals.DECIMAL64_NULL);
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(columnIndex, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                break;
+            default:
+                row.putDecimal256(
+                        columnIndex,
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL
                 );
                 break;
         }

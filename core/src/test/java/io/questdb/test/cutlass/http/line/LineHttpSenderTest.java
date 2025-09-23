@@ -1140,6 +1140,76 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertDecimals() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                String tableName = "simple_decimal_test";
+                serverMain.execute("CREATE TABLE " + tableName + " (a DECIMAL(9, 0), b DECIMAL(9, 3), " +
+                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+
+                var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
+                for (int protocol : protocols) {
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                            .retryTimeoutMillis(0)
+                            .protocolVersion(protocol)
+                            .build()
+                    ) {
+                        // Integers -> Decimal
+                        sender.table(tableName)
+                                .longColumn("a", 42)
+                                .longColumn("b", 42)
+                                .at(100000000000L + protocol * 100, ChronoUnit.MICROS);
+
+                        // Strings -> Decimal without rescale
+                        sender.table(tableName)
+                                .stringColumn("a", "42")
+                                .stringColumn("b", "42.123")
+                                .at(100000000001L + protocol * 100, ChronoUnit.MICROS);
+
+                        // Strings -> Decimal with rescale
+                        sender.table(tableName)
+                                .stringColumn("a", "42.0")
+                                .stringColumn("b", "42.1")
+                                .at(100000000002L + protocol * 100, ChronoUnit.MICROS);
+
+                        // Doubles -> Decimal
+                        sender.table(tableName)
+                                .doubleColumn("a", 42d)
+                                .doubleColumn("b", 42.1d)
+                                .at(100000000003L + protocol * 100, ChronoUnit.MICROS);
+
+                        // NaN/Inf Doubles -> Decimal
+                        sender.table(tableName)
+                                .doubleColumn("a", Double.NaN)
+                                .doubleColumn("b", Double.POSITIVE_INFINITY)
+                                .at(100000000004L + protocol * 100, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+                serverMain.awaitTxn(tableName, 2);
+                serverMain.assertSql("select * from " + tableName, "a\tb\tts\n" +
+                        "42\t42.000\t1970-01-02T03:46:40.000100Z\n" +
+                        "42\t42.123\t1970-01-02T03:46:40.000101Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000102Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000103Z\n" +
+                        "\t\t1970-01-02T03:46:40.000104Z\n" +
+                        "42\t42.000\t1970-01-02T03:46:40.000200Z\n" +
+                        "42\t42.123\t1970-01-02T03:46:40.000201Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000202Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000203Z\n" +
+                        "\t\t1970-01-02T03:46:40.000204Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertDoubleArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1230,6 +1300,79 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "ast error from protocol type: DOUBLE[][] to column type: DOUBLE[]");
                 }
 
+            }
+        });
+    }
+
+    @Test
+    public void testInsertInvalidDecimals() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "decimal_exception_test";
+                serverMain.execute("CREATE TABLE " + tableName + " (x DECIMAL(6, 3), y DECIMAL(76, 73), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+
+                var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
+                for (int protocol : protocols) {
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                            .address("localhost:" + port)
+                            .autoFlushRows(Integer.MAX_VALUE)
+                            .retryTimeoutMillis(0)
+                            .protocolVersion(protocol)
+                            .build()) {
+                        // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
+                        sender.table(tableName)
+                                .longColumn("x", 1234)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "line protocol value: 1234 is out bounds of column type: DECIMAL(6,3)");
+
+                        // Integers overbound during the rescale process.
+                        sender.table(tableName)
+                                .longColumn("y", 12345)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "line protocol value: 12345 is out bounds of column type: DECIMAL(76,73)");
+
+                        // Floating points with a scale greater than expected.
+                        sender.table(tableName)
+                                .doubleColumn("x", 1.2345d)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+
+                        // Floating points with a precision greater than expected.
+                        sender.table(tableName)
+                                .doubleColumn("x", 12345.678d)
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+
+                        // String that is not a valid decimal.
+                        sender.table(tableName)
+                                .stringColumn("x", "abc")
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+
+                        // String that has a too big precision.
+                        sender.table(tableName)
+                                .stringColumn("x", "1E8")
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+                    }
+                }
             }
         });
     }
