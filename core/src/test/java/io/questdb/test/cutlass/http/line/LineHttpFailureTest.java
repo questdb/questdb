@@ -388,6 +388,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     public void testGzipEncoding() throws Exception {
         try (final TestServerMain serverMain = startWithEnvVariables()) {
             serverMain.start();
+
             try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;protocol_version=1;auto_flush=off;")) {
                 sender.table("m1")
                         .symbol("tag1", "value1")
