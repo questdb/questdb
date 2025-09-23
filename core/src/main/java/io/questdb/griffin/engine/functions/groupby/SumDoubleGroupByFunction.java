@@ -39,11 +39,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     private final Function arg;
     private int valueIndex;
 
-    @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
-    }
-
     public SumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
@@ -89,6 +84,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
+    }
+
+    @Override
     public int getValueIndex() {
         return valueIndex;
     }
@@ -117,10 +117,19 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        double srcSum = srcValue.getDouble(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addDouble(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        final double srcSum = srcValue.getDouble(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
+            final double destSum = destValue.getDouble(valueIndex);
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
+                destValue.putDouble(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex + 1, destCount + srcCount);
+            } else {
+                destValue.putDouble(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
+            }
+        }
     }
 
     @Override

@@ -116,10 +116,19 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        float srcSum = srcValue.getFloat(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 1);
-        destValue.addFloat(valueIndex, srcSum);
-        destValue.addLong(valueIndex + 1, srcCount);
+        final float srcSum = srcValue.getFloat(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
+            final float destSum = destValue.getFloat(valueIndex);
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
+                destValue.putFloat(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex + 1, destCount + srcCount);
+            } else {
+                destValue.putFloat(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
+            }
+        }
     }
 
     @Override

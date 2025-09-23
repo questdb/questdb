@@ -329,16 +329,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelDecimalKeyGroupBy() throws Exception {
         Assume.assumeFalse(convertToParquet);
+        Assert.assertFalse(enableJitCompiler);
         testParallelDecimalKeyGroupBy(
-                "SELECT key, sum(price), avg(price), min(price), max(price) " +
+                "SELECT key, sum(price), avg(price), min(price), max(price), first(price), last(price) " +
                         "FROM tab " +
                         "ORDER BY key",
-                "key\tsum\tavg\tmin\tmax\n" +
-                        "0\t1602000.00\t2002.50\t5.00\t4000.00\n" +
-                        "1\t1598800.00\t1998.50\t1.00\t3996.00\n" +
-                        "2\t1599600.00\t1999.50\t2.00\t3997.00\n" +
-                        "3\t1600400.00\t2000.50\t3.00\t3998.00\n" +
-                        "4\t1601200.00\t2001.50\t4.00\t3999.00\n"
+                "key\tsum\tavg\tmin\tmax\tfirst\tlast\n" +
+                        "0\t1602000.00\t2002.50\t5.00\t4000.00\t5.00\t4000.00\n" +
+                        "1\t1598800.00\t1998.50\t1.00\t3996.00\t1.00\t3996.00\n" +
+                        "2\t1599600.00\t1999.50\t2.00\t3997.00\t2.00\t3997.00\n" +
+                        "3\t1600400.00\t2000.50\t3.00\t3998.00\t3.00\t3998.00\n" +
+                        "4\t1601200.00\t2001.50\t4.00\t3999.00\t4.00\t3999.00\n"
         );
     }
 
@@ -1554,6 +1555,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByDecimalFunctions() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        Assert.assertFalse(enableJitCompiler);
+        testParallelDecimalKeyGroupBy(
+                "SELECT sum(price), avg(price), min(price), max(price), first(price), last(price) FROM tab",
+                "sum\tavg\tmin\tmax\tfirst\tlast\n" +
+                        "8002000.00\t2000.50\t1.00\t4000.00\t1.00\t4000.00\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
         testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
     }
@@ -1658,6 +1670,46 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT count_distinct(along), approx_count_distinct(along) FROM tab",
                 "count_distinct\tapprox_count_distinct\n" +
                         "4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicDoubleFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(adouble), max(adouble), round(avg(adouble)*count(adouble)), round(sum(adouble)), first(adouble), last(adouble) FROM tab",
+                "min\tmax\tround\tround1\tfirst\tlast\n" +
+                        "2.0456303844185175E-4\t0.9999182937007105\t1679.0\t1679.0\t0.8799634725391621\t0.15322992873721464\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicFloatFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(afloat), max(afloat), round(avg(afloat)*count(afloat)), round(sum(afloat)), first(afloat), last(afloat) FROM tab",
+                "min\tmax\tround\tround1\tfirst\tlast\n" +
+                        "1.6343594E-4\t0.9997715\t1665.0\t1665.0\t0.87567717\t0.030083895\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicIntFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(anint), max(anint), round(avg(anint)*count(anint)), sum(anint), first(anint), last(anint) FROM tab",
+                "min\tmax\tround\tsum\tfirst\tlast\n" +
+                        "-2147365666\t2146394077\t-4.9631313424E10\t-49631313424\t-85170055\t1033747429\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithBasicLongFunctions() throws Exception {
+        Assume.assumeFalse(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT min(along), max(along), round(avg(along)*count(along)), sum(along), first(along), last(along) FROM tab",
+                "min\tmax\tround\tsum\tfirst\tlast\n" +
+                        "-9220264229979566148\t9222440717001210457\t-9.223372036854776E18\t-8085484953408325183\t8416773233910814357\t6812734169481155056\n"
         );
     }
 
