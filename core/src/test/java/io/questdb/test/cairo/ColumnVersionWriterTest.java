@@ -187,7 +187,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     for (int j = 0; j < 100; j++) {
                         Assert.assertEquals(0, r.getColumnTop(rnd.nextLong(), i));
                         Assert.assertEquals(i, r.getDefaultColumnNameTxn(i));
-                        Assert.assertEquals(Long.MIN_VALUE, r.getColumnTopPartitionTimestamp(i));
+                        final long ts = r.getColumnTopPartitionTimestamp(i);
+                        Assert.assertTrue(ts == ColumnVersionReader.COL_TOP_DEFAULT_PARTITION || ts == ColumnVersionReader.SYMBOL_TABLE_VERSION_PARTITION);
                     }
                 }
             }
