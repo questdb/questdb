@@ -611,7 +611,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testExplicitConstantTimestamp() throws SqlException {
-        testConstantPassThru(new TimestampConstant(123));
+        testConstantPassThru(new TimestampConstant(123, ColumnType.TIMESTAMP_MICRO));
     }
 
     @Test
@@ -1223,7 +1223,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration1, SqlExecutionContext sqlExecutionContext) {
-                return new TimestampFunction() {
+                return new TimestampFunction(ColumnType.TIMESTAMP_MICRO) {
                     @Override
                     public long getTimestamp(Record rec) {
                         return 0;

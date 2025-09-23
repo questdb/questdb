@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -68,6 +69,15 @@ public class LineProtocolException extends CairoException {
                 .put("table: ").put(tableNameUtf16)
                 .put(", timestamp: ").put(timestamp)
                 .put("; designated timestamp before 1970-01-01 is not allowed");
+    }
+
+    public static LineProtocolException designatedTimestampValueOverflow(String tableNameUtf16, long timestamp) {
+        return instance()
+                .put("table: ").put(tableNameUtf16)
+                .put(", timestamp: ").put(timestamp)
+                .put("; designated timestamp overflow, max[")
+                .put(CommonUtils.MAX_TIMESTAMP)
+                .put("]");
     }
 
     public static LineProtocolException invalidColNameError(CharSequence columnName, String tableNameUtf16) {

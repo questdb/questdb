@@ -28,7 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
@@ -43,20 +43,20 @@ public class PartitionDeleteTest extends AbstractCairoTest {
         engine.releaseAllWriters();
 
         try (TableWriter writer = newOffPoolWriter(configuration, "events")) {
-            long ts = TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z");
+            long ts = MicrosFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, i);
                 r.append();
             }
-            ts = TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z");
+            ts = MicrosFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, 100 + i);
                 r.append();
             }
 
-            ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
+            ts = MicrosFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
             for (int i = 0; i < 10; i++) {
                 TableWriter.Row r = writer.newRow(ts);
                 r.putLong(0, 200 + i);
@@ -74,7 +74,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, "events")) {
-                long ts = TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
+                long ts = MicrosFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 250 + i);
@@ -82,7 +82,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(MicrosFormatUtils.parseTimestamp("2020-06-30T00:00:00.000000Z")));
 
                 reader.reload();
 
@@ -92,7 +92,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
 
                 }
 
-                ts = TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z");
+                ts = MicrosFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 300 + i);
@@ -100,7 +100,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                ts = TimestampFormatUtils.parseTimestamp("2020-07-04T00:00:00.000000Z");
+                ts = MicrosFormatUtils.parseTimestamp("2020-07-04T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 400 + i);
@@ -108,7 +108,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                ts = TimestampFormatUtils.parseTimestamp("2020-07-05T00:00:00.000000Z");
+                ts = MicrosFormatUtils.parseTimestamp("2020-07-05T00:00:00.000000Z");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = writer.newRow(ts);
                     row.putLong(0, 500 + i);
@@ -116,9 +116,9 @@ public class PartitionDeleteTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z")));
-                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z")));
-                Assert.assertTrue(writer.removePartition(TimestampFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(MicrosFormatUtils.parseTimestamp("2020-07-01T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(MicrosFormatUtils.parseTimestamp("2020-07-02T00:00:00.000000Z")));
+                Assert.assertTrue(writer.removePartition(MicrosFormatUtils.parseTimestamp("2020-07-03T00:00:00.000000Z")));
 
                 Assert.assertTrue(reader.reload());
 

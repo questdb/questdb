@@ -369,9 +369,11 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     private long getRowCount(CairoEngine engine, TableToken token, TxReader txReader) {
         try (TableMetadata tm = engine.getTableMetadata(token)) {
             int partitionBy = tm.getPartitionBy();
+            int timestampType = tm.getTimestampType();
+
             try (Path path = new Path()) {
                 path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-                TableUtils.setTxReaderPath(txReader, path, partitionBy);
+                TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy);
                 return txReader.unsafeLoadRowCount();
             }
         }

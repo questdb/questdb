@@ -418,6 +418,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 {"g", "DATE"},
                 {"h", "BINARY"},
                 {"t", "TIMESTAMP"},
+                {"n", "TIMESTAMP_NS"},
                 {"x", "SYMBOL"},
                 {"z", "STRING"},
                 {"y", "BOOLEAN"},
@@ -429,9 +430,8 @@ public class CreateTableTest extends AbstractCairoTest {
 
         execute("create table x (" + getColumnDefinitions(columnTypes) + ")");
         execute("create table tab (like x)");
-        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
+        assertSql("a\tb\tc\td\te\tf\tg\th\tt\tn\tx\tz\ty\tl\tu\tgh1\tgh2\n", "tab");
         assertColumnTypes(columnTypes);
-
     }
 
     @Test
@@ -643,6 +643,61 @@ public class CreateTableTest extends AbstractCairoTest {
     public void testCreateTableWithNoIndex() throws Exception {
         execute("create table tab (s symbol) ");
         assertSql("s\n", "select * from tab");
+    }
+
+    @Test
+    public void testCreateTableWithTimestampNSColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ns timestamp_ns, s symbol) timestamp(ns) partition by DAY WAL;");
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\tns TIMESTAMP_NS,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+            execute("create table y (like x);");
+            assertSql("ns\ts\n", "select * from x");
+
+            try (TableReader reader = engine.getReader("x")) {
+                assertEquals(PartitionBy.DAY, reader.getPartitionedBy());
+                assertEquals(0, reader.getMetadata().getTimestampIndex());
+            }
+
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'y' ( \n" +
+                            "\tns TIMESTAMP_NS,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table y;");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    ,
+                    "SHOW COLUMNS FROM y"
+            );
+
+            execute(
+                    "CREATE TABLE z (" +
+                            "ns TIMESTAMP_NS," +
+                            "a INT," +
+                            "b STRING" +
+                            ") " +
+                            "TIMESTAMP(ns) PARTITION BY DAY WAL " +
+                            "DEDUP UPSERT KEYS(ns, a)"
+            );
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'z' ( \n" +
+                            "\tns TIMESTAMP_NS,\n" +
+                            "\ta INT,\n" +
+                            "\tb STRING\n" +
+                            ") timestamp(ns) PARTITION BY DAY WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us\n" +
+                            "DEDUP UPSERT KEYS(ns,a);\n",
+                    "show create table z;");
+        });
     }
 
     @Test

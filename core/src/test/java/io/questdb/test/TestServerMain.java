@@ -81,7 +81,7 @@ public class TestServerMain extends ServerMain {
         }
     }
 
-    public void ddl(String sql) {
+    public void execute(String sql) {
         try {
             ensureContext();
             getEngine().execute(sql, sqlExecutionContext);
