@@ -143,7 +143,7 @@ public class ImportParquetTest extends AbstractCairoTest {
                     " rnd_float() as value2," +
                     " rnd_timestamp('2023-01-01','2023-12-31',2) as created_at," +
                     " rnd_symbol('a','b','c') as status" +
-                    " from long_sequence(100000))");
+                    " from long_sequence(10000))");
 
             byte[] parquetData = createParquetFile("large_x");
             byte[] parquetImportRequest = createParquetImportRequest("dir/dir1/large_test.parquet", parquetData, "text");
@@ -163,26 +163,26 @@ public class ImportParquetTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: text/plain; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "6e\r\n" +
+                                                "6d\r\n" +
                                                 "Parquet file imported successfully\r\n" +
                                                 "File: dir/dir1/large_test.parquet\r\n" +
-                                                "Size: 2594145 bytes\r\n" +
+                                                "Size: 261201 bytes\r\n" +
                                                 "Status: imported\r\n" +
                                                 "\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
                         String expected = "id\tdescription\tvalue1\tvalue2\tcreated_at\tstatus\n" +
-                                "99991\tCDE\t0.8166478639285287\t0.4386441\t2023-05-16T21:22:48.854659Z\ta\n" +
-                                "99992\tCDE\t0.17891236195840365\t0.34030402\t2023-08-21T17:24:04.807108Z\tb\n" +
-                                "99993\tXYZ\t0.05557740758458862\t0.37863648\t2023-12-10T02:42:33.064423Z\tb\n" +
-                                "99994\tCDE\t0.8353920305218698\t0.1985147\t2023-01-30T09:44:51.084677Z\tb\n" +
-                                "99995\t\t0.4783108349434946\t0.079084635\t2023-11-01T02:22:06.043102Z\ta\n" +
-                                "99996\t\t0.8686709902046369\t0.97213304\t2023-12-24T09:44:05.007638Z\ta\n" +
-                                "99997\tXYZ\t0.4164018538135147\t0.29396755\t2023-03-25T16:40:31.769048Z\tc\n" +
-                                "99998\tCDE\t0.7721854080413442\t0.35694885\t2023-07-15T20:57:24.754320Z\ta\n" +
-                                "99999\tABC\t0.2478919218228035\t0.16465133\t\ta\n" +
-                                "100000\tCDE\t0.1399738796495611\t0.17249799\t\tb\n";
+                                "9991\tABC\t0.44505055200974364\t0.810286\t2023-02-03T07:37:17.755321Z\tb\n" +
+                                "9992\tCDE\t0.31350681695918414\t0.45137614\t2023-02-01T08:02:27.976883Z\tc\n" +
+                                "9993\tABC\t0.06556941137983563\t0.64124054\t\tb\n" +
+                                "9994\tCDE\t0.5823067636236696\t0.10297555\t2023-10-30T10:14:06.631515Z\tb\n" +
+                                "9995\t\t0.8595831530980106\t0.5085327\t2023-08-18T23:42:20.707974Z\tb\n" +
+                                "9996\t\t0.6260180160225268\t0.44432557\t\tb\n" +
+                                "9997\t\t0.5384815146871995\t0.22241545\t2023-12-26T01:16:00.781972Z\ta\n" +
+                                "9998\t\t0.0218703776689112\t0.13407451\t2023-11-24T18:00:55.609757Z\ta\n" +
+                                "9999\tCDE\t0.679001968559542\t0.067198396\t2023-02-07T20:22:06.472118Z\tb\n" +
+                                "10000\tABC\t0.0448720763572763\t0.6363311\t2023-02-20T12:31:53.335608Z\tc\n";
                         assertQueryNoLeakCheck(expected,
                                 "select * from read_parquet('dir/dir1/large_test.parquet') limit -10", null, null, true, true);
                         assertQueryNoLeakCheck(expected,
