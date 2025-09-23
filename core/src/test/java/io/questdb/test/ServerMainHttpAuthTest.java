@@ -199,6 +199,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"cairo.max.file.name.length\":127" +
                             "}," +
                             "\"accepting.writes\":true," +
+                            "\"accepting.reads\":true," +
                             "\"preferences.version\":0," +
                             "\"preferences\":{" +
                             "}" +
