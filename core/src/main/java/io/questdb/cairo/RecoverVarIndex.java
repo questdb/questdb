@@ -50,6 +50,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
+            int timestampType,
             int partitionBy,
             int indexValueBlockCapacity
     ) {
@@ -58,14 +59,14 @@ public class RecoverVarIndex extends RebuildColumnBase {
 
         if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$safe(columnName)
-                    .$(" in partition ").$ts(partitionTimestamp)
+                    .$(" in partition ").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
                     .$(", column not added to partition")
                     .$();
             return;
         }
 
         int trimTo = path.size();
-        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
 
         try {
             path.concat(columnName);

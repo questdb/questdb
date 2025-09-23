@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -33,7 +34,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
@@ -52,6 +57,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             @Transient IntList recordFunctionPositions,
             int valueCount,
             int timestampIndex,
+            int timestampType,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
@@ -64,6 +70,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
         super(base, groupByMetadata, recordFunctions);
         try {
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
+                    ColumnType.getTimestampDriver(timestampType),
                     groupByFunctions,
                     recordFunctions,
                     recordFunctionPositions,
@@ -81,6 +88,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     placeholderFunctions,
                     peeker,
                     timestampIndex,
+                    timestampType,
                     timestampSampler,
                     simpleMapValue,
                     timezoneNameFunc,
@@ -104,7 +112,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("value");
-        if (cursor.sampleFromFunc != TimestampConstant.NULL || cursor.sampleToFunc != TimestampConstant.NULL)
+        if (cursor.sampleFromFunc != TimestampConstant.TIMESTAMP_MICRO_NULL || cursor.sampleToFunc != TimestampConstant.TIMESTAMP_MICRO_NULL)
             sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);

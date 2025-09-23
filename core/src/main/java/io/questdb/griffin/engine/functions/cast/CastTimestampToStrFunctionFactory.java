@@ -25,14 +25,20 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -45,7 +51,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put(func.getTimestamp(null));
+            ColumnType.getTimestampDriver(func.getType()).append(sink, func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));
@@ -54,31 +60,31 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
+        private final TimestampDriver timestampDriver;
 
         public Func(Function arg) {
             super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(arg.getType());
         }
 
         @Override
         public CharSequence getStrA(Record rec) {
-            sinkA.clear();
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
-            }
-            TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
-            return sinkA;
+            return toSink(sinkA, rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            sinkB.clear();
+            return toSink(sinkB, rec);
+        }
+
+        private @Nullable StringSink toSink(StringSink sink, Record rec) {
+            sink.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NULL) {
                 return null;
             }
-            TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
-            return sinkB;
+            timestampDriver.append(sink, value);
+            return sink;
         }
     }
 }

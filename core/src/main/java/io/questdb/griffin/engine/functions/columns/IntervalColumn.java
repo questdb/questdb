@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
@@ -38,15 +40,18 @@ public class IntervalColumn extends IntervalFunction implements FunctionExtensio
     private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    private IntervalColumn(int columnIndex) {
+    private IntervalColumn(int columnIndex, int columnType) {
+        super(columnType);
         this.columnIndex = columnIndex;
     }
 
-    public static IntervalColumn newInstance(int columnIndex) {
+    public static IntervalColumn newInstance(int columnIndex, int columnType) {
         if (columnIndex < STATIC_COLUMN_COUNT) {
-            return COLUMNS.getQuick(columnIndex);
+            IntervalColumn column = COLUMNS.getQuick(columnIndex);
+            column.setType(columnType);
+            return column;
         }
-        return new IntervalColumn(columnIndex);
+        return new IntervalColumn(columnIndex, columnType);
     }
 
     @Override
@@ -92,7 +97,7 @@ public class IntervalColumn extends IntervalFunction implements FunctionExtensio
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new IntervalColumn(i));
+            COLUMNS.setQuick(i, new IntervalColumn(i, ColumnType.INTERVAL_RAW));
         }
     }
 }

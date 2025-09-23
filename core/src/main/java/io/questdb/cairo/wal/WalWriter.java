@@ -44,6 +44,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -98,7 +99,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -131,6 +131,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
@@ -189,7 +190,7 @@ public class WalWriter implements TableWriterAPI {
         this.walId = walId;
         this.path = new Path();
         path.of(configuration.getDbRoot());
-        this.pathRootSize = path.size();
+        this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
         this.metrics = configuration.getMetrics();
@@ -200,8 +201,8 @@ public class WalWriter implements TableWriterAPI {
             mkWalDir();
 
             metadata = new WalWriterMetadata(ff);
-
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
@@ -481,7 +482,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        validateDesignatedTimestampBounds(timestamp);
+        timestampDriver.validateBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
@@ -1044,9 +1045,9 @@ public class WalWriter implements TableWriterAPI {
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
                     if (replaceRangeHiTs > replaceRangeLowTs) {
-                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                        logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
                     logLine.I$();
@@ -1223,7 +1224,7 @@ public class WalWriter implements TableWriterAPI {
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
-                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(ff, path.$());
 
@@ -1756,11 +1757,14 @@ public class WalWriter implements TableWriterAPI {
         auxMem.jumpTo(auxMemSize);
         if (rowCount > 0) {
             final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEM_TAG);
-            columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setFullAuxVectorNull(auxMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(auxMemAddr, auxMemSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
             }
-            ff.munmap(auxMemAddr, auxMemSize, MEM_TAG);
         }
     }
 
@@ -1770,14 +1774,14 @@ public class WalWriter implements TableWriterAPI {
         dataMem.jumpTo(varColSize);
         if (rowCount > 0 && varColSize > 0) {
             final long dataMemAddr = TableUtils.mapRW(ff, dataMem.getFd(), varColSize, MEM_TAG);
-            columnTypeDriver.setDataVectorEntriesToNull(
-                    dataMemAddr,
-                    rowCount
-            );
-            if (commitMode != CommitMode.NOSYNC) {
-                ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+            try {
+                columnTypeDriver.setDataVectorEntriesToNull(dataMemAddr, rowCount);
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.msync(dataMemAddr, varColSize, commitMode == CommitMode.ASYNC);
+                }
+            } finally {
+                ff.munmap(dataMemAddr, varColSize, MEM_TAG);
             }
-            ff.munmap(dataMemAddr, varColSize, MEM_TAG);
         }
     }
 
@@ -1983,6 +1987,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override
@@ -2223,6 +2232,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override

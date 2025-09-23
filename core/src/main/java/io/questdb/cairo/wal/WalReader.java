@@ -82,7 +82,7 @@ public class WalReader implements Closeable {
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
-            LOG.debug().$("open [table=").$safe(tableName).I$();
+            LOG.debug().$("open [table=").$(tableToken).I$();
             int pathLen = path.size();
             eventCursor = events.of(path.slash().put(segmentId), -1);
             path.trimTo(pathLen);

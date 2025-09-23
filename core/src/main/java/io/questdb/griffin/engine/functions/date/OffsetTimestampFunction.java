@@ -34,7 +34,8 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
     private final long offset;
     private final Function timestamp;
 
-    public OffsetTimestampFunction(Function timestamp, long offset) {
+    public OffsetTimestampFunction(Function timestamp, long offset, int timestampType) {
+        super(timestampType);
         this.timestamp = timestamp;
         this.offset = offset;
     }

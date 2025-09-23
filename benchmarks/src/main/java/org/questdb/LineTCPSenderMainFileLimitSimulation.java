@@ -24,14 +24,12 @@
 
 package org.questdb;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineTcpSenderV2;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
-import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.util.concurrent.locks.LockSupport;
 
@@ -101,7 +99,7 @@ public class LineTCPSenderMainFileLimitSimulation {
 
             long ts = Os.currentTimeNanos();
             while (true) {
-                long shift = rnd.nextLong(Timestamps.HOUR_MICROS * 1000L / 3);
+                long shift = rnd.nextLong(MicrosTimestampDriver.INSTANCE.fromHours((int) (1000L / 3)));
                 if (rnd.nextBoolean()) {
                     shift = 0;
                 }
@@ -111,18 +109,6 @@ public class LineTCPSenderMainFileLimitSimulation {
                 ts += 1000_000L;
             }
         }
-    }
-
-    private static void fillDates(Rnd rnd, AbstractLineTcpSender sender) throws NumericException {
-        long period = Timestamps.MINUTE_MICROS * 1000L * 10;
-        long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25") * 1000L;
-        long endTs = IntervalUtils.parseFloorPartialTimestamp("2022-03-26T20") * 1000L;
-
-        while (ts < endTs) {
-            sendLine(rnd, sender, ts);
-            ts += period + rnd.nextLong(Timestamps.MINUTE_MICROS * 1000L);
-        }
-        sender.flush();
     }
 
     private static void generateStrings(Rnd rnd, String[] auui, int length) {

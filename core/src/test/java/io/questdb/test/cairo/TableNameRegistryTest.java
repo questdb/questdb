@@ -54,6 +54,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -894,7 +895,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
-                store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
+                store.writeEntry(new TableToken("tab1", "tab1~1", null, 1, true, false, false), OPERATION_ADD);
             }
 
             simulateEngineRestart();
@@ -1103,7 +1104,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         final int loopCounter = 8;
         final Rnd rnd = new Rnd(seed1, seed2);
 
-        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, () -> 0)) {
+        try (WalPurgeJob purgeJob = new WalPurgeJob(engine, FilesFacadeImpl.INSTANCE, (MicrosecondClock) () -> 0)) {
 
             for (int j = 0; j < loopCounter; j++) {
 
