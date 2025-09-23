@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -5259,7 +5260,7 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testSelfCastInGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.DAY);
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.DAY, ColumnType.TIMESTAMP);
             execute(
                     "insert into all2 select * from (" +
                             "select" +
