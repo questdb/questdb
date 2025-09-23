@@ -97,6 +97,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return true;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }

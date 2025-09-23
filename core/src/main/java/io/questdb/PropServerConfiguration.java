@@ -152,6 +152,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
+    private final boolean cairoAutoScaleSymbolCapacity;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
@@ -859,6 +860,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
         this.cairoCommitLatency = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY, 30_000_000);
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, true);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
         this.checkpointRecoveryEnabled = getBoolean(
@@ -2005,20 +2007,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private byte getLineTimestampUnit(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                return CommonUtils.TIMESTAMP_UNIT_MICROS;
-            case "ms":
-                return CommonUtils.TIMESTAMP_UNIT_MILLIS;
-            case "s":
-                return CommonUtils.TIMESTAMP_UNIT_SECONDS;
-            case "m":
-                return CommonUtils.TIMESTAMP_UNIT_MINUTES;
-            case "h":
-                return CommonUtils.TIMESTAMP_UNIT_HOURS;
-            default:
-                return CommonUtils.TIMESTAMP_UNIT_NANOS;
-        }
+        return switch (lineUdpTimestampSwitch) {
+            case "u" -> CommonUtils.TIMESTAMP_UNIT_MICROS;
+            case "ms" -> CommonUtils.TIMESTAMP_UNIT_MILLIS;
+            case "s" -> CommonUtils.TIMESTAMP_UNIT_SECONDS;
+            case "m" -> CommonUtils.TIMESTAMP_UNIT_MINUTES;
+            case "h" -> CommonUtils.TIMESTAMP_UNIT_HOURS;
+            default -> CommonUtils.TIMESTAMP_UNIT_NANOS;
+        };
     }
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
@@ -2783,6 +2779,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public boolean autoScaleSymbolCapacity() {
+            return cairoAutoScaleSymbolCapacity;
         }
 
         @Override

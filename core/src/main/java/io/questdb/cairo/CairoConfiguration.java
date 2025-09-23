@@ -66,6 +66,18 @@ public interface CairoConfiguration {
 
     boolean attachPartitionCopy();
 
+    /**
+     * Flag to enable or disable symbol capacity auto-scaling. Auto-scaling means resizing
+     * symbol table data structures as the number of symbols in the table grows. Optimal sizing of
+     * these data structures ensures optimal ingres performance.
+     * <p>
+     * By default, the auto-scaling is enabled. This is optimal. You may want to disable auto-scaling in case
+     * something goes wrong.
+     *
+     * @return true - auto-scaling is enabled and false - otherwise.
+     */
+    boolean autoScaleSymbolCapacity();
+
     default boolean disableColumnPurgeJob() {
         return false;
     }

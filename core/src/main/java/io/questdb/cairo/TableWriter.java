@@ -9581,20 +9581,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void scaleSymbolCapacities() {
-        for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-            var w = denseSymbolMapWriters.getQuick(i);
-            var columnIndex = w.getColumnIndex();
-            // ignore null writers, if they are present in the list
-            if (columnIndex > -1) {
-                int symbolCount = w.getSymbolCount();
-                int symbolCapacity = w.getSymbolCapacity();
-                // 80% using integer arithmetic
-                if ((long) symbolCount * 5 > (long) symbolCapacity * 4) {
-                    changeSymbolCapacity(
-                            metadata.getColumnName(w.getColumnIndex()),
-                            symbolCapacity * 2, // symbol capacity is power of 2
-                            AllowAllSecurityContext.INSTANCE // this is internal housekeeping task, triggered by WAL apply job
-                    );
+        if (configuration.autoScaleSymbolCapacity()) {
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                var w = denseSymbolMapWriters.getQuick(i);
+                var columnIndex = w.getColumnIndex();
+                // ignore null writers, if they are present in the list
+                if (columnIndex > -1) {
+                    int symbolCount = w.getSymbolCount();
+                    int symbolCapacity = w.getSymbolCapacity();
+                    // 80% using integer arithmetic
+                    if ((long) symbolCount * 5 > (long) symbolCapacity * 4) {
+                        changeSymbolCapacity(
+                                metadata.getColumnName(w.getColumnIndex()),
+                                symbolCapacity * 2, // symbol capacity is power of 2
+                                AllowAllSecurityContext.INSTANCE // this is internal housekeeping task, triggered by WAL apply job
+                        );
+                    }
                 }
             }
         }
