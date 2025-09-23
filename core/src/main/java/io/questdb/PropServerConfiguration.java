@@ -127,7 +127,8 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
-    public static final String ACCEPTING_WRITES = "accepting.writes"; // todo: accepting reads?
+    public static final String ACCEPTING_READS = "accepting.reads";
+    public static final String ACCEPTING_WRITES = "accepting.writes";
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;

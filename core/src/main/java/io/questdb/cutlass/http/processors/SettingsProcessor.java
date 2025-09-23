@@ -47,6 +47,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.PropServerConfiguration.ACCEPTING_WRITES;
+import static io.questdb.PropServerConfiguration.ACCEPTING_READS;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.bool;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.integer;
 import static java.net.HttpURLConnection.*;
@@ -105,6 +106,9 @@ public class SettingsProcessor implements HttpRequestHandler {
             settings.putAscii('{');
             serverConfiguration.exportConfiguration(settings);
             bool(ACCEPTING_WRITES, serverConfiguration.getCairoConfiguration().isAcceptingWrites(), settings);
+            // ACCEPTING_READS is hard-coded now, but it's already part of the JSON interface
+            // this allows us to return a different value when we run ingest-only instances
+            bool(ACCEPTING_READS, true, settings);
             integer(PREFERENCES_VERSION, settingsStore.getVersion(), settings);
             settingsStore.exportPreferences(settings);
             settings.putAscii('}');
