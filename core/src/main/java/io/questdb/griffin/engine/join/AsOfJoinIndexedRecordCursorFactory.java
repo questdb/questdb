@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
@@ -134,6 +135,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
     private class AsOfJoinIndexedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
+        private StaticSymbolTable slaveSymbolTable;
+
         public AsOfJoinIndexedRecordCursor(
                 int columnSplit,
                 Record nullRecord,
@@ -150,11 +153,16 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         }
 
         @Override
+        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+            super.of(masterCursor, slaveCursor, circuitBreaker);
+            slaveSymbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
+        }
+
+        @Override
         protected void performKeyMatching(long masterTimestamp) {
             // determine the integer key of the symbol to find in the slave table
             CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
-            StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            int symbolKey = TableUtils.toIndexKey(symbolTable.keyOf(masterSymbolValue));
+            int symbolKey = TableUtils.toIndexKey(slaveSymbolTable.keyOf(masterSymbolValue));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;
