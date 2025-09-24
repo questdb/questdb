@@ -979,7 +979,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameDedup, rnd, start, end);
 
             try {
-                transactions = uniqueInserts(transactions);
+                long initialMinTs, initialMaxTs;
+                try (TableReader reader = getReader(tableNameNoWal)) {
+                    initialMinTs = reader.getMinTimestamp();
+                    initialMaxTs = reader.getMaxTimestamp();
+                }
+
+                transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, 1000000L);
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
@@ -1166,7 +1172,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return sink.toString();
     }
 
-    private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
+    private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions, long minTs, long maxTs, long step) {
         ObjList<FuzzTransaction> uniqueTransactions = new ObjList<>();
         LongHashSet uniqueTimestamps = new LongHashSet();
 
@@ -1177,7 +1183,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 for (int j = 0; j < transaction.operationList.size(); j++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(j);
                     if (operation instanceof FuzzInsertOperation) {
-                        if (uniqueTimestamps.add(((FuzzInsertOperation) operation).getTimestamp())) {
+                        long timestamp = ((FuzzInsertOperation) operation).getTimestamp();
+
+                        boolean isInItialRange = timestamp >= minTs && timestamp <= maxTs && (timestamp - minTs) % step == 0;
+                        if (!isInItialRange && uniqueTimestamps.add(timestamp)) {
                             unique.operationList.add(operation);
                         } else {
                             Misc.free(operation);
