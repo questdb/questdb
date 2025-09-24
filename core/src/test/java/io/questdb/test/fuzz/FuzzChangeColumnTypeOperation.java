@@ -32,22 +32,23 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
-    private static final short[] numericConvertableColumnTypes = {
+    private static final int[] numericConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
-            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
-            ColumnType.DATE,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
+            ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
             ColumnType.STRING, ColumnType.VARCHAR
     };
-    private static final short[] varSizeConvertableColumnTypes = {
+    private static final int[] varSizeConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
-            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
-            ColumnType.DATE,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
+            ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
             ColumnType.UUID, ColumnType.IPv4,
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
@@ -58,7 +59,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final int newColumnType;
     private final int symbolCapacity;
 
-    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int oldColumnType, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
+    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
         this.columName = TestUtils.randomiseCase(rnd, columName);
         this.newColumnType = newColumnType;
         this.indexFlag = indexFlag;
@@ -114,6 +115,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.FLOAT:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
+            case ColumnType.TIMESTAMP_NANO:
             case ColumnType.DOUBLE:
                 return generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
             default:
@@ -149,7 +151,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
                 int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, columnType, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap);
+                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap);
                 transaction.operationList.add(operation);
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
@@ -183,7 +185,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofColumnChangeType(
                 0,
                 wApi.getTableToken(),
@@ -200,7 +202,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return true;
     }
 
-    private static int generateNextType(int columnType, short[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
+    private static int generateNextType(int columnType, int[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
         int nextColType = columnType;
         // disallow noop conversion
         // disallow conversions from non-nullable to nullable

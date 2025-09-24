@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -459,7 +460,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
     }
 
     private boolean isJson(HttpConnectionContext transientContext) {
-        return Utf8s.equalsNcAscii("json", transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
+        return HttpKeywords.isJson(transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
     }
 
     private void sendErrorAndThrowDisconnect(CharSequence message)

@@ -39,10 +39,10 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
-import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
@@ -166,6 +166,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -184,6 +185,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
+        testNanoClock = StationaryNanosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -708,9 +710,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertSql(
                     "i\trow_number\tavg\tsum\tfirst_value\n" +
-                            "1\t1\t50.5\t5050.0\t1.0\n" +
-                            "2\t2\t50.5\t5050.0\t1.0\n" +
-                            "3\t1\t50.5\t5050.0\t1.0\n",
+                            "1\t1\t50.5\t5050.0\t1\n" +
+                            "2\t2\t50.5\t5050.0\t1\n" +
+                            "3\t1\t50.5\t5050.0\t1\n",
                     sql
             );
         });
@@ -721,7 +723,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_float()::double ",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_float()::double]\n" +
+                        "  functions: [memoize(rnd_float()::double)]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -1606,7 +1608,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "where d < 100.0d and ts > dateadd('d', 1, now()  );",
                 "Update table: a\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [20,d+rnd_double()]\n" +
+                        "      functions: [20,memoize(d+rnd_double())]\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: d<100.0 [pre-touch]\n" +
                         "            PageFrame\n" +
@@ -2349,7 +2351,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
             constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
             constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
-            constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
+            constFuncs.put(ColumnType.TIMESTAMP_MICRO, list(new TimestampConstant(86400000000L, ColumnType.TIMESTAMP_MICRO)));
+            constFuncs.put(ColumnType.TIMESTAMP_NANO, list(new TimestampConstant(86400000000000L, ColumnType.TIMESTAMP_NANO)));
             constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
             constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
             constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
@@ -2365,7 +2368,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
-            constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
+            constFuncs.put(ColumnType.INTERVAL_RAW, list(IntervalConstant.RAW_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, list(IntervalConstant.TIMESTAMP_NANO_NULL));
+            constFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, list(IntervalConstant.TIMESTAMP_MICRO_NULL));
             constFuncs.put(ColumnType.ARRAY_STRING, list(new StringToStringArrayFunction(0, "{all}")));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
@@ -2389,7 +2394,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
             colFuncs.put(ColumnType.LONG, LongColumn.newInstance(1));
             colFuncs.put(ColumnType.DATE, DateColumn.newInstance(1));
-            colFuncs.put(ColumnType.TIMESTAMP, TimestampColumn.newInstance(1));
+            colFuncs.put(ColumnType.TIMESTAMP_MICRO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.TIMESTAMP_NANO, TimestampColumn.newInstance(1, ColumnType.TIMESTAMP_NANO));
             colFuncs.put(ColumnType.FLOAT, FloatColumn.newInstance(1));
             colFuncs.put(ColumnType.DOUBLE, DoubleColumn.newInstance(1));
             colFuncs.put(ColumnType.STRING, new StrColumn(1));
@@ -2405,7 +2411,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
             colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
             colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
-            colFuncs.put(ColumnType.INTERVAL, IntervalColumn.newInstance(1));
+            colFuncs.put(ColumnType.INTERVAL_RAW, IntervalColumn.newInstance(1, ColumnType.INTERVAL_RAW));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_MICRO));
+            colFuncs.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalColumn.newInstance(1, ColumnType.INTERVAL_TIMESTAMP_NANO));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2536,7 +2544,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("a"));
                                     args.add(new StrConstant("b"));
                                 } else if (factory instanceof EqIntervalFunctionFactory) {
-                                    args.add(IntervalConstant.NULL);
+                                    args.add(IntervalConstant.RAW_NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
                                     args.add(FloatColumn.newInstance(1));
                                     args.add(FloatColumn.newInstance(2));
@@ -2612,8 +2620,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof HydrateTableMetadataFunctionFactory) {
                                     args.add(new StrConstant("*"));
                                 } else if (factory instanceof InTimestampIntervalFunctionFactory) {
-                                    args.add(new TimestampConstant(123141));
-                                    args.add(new IntervalConstant(1231, 123146));
+                                    args.add(new TimestampConstant(123141, ColumnType.TIMESTAMP_MICRO));
+                                    args.add(new IntervalConstant(1231, 123146, ColumnType.INTERVAL_TIMESTAMP_MICRO));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
@@ -2644,8 +2652,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 sqlExecutionContext.configureWindowContext(
                                         null, null, null, false,
                                         PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
-                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20,
-                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
+                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, (char) 0, 10, 0, (char) 0, 20,
+                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, ColumnType.NULL, false, 0);
                             }
                             Function function = null;
                             try {
@@ -2663,7 +2671,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Assert.assertFalse("function " + factory.getSignature() +
                                         " should serialize to text properly. current text: " +
                                         planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
-                                LOG.info().$(sink).$(planSink.getSink()).$();
+                                LOG.info().$safe(sink).$safe(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
                                     ((NegatableBooleanFunction) function).setNegated();
@@ -2685,7 +2693,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
                                 if (memUsedAfter > memUsedBefore) {
-                                    LOG.error().$("Memory leak detected in ").$(factory.getSignature()).$();
+                                    LOG.error().$("Memory leak detected in ").$safe(factory.getSignature()).$();
                                     Assert.fail("Memory leak detected in " + factory.getSignature());
                                 }
                             }
@@ -3314,7 +3322,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from (select * from a order by d limit 10)",
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
-                        "    Sort light lo: 10\n" +
+                        "    Async Top K lo: 10 workers: 1\n" +
+                        "      filter: null\n" +
                         "      keys: [d]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
@@ -3454,7 +3463,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) from di order by y desc limit 1",
-                "Long top K lo: 1\n" +
+                "Long Top K lo: 1\n" +
                         "  keys: [y desc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3471,7 +3480,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select y, count(*) c from di order by c limit 42",
-                "Long top K lo: 42\n" +
+                "Long Top K lo: 42\n" +
                         "  keys: [c asc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [y]\n" +
@@ -3490,7 +3499,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "create table di (x int, y long)",
                     "select y, count(*) c from di order by c limit 42",
-                    "Long top K lo: 42\n" +
+                    "Long Top K lo: 42\n" +
                             "  keys: [c asc]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [y]\n" +
@@ -4312,7 +4321,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select * from a latest on ts partition by s",
                 "LatestByAllIndexed\n" +
-                        "    Async index backward scan on: s workers: 1\n" +
+                        "    Async index backward scan on: s workers: 2\n" +
                         "    Frame backward scan on: a\n"
         );
     }
@@ -5940,10 +5949,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
-                    "              functions: [915148800000000,null]\n" +
+                    "              functions: [1999-01-01T00:00:00.000000Z,null]\n" +
                     "                long_sequence count: 1\n" +
                     "        VirtualRecord\n" +
-                    "          functions: [1676851200000000,null]\n" +
+                    "          functions: [2023-02-20T00:00:00.000000Z,null]\n" +
                     "            long_sequence count: 1\n";
             assertPlanNoLeakCheck(query, expectedPlan);
             assertPlanNoLeakCheck(query + " order by timestamp", expectedPlan);
@@ -9369,7 +9378,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
-                        "  functions: [rnd_boolean()]\n" +
+                        "  functions: [memoize(rnd_boolean())]\n" +
                         "    long_sequence count: 1\n"
         ));
     }
@@ -9466,7 +9475,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000)) [pre-touch]\n" +
+                        "  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z)) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9516,7 +9525,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 1583020800000000<ts [pre-touch]\n" +
+                        "  filter: 2020-03-01T00:00:00.000000Z<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9533,17 +9542,44 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWhereOrderByLimit() throws Exception {
+    public void testSelectWhereOrderByLimit1() throws Exception {
         assertPlan(
                 "create table xx ( x long, str string) ",
                 "select * from xx where str = 'A' order by str,x limit 10",
-                "Sort light lo: 10\n" +
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: str='A'\n" +
                         "  keys: [str, x]\n" +
-                        "    Async Filter workers: 1\n" +
-                        "      filter: str='A'\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: xx\n"
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit2() throws Exception {
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select * from xx where str is not null order by str,x limit 10",
+                "Async JIT Top K lo: 10 workers: 1\n" +
+                        "  filter: str is not null\n" +
+                        "  keys: [str, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
+        );
+    }
+
+    @Test
+    public void testSelectWhereOrderByLimit3() throws Exception {
+        assertPlan(
+                "create table xx ( x long, id uuid ) ",
+                "select * from xx order by id desc, x limit 10",
+                "Async Top K lo: 10 workers: 1\n" +
+                        "  filter: null\n" +
+                        "  keys: [id desc, x]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: xx\n"
         );
     }
 
@@ -9901,7 +9937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and ts=1640995200000000) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9953,7 +9989,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or 1609459200000000<ts) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10215,7 +10251,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long() [pre-touch]\n" +
+                        "  filter: memoize(l=rnd_long()) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10674,7 +10710,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts, l limit 10) order by ts, l",
                     "Sort light\n" +
                             "  keys: [ts, l]\n" +
-                            "    Sort light lo: 10\n" +
+                            "    Async Top K lo: 10 workers: 1\n" +
+                            "      filter: null\n" +
                             "      keys: [ts, l]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -11687,10 +11724,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
-                    "1\t1\t1.0\t1.0\t1.0\n" +
-                    "2\t2\t2.0\t2.0\t2.0\n" +
-                    "3\t1\t3.0\t3.0\t3.0\n", sql);
+            assertSql(
+                    "i\trow_number\tavg\tsum\tfirst_value\n" +
+                            "1\t1\t1.0\t1.0\t1\n" +
+                            "2\t2\t2.0\t2.0\t2\n" +
+                            "3\t1\t3.0\t3.0\t3\n",
+                    sql
+            );
         });
     }
 
@@ -11747,13 +11787,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
         if (factory instanceof EqSymTimestampFunctionFactory) {
             return true;
         }
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return ((SwappingArgsFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return ((ArgSwappingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
 
         if (factory instanceof NegatingFunctionFactory) {
-            if (((NegatingFunctionFactory) factory).getDelegate() instanceof SwappingArgsFunctionFactory) {
-                return ((SwappingArgsFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
+            if (((NegatingFunctionFactory) factory).getDelegate() instanceof ArgSwappingFunctionFactory) {
+                return ((ArgSwappingFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
             }
             return ((NegatingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
         }
@@ -11762,8 +11802,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isIPv4StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isIPv4StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isIPv4StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isIPv4StrFactory(((NegatingFunctionFactory) factory).getDelegate());
@@ -11775,8 +11815,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private static boolean isLong256StrFactory(FunctionFactory factory) {
-        if (factory instanceof SwappingArgsFunctionFactory) {
-            return isLong256StrFactory(((SwappingArgsFunctionFactory) factory).getDelegate());
+        if (factory instanceof ArgSwappingFunctionFactory) {
+            return isLong256StrFactory(((ArgSwappingFunctionFactory) factory).getDelegate());
         }
         if (factory instanceof NegatingFunctionFactory) {
             return isLong256StrFactory(((NegatingFunctionFactory) factory).getDelegate());
@@ -11832,8 +11872,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 return new LongConstant(val);
             case ColumnType.DATE:
                 return new DateConstant(val * 86_400_000L);
-            case ColumnType.TIMESTAMP:
-                return new TimestampConstant(val * 86_400_000L);
+            case ColumnType.TIMESTAMP_MICRO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_MICRO);
+            case ColumnType.TIMESTAMP_NANO:
+                return new TimestampConstant(val * 86_400_000L, ColumnType.TIMESTAMP_NANO);
             default:
                 ObjList<Function> availableValues = values.get(type);
                 if (availableValues != null) {

@@ -53,7 +53,6 @@ import static io.questdb.std.Files.SEPARATOR;
 // This class also reduces file open/close operations by caching file descriptors.
 // when the segment is marked as not last segment usage.
 public class TableWriterSegmentFileCache {
-    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final Log LOG = LogFactory.getLog(TableWriterSegmentFileCache.class);
     private final CairoConfiguration configuration;
     private final TableToken tableToken;
@@ -68,9 +67,12 @@ public class TableWriterSegmentFileCache {
     public TableWriterSegmentFileCache(TableToken tableToken, CairoConfiguration configuration) {
         this.tableToken = tableToken;
         this.configuration = configuration;
+        ObjectFactory<MemoryCMOR> memoryFactory = configuration.getBypassWalFdCache()
+                ? TableWriterSegmentFileCache::openMemoryCMORBypassFdCache
+                : TableWriterSegmentFileCache::openMemoryCMORNormal;
 
         FilesFacade ff = configuration.getFilesFacade();
-        walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
+        walColumnMemoryPool = new WeakClosableObjectPool<>(memoryFactory, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
         walFdCloseCachedFdAction = (key, fdList) -> {
             for (int i = 0, n = fdList.size(); i < n; i++) {
                 long fd = fdList.get(i);
@@ -83,14 +85,15 @@ public class TableWriterSegmentFileCache {
     }
 
     public void closeWalFiles(boolean isLastSegmentUsage, long walSegmentId, int lo) {
-        LOG.debug().$("closing wal columns [table=").$(tableToken.getDirName())
+        LOG.debug().$("closing wal columns [table=").$(tableToken)
                 .$(", walSegmentId=").$(walSegmentId)
                 .$(", isLastSegmentUsage=").$(isLastSegmentUsage)
                 .I$();
 
         int key = walFdCache.keyIndex(walSegmentId);
+        boolean cacheIsDisabled = configuration.getBypassWalFdCache();
         boolean cacheIsFull = walFdCacheSize >= configuration.getWalMaxSegmentFileDescriptorsCache();
-        if (isLastSegmentUsage || cacheIsFull) {
+        if (isLastSegmentUsage || cacheIsFull || cacheIsDisabled) {
             if (key < 0) {
                 LongList fds = walFdCache.valueAt(key);
                 walFdCache.removeAt(key);
@@ -195,7 +198,9 @@ public class TableWriterSegmentFileCache {
 
     public void mmapSegments(TableMetadata metadata, @Transient Path walPath, long walSegmentId, long rowLo, long rowHi) {
         int timestampIndex = metadata.getTimestampIndex();
-        LOG.debug().$("open columns [table=").$(tableToken.getDirName()).$(", walSegmentId=").$(walSegmentId).I$();
+        LOG.debug().$("open columns [table=").$(tableToken)
+                .$(", walSegmentId=").$(walSegmentId)
+                .I$();
         int walPathLen = walPath.size();
         final int columnCount = metadata.getColumnCount();
         int fdCacheKey = walFdCache.keyIndex(walSegmentId);
@@ -203,6 +208,7 @@ public class TableWriterSegmentFileCache {
         if (fdCacheKey < 0) {
             fds = walFdCache.valueAt(fdCacheKey);
         }
+        int initialSize = walMappedColumns.size();
 
         try {
             int file = 0;
@@ -225,7 +231,10 @@ public class TableWriterSegmentFileCache {
 
                         LPSZ ifile = auxFd == -1 ? iFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (auxFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd)
+                                    .$(", path=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         columnTypeDriver.configureAuxMemOM(
                                 configuration.getFilesFacade(),
@@ -241,7 +250,10 @@ public class TableWriterSegmentFileCache {
 
                         LPSZ dfile = dataFd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (dataFd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", wal=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd)
+                                    .$(", wal=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         columnTypeDriver.configureDataMemOM(
                                 configuration.getFilesFacade(),
@@ -262,7 +274,10 @@ public class TableWriterSegmentFileCache {
                         long fd = fds != null ? fds.get(file++) : -1;
                         LPSZ dfile = fd == -1 ? dFile(walPath, metadata.getColumnName(columnIndex), -1L) : null;
                         if (fd != -1) {
-                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+                            LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd)
+                                    .$(", path=").$(walPath)
+                                    .$(", walSegment=").$(walSegmentId)
+                                    .I$();
                         }
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
@@ -282,8 +297,23 @@ public class TableWriterSegmentFileCache {
                 }
             }
         } catch (Throwable th) {
-            closeWalFiles(true, walSegmentId, 0);
+            closeWalFiles(true, walSegmentId, initialSize);
+            walMappedColumns.setPos(initialSize); // already done by closeWalFiles(); kept for clarity
+            // Avoid double removal/pool push by the finally block when cached FDs were consumed.
+            fds = null;
             throw th;
+        } finally {
+            // Now that the FDs are used in the column objects, remove them from the cache.
+            // to avoid double close in case of exceptions.
+            if (fdCacheKey < 0) {
+                walFdCache.removeAt(fdCacheKey);
+                walFdCacheSize--;
+            }
+
+            if (fds != null) {
+                fds.clear();
+                walFdCacheListPool.push(fds);
+            }
         }
     }
 
@@ -301,17 +331,32 @@ public class TableWriterSegmentFileCache {
         try {
             path.concat(WalUtils.WAL_NAME_BASE);
             int walBaseLen = path.size();
-            for (int i = 0; i < segmentCopyInfo.getSegmentCount(); i++) {
-                int walId = segmentCopyInfo.getWalId(i);
-                int segmentId = segmentCopyInfo.getSegmentId(i);
-                path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
-                long rowLo = segmentCopyInfo.getRowLo(i);
-                long rowHi = segmentCopyInfo.getRowHi(i);
-                long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-                mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+            try {
+                for (int i = 0, n = segmentCopyInfo.getSegmentCount(); i < n; i++) {
+                    int walId = segmentCopyInfo.getWalId(i);
+                    int segmentId = segmentCopyInfo.getSegmentId(i);
+                    path.trimTo(walBaseLen).put(walId).put(SEPARATOR).put(segmentId);
+                    long rowLo = segmentCopyInfo.getRowLo(i);
+                    long rowHi = segmentCopyInfo.getRowHi(i);
+                    long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
+                    mmapSegments(metadata, path, walIdSegmentId, rowLo, rowHi);
+                }
+            } catch (Throwable th) {
+                // Close all the columns without placing into the cache.
+                Misc.freeObjListAndClear(walMappedColumns);
+                closeWalFiles();
+                throw th;
             }
         } finally {
             path.trimTo(pathSize1);
         }
+    }
+
+    private static MemoryCMOR openMemoryCMORBypassFdCache() {
+        return Vm.getMemoryCMOR(true);
+    }
+
+    private static MemoryCMOR openMemoryCMORNormal() {
+        return Vm.getMemoryCMOR(false);
     }
 }

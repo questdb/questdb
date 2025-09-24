@@ -48,15 +48,13 @@ class OperationExecutor implements Closeable {
 
     OperationExecutor(
             CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
         executionContext = new WalApplySqlExecutionContext(
                 engine,
-                workerCount,
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
         executionContext.with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -84,7 +82,7 @@ class OperationExecutor implements Closeable {
             int stallCount = 0;
             while (true) {
                 try {
-                    compiledQuery = compiler.compile(alterSql, executionContext, false);
+                    compiledQuery = compiler.compile(alterSql, executionContext);
                     break;
                 } catch (TableReferenceOutOfDateException ex) {
                     // The table is renamed in the table registry
@@ -121,7 +119,7 @@ class OperationExecutor implements Closeable {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
-            final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext, false);
+            final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
                 updateOperation.withSqlStatement(updateSql);
                 updateOperation.withContext(executionContext);
@@ -140,7 +138,7 @@ class OperationExecutor implements Closeable {
         rnd.reset(seed0, seed1);
     }
 
-    public void setNowAndFixClock(long now) {
-        executionContext.setNowAndFixClock(now);
+    public void setNowAndFixClock(long now, int nowTimestampType) {
+        executionContext.setNowAndFixClock(now, nowTimestampType);
     }
 }

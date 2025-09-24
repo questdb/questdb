@@ -30,18 +30,18 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
-
-    CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx, boolean generateProgressLogger) throws SqlException;
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
@@ -58,6 +58,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
+            @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;

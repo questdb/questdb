@@ -27,8 +27,8 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.Clock;
 
 public interface JsonQueryProcessorConfiguration {
 
@@ -44,7 +44,7 @@ public interface JsonQueryProcessorConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    NanosecondClock getNanosecondClock();
+    Clock getNanosecondClock();
 
     default byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;

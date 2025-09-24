@@ -41,9 +41,9 @@ import org.jetbrains.annotations.Nullable;
 public abstract class SampleByIntervalIterator {
     protected TimestampSampler sampler;
     protected int step;
+    private LongList intervals;
     // index of next txn timestamp interval to check against
     private int txnIntervalLoIndex;
-    private LongList txnIntervals;
 
     /**
      * Returns maximum timestamp that belong to the iterated intervals.
@@ -73,20 +73,27 @@ public abstract class SampleByIntervalIterator {
     public abstract long getTimestampLo();
 
     /**
+     * Returns true if the current interval is the last interval.
+     */
+    public boolean isLast() {
+        return getTimestampHi() >= getMaxTimestamp();
+    }
+
+    /**
      * Iterates to the next interval.
      *
      * @return true if the iterator moved to the next interval; false if the iteration has ended
      */
     public boolean next() {
-        final int txnIntervalsSize = txnIntervals != null ? txnIntervals.size() : -1;
+        final int intervalsSize = intervals != null ? intervals.size() : -1;
         OUT:
         while (next0()) {
-            if (txnIntervalsSize != -1) {
+            if (intervalsSize != -1) {
                 final long iteratorLo = getTimestampLo();
                 final long iteratorHi = getTimestampHi() - 1; // hi is exclusive, hence -1
-                while (txnIntervalLoIndex < txnIntervalsSize) {
-                    final long intervalLo = txnIntervals.getQuick(txnIntervalLoIndex);
-                    final long intervalHi = txnIntervals.getQuick(txnIntervalLoIndex + 1);
+                while (txnIntervalLoIndex < intervalsSize) {
+                    final long intervalLo = intervals.getQuick(txnIntervalLoIndex);
+                    final long intervalHi = intervals.getQuick(txnIntervalLoIndex + 1);
 
                     if (iteratorHi < intervalLo) {
                         // iterator timestamps are before the txn interval
@@ -123,10 +130,10 @@ public abstract class SampleByIntervalIterator {
 
     protected void of(
             @NotNull TimestampSampler sampler,
-            @Nullable LongList txnIntervals
+            @Nullable LongList intervals
     ) {
         this.sampler = sampler;
-        this.txnIntervals = txnIntervals;
+        this.intervals = intervals;
     }
 
     protected abstract void toTop0();

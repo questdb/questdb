@@ -98,6 +98,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid date [str=").put(str).put(']');
     }
 
+    public static SqlException invalidDate(Utf8Sequence str, int position) {
+        return position(position).put("Invalid date [str=").put(str).put(']');
+    }
+
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
     }
@@ -188,6 +192,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     public SqlException put(@Nullable CharSequence cs) {
         if (cs != null) {
             message.put(cs);
+        }
+        return this;
+    }
+
+    public SqlException put(@Nullable CharSequence cs, int lo, int hi) {
+        if (cs != null) {
+            message.put(cs, lo, hi);
         }
         return this;
     }

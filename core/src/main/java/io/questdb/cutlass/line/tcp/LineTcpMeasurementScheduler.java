@@ -55,6 +55,7 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -83,6 +84,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
@@ -94,9 +96,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool ioWorkerPool,
+            WorkerPool sharedPoolNetwork,
             IODispatcher<LineTcpConnectionContext> dispatcher,
-            WorkerPool writerWorkerPool
+            WorkerPool sharedPoolWrite
     ) {
         try {
             this.engine = engine;
@@ -106,28 +108,28 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
-            this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
-            this.tableNameSinks = new StringSink[ioWorkerPoolSize];
-            for (int i = 0; i < ioWorkerPoolSize; i++) {
+            final int networkSharedPoolSize = sharedPoolNetwork.getWorkerCount();
+            this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
+            this.tableNameSinks = new StringSink[networkSharedPoolSize];
+            for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs[i] = netIoJob;
-                ioWorkerPool.assign(i, netIoJob);
-                ioWorkerPool.freeOnExit(netIoJob);
+                sharedPoolNetwork.assign(i, netIoJob);
+                sharedPoolNetwork.freeOnExit(netIoJob);
             }
 
             // Worker count is set to 1 because we do not use this execution context
             // in worker threads.
             tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
             idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-            loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+            loadByWriterThread = new long[sharedPoolWrite.getWorkerCount()];
             autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
             autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
             int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
             int queueSize = lineConfiguration.getWriterQueueCapacity();
             long commitInterval = configuration.getCommitInterval();
-            int nWriterThreads = writerWorkerPool.getWorkerCount();
+            int nWriterThreads = sharedPoolWrite.getWorkerCount();
             pubSeq = new MPSequence[nWriterThreads];
             //noinspection unchecked
             queue = new RingQueue[nWriterThreads];
@@ -141,8 +143,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         (address, addressSize) -> new LineTcpMeasurementEvent(
                                 address,
                                 addressSize,
-                                lineConfiguration.getMicrosecondClock(),
-                                lineConfiguration.getTimestampAdapter(),
+                                lineConfiguration.getTimestampUnit(),
                                 defaultColumnTypes,
                                 lineConfiguration.isStringToCharCastAllowed(),
                                 lineConfiguration.getMaxFileNameLength(),
@@ -159,15 +160,15 @@ public class LineTcpMeasurementScheduler implements Closeable {
 
                 assignedTables[i] = new ObjList<>();
 
-                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
+                final LineTcpLegacyWriterJob lineTcpLegacyWriterJob = new LineTcpLegacyWriterJob(
                         i,
                         q,
                         subSeq,
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpWriterJob);
+                sharedPoolWrite.assign(i, lineTcpLegacyWriterJob);
+                sharedPoolWrite.freeOnExit(lineTcpLegacyWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
@@ -179,9 +180,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
             lineWalAppender = new LineWalAppender(
                     autoCreateNewColumns,
                     configuration.isStringToCharCastAllowed(),
-                    configuration.getTimestampAdapter(),
-                    cairoConfiguration.getMaxFileNameLength(),
-                    configuration.getMicrosecondClock()
+                    configuration.getTimestampUnit(),
+                    sink,
+                    cairoConfiguration.getMaxFileNameLength()
             );
         } catch (Throwable t) {
             close();
@@ -212,6 +213,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
+        Misc.free(sink);
     }
 
     public boolean doMaintenance(
@@ -238,7 +240,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                             idleTableUpdateDetailsUtf16.put(tableNameUtf16, tud);
                             tud.removeReference(readerWorkerId);
                             pubSeq[writerWorkerId].done(seq);
-                            LOG.info().$("active table going idle [tableName=").$(tableNameUtf16).I$();
+                            LOG.info().$("active table going idle [tableName=").$safe(tableNameUtf16).I$();
                         }
                         return true;
                     } else {
@@ -267,7 +269,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             }
             LOG.info()
                     .$("releasing writer, its been idle since ").$ts(tub.getLastMeasurementMillis() * 1_000)
-                    .$("[tableName=").$(tub.getTableNameUtf16())
+                    .$("[tableName=").$safe(tub.getTableNameUtf16())
                     .I$();
 
             event.releaseWriter();
@@ -318,7 +320,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
-                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             // More details will be logged by catching thread
@@ -445,7 +447,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     if (idleTudKeyIndex < 0) {
                         // TUD is found in global idle cache - this meant it is non-WAL
                         tud = idleTableUpdateDetailsUtf16.valueAt(idleTudKeyIndex);
-                        LOG.info().$("idle table going active [tableName=").$(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("idle table going active [tableName=").$safe(tud.getTableNameUtf16()).I$();
                         if (tud.getWriter() == null) {
                             tud.closeNoLock();
                             // Use actual table name from the "details" to avoid case mismatches in the
@@ -541,7 +543,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 tableNameUtf8
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tud.getTableNameUtf16(), tud);
-        LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
+        LOG.info().$("assigned ").$safe(tableNameUtf16).$(" to thread ").$(threadId).$();
         return tud;
     }
 
@@ -554,7 +556,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
             if (stats != null) {
                 loadByWriterThread[stats.getWriterThreadId()] += stats.getEventsProcessedSinceReshuffle();
             } else {
-                LOG.error().$("could not find statistic for table [name=").$(tableName).I$();
+                LOG.error().$("could not find statistic for table [name=").$safe(tableName).I$();
             }
         }
     }

@@ -121,7 +121,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.$("fin");
             }
             log.$(" [id=").$(sqlId)
-                    .$(", sql=`").utf8(sqlText)
+                    .$(", sql=`").$safe(sqlText)
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
@@ -188,17 +188,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // We need guaranteed logging for errors, hence errorW() call.
 
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText)
+                        .$(", sql=`").$safe(sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
-                        .$(", msg=").$(message)
+                        .$(", msg=").$safe(message)
                         .$(", errno=").$(errno)
                         .$(", pos=").$(pos);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
                 log.$(" [id=").$(sqlId)
-                        .$(", sql=`").utf8(sqlText)
+                        .$(", sql=`").$safe(sqlText)
                         .$("`, ").$(executionContext)
                         .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
                         .$(", time=").$(durationNanos)
@@ -227,7 +227,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)
-                    .$(", sql=`").utf8(sqlText)
+                    .$(", sql=`").$safe(sqlText)
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(jit)
                     .I$();
@@ -338,7 +338,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // In this scenario, the returned pool entry got used by another query and
             // readers.clear() came in tangentially to this query.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
-                    .$(resource.getTableToken().getTableName()).I$();
+                    .$(resource.getTableToken()).I$();
         }
     }
 
@@ -374,7 +374,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
-            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
+            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
         }
     }
 
@@ -442,6 +442,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public long preComputedStateSize() {
+            return base.preComputedStateSize();
+        }
+
+        @Override
         public void recordAt(Record record, long atRowId) {
             base.recordAt(record, atRowId);
         }
@@ -467,6 +472,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     isOpen = false;
                     base = Misc.free(base);
                 }
+            } catch (Throwable th0) {
+                LOG.critical()
+                        .$("could not close record cursor")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").$safe(queryTrace.queryText)
+                        .$(", error=").$(th0)
+                        .I$();
             } finally {
                 // When execution context is null, the cursor has never been opened.
                 // Otherwise, cursor open attempt has been made, but may not have fully succeeded.

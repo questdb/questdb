@@ -86,31 +86,32 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                 " and currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
                     }
 
-                    final String originalColumns =
-                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                                    "i\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                                    "amt\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                                    "b\tBOOLEAN\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "c\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "d\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "e\tFLOAT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "f\tSHORT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "g\tDATE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "ik\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                                    "j\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "k\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "l\tBYTE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "m\tBINARY\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "n\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n";
+                    drainWalQueue();
+
+                    final String originalColumns = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\n" +
+                            "amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\n" +
+                            "j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n";
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                                    "mycol2\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n",
+                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
+                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
                             "show columns from x",
                             null,
                             false
@@ -694,6 +695,56 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddTimestampNSColumn() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createX();
+
+                    execute("alter table x add column nscol timestamp_ns");
+                    drainWalQueue();
+
+                    assertSql("ddl\n" +
+                                    "CREATE TABLE 'x' ( \n" +
+                                    "\ti INT,\n" +
+                                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tamt DOUBLE,\n" +
+                                    "\ttimestamp TIMESTAMP,\n" +
+                                    "\tb BOOLEAN,\n" +
+                                    "\tc STRING,\n" +
+                                    "\td DOUBLE,\n" +
+                                    "\te FLOAT,\n" +
+                                    "\tf SHORT,\n" +
+                                    "\tg DATE,\n" +
+                                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                                    "\tj LONG,\n" +
+                                    "\tk TIMESTAMP,\n" +
+                                    "\tl BYTE,\n" +
+                                    "\tm BINARY,\n" +
+                                    "\tn STRING,\n" +
+                                    "\tnscol TIMESTAMP_NS\n" +
+                                    ") timestamp(timestamp) PARTITION BY DAY " + (isWal ? "" : "BYPASS ") + "WAL\n" +
+                                    "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                            "show create table x;");
+
+                    assertQueryNoLeakCheck(
+                            "c\tnscol\n" +
+                                    "XYZ\t\n" +
+                                    "ABC\t\n" +
+                                    "ABC\t\n" +
+                                    "XYZ\t\n" +
+                                    "\t\n" +
+                                    "CDE\t\n" +
+                                    "CDE\t\n" +
+                                    "ABC\t\n" +
+                                    "\t\n" +
+                                    "XYZ\t\n",
+                            "select c, nscol from x"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testAddTwoColumns() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -713,31 +764,32 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                 " and currently not supported for WAL tables [table=x, oldStructureVersion=0, newStructureVersion=2]");
                     }
 
-                    final String originalColumns =
-                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                                    "i\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                                    "amt\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                                    "b\tBOOLEAN\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "c\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "d\tDOUBLE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "e\tFLOAT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "f\tSHORT\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "g\tDATE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "ik\tSYMBOL\tfalse\t0\ttrue\t128\tfalse\tfalse\n" +
-                                    "j\tLONG\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "k\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "l\tBYTE\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "m\tBINARY\tfalse\t0\tfalse\t0\tfalse\tfalse\n" +
-                                    "n\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n";
+                    drainWalQueue();
+
+                    final String originalColumns = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                            "i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\n" +
+                            "amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                            "b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\n" +
+                            "j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                            "n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n";
 
                     assertQueryNoLeakCheck(
                             isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\tfalse\tfalse\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n",
+                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
+                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n",
                             "show columns from x",
                             null,
                             false
@@ -825,8 +877,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr double[;", 36, "']' expected");
-            assertException("alter table x add column arr double[][;", 38, "']' expected");
+            assertException("alter table x add column arr double[;", 35, "syntax error at column type definition, expected array type: 'DOUBLE[]...', but found: 'double['");
+            assertException("alter table x add column arr double[][;", 37, "syntax error at column type definition, expected array type: 'DOUBLE[][]...', but found: 'double[]['");
             assertException("alter table x add column arr double];", 29, "arr has an unmatched `]` - were you trying to define an array?");
             assertException("alter table x add column arr double[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
         });

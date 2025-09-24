@@ -81,9 +81,9 @@ public interface MemoryM extends Closeable {
      * @param opts              open file flags
      * @param madviseOpts       madvise flags - madvise call is made when a non-negative value is provided
      */
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts);
+    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts, int madviseOpts);
 
-    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+    default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, int opts) {
         of(ff, name, extendSegmentSize, size, memoryTag, opts, -1);
     }
 
@@ -91,11 +91,16 @@ public interface MemoryM extends Closeable {
         of(ff, name, extendSegmentSize, size, memoryTag, CairoConfiguration.O_NONE, -1);
     }
 
+    /**
+     * Maps file based on its size as reported by the file system. This method must not be used by readers that
+     * will map files concurrently with writes performed by other threads. File length is not a reliable way to determine
+     * the size of the file contents.
+     *
+     * @param ff        the facade
+     * @param name      file name
+     * @param memoryTag the memory tag to track leaks if memory is not released or memory consumption
+     */
     default void smallFile(FilesFacade ff, LPSZ name, int memoryTag) {
         of(ff, name, ff.getPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
-    }
-
-    default void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), ff.length(name), memoryTag, CairoConfiguration.O_NONE, -1);
     }
 }

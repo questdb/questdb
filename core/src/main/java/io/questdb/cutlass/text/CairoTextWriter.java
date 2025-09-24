@@ -311,8 +311,11 @@ public class CairoTextWriter implements Closeable, Mutable {
                         this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     case ColumnType.TIMESTAMP:
-                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                            this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                        // different timestamp type
+                        if (detectedAdapter instanceof TimestampAdapter) {
+                            ((TimestampAdapter) detectedAdapter).reCompileDateFormat(ColumnType.getTimestampDriver(columnType).getTimestampDateFormatFactory());
+                        } else if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter, columnType));
                         } else {
                             logTypeError(i);
                             this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
@@ -340,7 +343,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void logTypeError(int i) {
         LOG.info()
-                .$("mis-detected [table=").$(tableName)
+                .$("mis-detected [table=").$safe(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
@@ -439,11 +442,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             // to use table's maxUncommittedRows and o3MaxLag if they're not set.
             if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
                 o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
-                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").$safe(tableName).$();
             }
             if (maxUncommittedRows == -1) {
                 maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
-                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").$safe(tableName).$();
             }
         }
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);

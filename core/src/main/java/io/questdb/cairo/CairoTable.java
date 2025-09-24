@@ -38,14 +38,15 @@ public class CairoTable implements Sinkable {
     private boolean dedup;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
-    private char matViewTimerIntervalUnit;
     private long matViewTimerStart;
+    private char matViewTimerUnit;
     private int maxUncommittedRows;
     private long metadataVersion = -1;
     private long o3MaxLag;
     private int partitionBy;
     private boolean softLink;
     private int timestampIndex;
+    private int timestampType;
     private TableToken token;
     private int ttlHoursOrMonths;
 
@@ -65,6 +66,7 @@ public class CairoTable implements Sinkable {
         columnNameIndexMap = fromTab.columnNameIndexMap;
 
         metadataVersion = fromTab.getMetadataVersion();
+        timestampType = fromTab.getTimestampType();
         partitionBy = fromTab.getPartitionBy();
         maxUncommittedRows = fromTab.getMaxUncommittedRows();
         o3MaxLag = fromTab.getO3MaxLag();
@@ -75,7 +77,7 @@ public class CairoTable implements Sinkable {
         matViewRefreshLimitHoursOrMonths = fromTab.getMatViewRefreshLimitHoursOrMonths();
         matViewTimerStart = fromTab.getMatViewTimerStart();
         matViewTimerInterval = fromTab.getMatViewTimerInterval();
-        matViewTimerIntervalUnit = fromTab.getMatViewTimerIntervalUnit();
+        matViewTimerUnit = fromTab.getMatViewTimerUnit();
     }
 
     public int getColumnCount() {
@@ -115,12 +117,12 @@ public class CairoTable implements Sinkable {
         return matViewTimerInterval;
     }
 
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
     public long getMatViewTimerStart() {
         return matViewTimerStart;
+    }
+
+    public char getMatViewTimerUnit() {
+        return matViewTimerUnit;
     }
 
     public int getMaxUncommittedRows() {
@@ -165,6 +167,10 @@ public class CairoTable implements Sinkable {
         return null;
     }
 
+    public int getTimestampType() {
+        return timestampType;
+    }
+
     /**
      * Returns the time-to-live (TTL) of the data in this table: if positive,
      * it's in hours; if negative, it's in months (and the actual value is positive)
@@ -187,22 +193,6 @@ public class CairoTable implements Sinkable {
 
     public void setDedupFlag(boolean dedup) {
         this.dedup = dedup;
-    }
-
-    public void setMatViewRefreshLimitHoursOrMonths(int matViewRefreshLimitHoursOrMonths) {
-        this.matViewRefreshLimitHoursOrMonths = matViewRefreshLimitHoursOrMonths;
-    }
-
-    public void setMatViewTimerInterval(int matViewTimerInterval) {
-        this.matViewTimerInterval = matViewTimerInterval;
-    }
-
-    public void setMatViewTimerIntervalUnit(char matViewTimerIntervalUnit) {
-        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
-    }
-
-    public void setMatViewTimerStart(long matViewTimerStart) {
-        this.matViewTimerStart = matViewTimerStart;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -231,6 +221,10 @@ public class CairoTable implements Sinkable {
 
     public void setTimestampIndex(int timestampIndex) {
         this.timestampIndex = timestampIndex;
+    }
+
+    public void setTimestampType(int timestampType) {
+        this.timestampType = timestampType;
     }
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {

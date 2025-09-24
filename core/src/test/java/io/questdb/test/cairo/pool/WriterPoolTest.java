@@ -157,11 +157,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
 
             @Override
@@ -535,7 +535,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final AtomicInteger writerCount = new AtomicInteger();
 
                 for (int i = 0; i < N; i++) {
-                    TableToken tableName = new TableToken("table_" + i, "table_" + i, i, false, false, false);
+                    TableToken tableName = new TableToken("table_" + i, "table_" + i, null, i, false, false, false);
                     new Thread(() -> {
                         try {
                             barrier.await();
@@ -884,11 +884,11 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long openRW(LPSZ name, long opts) {
+            public long openRWNoCache(LPSZ name, int opts) {
                 if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
-                return super.openRW(name, opts);
+                return super.openRWNoCache(name, opts);
             }
 
             @Override

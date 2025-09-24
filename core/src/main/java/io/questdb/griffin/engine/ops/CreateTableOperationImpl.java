@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -74,9 +75,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
-    private final int matViewTimerInterval;
-    private final char matViewTimerIntervalUnit;
-    private final long matViewTimerStart;
     private final String selectText;
     private final int selectTextPosition;
     private final String sqlText;
@@ -91,6 +89,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private String timestampColumnName;
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
+    private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
     private boolean walEnabled;
@@ -121,9 +120,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.matViewTimerStart = 0;
-        this.matViewTimerInterval = 0;
-        this.matViewTimerIntervalUnit = 0;
     }
 
     public CreateTableOperationImpl(
@@ -179,9 +175,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.matViewTimerStart = 0;
-        this.matViewTimerInterval = 0;
-        this.matViewTimerIntervalUnit = 0;
     }
 
     /**
@@ -229,10 +222,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
-            long batchO3MaxLag,
-            long matViewTimerStart,
-            int matViewTimerInterval,
-            char matViewTimerIntervalUnit
+            long batchO3MaxLag
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -253,9 +243,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
-        this.matViewTimerStart = matViewTimerStart;
-        this.matViewTimerInterval = matViewTimerInterval;
-        this.matViewTimerIntervalUnit = matViewTimerIntervalUnit;
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -322,21 +309,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getLikeTableNamePosition() {
         return likeTableNamePosition;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    @Override
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
     }
 
     @Override
@@ -556,16 +528,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         columnBits.clear();
         if (timestampColumnName == null) {
             timestampIndex = metadata.getTimestampIndex();
+            timestampType = metadata.getTimestampType();
         } else {
             timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
             if (timestampIndex == -1) {
                 throw SqlException.position(timestampColumnNamePosition)
                         .put("designated timestamp column doesn't exist [name=").put(timestampColumnName).put(']');
             }
-            int timestampColType = metadata.getColumnType(timestampIndex);
-            if (timestampColType != ColumnType.TIMESTAMP) {
+            timestampType = metadata.getColumnType(timestampIndex);
+            if (!ColumnType.isTimestamp(timestampType)) {
                 throw SqlException.position(timestampColumnNamePosition)
-                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
         }
         ObjList<CharSequence> castColNames = colNameToCastClausePos.keys();
@@ -599,6 +572,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final String columnName = metadata.getColumnName(i);
             final TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
+            if (!TableUtils.isValidColumnName(columnName, 255)) {
+                throw SqlException.position(tableNamePosition)
+                        .put("invalid column name [name=")
+                        .put(columnName)
+                        .put(", position=")
+                        .put(i)
+                        .put(']');
+            }
 
             int columnType;
             int symbolCapacity;
@@ -698,5 +679,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     int getTimestampColumnNamePosition() {
         return timestampColumnNamePosition;
+    }
+
+    int getTimestampType() {
+        return timestampType;
     }
 }

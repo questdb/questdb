@@ -31,11 +31,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -89,17 +91,23 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         if (!sqlExecutionContext.getCairoEngine().isWalTable(tableToken)) {
             throw SqlException.$(argPositions.get(0), "table is not a WAL table: ").put(tableName);
         }
-        return new CursorFunction(new WalTransactionsCursorFactory(tableToken));
+        int timestampType = 0;
+        try (TableMetadata metadata = sqlExecutionContext.getCairoEngine().getTableMetadata(tableToken)) {
+            if (metadata != null) {
+                timestampType = metadata.getTimestampType();
+            }
+        }
+        return new CursorFunction(new WalTransactionsCursorFactory(tableToken, timestampType));
     }
 
     private static class WalTransactionsCursorFactory extends AbstractRecordCursorFactory {
         private final TableListRecordCursor cursor;
         private final TableToken tableToken;
 
-        public WalTransactionsCursorFactory(TableToken tableToken) {
+        public WalTransactionsCursorFactory(TableToken tableToken, int timestampType) {
             super(METADATA);
             this.tableToken = tableToken;
-            this.cursor = new TableListRecordCursor();
+            this.cursor = new TableListRecordCursor(ColumnType.getTimestampDriver(timestampType));
         }
 
         @Override
@@ -115,7 +123,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     break;
                 } catch (CairoException e) {
                     Misc.free(cursor);
-                    if (e.errnoFileCannotRead()) {
+                    if (e.isFileCannotRead()) {
                         // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
                         if (txnLo == 0) {
@@ -125,8 +133,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                                 continue;
                             }
                         }
-                        throw e;
                     }
+                    throw e;
                 }
             }
             return cursor;
@@ -144,8 +152,13 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
 
         private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
+            private final TimestampDriver timestampDriver;
             TransactionRecord record = new TransactionRecord();
             private TransactionLogCursor logCursor;
+
+            private TableListRecordCursor(TimestampDriver timestampDriver) {
+                this.timestampDriver = timestampDriver;
+            }
 
             @Override
             public void close() {
@@ -160,6 +173,11 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             @Override
             public boolean hasNext() {
                 return logCursor.hasNext();
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return 0;
             }
 
             @Override
@@ -219,12 +237,12 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                 @Override
                 public long getTimestamp(int col) {
                     if (col == timestampColumn) {
-                        return logCursor.getCommitTimestamp();
+                        return timestampDriver.toMicros(logCursor.getCommitTimestamp());
                     }
                     if (col == minTimestampColumn) {
                         if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
                                 && logCursor.getTxnRowCount() > 0) {
-                            return logCursor.getTxnMinTimestamp();
+                            return timestampDriver.toMicros(logCursor.getTxnMinTimestamp());
                         } else {
                             return Numbers.LONG_NULL;
                         }
@@ -232,7 +250,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
                     if (col == maxTimestampColumn) {
                         if (logCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V2
                                 && logCursor.getTxnRowCount() > 0) {
-                            return logCursor.getTxnMaxTimestamp();
+                            return timestampDriver.toMicros(logCursor.getTxnMaxTimestamp());
                         } else {
                             return Numbers.LONG_NULL;
                         }
@@ -247,7 +265,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
         sequencerTxnColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP));
+        // todo, maybe we should use ColumnType.String here?, same as `minTimestamp` and `maxTimestamp`.
+        metadata.add(new TableColumnMetadata("timestamp", ColumnType.TIMESTAMP_MICRO));
         timestampColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("walId", ColumnType.INT));
         walIdColumn = metadata.getColumnCount() - 1;
@@ -257,9 +276,9 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         segmentTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("structureVersion", ColumnType.LONG));
         structureVersionColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("minTimestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("minTimestamp", ColumnType.TIMESTAMP_MICRO));
         minTimestampColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("maxTimestamp", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("maxTimestamp", ColumnType.TIMESTAMP_MICRO));
         maxTimestampColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
         rowCountColumn = metadata.getColumnCount() - 1;

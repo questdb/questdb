@@ -30,7 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 
 
 public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
-    protected static final String TABLE_START_CONTENT = "min\tmax\tcount\n" +
+    protected static final String TABLE_START_CONTENT = "min(ts)\tmax(ts)\tcount()\n" +
             "2022-12-08T00:05:11.070207Z\t2022-12-08T23:56:06.447339Z\t277\n" +
             "2022-12-09T00:01:17.517546Z\t2022-12-09T23:57:23.964885Z\t278\n" +
             "2022-12-10T00:02:35.035092Z\t2022-12-10T23:58:41.482431Z\t278\n" +
@@ -51,7 +51,7 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
     protected static final long futurePartitionTs; // nanos
     protected static final String lastPartitionName = "2022-12-11";
     protected static final long lastPartitionTs; // nanos
-    protected static final long lineTsStep = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Timestamps.toString(long)
+    protected static final long lineTsStep = TimeUnit.MILLISECONDS.toNanos(1L); // min resolution of Micros.toString(long)
     protected static final String secondPartitionName = "2022-12-09";
     protected static final long secondPartitionTs; // nanos
 
@@ -77,11 +77,11 @@ public class AbstractLinePartitionReadOnlyTest extends AbstractBootstrapTest {
 
     static {
         try {
-            firstPartitionTs = TimestampFormatUtils.parseTimestamp(firstPartitionName + "T00:00:00.000Z") * 1000L;
-            secondPartitionTs = TimestampFormatUtils.parseTimestamp(secondPartitionName + "T00:00:00.000Z") * 1000L;
-            thirdPartitionTs = TimestampFormatUtils.parseTimestamp(thirdPartitionName + "T00:00:00.000Z") * 1000L;
-            lastPartitionTs = TimestampFormatUtils.parseTimestamp(lastPartitionName + "T00:00:00.000Z") * 1000L;
-            futurePartitionTs = TimestampFormatUtils.parseTimestamp(futurePartitionName + "T00:00:00.000Z") * 1000L;
+            firstPartitionTs = MicrosFormatUtils.parseTimestamp(firstPartitionName + "T00:00:00.000Z") * 1000L;
+            secondPartitionTs = MicrosFormatUtils.parseTimestamp(secondPartitionName + "T00:00:00.000Z") * 1000L;
+            thirdPartitionTs = MicrosFormatUtils.parseTimestamp(thirdPartitionName + "T00:00:00.000Z") * 1000L;
+            lastPartitionTs = MicrosFormatUtils.parseTimestamp(lastPartitionName + "T00:00:00.000Z") * 1000L;
+            futurePartitionTs = MicrosFormatUtils.parseTimestamp(futurePartitionName + "T00:00:00.000Z") * 1000L;
         } catch (NumericException impossible) {
             throw new RuntimeException(impossible);
         }

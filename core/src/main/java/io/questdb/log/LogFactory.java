@@ -26,6 +26,7 @@ package io.questdb.log;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
 import io.questdb.mp.MPSequence;
@@ -46,7 +47,7 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -89,7 +90,7 @@ public class LogFactory implements Closeable {
     private static boolean envEnabled = true;
     private static boolean guaranteedLogging = false;
     private static String rootDir;
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final ObjList<DeferredLogger> deferredLoggers = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
@@ -97,7 +98,7 @@ public class LogFactory implements Closeable {
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final StringSink sink = new StringSink();
-    private final WorkerPool workerPool;
+    private final WorkerPool loggingWorkerPool;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
@@ -106,9 +107,9 @@ public class LogFactory implements Closeable {
         this(MicrosecondClockImpl.INSTANCE);
     }
 
-    private LogFactory(MicrosecondClock clock) {
+    private LogFactory(Clock clock) {
         this.clock = clock;
-        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+        loggingWorkerPool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
             public Metrics getMetrics() {
                 return Metrics.DISABLED;
@@ -235,7 +236,7 @@ public class LogFactory implements Closeable {
         for (int i = 0, n = jobs.size(); i < n; i++) {
             LogWriter job = jobs.get(i);
             job.bindProperties(this);
-            workerPool.assign(job);
+            loggingWorkerPool.assign(job);
         }
     }
 
@@ -409,9 +410,9 @@ public class LogFactory implements Closeable {
         assert !closed.get();
         if (running.compareAndSet(false, true)) {
             for (int i = 0, n = jobs.size(); i < n; i++) {
-                workerPool.assign(jobs.get(i));
+                loggingWorkerPool.assign(jobs.get(i));
             }
-            workerPool.start();
+            loggingWorkerPool.start();
         }
     }
 
@@ -710,14 +711,14 @@ public class LogFactory implements Closeable {
 
     private void haltThread() {
         if (running.compareAndSet(true, false)) {
-            workerPool.halt();
+            loggingWorkerPool.halt();
         }
     }
 
     @TestOnly
     private void pauseThread() {
         if (running.compareAndSet(true, false)) {
-            workerPool.pause();
+            loggingWorkerPool.pause();
         }
     }
 
@@ -933,11 +934,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(int x) {
             return this;
         }
@@ -1003,6 +999,31 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $safe(@Nullable CharSequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $size(long memoryBytes) {
             return this;
         }
@@ -1018,7 +1039,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $utf8(long lo, long hi) {
+        public LogRecord $ts(TimestampDriver driver, long x) {
             return this;
         }
 
@@ -1059,11 +1080,6 @@ public class LogFactory implements Closeable {
 
         @Override
         public LogRecord ts() {
-            return this;
-        }
-
-        @Override
-        public LogRecord utf8(@Nullable CharSequence sequence) {
             return this;
         }
     }

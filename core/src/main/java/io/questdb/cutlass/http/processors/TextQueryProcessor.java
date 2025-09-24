@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -68,7 +69,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -91,24 +91,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public TextQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
@@ -165,7 +155,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                             if (retries == maxSqlRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
-                            info(state).$(e.getFlyweightMessage()).$();
+                            info(state).$safe(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -287,10 +277,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
-    private static void putInterval(HttpChunkedResponse response, Record rec, int col) {
+    private static void putInterval(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (!Interval.NULL.equals(interval)) {
-            response.putQuote().put(interval).putQuote();
+            interval.toSink(response.putQuote(), intervalType);
+            response.putQuote();
         }
     }
 
@@ -476,27 +467,27 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         if (e instanceof CairoException) {
             CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
-                info(state).$("query cancelled [reason=`").$(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").utf8(state.query)
+                info(state).$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else if (ce.isCritical()) {
-                critical(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                critical(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             } else {
-                error(state).$("error [msg=`").$(ce.getFlyweightMessage())
+                error(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").utf8(state.query)
+                        .$("`, q=`").$safe(state.query)
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
-            error(state).$("internal HTTP server error [reason=`").$(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").utf8(state.query)
+            error(state).$("internal HTTP server error [reason=`").$safe(((HttpException) e).getFlyweightMessage())
+                    .$("`, q=`").$safe(state.query)
                     .$("`]").$();
         } else {
             critical(state).$("internal error [ex=").$(e)
-                    .$(", q=`").utf8(state.query)
+                    .$(", q=`").$safe(state.query)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.healthMetrics().incrementUnhandledErrors();
@@ -570,8 +561,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         state.skip = skip;
         state.count = 0L;
         state.stop = stop;
-        state.noMeta = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_NM));
-        state.countRows = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_COUNT));
+        state.noMeta = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_NM));
+        state.countRows = HttpKeywords.isTrue(request.getUrlParam(URL_PARAM_COUNT));
         return true;
     }
 
@@ -607,13 +598,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
-                if (d == d) {
+                if (Numbers.isFinite(d)) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
-                if (f == f) {
+                if (Numbers.isFinite(f)) {
                     response.put(f);
                 }
                 break;
@@ -638,7 +629,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
-                    response.putAscii('"').putISODate(l).putAscii('"');
+                    response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
@@ -687,7 +678,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 putIPv4Value(response, rec, columnIndex);
                 break;
             case ColumnType.INTERVAL:
-                putInterval(response, rec, columnIndex);
+                putInterval(response, rec, columnIndex, columnType);
                 break;
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);
@@ -729,9 +720,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             TextQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("syntax-error [q=`").utf8(state.query)
+        info(state).$("syntax-error [q=`").$safe(state.query)
                 .$("`, at=").$(container.getPosition())
-                .$(", message=`").$(container.getFlyweightMessage()).$('`').I$();
+                .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
         sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
     }
 

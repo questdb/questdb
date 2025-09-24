@@ -45,8 +45,7 @@ import io.questdb.preferences.PreferencesUpdateListener;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 
 import java.io.Closeable;
 
@@ -99,15 +98,15 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             );
             updateTelemetryConfig(engine, compiler, sqlExecutionContext, configTableToken);
         } catch (Throwable th) {
-            LOG.error().$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME).$("]").$(th).$();
+            LOG.error().$("could not update config telemetry [table=").$(configTableToken).$("]").$(th).$();
         }
     }
 
     private void appendConfigRow(CairoEngine engine, TableWriter configWriter, Long256 id, boolean enabled) {
         final TableWriter.Row row = configWriter.newRow();
         if (id == null) {
-            final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
-            final NanosecondClock nanosecondClock = engine.getConfiguration().getNanosecondClock();
+            final io.questdb.std.datetime.Clock clock = engine.getConfiguration().getMicrosecondClock();
+            final Clock nanosecondClock = engine.getConfiguration().getNanosecondClock();
             final long a = nanosecondClock.getTicks();
             final long b = clock.getTicks();
             row.putLong256(0, a, b, 0, 0);
@@ -191,8 +190,8 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
             }
         } catch (CairoException ex) {
             LOG.error()
-                    .$("could not update config telemetry [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, msg=").$(ex.getFlyweightMessage())
+                    .$("could not update config telemetry [table=").$(tableToken)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }

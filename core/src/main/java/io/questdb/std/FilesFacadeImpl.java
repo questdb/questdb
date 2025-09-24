@@ -370,8 +370,18 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public long openRONoCache(LPSZ path) {
+        return Files.openRONoCache(path);
+    }
+
+    @Override
+    public long openRW(LPSZ name, int opts) {
         return Files.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWNoCache(LPSZ name, int opts) {
+        return openRW(name, opts);
     }
 
     @Override
@@ -416,7 +426,7 @@ public class FilesFacadeImpl implements FilesFacade {
         boolean ok = Files.remove(name);
         if (!ok) {
             final int errno = errno();
-            if (Files.errnoFileDoesNotExist(errno)) {
+            if (Files.isErrnoFileDoesNotExist(errno)) {
                 return true;
             }
             if (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN) {

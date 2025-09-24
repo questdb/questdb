@@ -52,7 +52,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
     private final LongList pageSizes = new LongList();
-    private final int workerCount;
+    private final int sharedQueryWorkerCount;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
     // only native partition frames are reentered
@@ -66,14 +66,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
             IntList columnSizeShifts,
-            int workerCount,
+            int sharedQueryWorkerCount,
             int pageFrameMinRows,
             int pageFrameMaxRows
     ) {
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
         columnCount = columnIndexes.size();
-        this.workerCount = workerCount;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
     }
@@ -109,7 +109,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public @Nullable PageFrame next() {
+    public @Nullable PageFrame next(long skipTarget) {
         if (reenterPartitionFrame) {
             if (reenterParquetDecoder != null) {
                 return computeParquetFrame(reenterPartitionLo, reenterPartitionHi);
@@ -117,27 +117,19 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
 
-        final PartitionFrame partitionFrame = partitionFrameCursor.next();
+        final PartitionFrame partitionFrame = partitionFrameCursor.next(skipTarget);
         if (partitionFrame != null) {
             reenterPartitionIndex = partitionFrame.getPartitionIndex();
             final long lo = partitionFrame.getRowLo();
             final long hi = partitionFrame.getRowHi();
 
-            final byte format = partitionFrame.getPartitionFormat();
-            if (format == PartitionFormat.PARQUET) {
-                clearAddresses();
-                reenterParquetDecoder = partitionFrame.getParquetDecoder();
-                reenterPageFrameRowLimit = 0;
-                return computeParquetFrame(lo, hi);
+            if (hi - lo <= skipTarget) {
+                frame.partitionIndex = reenterPartitionIndex;
+                frame.partitionLo = lo;
+                frame.partitionHi = hi;
+                return frame;
             }
-
-            assert format == PartitionFormat.NATIVE;
-            reenterParquetDecoder = null;
-            reenterPageFrameRowLimit = Math.min(
-                    pageFrameMaxRows,
-                    Math.max(pageFrameMinRows, (hi - lo) / workerCount)
-            );
-            return computeNativeFrame(lo, hi);
+            return nextSlow(partitionFrame, lo, hi);
         }
         return null;
     }
@@ -294,6 +286,24 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.rowGroupHi = (int) (adjustedHi - rowCount);
         frame.partitionIndex = reenterPartitionIndex;
         return frame;
+    }
+
+    private TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi) {
+        final byte format = partitionFrame.getPartitionFormat();
+        if (format == PartitionFormat.PARQUET) {
+            clearAddresses();
+            reenterParquetDecoder = partitionFrame.getParquetDecoder();
+            reenterPageFrameRowLimit = 0;
+            return computeParquetFrame(lo, hi);
+        }
+
+        assert format == PartitionFormat.NATIVE;
+        reenterParquetDecoder = null;
+        reenterPageFrameRowLimit = Math.min(
+                pageFrameMaxRows,
+                Math.max(pageFrameMinRows, (hi - lo) / Math.max(sharedQueryWorkerCount, 1))
+        );
+        return computeNativeFrame(lo, hi);
     }
 
     private class TableReaderPageFrame implements PageFrame {

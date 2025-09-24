@@ -65,10 +65,10 @@ public class CountFunctionFactoryHelper {
                                            CairoConfiguration configuration,
                                            SqlExecutionContext sqlExecutionContext,
                                            IsRecordNotNull isRecordNotNull) throws SqlException {
-        factory.checkWindowParameter(position, sqlExecutionContext);
-        WindowContext windowContext = factory.windowContext;
-        long rowsLo = factory.rowsLo;
-        long rowsHi = factory.rowsHi;
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.validate(position, factory.supportNullsDesc());
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
@@ -173,7 +173,7 @@ public class CountFunctionFactoryHelper {
                             isRecordNotNull
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountOverCurrentRowFunction(args.get(0), isRecordNotNull);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -254,7 +254,7 @@ public class CountFunctionFactoryHelper {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new CountOverUnboundedRowsFrameFunction(args.get(0), isRecordNotNull);
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountOverCurrentRowFunction(args.get(0), isRecordNotNull);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -290,7 +290,6 @@ public class CountFunctionFactoryHelper {
         private static final long VALUE_ONE = 1L;
         private static final long VALUE_ZERO = 0L;
         private final IsRecordNotNull isNotNullFunc;
-        private long value;
 
         CountOverCurrentRowFunction(Function arg, IsRecordNotNull isNotNullFunc) {
             super(arg);
@@ -299,8 +298,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public long getLong(Record rec) {
-            value = isNotNullFunc.isNotNull(arg, rec) ? VALUE_ONE : VALUE_ZERO;
-            return value;
+            return isNotNullFunc.isNotNull(arg, rec) ? VALUE_ONE : VALUE_ZERO;
         }
 
         @Override
@@ -313,10 +311,9 @@ public class CountFunctionFactoryHelper {
             return ZERO_PASS;
         }
 
-
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), isNotNullFunc.isNotNull(arg, record) ? VALUE_ONE : VALUE_ZERO);
         }
     }
 
@@ -371,7 +368,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(arg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles count(arg) over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row])
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
@@ -554,7 +551,8 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override
@@ -919,7 +917,8 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), count);
         }
 
         @Override

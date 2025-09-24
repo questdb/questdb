@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.client;
 
 import io.questdb.HttpClientConfiguration;
 import io.questdb.cutlass.http.HttpHeaderParser;
+import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.line.array.ArrayBufferAppender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -33,6 +34,7 @@ import io.questdb.network.IOOperation;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -44,6 +46,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
@@ -54,7 +57,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.net.HttpURLConnection;
 
-import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
+import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public abstract class HttpClient implements QuietCloseable {
@@ -282,25 +285,25 @@ public abstract class HttpClient implements QuietCloseable {
         public Request DELETE() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("DELETE ");
+            return putAscii("DELETE ");
         }
 
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("GET ");
+            return putAscii("GET ");
         }
 
         public Request POST() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("POST ");
+            return putAscii("POST ");
         }
 
         public Request PUT() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
-            return put("PUT ");
+            return putAscii("PUT ");
         }
 
         public Request authBasic(CharSequence username, CharSequence password) {
@@ -510,6 +513,25 @@ public abstract class HttpClient implements QuietCloseable {
             sendHeaderAndContent(maxContentLen, timeout);
         }
 
+        public Request setCookie(CharSequence name, CharSequence value) {
+            beforeHeader();
+            put(HEADER_COOKIE).putAscii(": ").put(name);
+            if (value != null) {
+                putAscii(COOKIE_VALUE_SEPARATOR).put(value);
+            }
+            eol();
+            return this;
+        }
+
+        @Override
+        public String toString() {
+            StringSink ss = new StringSink();
+            DirectUtf8String s = new DirectUtf8String();
+            s.of(bufLo, ptr);
+            ss.put(s);
+            return ss.toString();
+        }
+
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }
@@ -598,10 +620,15 @@ public abstract class HttpClient implements QuietCloseable {
             }
 
             if (socket.supportsTls()) {
-                if (socket.startTlsSession(host) < 0) {
+                try {
+                    socket.startTlsSession(host);
+                } catch (TlsSessionInitFailedException e) {
                     int errno = nf.errno();
                     disconnect();
-                    throw new HttpClientException("could not start TLS session [fd=").put(fd).put(", errno=").put(errno).put(']');
+                    throw new HttpClientException("could not start TLS session [fd=").put(fd)
+                            .put(", error=").put(e.getFlyweightMessage())
+                            .put(", errno=").put(errno)
+                            .put(']');
                 }
             }
             setupIoWait();
@@ -739,6 +766,15 @@ public abstract class HttpClient implements QuietCloseable {
                 case '}':
                     putAsciiInternal("%7D");
                     break;
+                case '\n':
+                    putAsciiInternal("%0A");
+                    break;
+                case '\r':
+                    putAsciiInternal("%0D");
+                    break;
+                case '\t':
+                    putAsciiInternal("%09");
+                    break;
                 default:
                     // there are symbols to escape, but those we do not tend to use at all
                     // https://www.w3schools.com/tags/ref_urlencode.ASP
@@ -845,7 +881,7 @@ public abstract class HttpClient implements QuietCloseable {
             if (isIncomplete()) {
                 throw new HttpClientException("http response headers not yet received");
             }
-            return Utf8s.equalsNcAscii("chunked", getHeader(HEADER_TRANSFER_ENCODING));
+            return HttpKeywords.isChunked(getHeader(HEADER_TRANSFER_ENCODING));
         }
 
         private void free() {

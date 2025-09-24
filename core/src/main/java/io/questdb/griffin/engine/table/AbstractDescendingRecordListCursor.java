@@ -107,6 +107,11 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isTreeMapBuilt ? 1 : 0;
+    }
+
+    @Override
     public long size() {
         return isTreeMapBuilt ? rows.size() : -1;
     }

@@ -51,10 +51,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isCopy;
     private boolean isSoftLink;
-    private int matViewRefreshLimitHoursOrMonths;
-    private int matViewTimerInterval;
-    private char matViewTimerIntervalUnit;
-    private long matViewTimerStart;
     private int maxUncommittedRows;
     private MemoryCARW metaCopyMem; // used when loadFrom() called
     private MemoryMR metaMem;
@@ -158,23 +154,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public int getMatViewRefreshLimitHoursOrMonths() {
-        return matViewRefreshLimitHoursOrMonths;
-    }
-
-    public int getMatViewTimerInterval() {
-        return matViewTimerInterval;
-    }
-
-    public char getMatViewTimerIntervalUnit() {
-        return matViewTimerIntervalUnit;
-    }
-
-    public long getMatViewTimerStart() {
-        return matViewTimerStart;
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -238,7 +217,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public void load(LPSZ path) {
+    public void loadMetadata(LPSZ path) {
         try {
             isCopy = false;
             Misc.free(metaCopyMem);
@@ -251,7 +230,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    public void load() {
+    public void loadMetadata() {
         final long spinLockTimeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
         long deadline = configuration.getMillisecondClock().getTicks() + spinLockTimeout;
@@ -259,7 +238,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         boolean existenceChecked = false;
         while (true) {
             try {
-                load(path.$());
+                loadMetadata(path.$());
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
@@ -270,7 +249,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, spinLockTimeout);
+                TableUtils.handleMetadataLoadException(tableToken, deadline, ex, millisecondClock, spinLockTimeout);
             }
         }
     }
@@ -318,10 +297,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.metadataVersion = mem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
-        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(mem);
-        this.matViewTimerStart = TableUtils.getMatViewTimerStart(mem);
-        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(mem);
-        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -387,10 +362,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.o3MaxLag = newMetaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
-        this.matViewRefreshLimitHoursOrMonths = TableUtils.getMatViewRefreshLimitHoursOrMonths(newMetaMem);
-        this.matViewTimerStart = TableUtils.getMatViewTimerStart(newMetaMem);
-        this.matViewTimerInterval = TableUtils.getMatViewTimerInterval(newMetaMem);
-        this.matViewTimerIntervalUnit = TableUtils.getMatViewTimerIntervalUnit(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
@@ -58,11 +59,14 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        checkWindowParameter(position, sqlExecutionContext);
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new LongNullFunction(null,
                     CountFunctionFactoryHelper.COUNT_NAME,
@@ -163,7 +167,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             isRecordNotNull
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverCurrentRowFunction(null, isRecordNotNull);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -236,7 +240,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverUnboundedRowsFrameFunction(null, isRecordNotNull);
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new CountFunctionFactoryHelper.CountOverCurrentRowFunction(null, isRecordNotNull);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

@@ -78,13 +78,13 @@ public class WalReader implements Closeable {
         rootLen = path.size();
 
         try {
-            metadata = new SequencerMetadata(ff, configuration.getCommitMode(), true);
+            metadata = new SequencerMetadata(configuration, true);
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
-            events = new WalEventReader(ff);
-            LOG.debug().$("open [table=").$(tableName).I$();
+            events = new WalEventReader(configuration);
+            LOG.debug().$("open [table=").$(tableToken).I$();
             int pathLen = path.size();
-            eventCursor = events.of(path.slash().put(segmentId), -1L);
+            eventCursor = events.of(path.slash().put(segmentId), -1);
             path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
             path.slash().put(segmentId);
@@ -108,7 +108,7 @@ public class WalReader implements Closeable {
         Misc.free(metadata);
         Misc.freeObjList(columns);
         Misc.free(path);
-        LOG.debug().$("closed '").utf8(tableName).$('\'').$();
+        LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
     public MemoryCR getColumn(int absoluteIndex) {

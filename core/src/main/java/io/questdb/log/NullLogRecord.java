@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
@@ -56,11 +57,6 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
-        return this;
-    }
-
-    @Override
-    public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         return this;
     }
 
@@ -130,6 +126,31 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $safe(@NotNull CharSequence sequence, int lo, int hi) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable Utf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(long lo, long hi) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $safe(@Nullable CharSequence sequence) {
+        return this;
+    }
+
+    @Override
     public LogRecord $size(long memoryBytes) {
         return this;
     }
@@ -145,7 +166,7 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $utf8(long lo, long hi) {
+    public LogRecord $ts(TimestampDriver driver, long x) {
         return this;
     }
 
@@ -186,11 +207,6 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord ts() {
-        return this;
-    }
-
-    @Override
-    public LogRecord utf8(@Nullable CharSequence sequence) {
         return this;
     }
 }

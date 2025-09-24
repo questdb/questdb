@@ -39,6 +39,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             GroupByFunctionsUpdater groupByFunctionsUpdater,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -53,6 +54,7 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -67,6 +69,11 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
         );
         this.simpleMapValue = simpleMapValue;
         record.of(simpleMapValue);
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return super.preComputedStateSize();
     }
 
     @Override

@@ -52,10 +52,10 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
-    private RecordCursorFactory base;
     private SelectedPageFrameCursor pageFrameCursor;
     private SelectedTimeFrameCursor timeFrameCursor;
 
@@ -180,22 +180,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
-    }
-
-    /**
-     * Replace base factory with another one. This is useful when optimizing a physical plan.
-     * <p>
-     * Important: The new base factory must be compatible with the current one, i.e. it must
-     * have the same metadata and the same column count. This is not checked here, but
-     * it is the responsibility of the caller to ensure that this is the case.
-     * <p>
-     * The old base factory is NOT closed. It is the responsibility of the caller to close it
-     * when it is no longer needed.
-     *
-     * @param base the new base factory
-     */
-    public void replaceBaseFactory(RecordCursorFactory base) {
-        this.base = base;
     }
 
     @Override
@@ -356,13 +340,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean isExternal() {
+            return baseCursor.isExternal();
+        }
+
+        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public @Nullable PageFrame next() {
-            PageFrame baseFrame = baseCursor.next();
+        public @Nullable PageFrame next(long skipTarget) {
+            PageFrame baseFrame = baseCursor.next(skipTarget);
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 
@@ -422,7 +411,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
 

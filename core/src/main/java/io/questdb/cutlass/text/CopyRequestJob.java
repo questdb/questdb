@@ -43,7 +43,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -55,7 +55,7 @@ import static io.questdb.cutlass.text.CopyTask.getStatusName;
 
 public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyRequestJob.class);
-    private final MicrosecondClock clock;
+    private final Clock clock;
     private final CopyContext copyContext;
     private final CairoEngine engine;
     private final int logRetentionDays;
@@ -83,7 +83,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
 
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            // Set sharedQueryWorkerCount as 0, no need to do parallel query execution in this job,
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 0);
             this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

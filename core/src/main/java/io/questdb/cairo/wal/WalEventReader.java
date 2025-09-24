@@ -33,6 +33,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -45,10 +46,11 @@ public class WalEventReader implements Closeable {
     private final MemoryCMR eventMem;
     private final FilesFacade ff;
 
-    public WalEventReader(FilesFacade ff) {
-        this.ff = ff;
-        eventIndexMem = Vm.getCMRInstance();
-        eventMem = Vm.getCMRInstance();
+    public WalEventReader(CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        boolean bypassFdCache = configuration.getBypassWalFdCache();
+        eventIndexMem = Vm.getCMRInstance(bypassFdCache);
+        eventMem = Vm.getCMRInstance(bypassFdCache);
         eventCursor = new WalEventCursor(eventMem);
     }
 
@@ -63,9 +65,9 @@ public class WalEventReader implements Closeable {
     public WalEventCursor of(Path path, long segmentTxn) {
         // The reader needs to deal with:
         //   * _event and _event.i truncation.
-        //   * mmap-written data which has not persisted to disk and appears as zeros when read back.
+        //   * mmap-written data which was not persisted to disk and appears as zeros when read back.
 
-        int trimTo = path.size();
+        final int trimTo = path.size();
         try {
             final int pathLen = path.size();
             path.concat(EVENT_FILE_NAME);
@@ -136,7 +138,7 @@ public class WalEventReader implements Closeable {
 
                     // N.B.
                     // The `_event` file starts with a header. If we're reading a section of the file that was grown
-                    // by setting the filesize (via the mmap writer logic) and either never written or persisted,
+                    // by setting the file size (via the mmap writer logic) and either never written or persisted,
                     // we'd read a zero-value offset or size.
                     // The following two conditionals catch two partial and full corruption cases when data was not
                     // fully flushed to disk.
@@ -181,10 +183,14 @@ public class WalEventReader implements Closeable {
                 eventCursor.openOffset(-1);
             }
 
-            final int formatVersion = eventMem.getInt(WAL_FORMAT_OFFSET_32);
-            if (WALE_FORMAT_VERSION != formatVersion && WALE_MAT_VIEW_FORMAT_VERSION != formatVersion) {
+            // Check only lower short to match the version
+            // Higher short can be used to make a forward compatible change
+            // by adding more data at the footer of each record
+            final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            final short formatVersion = Numbers.decodeLowShort(version);
+            if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION) {
                 throw TableUtils.validationException(eventMem)
-                        .put("Wal events file version does not match runtime version [expected=")
+                        .put("WAL events file version does not match runtime version [expected=")
                         .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
                         .put(", actual=").put(formatVersion)
                         .put(']');

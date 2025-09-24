@@ -41,7 +41,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
@@ -53,18 +52,18 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
@@ -218,7 +217,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.close();
-        Misc.free(selectCache);
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
 
@@ -267,6 +265,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return responseSink.getRawSocket();
     }
 
+    @SuppressWarnings("unused")
     public RejectProcessor getRejectProcessor() {
         return rejectProcessor;
     }
@@ -330,35 +329,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public void init() {
-        if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
-        }
-        connectionCounted = false;
-    }
-
-    @Override
     public boolean invalid() {
         return pendingRetry || receivedBytes > 0 || this.socket == null;
-    }
-
-    @Override
-    public HttpConnectionContext of(long fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        // The context is obtained from the pool, so we should initialize the memory.
-        if (recvBuffer == 0) {
-            // re-read recv buffer size in case the config was reloaded
-            recvBufferSize = configuration.getRecvBufferSize();
-            recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
-            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
-        }
-        // re-read buffer sizes in case the config was reloaded
-        responseSink.of(socket, configuration.getSendBufferSize());
-        headerParser.reopen(configuration.getHttpContextConfiguration().getRequestHeaderBufferSize());
-        multipartContentHeaderParser.reopen(configuration.getHttpContextConfiguration().getMultipartHeaderBufferSize());
-        return this;
     }
 
     public void reset() {
@@ -507,7 +479,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private boolean configureSecurityContext() {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
-            final NanosecondClock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
+            final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
             if (!authenticator.authenticate(headerParser)) {
                 // authenticationNanos stays 0, when it fails this value is irrelevant
@@ -813,7 +785,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         try {
             LOG.info()
                     .$("failed query result cannot be delivered. Kicked out [fd=").$(getFd())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
             processor.failRequest(this, e);
             throw registerDispatcherDisconnect(reason);
@@ -833,10 +805,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private HttpRequestProcessor getHttpRequestProcessor(HttpRequestProcessorSelector selector) {
-        HttpRequestProcessor processor = selector.select(headerParser);
-        if (processor == null) {
-            processor = selector.getDefaultProcessor();
-        }
+        final HttpRequestProcessor processor = selector.select(headerParser);
         return requestValidator.validateRequestType(processor, rejectProcessor);
     }
 
@@ -910,9 +879,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 }
 
                 final long contentLength = headerParser.getContentLength();
-                final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
-                final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
-                        || Utf8s.equalsNcAscii("multipart/mixed", headerParser.getContentType());
+                final boolean chunked = HttpKeywords.isChunked(headerParser.getHeader(HEADER_TRANSFER_ENCODING));
+                final boolean multipartRequest = HttpKeywords.isContentTypeMultipartFormData(headerParser.getContentType())
+                        || HttpKeywords.isContentTypeMultipartMixed(headerParser.getContentType());
 
                 if (multipartRequest) {
                     busyRecv = consumeMultipart(socket, (HttpMultipartContentProcessor) processor, headerEnd, read, newRequest, rescheduleContext);
@@ -965,7 +934,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (ServerDisconnectException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             throw e;
         } catch (HttpException e) {
-            LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$(e.getFlyweightMessage()).$("`]").$();
+            LOG.error().$("http error [fd=").$(getFd()).$(", e=`").$safe(e.getFlyweightMessage()).$("`]").$();
             throw registerDispatcherDisconnect(DISCONNECT_REASON_PROTOCOL_VIOLATION);
         } catch (Throwable e) {
             LOG.error().$("internal error [fd=").$(getFd()).$(", e=`").$(e).$("`]").$();
@@ -1032,5 +1001,25 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = receivedBytes;
         Vect.memmove(recvBuffer, start, receivedBytes);
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
+    }
+
+    @Override
+    protected void doInit() throws TlsSessionInitFailedException {
+        // the context is obtained from the pool, so we should initialize the memory
+        if (recvBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            recvBufferSize = configuration.getRecvBufferSize();
+            recvBufferReadSize = Math.min(forceFragmentationReceiveChunkSize, recvBufferSize);
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        }
+        // re-read buffer sizes in case the config was reloaded
+        responseSink.of(socket, configuration.getSendBufferSize());
+        headerParser.reopen(configuration.getHttpContextConfiguration().getRequestHeaderBufferSize());
+        multipartContentHeaderParser.reopen(configuration.getHttpContextConfiguration().getMultipartHeaderBufferSize());
+
+        if (socket.supportsTls()) {
+            socket.startTlsSession(null);
+        }
+        connectionCounted = false;
     }
 }

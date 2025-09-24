@@ -48,7 +48,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
 
 /**
@@ -94,7 +93,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getSharedWorkerPoolNetworkConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);
@@ -119,7 +118,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
                     CairoEngine engine = qdb.getEngine();
                     CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
-                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getWorkerPoolConfiguration().getWorkerCount());
+                    Assert.assertEquals(SHARED_POOL_SIZE, qdb.getConfiguration().getSharedWorkerPoolNetworkConfiguration().getWorkerCount());
                     Assert.assertEquals(PG_WIRE_POOL_SIZE, qdb.getConfiguration().getPGWireConfiguration().getWorkerCount());
 
                     TableToken tableToken = createPopulateTable(cairoConfig, engine, compiler, context, tableName);

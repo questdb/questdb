@@ -29,8 +29,18 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -88,7 +98,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             header = true;
         } else {
             LOG.info()
-                    .$("no header [table=").$(tableName)
+                    .$("no header [table=").$safe(tableName)
                     .$(", lineCount=").$(lineCount)
                     .$(", errorCount=").$(errorCount)
                     .$(", forceHeader=").$(forceHeader)
@@ -288,7 +298,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             if (Utf8s.utf8ToUtf16(value.lo(), value.hi(), utf8Sink)) {
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
-                LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                LOG.info().$("utf8 error [table=").$safe(tableName).$(", line=0, col=").$(i).$(']').$();
                 columnNames.setQuick(i, "");
             }
         }

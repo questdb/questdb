@@ -35,7 +35,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -107,7 +107,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
@@ -163,7 +163,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
@@ -199,7 +199,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
@@ -261,9 +261,9 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
-            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n";
+            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n";
             String left = "a\tSYMBOL\tfalse\t256\t";
-            String right = "\t128\tfalse\tfalse\n";
+            String right = "\t128\t0\tfalse\tfalse\n";
 
             // check its true by default
             assertSql(header + left + "true" + right, "table_columns('foo')");
@@ -278,7 +278,6 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
 
             // check its true again
             assertSql(header + left + "true" + right, "table_columns('foo')");
-
         });
     }
 
@@ -371,7 +370,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
@@ -479,7 +478,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                     thread.start();
                 }
 
-                MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
                 while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= errorsExpected) {
@@ -593,7 +592,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                     thread.start();
                 }
 
-                MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
                 while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= 0) {
@@ -643,7 +642,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 .withAlterTableMaxWaitTimeout(50_000L)
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
-                    public long openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, int opts) {
                         if (Utf8s.endsWithAscii(name, "default/ts.d.2") || Utf8s.endsWithAscii(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }

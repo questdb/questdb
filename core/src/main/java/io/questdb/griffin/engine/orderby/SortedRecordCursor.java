@@ -24,8 +24,11 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
@@ -101,6 +104,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public long size() {
         return baseCursor.size();
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return chain.size();
     }
 
     @Override

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,7 +36,6 @@ import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -61,6 +61,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
         private final Interval interval = new Interval();
 
         public IntIntervalFunction(Function arg) {
+            super(ColumnType.INTERVAL_RAW);
             this.arg = arg;
         }
 
@@ -71,7 +72,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            interval.of(arg.getInt(rec), Numbers.LONG_NULL);
+            interval.of(arg.getInt(rec), Long.MAX_VALUE);
             return interval;
         }
 
@@ -83,6 +84,11 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
         @Override
         public boolean isOperator() {
             return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

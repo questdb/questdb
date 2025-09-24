@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
@@ -230,6 +231,10 @@ public class IntervalUtilsTest {
 
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
         Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 125));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
     }
 
     @Test
@@ -300,13 +305,13 @@ public class IntervalUtilsTest {
 
     @Test
     public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
-        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
+        long expected = MicrosTimestampDriver.floor("2019-01-01T00:00:00.123456Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
 
         // with offset
-        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
+        expected = MicrosTimestampDriver.floor("2019-01-01T00:00:00.123456+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
         assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
@@ -375,7 +380,7 @@ public class IntervalUtilsTest {
     }
 
     private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
-        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
+        Assert.assertEquals(expectedTimestamp, MicrosTimestampDriver.floor(actual));
     }
 
     private static long getIntervalHi(LongList intervals, int pos) {

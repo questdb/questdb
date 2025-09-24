@@ -4,7 +4,7 @@ import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
-import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
 import static java.net.HttpURLConnection.HTTP_BAD_METHOD;
 import static java.net.HttpURLConnection.HTTP_BAD_REQUEST;
 
@@ -39,9 +39,9 @@ public class HttpRequestValidator {
         this.requestHeader = requestHeader;
 
         contentLength = requestHeader.getContentLength();
-        chunked = Utf8s.equalsNcAscii(HEADER_TRANSFER_ENCODING_CHUNKED, requestHeader.getHeader(HEADER_TRANSFER_ENCODING));
-        multipart = Utf8s.equalsNcAscii(CONTENT_TYPE_MULTIPART_FORM_DATA, requestHeader.getContentType())
-                || Utf8s.equalsNcAscii(CONTENT_TYPE_MULTIPART_MIXED, requestHeader.getContentType());
+        chunked = HttpKeywords.isChunked(requestHeader.getHeader(HEADER_TRANSFER_ENCODING));
+        multipart = HttpKeywords.isContentTypeMultipartFormData(requestHeader.getContentType())
+                || HttpKeywords.isContentTypeMultipartMixed(requestHeader.getContentType());
         requestType = INVALID;
     }
 
@@ -78,6 +78,11 @@ public class HttpRequestValidator {
     }
 
     HttpRequestProcessor validateRequestType(HttpRequestProcessor processor, RejectProcessor rejectProcessor) {
+        if (processor == null) {
+            rejectProcessor.getMessageSink().put("No request handler for URI: ").put(requestHeader.getUrl());
+            return rejectProcessor.reject(HTTP_BAD_REQUEST);
+        }
+
         if ((processor.getSupportedRequestTypes() & requestType) == requestType) {
             // request type is supported, check passed
             return processor;

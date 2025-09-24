@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -92,9 +92,13 @@ public class TableSequencerImpl implements TableSequencer {
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
+            metadata = new SequencerMetadata(configuration);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
-            walIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, WAL_INDEX_FILE_NAME, configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep());
+            walIdGenerator = IDGeneratorFactory.newIDGenerator(
+                    configuration,
+                    WAL_INDEX_FILE_NAME,
+                    configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
+            );
             tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
@@ -110,8 +114,8 @@ public class TableSequencerImpl implements TableSequencer {
                 }
             }
         } catch (Throwable th) {
-            LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+            LOG.critical().$("could not create sequencer [name=").$(tableToken)
+                    .$(", error=").$safe(th.getMessage())
                     .I$();
             closeLocked();
             throw th;
@@ -125,23 +129,23 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
-                LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
+            if (ex.isFileCannotRead() && engine.isTableDropped(tableToken)) {
+                LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
-                        .$(", error=").$(ex.getMessage())
+                        .$(", error=").$safe(ex.getMessage())
                         .I$();
                 throw CairoException.tableDropped(tableToken);
             }
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not open sequencer [table=").$(tableToken)
                     .$(", path=").$(path)
                     .$(", errno=").$(ex.getErrno())
-                    .$(", error=").$(ex.getMessage())
+                    .$(", error=").$safe(ex.getMessage())
                     .I$();
             throw ex;
         } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+            LOG.critical().$("could not open sequencer [table=").$(tableToken)
                     .$(", path=").$(path)
-                    .$(", error=").$(th.getMessage())
+                    .$(", error=").$safe(th.getMessage())
                     .I$();
             closeLocked();
             throw th;
@@ -323,7 +327,7 @@ public class TableSequencerImpl implements TableSequencer {
                 applyToMetadata(deserializedAlter);
                 if (metadata.getMetadataVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
-                            .put("applying structure change to WAL table failed [table=").put(tableToken.getDirName())
+                            .put("applying structure change to WAL table failed [table=").put(tableToken)
                             .put(", oldVersion: ").put(expectedStructureVersion)
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
@@ -346,8 +350,8 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+            LOG.critical().$("could not apply structure change to WAL table sequencer [table=").$(tableToken)
+                    .$(", error=").$safe(th.getMessage())
                     .I$();
             throw th;
         }
@@ -378,9 +382,8 @@ public class TableSequencerImpl implements TableSequencer {
             }
         } catch (Throwable th) {
             distressed = true;
-            LOG.critical().$("could not apply transaction to WAL table sequencer [table=")
-                    .utf8(tableToken.getDirName())
-                    .$(", error=").$(th.getMessage())
+            LOG.critical().$("could not apply transaction to WAL table sequencer [table=").$(tableToken)
+                    .$(", error=").$safe(th.getMessage())
                     .I$();
             throw th;
         }
@@ -417,7 +420,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
-                .$("reloaded table sequencer [name=").utf8(tableToken.getDirName())
+                .$("reloaded table sequencer [table=").$(tableToken)
                 .$(", lastTxn=").$(lastTxn)
                 .I$();
         seqTxnTracker.notifyOnCommit(lastTxn);

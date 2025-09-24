@@ -107,6 +107,11 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     }
 
     @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
     public void recordAt(Record record, long atRowId) {
         ((Unordered8MapRecord) record).of(atRowId);
     }

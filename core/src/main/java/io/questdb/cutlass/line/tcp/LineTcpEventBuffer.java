@@ -314,7 +314,7 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putInt(address, valueSize);
         address += Integer.BYTES;
         value.writeTo(address, 0, valueSize);
-        return address + totalSize;
+        return address + valueSize;
     }
 
     public long columnValueLength(byte entityType, long offset) {

@@ -36,16 +36,22 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectByteSequenceView;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
-import static io.questdb.cairo.wal.WalUtils.WALE_HEADER_SIZE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
-
+    private static final int DEDUP_MODE_OFFSET = Byte.BYTES;
+    private static final int REPLACE_RANGE_HI_OFFSET = DEDUP_MODE_OFFSET + Long.BYTES;
+    private static final int REPLACE_RANGE_LO_OFFSET = REPLACE_RANGE_HI_OFFSET + Long.BYTES;
+    private static final int REPLACE_RANGE_EXTRA_OFFSET = REPLACE_RANGE_LO_OFFSET + Long.BYTES;
+    private static final int DEDUP_FOOTER_SIZE = REPLACE_RANGE_EXTRA_OFFSET;
     private final DataInfo dataInfo = new DataInfo();
     private final MemoryCMR eventMem;
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
@@ -96,7 +102,7 @@ public class WalEventCursor {
         return mvDataInfo;
     }
 
-    public MatViewInvalidationInfo getMvInvalidationInfo() {
+    public MatViewInvalidationInfo getMatViewInvalidationInfo() {
         if (type != MAT_VIEW_INVALIDATE) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_INVALIDATION, type=").put(type);
         }
@@ -292,9 +298,8 @@ public class WalEventCursor {
             this.nextOffset = offset + size;
             this.txn = readLong();
             this.memSize = eventMem.size();
-            this.readRecord();
-        } else {
-            reset();
+
+            readRecord();
         }
     }
 
@@ -324,11 +329,20 @@ public class WalEventCursor {
 
     public class DataInfo implements SymbolMapDiffCursor {
         private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
+        // extra field, for now used only in mat views
+        protected long replaceRangeExtra;
+        private byte dedupMode;
         private long endRowID;
         private long maxTimestamp;
         private long minTimestamp;
         private boolean outOfOrder;
+        private long replaceRangeTsHi;
+        private long replaceRangeTsLow;
         private long startRowID;
+
+        public byte getDedupMode() {
+            return dedupMode;
+        }
 
         public long getEndRowID() {
             return endRowID;
@@ -340,6 +354,14 @@ public class WalEventCursor {
 
         public long getMinTimestamp() {
             return minTimestamp;
+        }
+
+        public long getReplaceRangeTsHi() {
+            return replaceRangeTsHi;
+        }
+
+        public long getReplaceRangeTsLow() {
+            return replaceRangeTsLow;
         }
 
         public long getStartRowID() {
@@ -361,19 +383,53 @@ public class WalEventCursor {
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();
+
+            // Read the footer that may contains replace range timestamps and dedup mode
+            // The footer is not written when the dedup mode is default
+            // Format:
+            // [replaceRangeTsLow:long, replaceRangeTsHi:long, dedupMode:byte]
+            // Length of this footer is 2 * Long.BYTES + Byte.BYTES
+            dedupMode = WAL_DEDUP_MODE_DEFAULT;
+            replaceRangeTsLow = 0;
+            replaceRangeTsHi = 0;
+
+            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
+                // This is big enough to contain the footer.
+                // But it can be still populated with symbol map values instead of the footer.
+                // Check that the last symbol map diff entry contains the END of symbol diffs marker.
+
+                // Read column index before the footer.
+                int symbolColIndex = eventMem.getInt(nextOffset - (Integer.BYTES + DEDUP_FOOTER_SIZE));
+
+                if (symbolColIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
+                    dedupMode = eventMem.getByte(nextOffset - DEDUP_MODE_OFFSET);
+                    if (dedupMode >= 0 && dedupMode <= WAL_DEDUP_MODE_MAX) {
+                        replaceRangeExtra = eventMem.getLong(nextOffset - REPLACE_RANGE_EXTRA_OFFSET);
+                        replaceRangeTsLow = eventMem.getLong(nextOffset - REPLACE_RANGE_LO_OFFSET);
+                        replaceRangeTsHi = eventMem.getLong(nextOffset - REPLACE_RANGE_HI_OFFSET);
+                    } else {
+                        // This WAL record does not have dedup mode recognised, clean unrecognised mode value
+                        dedupMode = WAL_DEDUP_MODE_DEFAULT;
+                    }
+                }
+            }
         }
     }
 
     public class MatViewDataInfo extends DataInfo {
         private long lastRefreshBaseTableTxn;
-        private long lastRefreshTimestamp;
+        private long lastRefreshTimestampUs;
+
+        public long getLastPeriodHi() {
+            return replaceRangeExtra;
+        }
 
         public long getLastRefreshBaseTableTxn() {
             return lastRefreshBaseTableTxn;
         }
 
-        public long getLastRefreshTimestamp() {
-            return lastRefreshTimestamp;
+        public long getLastRefreshTimestampUs() {
+            return lastRefreshTimestampUs;
         }
 
         @Override
@@ -382,26 +438,41 @@ public class WalEventCursor {
             // read the extra fields in the fixed part
             // symbol map will start after this
             lastRefreshBaseTableTxn = readLong();
-            lastRefreshTimestamp = readLong();
+            lastRefreshTimestampUs = readLong();
         }
     }
 
     public class MatViewInvalidationInfo {
         private final StringSink error = new StringSink();
+        private final LongList refreshIntervals = new LongList();
         private boolean invalid;
+        private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
-        private long lastRefreshTimestamp;
+        private long lastRefreshTimestampUs;
+        private long refreshIntervalsBaseTxn;
 
         public CharSequence getInvalidationReason() {
             return error;
+        }
+
+        public long getLastPeriodHi() {
+            return lastPeriodHi;
         }
 
         public long getLastRefreshBaseTableTxn() {
             return lastRefreshBaseTableTxn;
         }
 
-        public long getLastRefreshTimestamp() {
-            return lastRefreshTimestamp;
+        public long getLastRefreshTimestampUs() {
+            return lastRefreshTimestampUs;
+        }
+
+        public LongList getRefreshIntervals() {
+            return refreshIntervals;
+        }
+
+        public long getRefreshIntervalsBaseTxn() {
+            return refreshIntervalsBaseTxn;
         }
 
         public boolean isInvalid() {
@@ -410,10 +481,27 @@ public class WalEventCursor {
 
         private void read() {
             lastRefreshBaseTableTxn = readLong();
-            lastRefreshTimestamp = readLong();
+            lastRefreshTimestampUs = readLong();
             invalid = readBool();
             error.clear();
             error.put(readStr());
+
+            if (nextOffset - offset >= Long.BYTES) {
+                lastPeriodHi = readLong();
+            } else {
+                lastPeriodHi = Numbers.LONG_NULL;
+            }
+
+            refreshIntervals.clear();
+            if (nextOffset - offset >= Long.BYTES + Integer.BYTES) {
+                refreshIntervalsBaseTxn = readLong();
+                final int intervalsLen = readInt();
+                for (int i = 0; i < intervalsLen; i++) {
+                    refreshIntervals.add(readLong());
+                }
+            } else {
+                refreshIntervalsBaseTxn = -1;
+            }
         }
     }
 

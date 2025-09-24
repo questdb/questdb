@@ -124,7 +124,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                rnd.nextDouble()
+                rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.1 * rnd.nextDouble()
         );
 
         fuzzer.setFuzzCounts(
@@ -173,7 +175,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected int getMaxWalFdCache(Rnd rnd) {
-        return rnd.nextInt(1000);
+        // Generate 0s in 30% of the cases
+        // 0 forces to bypass fd cache which is an important case to test
+        return Math.max(0, rnd.nextInt(1000) - 300);
     }
 
     protected long getMaxWalSize(Rnd rnd) {
@@ -193,7 +197,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
-                int size = rnd.nextInt(16 * 1024 * 1024);
+                int size = rnd.nextInt(8 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
@@ -245,23 +249,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double setTtlProb
+            double setTtlProb,
+            double replaceProb,
+            double symbolAccessProb
     ) {
-        fuzzer.setFuzzProbabilities(
-                cancelRowsProb,
-                notSetProb,
-                nullSetProb,
-                rollbackProb,
-                colAddProb,
-                colRemoveProb,
-                colRenameProb,
-                colTypeChangeProb,
-                dataAddProb,
-                equalTsRowsProb,
-                partitionDropProb,
-                truncateProb,
-                tableDropProb,
-                setTtlProb
+        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb,
+                replaceProb, symbolAccessProb
         );
     }
 

@@ -46,8 +46,9 @@ class PageFrameFwdRowCursor implements RowCursor {
         return current++;
     }
 
-    void of(PageFrame frame) {
+    PageFrameFwdRowCursor of(PageFrame frame) {
         this.current = 0;
         this.hi = frame.getPartitionHi() - frame.getPartitionLo();
+        return this;
     }
 }

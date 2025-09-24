@@ -208,6 +208,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    default boolean isConstantOrRuntimeConstant() {
+        return isConstant() || isRuntimeConstant();
+    }
+
     default boolean isNonDeterministic() {
         return false;
     }
@@ -218,6 +223,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     // used in generic toSink implementations
     default boolean isOperator() {
+        return false;
+    }
+
+    default boolean isRandom() {
         return false;
     }
 
@@ -261,7 +270,29 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getType() == ColumnType.UNDEFINED;
     }
 
+    /**
+     * This method is called exactly once per data row. It provides an opportunity for the function
+     * to perform heavy or volatile computations, cache the results and ensure getXXX() methods use the case instead
+     * of recomputing values.
+     *
+     * @param record the record for data access.
+     */
+    default void memoize(Record record) {
+    }
+
     default void offerStateTo(Function that) {
+    }
+
+    /**
+     * For exactly once per-row execution functions can declare themselves memoizable by
+     * returning true out of this method. Typically, this is all what's required. FunctionParser will
+     * wrap memoizable functions into type-specific Memoizers. These memoizers will implement {@see memoize} method.
+     * Caching heavy or potentially volatile computations for each data row.
+     *
+     * @return if function is memoizable
+     */
+    default boolean shouldMemoize() {
+        return false;
     }
 
     /**

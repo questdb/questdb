@@ -29,10 +29,22 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.std.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Long128;
+import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Uuid;
+import io.questdb.std.ex.BytecodeException;
 import io.questdb.std.str.Utf8s;
 
 public class RecordComparatorCompiler {
+    private static final Log LOG = LogFactory.getLog(RecordComparatorCompiler.class);
     private final BytecodeAssembler asm;
     private final IntList branches = new IntList();
     private final IntList comparatorAccessorIndices = new IntList();
@@ -56,9 +68,9 @@ public class RecordComparatorCompiler {
      * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
      *                         Index sign indicates direction of sort: negative - descending,
      *                         positive - ascending.
-     * @return RecordComparator instance.
+     * @return generated class.
      */
-    public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
+    public Class<RecordComparator> compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);
@@ -92,7 +104,35 @@ public class RecordComparatorCompiler {
 
         // class attribute count
         asm.putShort(0);
-        return asm.newInstance();
+
+        return asm.loadClass();
+    }
+
+    /**
+     * Generates byte code for record comparator and creates an instance. To avoid frequent calls to
+     * record field getters comparator caches values of left argument.
+     *
+     * @param columnTypes      types of columns in the cursor. All but BINARY types are supported
+     * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
+     *                         Index sign indicates direction of sort: negative - descending,
+     *                         positive - ascending.
+     * @return RecordComparator instance.
+     */
+    public RecordComparator newInstance(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
+        final Class<RecordComparator> clazz = compile(columnTypes, keyColumnIndices);
+        return newInstance(clazz);
+    }
+
+    /**
+     * Creates a record comparator instance for the given class.
+     */
+    public RecordComparator newInstance(Class<RecordComparator> clazz) {
+        try {
+            return clazz.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of GroupByFunctionsUpdater, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
     }
 
     private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes) {

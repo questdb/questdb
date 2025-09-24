@@ -97,7 +97,7 @@ steps:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
+      mavenOptions: "-Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
       options:
         "--batch-mode --quiet -Dtest.include=$(includeTests)

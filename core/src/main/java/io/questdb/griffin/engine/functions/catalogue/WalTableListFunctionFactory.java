@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -40,6 +39,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
@@ -118,7 +118,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             engine = executionContext.getCairoEngine();
-            cursor.toTop();
+            cursor.init();
             return cursor;
         }
 
@@ -145,7 +145,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-                tableIndex = -1;
+                tableBucket.clear();
                 txReader.close();
             }
 
@@ -156,20 +156,20 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (tableIndex < 0) {
-                    engine.getTableTokens(tableBucket, false);
-                    tableIndex = -1;
-                }
-
                 tableIndex++;
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     final TableToken tableToken = tableBucket.get(tableIndex);
-                    if (engine.isWalTable(tableToken) && record.switchTo(tableToken)) {
+                    if (engine.isWalTable(tableToken) && !engine.isTableDropped(tableToken) && record.switchTo(tableToken)) {
                         break;
                     }
                 }
                 return tableIndex < n;
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return tableBucket.size();
             }
 
             @Override
@@ -179,7 +179,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                close();
+                tableIndex = -1;
+            }
+
+            private void init() {
+                tableBucket.clear();
+                engine.getTableTokens(tableBucket, false);
+                toTop();
             }
 
             public class TableListRecord implements Record {
@@ -290,13 +296,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                 return false;
                             }
 
-                            txReader.ofRO(rootPath.$(), PartitionBy.NONE);
-                            final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                            final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
-                            final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-                            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                            bufferedTxnSize = txReader.getLagTxnCount();
-                            return true;
+                            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                                txReader.ofRO(rootPath.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+                                final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                                final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
+                                final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+                                TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                                bufferedTxnSize = txReader.getLagTxnCount();
+                                return true;
+                            }
                         } finally {
                             if (txnFd > -1) {
                                 ff.close(txnFd);
@@ -307,7 +315,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                         }
                     } catch (CairoException ex) {
-                        if (ex.errnoFileCannotRead()) {
+                        if (ex.isFileCannotRead()) {
                             return false;
                         }
                         throw ex;

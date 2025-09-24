@@ -117,6 +117,11 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_str(").val((Sinkable) symbols).val(')');
         }
