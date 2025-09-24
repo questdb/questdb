@@ -32,14 +32,16 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataService {
+
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
      * size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
@@ -48,7 +50,7 @@ public interface MetadataService {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
@@ -152,6 +154,8 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTimestampType();
+
     UpdateOperator getUpdateOperator();
 
     void removeColumn(@NotNull CharSequence columnName);
@@ -167,17 +171,32 @@ public interface MetadataService {
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 
     /**
+     * Sets refresh type and settings for materialized view.
+     */
+    void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStartUs,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    );
+
+    /**
      * Sets the incremental refresh limit for materialized view:
      * if positive, it's in hours;
      * if negative, it's in months (and the actual value is positive);
      * zero means "no refresh limit".
      */
-    void setMetaMatViewRefreshLimit(int limitHoursOrMonths);
+    void setMatViewRefreshLimit(int limitHoursOrMonths);
 
     /**
      * Sets incremental refresh timer values for materialized view.
      */
-    void setMetaMatViewRefreshTimer(long start, int interval, char unit);
+    void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

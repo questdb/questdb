@@ -65,7 +65,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         if (table.isSoftLink()) {
             sink.putAscii(", IN VOLUME ");
 
-            Path.clearThreadLocals();
             Path softLinkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(table.getDirectoryName());
             Path otherVolumePath = Path.getThreadLocal2("");
 
@@ -185,6 +184,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
             toTop();
             return this;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

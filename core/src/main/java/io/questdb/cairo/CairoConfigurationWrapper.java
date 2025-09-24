@@ -37,8 +37,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -139,6 +139,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
+    }
+
+    @Override
+    public int getColumnAliasGeneratedMaxSize() {
+        return getDelegate().getColumnAliasGeneratedMaxSize();
     }
 
     @Override
@@ -252,6 +257,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return getDelegate().getDbLogName();
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return getDelegate().getDbRoot();
     }
@@ -294,6 +304,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull FactoryProvider getFactoryProvider() {
         return getDelegate().getFactoryProvider();
+    }
+
+    @Override
+    public boolean getFileDescriptorCacheEnabled() {
+        return getDelegate().getFileDescriptorCacheEnabled();
     }
 
     @Override
@@ -442,13 +457,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRefreshIntervals() {
+        return getDelegate().getMatViewMaxRefreshIntervals();
+    }
+
+    @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
     }
 
     @Override
-    public long getMatViewMinRefreshInterval() {
-        return getDelegate().getMatViewMinRefreshInterval();
+    public long getMatViewRefreshIntervalsUpdatePeriod() {
+        return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
 
     @Override
@@ -459,11 +479,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
-    }
-
-    @Override
-    public long getMatViewTimerStartEpsilon() {
-        return getDelegate().getMatViewTimerStartEpsilon();
     }
 
     @Override
@@ -717,6 +732,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlAsOfJoinMapEvacuationThreshold() {
+        return getDelegate().getSqlAsOfJoinMapEvacuationThreshold();
+    }
+
+    @Override
+    public int getSqlAsOfJoinShortCircuitCacheCapacity() {
+        return getDelegate().getSqlAsOfJoinShortCircuitCacheCapacity();
+    }
+
+    @Override
     public int getSqlCharacterStoreCapacity() {
         return getDelegate().getSqlCharacterStoreCapacity();
     }
@@ -824,6 +849,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlJitIRMemoryPageSize() {
         return getDelegate().getSqlJitIRMemoryPageSize();
+    }
+
+    @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return getDelegate().getSqlJitMaxInListSizeThreshold();
     }
 
     @Override
@@ -999,6 +1029,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getStrFunctionMaxBufferLength() {
         return getDelegate().getStrFunctionMaxBufferLength();
+    }
+
+    @Override
+    public long getSymbolTableAppendPageSize() {
+        return getDelegate().getSymbolTableAppendPageSize();
     }
 
     @Override
@@ -1187,7 +1222,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterFileOpenOpts() {
+    public int getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
     }
 
@@ -1199,6 +1234,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isCheckpointRecoveryEnabled() {
         return getDelegate().isCheckpointRecoveryEnabled();
+    }
+
+    @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return getDelegate().isColumnAliasExpressionEnabled();
     }
 
     @Override
@@ -1239,6 +1279,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetRawArrayEncoding() {
+        return getDelegate().isPartitionEncoderParquetRawArrayEncoding();
     }
 
     @Override
@@ -1289,6 +1334,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelReadParquetEnabled() {
         return getDelegate().isSqlParallelReadParquetEnabled();
+    }
+
+    @Override
+    public boolean isSqlParallelTopKEnabled() {
+        return getDelegate().isSqlParallelTopKEnabled();
     }
 
     @Override

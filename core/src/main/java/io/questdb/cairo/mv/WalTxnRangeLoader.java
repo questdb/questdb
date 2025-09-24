@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -50,8 +51,8 @@ public class WalTxnRangeLoader implements QuietCloseable {
     private long minTimestamp;
     private DirectLongList txnDetails = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_READER);
 
-    public WalTxnRangeLoader(FilesFacade ff) {
-        walEventReader = new WalEventReader(ff);
+    public WalTxnRangeLoader(CairoConfiguration configuration) {
+        walEventReader = new WalEventReader(configuration);
     }
 
     @Override
@@ -94,6 +95,9 @@ public class WalTxnRangeLoader implements QuietCloseable {
     ) {
         txnDetails.clear();
 
+        minTimestamp = Long.MAX_VALUE;
+        maxTimestamp = Long.MIN_VALUE;
+
         try (WalEventReader eventReader = walEventReader) {
             final int maxLoadTxnCount = (int) (txnHi - txnLo);
             int txnsToLoad = (int) Math.min(maxLoadTxnCount, transactionLogCursor.getMaxTxn() - txnLo + 1);
@@ -105,9 +109,6 @@ public class WalTxnRangeLoader implements QuietCloseable {
                 int lastSegmentTxn = -2;
 
                 WalEventCursor walEventCursor = null;
-                minTimestamp = Long.MAX_VALUE;
-                maxTimestamp = Long.MIN_VALUE;
-
                 for (int i = 0; i < txnsToLoad; i++) {
                     long long1 = txnDetails.get(2L * i);
                     long long2 = txnDetails.get(2L * i + 1);

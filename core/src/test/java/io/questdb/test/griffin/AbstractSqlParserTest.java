@@ -86,7 +86,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = nameSets.size(); i < n; i++) {
                     boolean f = nameSets.getQuick(i).contains(tok);
                     if (f) {
-                        Assert.assertFalse(found);
+                        Assert.assertFalse("ambiguous column: " + tok, found);
                         found = true;
                     }
                 }
@@ -116,6 +116,22 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
         }
     }
 
+    private void addColumnToNameSets(ObjList<LowerCaseCharSequenceHashSet> nameSets, CharSequence columnName) {
+        // Add column to name set 0 (it always exists, we are assuming this column can be referenced by the projection)
+        // unless that is, column already exists in one of the sets. If we don't check column existence, it might
+        // cause "ambiguous" column error.
+        boolean found = false;
+        for (int i = 0, n = nameSets.size(); i < n; i++) {
+            if (nameSets.getQuick(i).contains(columnName)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            nameSets.getQuick(0).add(columnName);
+        }
+    }
+
     protected static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) throws Exception {
         refreshTablesInBaseEngine();
         assertSyntaxError0(query, position, contains, tableModels);
@@ -136,7 +152,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
     protected void assertInsertQuery(TableModel... tableModels) throws SqlException {
         assertModel(
-                "insert into test (test_timestamp, test_value) values (cast('2020-12-31 15:15:51.663+00:00',timestamp), '256')",
+                "insert into test (test_timestamp, test_value) values ('2020-12-31 15:15:51.663+00:00'::timestamp, '256')",
                 "insert into test (test_timestamp, test_value) values (timestamp with time zone '2020-12-31 15:15:51.663+00:00', '256')",
                 ExecutionModel.INSERT,
                 tableModels
@@ -211,6 +227,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
 
             for (int i = 0, n = columns.size(); i < n; i++) {
                 AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
+                addColumnToNameSets(nameSets, columns.getQuick(i).getName());
             }
 
             columns = nested.getTopDownColumns();

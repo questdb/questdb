@@ -31,8 +31,8 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByFunction {
-    public FirstNotNullTimestampGroupByFunction(@NotNull Function arg) {
-        super(arg);
+    public FirstNotNullTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
+        super(arg, timestampType);
     }
 
     @Override

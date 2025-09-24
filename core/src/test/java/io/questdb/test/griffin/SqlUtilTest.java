@@ -27,16 +27,22 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.OperatorExpression;
+import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -49,6 +55,133 @@ import org.junit.Test;
 import java.util.concurrent.TimeUnit;
 
 public class SqlUtilTest {
+
+    @Test
+    public void testExprColumnAliasDisallowedAlias() {
+        OperatorRegistry registry = OperatorExpression.getRegistry();
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        for (int i = 0, n = registry.operators.size(); i < n; i++) {
+            String token = registry.operators.getQuick(i).getToken();
+            Assert.assertEquals(
+                    '"' + token + '"',
+                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true).toString()
+            );
+
+            token = token.toUpperCase();
+            Assert.assertEquals(
+                    '"' + token + '"',
+                    SqlUtil.createExprColumnAlias(store, token, aliasMap, 64, true).toString()
+            );
+        }
+    }
+
+    @Test
+    public void testExprColumnAliasDuplicates() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        aliasMap.put("same", null);
+        Assert.assertEquals(
+                "same_2",
+                SqlUtil.createExprColumnAlias(store, "same", aliasMap, 64).toString()
+        );
+        aliasMap.put("same_2", null);
+        Assert.assertEquals(
+                "same_3",
+                SqlUtil.createExprColumnAlias(store, "same", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasSimpleCase() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "basic",
+                SqlUtil.createExprColumnAlias(store, "basic", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasTrimEnd() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "  space",
+                SqlUtil.createExprColumnAlias(store, "  space    ", aliasMap, 64).toString()
+        );
+    }
+
+    @Test
+    public void testExprColumnAliasTrimmed() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "longstr",
+                SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, 7).toString()
+        );
+    }
+
+    @Test
+    public void testExprNonLiteral() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "\"quoted\"",
+                SqlUtil.createExprColumnAlias(store, "\"quoted\"", aliasMap, 64, true).toString()
+        );
+        Assert.assertEquals(
+                "\"prefix.nonliteral\"",
+                SqlUtil.createExprColumnAlias(store, "prefix.nonliteral", aliasMap, 64, true).toString()
+        );
+        Assert.assertEquals(
+                "\"prefix.\"",
+                SqlUtil.createExprColumnAlias(store, "prefix.", aliasMap, 64, true).toString()
+        );
+    }
+
+    @Test
+    public void testExprPrefixedColumn() {
+        CharacterStore store = new CharacterStore(32, 1);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);
+        Assert.assertEquals(
+                "basic",
+                SqlUtil.createExprColumnAlias(store, "table.basic", aliasMap, 64).toString()
+        );
+        aliasMap.put("basic", null);
+        Assert.assertEquals(
+                "\"between\"",
+                SqlUtil.createExprColumnAlias(store, "table.between", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted\"",
+                SqlUtil.createExprColumnAlias(store, "\"table\".\"quoted\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted.table\"",
+                SqlUtil.createExprColumnAlias(store, "\"quoted.table\"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "spaces",
+                SqlUtil.createExprColumnAlias(store, "table.spaces   ", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"quoted spaces   \"",
+                SqlUtil.createExprColumnAlias(store, "table.\"quoted spaces   \"", aliasMap, 64).toString()
+        );
+        Assert.assertEquals(
+                "\"table.\"",
+                SqlUtil.createExprColumnAlias(store, "table.", aliasMap, 64).toString()
+        );
+
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(
+                    "basic_" + (i + 2),
+                    SqlUtil.createExprColumnAlias(store, "table.basic", aliasMap, 64).toString()
+            );
+            aliasMap.put("basic_" + (i + 2), null);
+        }
+    }
 
     @Test
     public void testImplicitCastCharAsGeoHash() {
@@ -171,6 +304,7 @@ public class SqlUtilTest {
 
     @Test
     public void testParseMicros() throws SqlException {
+        Assert.assertEquals(1, SqlUtil.expectMicros("1000ns", 12));
         Assert.assertEquals(1, SqlUtil.expectMicros("1us", 12));
         Assert.assertEquals(1000, SqlUtil.expectMicros("1ms", 12));
         Assert.assertEquals(2000000, SqlUtil.expectMicros("2s", 12));
@@ -404,17 +538,18 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrTimestamp() {
-        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastStrAsTimestamp(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20T10:30:55.123999Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastStrAsTimestamp("-900")));
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        Assert.assertEquals(Numbers.LONG_NULL, timestampDriver.implicitCast(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20T10:30:55.123999Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 10:30:55Z")));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 Z")));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Micros.toUSecString(timestampDriver.implicitCast("2022-11-20 10:30:55.123Z")));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Micros.toUSecString(timestampDriver.implicitCast("200")));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Micros.toUSecString(timestampDriver.implicitCast("-900")));
 
         // not a number
         try {
-            SqlUtil.implicitCastStrAsTimestamp("hello");
+            timestampDriver.implicitCast("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [STRING -> TIMESTAMP]", e.getFlyweightMessage());
@@ -423,17 +558,18 @@ public class SqlUtilTest {
 
     @Test
     public void testParseStrVarcharAsTimestamp0() {
-        Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastVarcharAsTimestamp(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20T10:30:55.123999Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Timestamps.toUSecString(SqlUtil.implicitCastVarcharAsTimestamp("-900")));
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
+        Assert.assertEquals(Numbers.LONG_NULL, timestampDriver.implicitCastVarchar(null));
+        Assert.assertEquals("2022-11-20T10:30:55.123999Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20T10:30:55.123999Z"))));
+        Assert.assertEquals("2022-11-20T10:30:55.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 10:30:55Z"))));
+        Assert.assertEquals("2022-11-20T00:00:00.000000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 Z"))));
+        Assert.assertEquals("2022-11-20T10:30:55.123000Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("2022-11-20 10:30:55.123Z"))));
+        Assert.assertEquals("1970-01-01T00:00:00.000200Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("200"))));
+        Assert.assertEquals("1969-12-31T23:59:59.999100Z", Micros.toUSecString(timestampDriver.implicitCastVarchar(new Utf8String("-900"))));
 
         // not a number
         try {
-            SqlUtil.implicitCastVarcharAsTimestamp("hello");
+            timestampDriver.implicitCastVarchar(new Utf8String("hello"));
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> TIMESTAMP]", e.getFlyweightMessage());
@@ -698,6 +834,6 @@ public class SqlUtilTest {
     static {
         // this is required to initialize calendar indexes ahead of using them
         // otherwise sink can end up having odd characters
-        TimestampFormatUtils.init();
+        MicrosFormatUtils.init();
     }
 }

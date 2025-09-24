@@ -122,14 +122,13 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         throw CairoException.duplicateColumn(meta.getColumnName());
     }
 
-    public GenericRecordMetadata addIfNotExists(int i, TableColumnMetadata meta) {
+    public void addIfNotExists(int i, TableColumnMetadata meta) {
         int index = columnNameIndexMap.keyIndex(meta.getColumnName());
         if (index > -1) {
             columnNameIndexMap.putAt(index, meta.getColumnName(), i);
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
         }
-        return this;
     }
 
     public void setTimestampIndex(int index) {

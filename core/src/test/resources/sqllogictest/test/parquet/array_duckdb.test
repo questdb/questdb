@@ -1,0 +1,18 @@
+# name: test/sql/copy/parquet/array_duckdb.test
+# description: Array compatibility for DuckDB lists
+# group: [parquet]
+
+require parquet
+
+query I
+SELECT arr[1], arr[2] FROM parquet_scan('data/parquet-testing/array_plain_duckdb.parquet')
+----
+{1.000000,2.000000,3.000000} {4.000000,NULL,5.000000}
+{1.000000,2.000000,3.000000} NULL
+{NULL} NULL
+NULL NULL
+
+query II
+SELECT arr FROM parquet_scan('data/parquet-testing/array_rle_duckdb.parquet')
+----
+{1.000000,2.000000,3.000000}

@@ -47,10 +47,10 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction();
+        return new RndIntFunction();
     }
 
-    private static class RndFunction extends IntFunction implements Function {
+    private static class RndIntFunction extends IntFunction implements Function {
 
         private Rnd rnd;
 
@@ -66,6 +66,16 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRandom() {
+            return true;
+        }
+
+        @Override
+        public boolean shouldMemoize() {
             return true;
         }
 

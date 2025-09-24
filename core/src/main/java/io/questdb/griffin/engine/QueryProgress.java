@@ -338,7 +338,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // In this scenario, the returned pool entry got used by another query and
             // readers.clear() came in tangentially to this query.
             LOG.critical().$("returned reader is not in supervisor's list [tableName=")
-                    .$(resource.getTableToken().getTableName()).I$();
+                    .$(resource.getTableToken()).I$();
         }
     }
 
@@ -374,7 +374,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
-            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
+            log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
         }
     }
 
@@ -439,6 +439,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         public void of(RecordCursor cursor) {
             this.base = cursor;
             this.isOpen = true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return base.preComputedStateSize();
         }
 
         @Override

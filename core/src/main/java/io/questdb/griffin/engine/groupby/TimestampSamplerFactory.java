@@ -24,10 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
@@ -38,12 +38,11 @@ public final class TimestampSamplerFactory {
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
+     * @param kind     kind of an interval we are parsing, used for error reporting
      * @return index of the first character after the interval token
      * @throws SqlException when input string is not a valid interval token
      */
-    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
-        int k = -1;
-
+    public static int findIntervalEndIndex(CharSequence cs, int position, CharSequence kind) throws SqlException {
         if (cs == null) {
             throw SqlException.$(position, "missing interval");
         }
@@ -54,16 +53,27 @@ public final class TimestampSamplerFactory {
         }
 
         // look for end of digits
+        int k = -1;
+        boolean allZeros = true;
+        boolean atLeastOneDigit = false;
         for (int i = 0; i < len; i++) {
             char c = cs.charAt(i);
             if (c < '0' || c > '9') {
                 k = i;
                 break;
             }
+            atLeastOneDigit = true;
+            if (c != '0') {
+                allZeros = false;
+            }
         }
 
         if (k == 0 && cs.charAt(0) == '-') {
             throw SqlException.$(position, "negative interval is not allowed");
+        }
+
+        if (allZeros && atLeastOneDigit) {
+            throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
         }
 
         if (k == -1) {
@@ -78,48 +88,17 @@ public final class TimestampSamplerFactory {
         return k;
     }
 
-    public static TimestampSampler getInstance(long interval, CharSequence units, int position) throws SqlException {
+    public static TimestampSampler getInstance(TimestampDriver driver, long interval, CharSequence units, int position) throws SqlException {
         if (units.length() == 1) {
-            return getInstance(interval, units.charAt(0), position);
+            return getInstance(driver, interval, units.charAt(0), position);
         }
         // Just in case SqlParser will allow this in the future
         throw SqlException.$(position, "expected one character interval qualifier");
     }
 
     @NotNull
-    public static TimestampSampler getInstance(long interval, char timeUnit, int position) throws SqlException {
-        switch (timeUnit) {
-            case 'U':
-                // micros
-                return new MicroTimestampSampler(interval);
-            case 'T':
-                // millis
-                return new MicroTimestampSampler(Timestamps.MILLI_MICROS * interval);
-            case 's':
-                // seconds
-                return new MicroTimestampSampler(Timestamps.SECOND_MICROS * interval);
-            case 'm':
-                // minutes
-                return new MicroTimestampSampler(Timestamps.MINUTE_MICROS * interval);
-            case 'h':
-                // hours
-                return new MicroTimestampSampler(Timestamps.HOUR_MICROS * interval);
-            case 'd':
-                // days
-                return new MicroTimestampSampler(Timestamps.DAY_MICROS * interval);
-            case 'w':
-                // weeks
-                return new MicroTimestampSampler(Timestamps.WEEK_MICROS * interval);
-            case 'M':
-                // months
-                return new MonthTimestampSampler((int) interval);
-            case 'y':
-                return new YearTimestampSampler((int) interval);
-            default:
-                // Just in case SqlParser will allow this in the future
-                throw SqlException.$(position, "unsupported interval qualifier");
-
-        }
+    public static TimestampSampler getInstance(TimestampDriver driver, long interval, char timeUnit, int position) throws SqlException {
+        return driver.getTimestampSampler(interval, timeUnit, position);
     }
 
     /**
@@ -130,25 +109,28 @@ public final class TimestampSamplerFactory {
      * @return instance of appropriate TimestampSampler
      * @throws SqlException when input string is invalid
      */
-    public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
-        int k = findIntervalEndIndex(cs, position);
+    public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
+        int k = findIntervalEndIndex(cs, position, "sample");
         assert cs.length() > k;
 
-        long n = parseInterval(cs, k, position);
-        return getInstance(n, cs.charAt(k), position + k);
+        long n = parseInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
+        return getInstance(driver, n, cs.charAt(k), position + k);
     }
 
     /**
-     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int, CharSequence)}
      * has been called and returned a valid index. Behavior is undefined if called with invalid index.
      *
      * @param cs          token to parse interval from
      * @param intervalEnd end of interval token, exclusive
      * @param position    position in SQL text to report error against
+     * @param kind        kind of an interval we are parsing, used for error reporting
+     * @param maxValue    maximum value for the interval, used for error reporting
+     * @param unit        unit qualifier, used for error reporting
      * @return parsed interval value
      * @throws SqlException when input string is invalid
      */
-    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position, String kind, int maxValue, char unit) throws SqlException {
         if (intervalEnd == 0) {
             // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
             return 1;
@@ -156,11 +138,19 @@ public final class TimestampSamplerFactory {
         try {
             int n = Numbers.parseInt(cs, 0, intervalEnd);
             if (n == 0) {
-                throw SqlException.$(position, "zero is not a valid sample value");
+                throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
+            }
+            if (maxValue != Numbers.INT_NULL && n > maxValue) {
+                throw SqlException.$(position, kind).put(" value too high for given units [value=").put(cs).put(", maximum=").put(maxValue).put(unit).put(']');
             }
             return n;
         } catch (NumericException e) {
-            throw SqlException.$(position, "invalid sample value [value=").put(cs).put(']');
+            SqlException ex = SqlException.$(position, "invalid ").put(kind).put(" value [value=").put(cs);
+            if (maxValue != Numbers.INT_NULL) {
+                ex.put(", maximum=").put(maxValue).put(unit);
+            }
+            ex.put(']');
+            throw ex;
         }
     }
 }

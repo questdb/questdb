@@ -25,36 +25,43 @@
 package io.questdb.mp;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnIndexerJob;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.O3CopyJob;
+import io.questdb.cairo.O3OpenColumnJob;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 
 public class WorkerPoolUtils {
 
     public static void setupQueryJobs(
-            WorkerPool workerPool,
+            WorkerPool sharedPoolQuery,
             CairoEngine cairoEngine
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        final int workerCount = workerPool.getWorkerCount();
+        final int workerCount = sharedPoolQuery.getWorkerCount();
 
-        workerPool.assign(new LatestByAllIndexedJob(messageBus));
+        sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
         if (configuration.isSqlParallelGroupByEnabled()) {
-            workerPool.assign(new GroupByVectorAggregateJob(messageBus));
-            workerPool.assign(new GroupByMergeShardJob(messageBus));
+            sharedPoolQuery.assign(new GroupByVectorAggregateJob(messageBus));
+            sharedPoolQuery.assign(new GroupByMergeShardJob(messageBus));
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
-            final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
-            final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
+            final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
+            final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
             for (int i = 0; i < workerCount; i++) {
                 // create job per worker to allow each worker to have own shard walk sequence
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
@@ -62,32 +69,32 @@ public class WorkerPoolUtils {
                         new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
                         configuration.getCircuitBreakerConfiguration()
                 );
-                workerPool.assign(i, pageFrameReduceJob);
-                workerPool.freeOnExit(pageFrameReduceJob);
+                sharedPoolQuery.assign(i, pageFrameReduceJob);
+                sharedPoolQuery.freeOnExit(pageFrameReduceJob);
             }
         }
     }
 
-    public static void setupWriterJobs(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
+    public static void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
                 cairoEngine,
-                workerPool.getWorkerCount()
+                sharedPoolWrite.getWorkerCount()
         );
-        workerPool.freeOnExit(purgeDiscoveryJob);
-        workerPool.assign(purgeDiscoveryJob);
+        sharedPoolWrite.freeOnExit(purgeDiscoveryJob);
+        sharedPoolWrite.assign(purgeDiscoveryJob);
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);
-            workerPool.freeOnExit(columnPurgeJob);
-            workerPool.assign(columnPurgeJob);
+            sharedPoolWrite.freeOnExit(columnPurgeJob);
+            sharedPoolWrite.assign(columnPurgeJob);
         }
 
-        workerPool.assign(new ColumnIndexerJob(messageBus));
-        workerPool.assign(new O3PartitionJob(messageBus));
-        workerPool.assign(new O3OpenColumnJob(messageBus));
-        workerPool.assign(new O3CopyJob(messageBus));
-        workerPool.assign(new ColumnTaskJob(messageBus));
+        sharedPoolWrite.assign(new ColumnIndexerJob(messageBus));
+        sharedPoolWrite.assign(new O3PartitionJob(messageBus));
+        sharedPoolWrite.assign(new O3OpenColumnJob(messageBus));
+        sharedPoolWrite.assign(new O3CopyJob(messageBus));
+        sharedPoolWrite.assign(new ColumnTaskJob(messageBus));
     }
 }

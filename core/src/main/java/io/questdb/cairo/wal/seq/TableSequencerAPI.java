@@ -107,6 +107,7 @@ public class TableSequencerAPI implements QuietCloseable {
             } finally {
                 seq.unlockWrite();
             }
+            getSeqTxnTracker(tableToken).notifyOnDrop();
         } catch (CairoException e) {
             LOG.info().$("failed to drop wal table [table=").$(tableToken).I$();
             if (!failedCreate) {
@@ -126,7 +127,6 @@ public class TableSequencerAPI implements QuietCloseable {
 
             // Exclude locked entries.
             // Use includeDropped argument to decide whether to include dropped tables.
-            String publicTableName = tableToken.getTableName();
             boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
             if (engine.isWalTable(tableToken) && !isDropped) {
                 long lastTxn;
@@ -149,7 +149,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         }
                     }
                 } catch (CairoException ex) {
-                    if (ex.errnoFileCannotRead() || ex.isTableDropped()) {
+                    if (ex.isFileCannotRead() || ex.isTableDropped()) {
                         // Table is partially dropped, but not fully.
                         lastTxn = -1;
                     } else {
@@ -242,6 +242,7 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    @NotNull
     public SeqTxnTracker getTxnTracker(TableToken tableToken) {
         return getSeqTxnTracker(tableToken);
     }
@@ -465,6 +466,7 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
+    @NotNull
     private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
         return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }

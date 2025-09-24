@@ -39,7 +39,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCursor implements Reopenable {
+class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor implements Reopenable {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
@@ -59,6 +59,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             ObjList<Function> recordFunctions,
             ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
@@ -73,6 +74,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -138,6 +140,11 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             isOpen = true;
             map.reopen();
         }
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return (!isMapBuildPending && isMapInitialized ? 1 : 0) + super.preComputedStateSize();
     }
 
     @Override

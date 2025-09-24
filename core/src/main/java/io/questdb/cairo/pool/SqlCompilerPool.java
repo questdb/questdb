@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
@@ -49,9 +50,9 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
     // It also should be kept in mind that some details of these fake tokens can make it into
     // logs, such as the directory names, and they do not (and really should not) exist on disk.
     private static final TableToken[] TOKENS = {
-            new TableToken("blue", "/compilers/blue/", 0, false, false, false),
-            new TableToken("red", "/compilers/red/", 0, false, false, false),
-            new TableToken("green", "/compilers/green/", 0, false, false, false)
+            new TableToken("blue", "/compilers/blue/", null, 0, false, false, false),
+            new TableToken("red", "/compilers/red/", null, 0, false, false, false),
+            new TableToken("green", "/compilers/green/", null, 0, false, false, false)
     };
     private final CairoEngine engine;
     private final Rnd rnd = new Rnd();
@@ -149,8 +150,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public RecordCursorFactory generateSelectWithRetries(QueryModel queryModel, SqlExecutionContext executionContext, boolean generateProgressLogger) throws SqlException {
-            return delegate.generateSelectWithRetries(queryModel, executionContext, generateProgressLogger);
+        public RecordCursorFactory generateSelectWithRetries(
+                QueryModel queryModel,
+                @Nullable InsertModel insertModel,
+                SqlExecutionContext executionContext,
+                boolean generateProgressLogger
+        ) throws SqlException {
+            return delegate.generateSelectWithRetries(queryModel, insertModel, executionContext, generateProgressLogger);
         }
 
         @Override

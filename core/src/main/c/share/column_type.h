@@ -34,45 +34,49 @@
  * ColumnType enum, matching the Java definitions.
  */
 enum class ColumnType : int {
-    UNDEFINED = 0,
-    BOOLEAN = 1,
-    BYTE = 2,
-    SHORT = 3,
-    CHAR = 4,
-    INT = 5,
-    LONG = 6,
-    DATE = 7,
-    TIMESTAMP = 8,
-    FLOAT = 9,
-    DOUBLE = 10,
-    STRING = 11,
-    SYMBOL = 12,
-    LONG256 = 13,
-    GEOBYTE = 14,
-    GEOSHORT = 15,
-    GEOINT = 16,
-    GEOLONG = 17,
-    BINARY = 18,
-    UUID = 19,
-    CURSOR = 20,
-    VAR_ARG = 21,
-    RECORD = 22,
-    GEOHASH = 23,
-    LONG128 = 24,
-    IPV4 = 25,
-    VARCHAR = 26,
-    REGCLASS = 27,
-    REGPROCEDURE = 28,
-    ARRAY_STRING = 29,
-    PARAMETER = 30,
-    NULL_ = 31
+  UNDEFINED = 0,
+  BOOLEAN = 1,
+  BYTE = 2,
+  SHORT = 3,
+  CHAR = 4,
+  INT = 5,
+  LONG = 6,
+  DATE = 7,
+  TIMESTAMP_MICRO = 8,
+  FLOAT = 9,
+  DOUBLE = 10,
+  STRING = 11,
+  SYMBOL = 12,
+  LONG256 = 13,
+  GEOBYTE = 14,
+  GEOSHORT = 15,
+  GEOINT = 16,
+  GEOLONG = 17,
+  BINARY = 18,
+  UUID = 19,
+  CURSOR = 20,
+  VAR_ARG = 21,
+  RECORD = 22,
+  GEOHASH = 23,
+  LONG128 = 24,
+  IPV4 = 25,
+  VARCHAR = 26,
+  ARRAY = 27,
+  REGCLASS = 28,
+  REGPROCEDURE = 29,
+  ARRAY_STRING = 30,
+  PARAMETER = 31,
+  INTERVAL = 32,
+  NULL_ = 33,
+  TIMESTAMP_NANO = 1 << 18 | TIMESTAMP_MICRO,
 };
 
 #pragma pack (push, 1)
 struct VarcharAuxEntryInlined {
     uint8_t header;
     uint8_t chars[9];
-    uint8_t offset[6];
+    [[maybe_unused]] uint16_t offset_lo;
+    [[maybe_unused]] uint32_t offset_hi;
 };
 
 struct VarcharAuxEntrySplit {
@@ -81,6 +85,26 @@ struct VarcharAuxEntrySplit {
     uint16_t offset_lo;
     uint32_t offset_hi;
 };
+
+struct ArrayAuxEntry {
+    uint64_t offset_48;
+    int32_t data_size;
+    [[maybe_unused]] int32_t reserved2;
+};
+
+struct VarcharAuxEntryBoth {
+    uint64_t header1;
+    uint16_t header2;
+    uint16_t offset_lo;
+    uint32_t offset_hi;
+
+    [[nodiscard]]
+    inline int64_t get_data_offset() const {
+        return (static_cast<int64_t>(offset_hi) << 16) | offset_lo;
+    }
+};
+
+constexpr uint64_t ARRAY_OFFSET_MAX = (1ULL << 48) - 1ULL;
 #pragma pack(pop)
 
 #endif //COLUMN_TYPE_H

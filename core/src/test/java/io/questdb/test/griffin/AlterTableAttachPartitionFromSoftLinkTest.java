@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.griffin.SqlException;
@@ -40,7 +41,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.Rnd;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,17 +58,20 @@ import java.util.function.Function;
 public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTableAttachPartitionTest {
 
     // some tests begin with: Assume.assumeTrue(Os.type != Os.WINDOWS);
-    // in WINDOWS the user performing the tests needs to have the 'Create Symbolic Links' privilege. 
-    // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and 
+    // in WINDOWS the user performing the tests needs to have the 'Create Symbolic Links' privilege.
+    // this privilege is not granted by default. in addition, if User Account Control (UAC) is on, and
     // the user has administrator privileges, tests must 'Run as administrator'.
     // besides this, isSoftLink is not supported in WINDOWS
 
     private static final String activePartitionName = "2022-10-18";
-    private static final long activePartitionTimestamp;
     private static final String expectedMaxTimestamp = "2022-10-18T23:59:59.000000Z";
     private static final String expectedMinTimestamp = "2022-10-17T00:00:17.279900Z";
     private static final String readOnlyPartitionName = "2022-10-17";
-    private static final long readOnlyPartitionTimestamp;
+    private static final Rnd rnd = TestUtils.generateRandom(null);
+    private long activePartitionTimestamp;
+    private long readOnlyPartitionTimestamp;
+    private int timestampType;
+    private String timestampTypeName;
 
     @Override
     @Before
@@ -75,6 +79,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
         super.setUp();
         Assert.assertEquals(TableUtils.ATTACHABLE_DIR_MARKER, configuration.getAttachPartitionSuffix());
         Assert.assertFalse(configuration.attachPartitionCopy());
+        timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+        timestampTypeName = ColumnType.nameOf(timestampType);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        try {
+            readOnlyPartitionTimestamp = timestampDriver.parseFloorLiteral(readOnlyPartitionName + "T00:00:00.000Z");
+            activePartitionTimestamp = timestampDriver.parseFloorLiteral(activePartitionName + "T00:00:00.000Z");
+        } catch (NumericException impossible) {
+            throw new RuntimeException(impossible);
+        }
+
     }
 
     @Test
@@ -89,16 +103,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             execute("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z', '¶')");
                             execute("ALTER TABLE " + tableName + " ALTER COLUMN ss ADD INDEX CAPACITY 32");
                             assertSql(
-                                    "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                                    replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
                             assertSql(
-                                    "l\ti\ts\tts\tss\n" +
+                                    replaceTimestampSuffix1("l\ti\ts\tts\tss\n" +
                                             "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\t\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\t\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\t\n" +
                                             "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\t\n" +
-                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\t\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\t\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -117,8 +131,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
                         try {
                             execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             // verify cold storage folder exists
@@ -138,14 +152,14 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             // insert a row at the end of the partition, the only row, which will create the partition
                             // at this point there is no longer information as to weather it was read-only in the past
                             execute("INSERT INTO " + tableName + " (l, i, ts) VALUES(0, 0, '" + readOnlyPartitionName + "T23:59:59.500001Z')");
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix("min\tmax\tcount\n" +
+                                    "2022-10-17T23:59:59.500001Z\t2022-10-18T23:59:59.000000Z\t5001\n"), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             // drop the partition
                             execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -168,17 +182,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             // silently ignored because the partition is read-only
                             execute("INSERT INTO " + tableName + " VALUES(1492, 10, 'howdy', '" + readOnlyPartitionName + "T23:59:59.999999Z')");
                             assertSql(
-                                    "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                                    replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             assertSql(
-                                    "l\ti\ts\tts\n" +
+                                    replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                             "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
                                             "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
                                             "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                             "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
-                                            "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                                            "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -197,8 +211,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             attachPartitionFromSoftLink(tableName, "IGLOO", tableToken -> {
                         try {
                             execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             // verify cold storage folder exists
@@ -240,8 +254,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                 Assert.assertTrue(Files.exists(path.$()));
                             }
                             engine.releaseAllReaders();
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             runO3PartitionPurgeJob();
@@ -268,12 +282,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         TestUtils.unchecked(() -> {
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                     "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                     "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                     "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
 
                             try (TableReader ignore = engine.getReader(tableToken)) {
@@ -302,10 +316,10 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
                             execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + readOnlyPartitionName + "'", sqlExecutionContext);
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-18T00:00:16.779900Z\t2022-10-18T23:59:59.000000Z\t5000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\ts\tts\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -322,12 +336,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, tableToken -> {
                         try {
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "5001\t5001\t\t2022-10-18T00:00:16.779900Z\n" +
                                     "5002\t5002\tHYRX\t2022-10-18T00:00:34.059800Z\n" +
                                     "5003\t5003\tCPSW\t2022-10-18T00:00:51.339700Z\n" +
                                     "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n" +
-                                    "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5"
+                                    "5005\t5005\tPEHN\t2022-10-18T00:01:25.899500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5"
                             );
 
                             try (TableWriter writer = getWriter(tableToken)) {
@@ -346,20 +360,20 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                 // goes through but only one row makes it into the table
                                 writer.commit();
 
-                                assertSql("l\ti\ts\tts\n" +
+                                assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                         "2023\t12\tDecember\t2022-10-18T00:00:00.000000Z\n" +
                                         "5001\t5001\t\t2022-10-18T00:00:16.779900Z\n" +
                                         "5002\t5002\tHYRX\t2022-10-18T00:00:34.059800Z\n" +
                                         "5003\t5003\tCPSW\t2022-10-18T00:00:51.339700Z\n" +
-                                        "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5"
+                                        "5004\t5004\tVTJW\t2022-10-18T00:01:08.619600Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + activePartitionName + "' LIMIT 5"
                                 );
 
-                                assertSql("l\ti\ts\tts\n" +
+                                assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                         "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
                                         "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
                                         "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                         "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
-                                        "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                                        "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                                 );
 
                                 row = writer.newRow(activePartitionTimestamp);
@@ -376,11 +390,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     readOnlyPartitionName
                             );
 
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10002\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10002\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\ts\tts\n" +
-                                    "2023\t10\tOctopus\t2022-10-18T00:00:00.000000Z\n", "SELECT * FROM " + tableName + " WHERE s = 'Octopus'"
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
+                                    "2023\t10\tOctopus\t2022-10-18T00:00:00.000000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE s = 'Octopus'"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -427,28 +441,28 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Assert.assertFalse(txFile.isPartitionReadOnly(partitionCount - 1));
             }
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             String lastReadOnlyPartitionName = "2022-10-20";
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                     "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
                     "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
                     "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
                     "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
-                    "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT 5"
+                    "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", timestampTypeName), tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT 5"
             );
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                     "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
                     "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
                     "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
                     "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
-                    "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT -5"
+                    "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", timestampTypeName), tableName + " WHERE ts IN '" + lastReadOnlyPartitionName + "' LIMIT -5"
             );
 
             // silently ignored as the partition is read only
@@ -469,21 +483,21 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     lastReadOnlyPartitionName
             );
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // drop active partition
             execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-10-21'", sqlExecutionContext);
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
+                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // the previously read-only partition becomes now the active partition, and cannot be written to
@@ -496,19 +510,19 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 }
             }
 
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                     "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
                     "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
                     "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
                     "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
-                    "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5"
+                    "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", timestampTypeName), tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5"
             );
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                     "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
                     "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
                     "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
                     "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
-                    "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5"
+                    "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", timestampTypeName), tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5"
             );
 
             // silently ignored as the partition is read only
@@ -523,35 +537,35 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             execute("INSERT INTO " + tableName + " (l, i, s, ts) VALUES(-1, -1, 'µ','" + newPartitionName + "T20:00:00.202312Z')");
             update("UPDATE " + tableName + " SET l = 13 WHERE ts = '" + newPartitionName + "T20:00:00.202312Z'");
             assertSql(
-                    "l\ti\ts\tts\n" +
-                            "13\t-1\tµ\t2022-10-21T20:00:00.202312Z\n", tableName + " WHERE ts in '" + newPartitionName + "'"
+                    replaceTimestampSuffix("l\ti\ts\tts\n" +
+                            "13\t-1\tµ\t2022-10-21T20:00:00.202312Z\n"), tableName + " WHERE ts in '" + newPartitionName + "'"
             );
 
             assertSql(
-                    "l\ti\ts\tts\n" +
+                    replaceTimestampSuffix1("l\ti\ts\tts\n" +
                             "6001\t6001\t\t2022-10-20T00:00:42.599900Z\n" +
                             "6002\t6002\tPEHN\t2022-10-20T00:01:25.799800Z\n" +
                             "6003\t6003\t\t2022-10-20T00:02:08.999700Z\n" +
                             "6004\t6004\tCPSW\t2022-10-20T00:02:52.199600Z\n" +
-                            "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5"
+                            "6005\t6005\tCPSW\t2022-10-20T00:03:35.399500Z\n", timestampTypeName), tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT 5"
             );
 
             assertSql(
-                    "l\ti\ts\tts\n" +
+                    replaceTimestampSuffix1("l\ti\ts\tts\n" +
                             "7996\t7996\tVTJW\t2022-10-20T23:57:06.400400Z\n" +
                             "7997\t7997\t\t2022-10-20T23:57:49.600300Z\n" +
                             "7998\t7998\t\t2022-10-20T23:58:32.800200Z\n" +
                             "7999\t7999\tPEHN\t2022-10-20T23:59:16.000100Z\n" +
-                            "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5"
+                            "8000\t8000\tPEHN\t2022-10-20T23:59:59.200000Z\n", timestampTypeName), tableName + " WHERE ts in '" + lastReadOnlyPartitionName + "' LIMIT -5"
             );
 
             assertSql(
-                    "min\tmax\tcount\n" +
+                    replaceTimestampSuffix("min\tmax\tcount\n" +
                             "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                             "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n" +
-                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
+                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n"), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -564,12 +578,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TableToken tableToken = createPopulateTable(tableName, 5);
             makeAllPartitionsReadOnly(tableToken);
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
                     "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
                     "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
                     "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
-                    "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
+                    "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
             );
 
             // silently ignored as the partition is read only
@@ -583,18 +597,18 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             multiInsertStmt += "(1, 0, 'µ', '" + newPartitionName + "T01:00:27.202901Z'),";
             multiInsertStmt += "(1, 1, 'µ', '" + newPartitionName + "T01:00:27.202902Z');";
             execute(multiInsertStmt);
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix("l\ti\ts\tts\n" +
                     "1\t0\tµ\t2022-10-22T01:00:27.202901Z\n" +
-                    "1\t1\tµ\t2022-10-22T01:00:27.202902Z\n", tableName + " WHERE ts in '" + newPartitionName + "'"
+                    "1\t1\tµ\t2022-10-22T01:00:27.202902Z\n"), tableName + " WHERE ts in '" + newPartitionName + "'"
             );
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
                     "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
                     "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
                     "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
                     "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n" +
-                    "2022-10-22T01:00:27.202901Z\t2022-10-22T01:00:27.202902Z\t2\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
+                    "2022-10-22T01:00:27.202901Z\t2022-10-22T01:00:27.202902Z\t2\n"), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
             );
         });
     }
@@ -607,12 +621,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             TableToken tableToken = createPopulateTable(tableName, 5);
             makeAllPartitionsReadOnly(tableToken);
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
                     "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
                     "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
                     "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
-                    "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
+                    "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
             );
 
             // silently ignored as the partition is read only
@@ -626,18 +640,18 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             multiInsertStmt += "(137, -3, 'P', '" + firstPartitionName + "T00:03:09.103056Z'),";
             multiInsertStmt += "(1, 0, 'µ', '" + newPartitionName + "T01:00:26.453476Z');";
             execute(multiInsertStmt);
-            assertSql("l\ti\ts\tts\n" +
+            assertSql(replaceTimestampSuffix("l\ti\ts\tts\n" +
                     "1\t0\tµ\t2022-10-22T01:00:26.453476Z\n" +
-                    "1\t1\tµø\t2022-10-22T01:00:27.202901Z\n", tableName + " WHERE ts in '" + newPartitionName + "'"
+                    "1\t1\tµø\t2022-10-22T01:00:27.202901Z\n"), tableName + " WHERE ts in '" + newPartitionName + "'"
             );
 
-            assertSql("min\tmax\tcount\n" +
+            assertSql(replaceTimestampSuffix("min\tmax\tcount\n" +
                     "2022-10-17T00:00:43.199900Z\t2022-10-17T23:59:59.800000Z\t2000\n" +
                     "2022-10-18T00:00:42.999900Z\t2022-10-18T23:59:59.600000Z\t2000\n" +
                     "2022-10-19T00:00:42.799900Z\t2022-10-19T23:59:59.400000Z\t2000\n" +
                     "2022-10-20T00:00:42.599900Z\t2022-10-20T23:59:59.200000Z\t2000\n" +
                     "2022-10-21T00:00:42.399900Z\t2022-10-21T23:59:59.000000Z\t2000\n" +
-                    "2022-10-22T01:00:26.453476Z\t2022-10-22T01:00:27.202901Z\t2\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
+                    "2022-10-22T01:00:26.453476Z\t2022-10-22T01:00:27.202901Z\t2\n"), "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR"
             );
         });
     }
@@ -648,12 +662,12 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             final String tableName = testName.getMethodName();
             createTableWithReadOnlyPartition(tableName, ignore -> {
                         try {
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                     "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                     "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                     "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
 
                             // silently ignored as the partition is read only
@@ -674,23 +688,23 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     readOnlyPartitionName
                             );
 
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                             "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" + // <-- update was skipped, l would have been 13
-                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                            "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                                     // <-- no new row at the end
                             );
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
                                     "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" + // <-- update was skipped, l would have been 13
                                     "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                     "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
-                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -726,14 +740,14 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     src.col("l", ColumnType.LONG)
                             .col("i", ColumnType.INT)
                             .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                            .timestamp("ts"),
+                            .timestamp("ts", timestampType),
                     10000,
                     partitionName[0],
                     partitionCount
             );
             txn++;
-            assertSql("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
 
             // detach all partitions but last two and them from soft link
@@ -763,8 +777,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             }
 
             // verify content
-            assertSql("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
 
             // create a reader, which will prevent partitions from being immediately purged
@@ -781,8 +795,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Assert.assertTrue(Files.exists(path.$()));
             }
             engine.releaseAllReaders();
-            assertSql("min\tmax\tcount\n" +
-                    "2022-10-22T00:00:33.726600Z\t2022-10-22T23:59:59.000000Z\t1667\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    "2022-10-22T00:00:33.726600Z\t2022-10-22T23:59:59.000000Z\t1667\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
 
             runO3PartitionPurgeJob();
@@ -820,16 +834,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             execute("INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')");
 
                             assertSql(
-                                    "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                                    replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
                             assertSql(
-                                    "l\ti\tts\n" +
+                                    replaceTimestampSuffix1("l\ti\tts\n" +
                                             "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
                         });
 
@@ -880,17 +894,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             execute("INSERT INTO " + tableName + " VALUES(666, 666, '" + readOnlyPartitionName + "T23:59:59.999999Z')");
 
                             assertSql(
-                                    "min\tmax\tcount\n" +
-                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                                    replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                            "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
 
                             assertSql(
-                                    "l\ti\tts\n" +
+                                    replaceTimestampSuffix1("l\ti\tts\n" +
                                             "4996\t4996\t2022-10-17T23:58:50.380400Z\n" +
                                             "4997\t4997\t2022-10-17T23:59:07.660300Z\n" +
                                             "4998\t4998\t2022-10-17T23:59:24.940200Z\n" +
                                             "4999\t4999\t2022-10-17T23:59:42.220100Z\n" +
-                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                            "5000\t5000\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
                         });
                         return null;
@@ -910,15 +924,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
                             // silently ignored as the partition is read only
                             execute("INSERT INTO " + tableName + " VALUES(666, 666, 'queso', '" + readOnlyPartitionName + "T23:59:59.999999Z')");
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\tss\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\tss\tts\n" +
                                     "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                     "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                     "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                     "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -994,22 +1008,22 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     tableName,
                                     readOnlyPartitionName
                             );
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "4996\t4996\tVTJW\t2022-10-17T23:58:50.380400Z\n" +
                                     "4997\t4997\tCPSW\t2022-10-17T23:59:07.660300Z\n" +
                                     "4998\t4998\tHYRX\t2022-10-17T23:59:24.940200Z\n" +
                                     "4999\t4999\tHYRX\t2022-10-17T23:59:42.220100Z\n" +
-                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
+                                    "5000\t5000\tCPSW\t2022-10-17T23:59:59.500000Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT -5"
                             );
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" +
                                     "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
                                     "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                     "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
-                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -1032,15 +1046,15 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     tableName,
                                     readOnlyPartitionName
                             );
-                            assertSql("min\tmax\tcount\n" +
-                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+                            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                                    "2022-10-17T00:00:17.279900Z\t2022-10-18T23:59:59.000000Z\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
                             );
-                            assertSql("l\ti\ts\tts\n" +
+                            assertSql(replaceTimestampSuffix1("l\ti\ts\tts\n" +
                                     "1\t1\tCPSW\t2022-10-17T00:00:17.279900Z\n" + // update is skipped, l would have been 13
                                     "2\t2\tHYRX\t2022-10-17T00:00:34.559800Z\n" +
                                     "3\t3\t\t2022-10-17T00:00:51.839700Z\n" +
                                     "4\t4\tVTJW\t2022-10-17T00:01:09.119600Z\n" +
-                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
+                                    "5\t5\tPEHN\t2022-10-17T00:01:26.399500Z\n", timestampTypeName), "SELECT * FROM " + tableName + " WHERE ts in '" + readOnlyPartitionName + "' LIMIT 5"
                             );
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
@@ -1089,7 +1103,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             assertExceptionNoLeakCheck(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
-                    "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
+                    "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + replaceTimestampSuffix("T00:00:00.000000Z]", timestampTypeName),
                     e.getFlyweightMessage());
         } catch (Throwable e) {
             Assert.fail("not expecting any Exception: " + e.getMessage());
@@ -1099,8 +1113,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private void attachPartitionFromSoftLink(String tableName, String otherLocation, Function<TableToken, Void> test) throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             TableToken tableToken = createPopulateTable(tableName, 2);
-            assertSql("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
 
             // detach partition and attach it from soft link
@@ -1121,8 +1135,8 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));
                 Assert.assertFalse(txFile.isPartitionReadOnly(1));
             }
-            assertSql("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
             test.apply(tableToken);
         });
@@ -1177,7 +1191,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 src.col("l", ColumnType.LONG)
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                        .timestamp("ts"),
+                        .timestamp("ts", timestampType),
                 10000,
                 "2022-10-17",
                 partitionCount
@@ -1203,20 +1217,14 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Assert.assertTrue(txFile.isPartitionReadOnly(0));
                 Assert.assertFalse(txFile.isPartitionReadOnly(1));
             }
-            assertSql("min\tmax\tcount\n" +
-                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
+            assertSql(replaceTimestampSuffix1("min\tmax\tcount\n" +
+                    expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", timestampTypeName), "SELECT min(ts), max(ts), count() FROM " + tableName
             );
             test.apply(tableToken);
         });
     }
 
-    static {
-        try {
-            readOnlyPartitionTimestamp = TimestampFormatUtils.parseTimestamp(readOnlyPartitionName + "T00:00:00.000Z");
-            activePartitionTimestamp = TimestampFormatUtils.parseTimestamp(activePartitionName + "T00:00:00.000Z");
-        } catch (NumericException impossible) {
-            throw new RuntimeException(impossible);
-        }
+    private String replaceTimestampSuffix(String expected) {
+        return ColumnType.isTimestampNano(timestampType) ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
     }
 }
-

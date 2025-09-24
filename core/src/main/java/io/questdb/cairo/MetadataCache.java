@@ -199,10 +199,6 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
-            table.setMatViewRefreshLimitHoursOrMonths(TableUtils.getMatViewRefreshLimitHoursOrMonths(metaMem));
-            table.setMatViewTimerStart(TableUtils.getMatViewTimerStart(metaMem));
-            table.setMatViewTimerInterval(TableUtils.getMatViewTimerInterval(metaMem));
-            table.setMatViewTimerIntervalUnit(TableUtils.getMatViewTimerIntervalUnit(metaMem));
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
@@ -245,6 +241,7 @@ public class MetadataCache implements QuietCloseable {
                 if (isDesignated) {
                     // Timestamp index is the logical index of the column in the column list. Rather than
                     // physical index of the column in the metadata file (writer index).
+                    table.setTimestampType(columnType);
                     table.setTimestampIndex(table.getColumnCount());
                 }
 
@@ -293,7 +290,13 @@ public class MetadataCache implements QuietCloseable {
         }
     }
 
-    private void loadCapacities(CairoColumn column, TableToken token, Path path, CairoConfiguration configuration, ColumnVersionReader columnVersionReader) {
+    private void loadCapacities(
+            CairoColumn column,
+            TableToken token,
+            Path path,
+            CairoConfiguration configuration,
+            ColumnVersionReader columnVersionReader
+    ) {
         final CharSequence columnName = column.getName();
         final int writerIndex = column.getWriterIndex();
 
@@ -309,7 +312,6 @@ public class MetadataCache implements QuietCloseable {
             final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
-
                 columnVersionReader.readUnsafe();
                 columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
             }
@@ -498,7 +500,7 @@ public class MetadataCache implements QuietCloseable {
             CairoTable entry = tableMap.get(tableName);
             if (entry != null && tableToken.equals(entry.getTableToken())) {
                 tableMap.remove(tableName);
-                LOG.info().$("dropped [table=").$safe(tableName).I$();
+                LOG.info().$("dropped [table=").$(tableToken).I$();
             }
         }
 
@@ -543,10 +545,6 @@ public class MetadataCache implements QuietCloseable {
             int timestampWriterIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(-1);
             table.setTtlHoursOrMonths(tableMetadata.getTtlHoursOrMonths());
-            table.setMatViewRefreshLimitHoursOrMonths(tableMetadata.getMatViewRefreshLimitHoursOrMonths());
-            table.setMatViewTimerStart(tableMetadata.getMatViewTimerStart());
-            table.setMatViewTimerInterval(tableMetadata.getMatViewTimerInterval());
-            table.setMatViewTimerIntervalUnit(tableMetadata.getMatViewTimerIntervalUnit());
             Path tempPath = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
             table.setSoftLinkFlag(Files.isSoftLink(tempPath.concat(tableToken.getDirNameUtf8()).$()));
 

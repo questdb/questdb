@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -54,8 +55,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -83,14 +84,24 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final MatViewDefinition matViewDefinition = new MatViewDefinition();
+    private final boolean deferred;
+    private final int periodDelay;
+    private final char periodDelayUnit;
+    private final int periodLength;
+    private final char periodLengthUnit;
     private final int refreshType;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final int timerInterval;
+    private final long timerStartUs;
+    private final String timerTimeZone;
+    private final char timerUnit;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
+    private final MatViewDefinition viewDefinition = new MatViewDefinition();
+    private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
@@ -99,18 +110,36 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
+            boolean deferred,
             @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
-            @Nullable String timeZoneOffset
+            @Nullable String timeZoneOffset,
+            int timerInterval,
+            char timerUnit,
+            long timerStartUs,
+            @Nullable String timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
     ) {
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
+        this.deferred = deferred;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
+        this.timerInterval = timerInterval;
+        this.timerUnit = timerUnit;
+        this.timerStartUs = timerStartUs;
+        this.timerTimeZone = timerTimeZone;
+        this.periodLength = periodLength;
+        this.periodLengthUnit = periodLengthUnit;
+        this.periodDelay = periodDelay;
+        this.periodDelayUnit = periodDelayUnit;
     }
 
     @Override
@@ -158,22 +187,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public MatViewDefinition getMatViewDefinition() {
-        return matViewDefinition;
-    }
-
-    @Override
-    public int getMatViewTimerInterval() {
-        return createTableOperation.getMatViewTimerInterval();
-    }
-
-    @Override
-    public char getMatViewTimerIntervalUnit() {
-        return createTableOperation.getMatViewTimerIntervalUnit();
-    }
-
-    @Override
-    public long getMatViewTimerStart() {
-        return createTableOperation.getMatViewTimerStart();
+        return viewDefinition;
     }
 
     @Override
@@ -258,21 +272,37 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void init(TableToken matViewToken) {
-        matViewDefinition.init(
+        viewDefinition.init(
                 refreshType,
+                deferred,
+                baseTableTimestampType,
                 matViewToken,
                 Chars.toString(createTableOperation.getSelectText()),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset
+                timeZoneOffset,
+                0, // refreshLimitHoursOrMonths can only be set via ALTER
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
         );
     }
 
     @Override
     public boolean isDedupKey(int index) {
         return createTableOperation.isDedupKey(index);
+    }
+
+    @Override
+    public boolean isDeferred() {
+        return deferred;
     }
 
     @Override
@@ -303,9 +333,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromModel(
-            SqlExecutionContext sqlExecutionContext,
-            FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
+            @NotNull SqlExecutionContext sqlExecutionContext,
+            @NotNull FunctionFactoryCache functionFactoryCache,
+            @NotNull QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -341,7 +371,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             final int timestampType = timestampModel.getColumnType();
             // type can be -1 for create table as select because types aren't known yet
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
+            if (!ColumnType.isTimestamp(timestampType) && timestampType != ColumnType.UNDEFINED) {
                 throw SqlException.position(timestampPos)
                         .put("TIMESTAMP column expected [actual=")
                         .put(ColumnType.nameOf(timestampType)).put(']');
@@ -402,31 +432,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Parse sampling interval expression.
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos, "sample");
         assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos);
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
-
-        // Check if PARTITION BY wasn't specified in SQL, so that we need
-        // to assign it based on the sampling interval.
-        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
-            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
-                    samplingInterval,
-                    samplingIntervalUnit,
-                    0
-            );
-            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
-            final int partitionBy = approxBucketMicros > Timestamps.HOUR_MICROS ? PartitionBy.YEAR
-                    : approxBucketMicros > Timestamps.MINUTE_MICROS ? PartitionBy.MONTH
-                    : PartitionBy.DAY;
-            createTableOperation.setPartitionBy(partitionBy);
-            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
-            if (ttlHoursOrMonths > 0) {
-                // Don't forget to validate TTL against PARTITION BY.
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
-            }
-        }
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
@@ -448,8 +458,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(
-            RecordMetadata selectMetadata,
-            TableReaderMetadata baseTableMetadata
+            @NotNull RecordMetadata selectMetadata,
+            @NotNull TableReaderMetadata baseTableMetadata
     ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
@@ -460,11 +470,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
+        updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
+        this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
     private static void copyBaseTableSymbolColumnCapacity(
-            ExpressionNode columnNode,
-            QueryModel queryModel,
+            @Nullable ExpressionNode columnNode,
+            @Nullable QueryModel queryModel,
             @NotNull CreateTableColumnModel columnModel,
             @NotNull CharSequence baseTableName,
             @NotNull TableMetadata baseTableMetadata
@@ -612,6 +624,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 if (tmpLiterals.contains(column.getAlias())) {
                     tmpColumnIndexes.add(i);
                 }
+            }
+        }
+    }
+
+    private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {
+        // Check if PARTITION BY wasn't specified in SQL, so that we need
+        // to assign it based on the sampling interval.
+        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
+                    timestampDriver,
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+            final long approxBucket = timestampSampler.getApproxBucketSize();
+            final int partitionBy = approxBucket > timestampDriver.fromHours(1) ? PartitionBy.YEAR
+                    : approxBucket > timestampDriver.fromMinutes(1) ? PartitionBy.MONTH
+                    : PartitionBy.DAY;
+            createTableOperation.setPartitionBy(partitionBy);
+            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+            if (ttlHoursOrMonths > 0) {
+                // Don't forget to validate TTL against PARTITION BY.
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }
     }

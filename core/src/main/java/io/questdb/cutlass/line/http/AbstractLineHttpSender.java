@@ -27,6 +27,8 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -43,16 +45,16 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
@@ -79,7 +81,7 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final String path;
     private final int port;
     private final CharSequence questDBVersion;
-    private final Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
+    private final Rnd rnd;
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
@@ -104,7 +106,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
-            long flushIntervalNanos
+            long flushIntervalNanos,
+            Rnd rnd
     ) {
         this(
                 host,
@@ -120,7 +123,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos
+                flushIntervalNanos,
+                rnd
         );
     }
 
@@ -138,7 +142,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             int maxNameLength,
             long maxRetriesNanos,
             long minRequestThroughput,
-            long flushIntervalNanos
+            long flushIntervalNanos,
+            Rnd rnd
     ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
@@ -162,6 +167,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
         this.maxNameLength = maxNameLength;
+        this.rnd = rnd;
     }
 
     public static AbstractLineHttpSender createLineSender(
@@ -181,6 +187,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             int protocolVersion
     ) {
         HttpClient cli = null;
+        Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
 
         // if user does not set protocol version explicit, client will try to detect it from server
         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
@@ -190,9 +197,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
             }
             try {
-                HttpClient.Request req = cli.newRequest(host, port).GET();
-                HttpClient.ResponseHeaders response = req.url(clientConfiguration.getSettingsPath()).send();
-                response.await();
+                HttpClient.Request req = cli.newRequest(host, port).GET().url(clientConfiguration.getSettingsPath());
+                HttpClient.ResponseHeaders response = sendWithRetries(cli, req, rnd, maxRetriesNanos);
                 DirectUtf8Sequence statusCode = response.getStatusCode();
                 if (Utf8s.equalsNcAscii("200", statusCode)) {
                     try (JsonSettingsParser parser = new JsonSettingsParser()) {
@@ -238,7 +244,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    rnd
             );
         } else {
             return new LineHttpSenderV2(
@@ -255,21 +262,32 @@ public abstract class AbstractLineHttpSender implements Sender {
                     maxNameLength,
                     maxRetriesNanos,
                     minRequestThroughput,
-                    flushIntervalNanos
+                    flushIntervalNanos,
+                    rnd
             );
         }
     }
 
     @Override
     public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
+        request.putAscii(' ');
+        // todo. Not efficient for timestamp > Long.MAX_VALUE, consider introduce a conf like 'timestamp_transmit_use_nanos' ?
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).put('t');
+        }
         atNow();
     }
 
     @Override
     public void at(Instant timestamp) {
-        long micros = timestamp.getEpochSecond() * Timestamps.SECOND_MICROS + timestamp.getNano() / 1_000;
-        request.putAscii(' ').put(micros).put('t');
+        request.putAscii(' ');
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(timestamp));
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).put('t');
+        }
         atNow();
     }
 
@@ -349,6 +367,15 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
+    @TestOnly
+    public void putRawMessage(Utf8Sequence msg) {
+        request.put(msg); // message must include trailing \n
+        state = RequestState.EMPTY;
+        if (rowAdded()) {
+            flush();
+        }
+    }
+
     @Override
     public Sender stringColumn(CharSequence name, CharSequence value) {
         writeFieldName(name);
@@ -402,18 +429,31 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        // micros
-        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name);
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAscii('n');
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
+        }
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
-        // micros
-        writeFieldName(name)
-                .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
-                .put('t');
+        writeFieldName(name);
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(value)).putAscii('n');
+        } catch (ArithmeticException e) {
+            request.put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
+        }
         return this;
+    }
+
+    private static int backoff(Rnd rnd, int retryBackoff) {
+        int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
+        int backoff = retryBackoff + jitter;
+        Os.sleep(backoff);
+        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
     }
 
     private static void chunkedResponseToSink(HttpClient.ResponseHeaders response, StringSink sink) {
@@ -427,6 +467,33 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
+    private static boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3 || statusCode.byteAt(0) != '5') {
+            return false;
+        }
+
+        /*
+        We are retrying on the following response codes (copied from the Rust client):
+        500:  Internal Server Error
+        503:  Service Unavailable
+        504:  Gateway Timeout
+
+        // Unofficial extensions
+        507:  Insufficient Storage
+        509:  Bandwidth Limit Exceeded
+        523:  Origin is Unreachable
+        524:  A Timeout Occurred
+        529:  Site is overloaded
+        599:  Network Connect Timeout Error
+        */
+
+        byte middle = statusCode.byteAt(1);
+        byte last = statusCode.byteAt(2);
+        return (middle == '0' && (last == '0' || last == '3' || last == '4' || last == '7' || last == '9'))
+                || (middle == '2' && (last == '3' || last == '4' || last == '9'))
+                || (middle == '9' && last == '9');
+    }
+
     private static boolean isSuccessResponse(DirectUtf8Sequence statusCode) {
         return statusCode != null && statusCode.size() == 3 && statusCode.byteAt(0) == '2';
     }
@@ -436,12 +503,43 @@ public abstract class AbstractLineHttpSender implements Sender {
         return HttpKeywords.isClose(connectionHeader);
     }
 
+    private static HttpClient.ResponseHeaders sendWithRetries(HttpClient client, HttpClient.Request req, Rnd rnd, long maxRetriesNanos) {
+        long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        for (; ; ) {
+            try {
+                HttpClient.ResponseHeaders response = req.send();
+                response.await();
+                DirectUtf8Sequence statusCode = response.getStatusCode();
+                if (isSuccessResponse(statusCode)) {
+                    return response;
+                }
+                if (!isRetryableHttpStatus(statusCode)) {
+                    // no point in retrying if the status code is not retryable
+                    return response;
+                }
 
-    private int backoff(int retryBackoff) {
-        int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
-        int backoff = retryBackoff + jitter;
-        Os.sleep(backoff);
-        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
+                long nowNanos = System.nanoTime();
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                        ? nowNanos + maxRetriesNanos
+                        : retryingDeadlineNanos;
+                if (nowNanos >= retryingDeadlineNanos) {
+                    return response;
+                }
+            } catch (HttpClientException e) {
+                // network I/O error -> we retry
+                long nowNanos = System.nanoTime();
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE)
+                        ? nowNanos + maxRetriesNanos
+                        : retryingDeadlineNanos;
+                if (nowNanos >= retryingDeadlineNanos) {
+                    throw e;
+                }
+            }
+            // ok, retrying
+            client.disconnect(); // forces reconnect
+            retryBackoff = backoff(rnd, retryBackoff);
+        }
     }
 
     private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {
@@ -525,7 +623,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                         throwOnHttpErrorResponse(statusCode, response);
                     }
                     client.disconnect(); // forces reconnect, just in case
-                    retryBackoff = backoff(retryBackoff);
+                    retryBackoff = backoff(rnd, retryBackoff);
                     continue;
                 }
                 throwOnHttpErrorResponse(statusCode, response);
@@ -545,39 +643,12 @@ public abstract class AbstractLineHttpSender implements Sender {
                     throw new LineSenderException("Could not flush buffer: ").put(url)
                             .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
-                retryBackoff = backoff(retryBackoff);
+                retryBackoff = backoff(rnd, retryBackoff);
             }
         }
         pendingRows = 0;
         flushAfterNanos = System.nanoTime() + flushIntervalNanos;
         request = newRequest();
-    }
-
-    private boolean isRetryableHttpStatus(DirectUtf8Sequence statusCode) {
-        if (statusCode == null || statusCode.size() != 3 || statusCode.byteAt(0) != '5') {
-            return false;
-        }
-
-        /*
-        We are retrying on the following response codes (copied from the Rust client):
-        500:  Internal Server Error
-        503:  Service Unavailable
-        504:  Gateway Timeout
-
-        // Unofficial extensions
-        507:  Insufficient Storage
-        509:  Bandwidth Limit Exceeded
-        523:  Origin is Unreachable
-        524:  A Timeout Occurred
-        529:  Site is overloaded
-        599:  Network Connect Timeout Error
-        */
-
-        byte middle = statusCode.byteAt(1);
-        byte last = statusCode.byteAt(2);
-        return (middle == '0' && (last == '0' || last == '3' || last == '4' || last == '7' || last == '9'))
-                || (middle == '2' && (last == '3' || last == '4' || last == '9'))
-                || (middle == '9' && last == '9');
     }
 
     private HttpClient.Request newRequest() {

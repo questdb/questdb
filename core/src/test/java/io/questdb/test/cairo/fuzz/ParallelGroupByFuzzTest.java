@@ -692,6 +692,291 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByArrayFirst() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        testParallelGroupByArray(
+                "SELECT first(darr), key FROM tab order by key",
+                "first\tkey\n" +
+                        "[[null,null,null],[null,0.7883065830055033,null]]\tk0\n" +
+                        "[[null,0.20447441837877756],[null,null]]\tk1\n" +
+                        "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\tk2\n" +
+                        "[[null,0.33608255572515877],[0.690540444367637,null]]\tk3\n" +
+                        "[[null,null],[0.12503042190293423,null]]\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelGroupByArrayFunction() throws Exception {
+        Assume.assumeTrue(!convertToParquet && enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler,
+                                "create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY",
+                                sqlExecutionContext);
+                        execute(compiler,
+                                "insert into tango values " +
+                                        "('2025-06-26', 1.0, ARRAY[1.0,2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])," +
+                                        "('2025-06-26', 10.0, null)," +
+                                        "('2025-06-27', 18.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                                        "('2025-06-27', 25.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])," +
+                                        "('2025-06-28', 38.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                                        "('2025-06-28', 35.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])," +
+                                        "('2025-06-29', 48.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                                        "('2025-06-29', 45.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])," +
+                                        "('2025-06-30', 58.0, ARRAY[11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0])," +
+                                        "('2025-06-30', 55.0, ARRAY[21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0])",
+                                sqlExecutionContext);
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [max(array_position(arr, a))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
+                                "ts\tv\n" +
+                                        "2025-06-26T00:00:00.000000Z\t1\n" +
+                                        "2025-06-27T00:00:00.000000Z\t8\n" +
+                                        "2025-06-28T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-29T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-30T00:00:00.000000Z\tnull\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, max(array_position(arr, a)) as v from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [max(array_position(arr, a))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, max(array_position(arr, a)) as v from tango sample by 1d",
+                                "ts\tv\n" +
+                                        "2025-06-26T00:00:00.000000Z\t1\n" +
+                                        "2025-06-27T00:00:00.000000Z\t8\n" +
+                                        "2025-06-28T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-29T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-30T00:00:00.000000Z\tnull\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [min(insertion_point(arr,a))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, min(insertion_point(arr, a)) as v from tango sample by 1d",
+                                "ts\tv\n" +
+                                        "2025-06-26T00:00:00.000000Z\t2\n" +
+                                        "2025-06-27T00:00:00.000000Z\t6\n" +
+                                        "2025-06-28T00:00:00.000000Z\t11\n" +
+                                        "2025-06-29T00:00:00.000000Z\t11\n" +
+                                        "2025-06-30T00:00:00.000000Z\t11\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, sum(array_count(arr)) as v from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [sum(array_count(arr))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, sum(array_count(arr)) as v from tango sample by 1d",
+                                "ts\tv\n" +
+                                        "2025-06-26T00:00:00.000000Z\t10\n" +
+                                        "2025-06-27T00:00:00.000000Z\t20\n" +
+                                        "2025-06-28T00:00:00.000000Z\t20\n" +
+                                        "2025-06-29T00:00:00.000000Z\t20\n" +
+                                        "2025-06-30T00:00:00.000000Z\t20\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, sum(array_avg(arr)) as v from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [sum(array_avg(arr))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, sum(array_avg(arr)) as v from tango sample by 1d",
+                                "ts\tv\n" +
+                                        "2025-06-26T00:00:00.000000Z\t5.5\n" +
+                                        "2025-06-27T00:00:00.000000Z\t41.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t41.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t41.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t41.0\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
+                                "QUERY PLAN\n" +
+                                        "Sort light\n" +
+                                        "  keys: [ts, array_sum]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts,array_sum]\n" +
+                                        "      values: [sum(a)]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, array_sum(array_cum_sum(arr)), sum(a) from tango sample by 1d order by ts, array_sum",
+                                "ts\tarray_sum\tsum\n" +
+                                        "2025-06-26T00:00:00.000000Z\t220.0\t1.0\n" +
+                                        "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
+                                        "2025-06-27T00:00:00.000000Z\t770.0\t18.0\n" +
+                                        "2025-06-27T00:00:00.000000Z\t1320.0\t25.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t770.0\t38.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t1320.0\t35.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t770.0\t48.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t1320.0\t45.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t770.0\t58.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t1320.0\t55.0\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, dot_product(arr, 2), first(a) from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts,dot_product]\n" +
+                                        "      values: [first(a)]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, dot_product(arr, 2), first(a) from tango sample by 1d order by ts, dot_product",
+                                "ts\tdot_product\tfirst\n" +
+                                        "2025-06-26T00:00:00.000000Z\t110.0\t1.0\n" +
+                                        "2025-06-26T00:00:00.000000Z\tnull\t10.0\n" +
+                                        "2025-06-27T00:00:00.000000Z\t310.0\t18.0\n" +
+                                        "2025-06-27T00:00:00.000000Z\t510.0\t25.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t310.0\t38.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t510.0\t35.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t310.0\t48.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t510.0\t45.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t310.0\t58.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t510.0\t55.0\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [sum(array_sum(arr*5+3-1/2))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, sum(array_sum((arr * 5 + 3 - 1)/2)) from tango sample by 1d",
+                                "ts\tsum\n" +
+                                        "2025-06-26T00:00:00.000000Z\t147.5\n" +
+                                        "2025-06-27T00:00:00.000000Z\t1045.0\n" +
+                                        "2025-06-28T00:00:00.000000Z\t1045.0\n" +
+                                        "2025-06-29T00:00:00.000000Z\t1045.0\n" +
+                                        "2025-06-30T00:00:00.000000Z\t1045.0\n"
+                        );
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "explain select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
+                                "QUERY PLAN\n" +
+                                        "Radix sort light\n" +
+                                        "  keys: [ts]\n" +
+                                        "    Async Group By workers: 4\n" +
+                                        "      keys: [ts]\n" +
+                                        "      values: [sum(array_sum(arr[a::int:a::int+2]))]\n" +
+                                        "      filter: null\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tango\n",
+                                "select ts, sum(array_sum(arr[a::int:a::int + 2])) from tango sample by 1d",
+                                "ts\tsum\n" +
+                                        "2025-06-26T00:00:00.000000Z\t3.0\n" +
+                                        "2025-06-27T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-28T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-29T00:00:00.000000Z\tnull\n" +
+                                        "2025-06-30T00:00:00.000000Z\tnull\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelGroupByArrayNull() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // Add double[], all values should be null
+                        execute(
+                                compiler,
+                                "alter table tab add column darr double[]",
+                                sqlExecutionContext
+                        );
+
+                        assertQueries(engine, sqlExecutionContext, "SELECT first(darr), key FROM tab order by key", "first\tkey\n" +
+                                "null\tk0\n" +
+                                "null\tk1\n" +
+                                "null\tk2\n" +
+                                "null\tk3\n" +
+                                "null\tk4\n");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2888,24 +3173,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
-        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
-    }
-
-    private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
-        for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
-            final String query = queriesAndExpectedResults[i];
-            final String expected = queriesAndExpectedResults[i + 1];
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
-        }
-    }
-
     private void testFirstLastFunctionFuzz(String query) throws Exception {
         // With this test, we aim to verify correctness of merge() method
         // implementation in first/last functions.
@@ -3035,6 +3302,33 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
         testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    }
+
+    private void testParallelGroupByArray(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        execute(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " rnd_double_array(2, 2, 3) darr," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
@@ -3423,6 +3717,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
+        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
+    }
+
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
+        for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
+            final String query = queriesAndExpectedResults[i];
+            final String expected = queriesAndExpectedResults[i + 1];
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    query,
+                    sink,
+                    expected
+            );
+        }
     }
 
     private interface BindVariablesInitializer {

@@ -25,7 +25,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <version>8.3.4-SNAPSHOT</version>
+    <version>9.0.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-parent</artifactId>
     <packaging>pom</packaging>
@@ -43,7 +43,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
-                <version>2.8.2</version>
+                <version>3.1.4</version>
                 <configuration>
                     <skip>true</skip>
                 </configuration>
@@ -71,11 +71,16 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-release-plugin</artifactId>
-                <version>2.5.3</version>
+                <version>3.1.1</version>
                 <configuration>
                     <tagNameFormat>@{project.version}</tagNameFormat>
                     <arguments>-Dmaven.test.skipTests=true -Dmaven.test.skip=true</arguments>
                     <releaseProfiles>build-web-console,maven-central-release</releaseProfiles>
+                    <scmCommentPrefix>[maven-release-plugin]</scmCommentPrefix>
+                    <scmReleaseCommitComment>[maven-release-plugin] prepare release @{releaseLabel}
+                    </scmReleaseCommitComment>
+                    <scmDevelopmentCommitComment>[maven-release-plugin] prepare for next development iteration
+                    </scmDevelopmentCommitComment>
                 </configuration>
             </plugin>
         </plugins>

@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.VirtualFunctionDirectSymbolRecordCursor;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -140,7 +140,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         closed = true;
     }
 
-    class WindowRecordCursor extends VirtualFunctionDirectSymbolRecordCursor {
+    class WindowRecordCursor extends AbstractVirtualFunctionRecordCursor {
 
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
@@ -174,6 +174,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
             return hasNext;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
         }
 
         @Override

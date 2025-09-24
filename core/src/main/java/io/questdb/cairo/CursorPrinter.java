@@ -36,7 +36,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
@@ -62,7 +61,7 @@ public class CursorPrinter {
                 DateFormatUtils.appendDateTime(sink, record.getDate(columnIndex));
                 break;
             case ColumnType.TIMESTAMP:
-                TimestampFormatUtils.appendDateTimeUSec(sink, record.getTimestamp(columnIndex));
+                ColumnType.getTimestampDriver(columnType).append(sink, record.getTimestamp(columnIndex));
                 break;
             case ColumnType.DOUBLE:
                 double v = record.getDouble(columnIndex);
@@ -166,11 +165,15 @@ public class CursorPrinter {
             case ColumnType.INTERVAL:
                 Interval interval = record.getInterval(columnIndex);
                 if (!Interval.NULL.equals(interval)) {
-                    interval.toSink(sink);
+                    interval.toSink(sink, columnType);
                 }
                 break;
             case ColumnType.ARRAY:
-                ArrayTypeDriver.arrayToJson(record.getArray(columnIndex, columnType), sink, NoopArrayWriteState.INSTANCE);
+                ArrayTypeDriver.arrayToJson(
+                        record.getArray(columnIndex, columnType),
+                        sink,
+                        NoopArrayWriteState.INSTANCE
+                );
                 break;
             case ColumnType.ARRAY_STRING:
                 sink.put(record.getStrA(columnIndex));

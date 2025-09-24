@@ -69,7 +69,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -92,24 +91,14 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public TextQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public TextQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
@@ -288,10 +277,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
-    private static void putInterval(HttpChunkedResponse response, Record rec, int col) {
+    private static void putInterval(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (!Interval.NULL.equals(interval)) {
-            response.putQuote().put(interval).putQuote();
+            interval.toSink(response.putQuote(), intervalType);
+            response.putQuote();
         }
     }
 
@@ -608,15 +598,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (d == d) {
+                if (Numbers.isFinite(d)) {
                     response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
-                //noinspection ExpressionComparedToItself
-                if (f == f) {
+                if (Numbers.isFinite(f)) {
                     response.put(f);
                 }
                 break;
@@ -641,7 +629,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
-                    response.putAscii('"').putISODate(l).putAscii('"');
+                    response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
@@ -690,7 +678,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 putIPv4Value(response, rec, columnIndex);
                 break;
             case ColumnType.INTERVAL:
-                putInterval(response, rec, columnIndex);
+                putInterval(response, rec, columnIndex, columnType);
                 break;
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);

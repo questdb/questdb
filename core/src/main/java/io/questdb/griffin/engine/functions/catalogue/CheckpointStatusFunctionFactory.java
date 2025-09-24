@@ -24,9 +24,17 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -118,6 +126,11 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
             }
 
             @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
             public long size() {
                 return 1;
             }
@@ -159,7 +172,7 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("in_progress", ColumnType.BOOLEAN));
         inProgressColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("started_at", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("started_at", ColumnType.TIMESTAMP_MICRO));
         startedAtColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }

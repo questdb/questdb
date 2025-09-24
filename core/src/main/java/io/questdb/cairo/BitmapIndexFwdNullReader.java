@@ -31,6 +31,23 @@ import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
+    private long columnTxn;
+    private long partitionTxn;
+
+    public BitmapIndexFwdNullReader(long columnTxn, long partitionTxn) {
+        this.columnTxn = columnTxn;
+        this.partitionTxn = partitionTxn;
+    }
+
+    @Override
+    public long getColumnTop() {
+        return 0;
+    }
+
+    @Override
+    public long getColumnTxn() {
+        return columnTxn;
+    }
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
@@ -62,8 +79,8 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public long getUnIndexedNullCount() {
-        return 0;
+    public long getPartitionTxn() {
+        return partitionTxn;
     }
 
     @Override
@@ -87,7 +104,14 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop) {
+        this.partitionTxn = partitionTxn;
+        this.columnTxn = columnNameTxn;
+    }
+
+    @Override
+    public void reloadConditionally() {
+        // no-op
     }
 
     private NullCursor getCursor(boolean cachedInstance) {

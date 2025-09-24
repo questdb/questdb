@@ -65,13 +65,12 @@ import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -91,30 +90,20 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private final CairoEngine engine;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
-    private final NanosecondClock nanosecondClock;
+    private final Clock nanosecondClock;
     private final Path path;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
-    @TestOnly
     public JsonQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
             CairoEngine engine,
-            int workerCount
-    ) {
-        this(configuration, engine, workerCount, workerCount);
-    }
-
-    public JsonQueryProcessor(
-            JsonQueryProcessorConfiguration configuration,
-            CairoEngine engine,
-            int workerCount,
-            int sharedWorkerCount
+            int sharedQueryWorkerCount
     ) {
         this(
                 configuration,
                 engine,
-                new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount)
+                new SqlExecutionContextImpl(engine, sharedQueryWorkerCount)
         );
     }
 

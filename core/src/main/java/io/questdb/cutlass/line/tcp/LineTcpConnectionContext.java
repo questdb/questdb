@@ -37,8 +37,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
-import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -47,7 +47,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
-import org.jetbrains.annotations.NotNull;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -89,7 +88,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.scheduler = scheduler;
             this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
-            parser = new LineTcpParser(configuration.getCairoConfiguration());
+            parser = new LineTcpParser();
             recvBuffer = new AdaptiveRecvBuffer(parser, MemoryTag.NATIVE_ILP_RSS);
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
             clear();
@@ -159,14 +158,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 } catch (CommitFailedException ex) {
                     if (ex.isTableDropped()) {
                         // table dropped, nothing to worry about
-                        LOG.info().$("closing writer because table has been dropped (2) [table=").$safe(tud.getTableNameUtf16()).I$();
+                        LOG.info().$("closing writer because table has been dropped (2) [table=").$(tud.getTableToken()).I$();
                         tud.setWriterInError();
                         tud.releaseWriter(false);
                     } else {
-                        LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                        LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                     }
                 } catch (Throwable ex) {
-                    LOG.critical().$("commit failed [table=").$safe(tud.getTableNameUtf16()).$(",ex=").$(ex).I$();
+                    LOG.critical().$("commit failed [table=").$(tud.getTableToken()).$(",ex=").$(ex).I$();
                 }
             }
         }
@@ -203,36 +202,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             // uncommon branch in a separate method to avoid polluting common path
             return handleAuthentication(netIoJob);
         }
-    }
-
-    @Override
-    public void init() {
-        if (socket.supportsTls()) {
-            if (socket.startTlsSession(null) != 0) {
-                throw CairoException.nonCritical().put("failed to start TLS session");
-            }
-        }
-    }
-
-    @Override
-    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        if (recvBuffer.getBufStart() == 0) {
-            recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
-            goodMeasurement = true;
-        }
-        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
-        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
-            // when security context has not been set by anything else (subclass) we assume
-            // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
-            );
-            securityContext.authorizeLineTcp();
-        }
-        return this;
     }
 
     private boolean checkQueueFullLogHysteresis() {
@@ -325,6 +294,30 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
         tableUpdateDetailsUtf8.put(tableNameUtf8, tableUpdateDetails);
+    }
+
+    @Override
+    protected void doInit() throws TlsSessionInitFailedException {
+        if (recvBuffer.getBufStart() == 0) {
+            recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
+            goodMeasurement = true;
+        }
+
+        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    null,
+                    SecurityContext.AUTH_TYPE_NONE,
+                    SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
+        }
+
+        if (socket.supportsTls()) {
+            socket.startTlsSession(null);
+        }
     }
 
     protected SecurityContext getSecurityContext() {

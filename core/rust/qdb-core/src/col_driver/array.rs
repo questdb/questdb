@@ -53,16 +53,16 @@ const OFFSET_MAX: u64 = (1u64 << 48) - 1;
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-struct ArrayAuxEntry {
+pub struct ArrayAuxEntry {
     packed: u128,
 }
 
 impl ArrayAuxEntry {
-    fn size(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         (self.packed >> 64) as u32
     }
 
-    fn offset(&self) -> u64 {
+    pub fn offset(&self) -> u64 {
         (self.packed as u64) & OFFSET_MAX
     }
 }
@@ -178,7 +178,7 @@ mod tests {
 
         // out of range
         let err = ArrayDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("array entry index 5 not found in aux for column a1 in"));
     }
@@ -218,7 +218,7 @@ mod tests {
 
         // out of range
         let err = ArrayDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("array entry index 5 not found in aux for column a2 in"));
     }
@@ -258,7 +258,7 @@ mod tests {
 
         // out of range
         let err = ArrayDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("array entry index 5 not found in aux for column a3 in"));
     }
@@ -298,7 +298,7 @@ mod tests {
 
         // out of range
         let err = ArrayDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("array entry index 5 not found in aux for column a4 in"));
     }
@@ -313,7 +313,7 @@ mod tests {
 
         // out of range
         let err = ArrayDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
-        let msg = format!("{:#}", err);
+        let msg = format!("{err:#}");
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         eprintln!("{msg}");
         assert!(msg.contains("array entry index 0 not found in aux for column aempty in"));

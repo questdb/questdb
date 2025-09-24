@@ -30,6 +30,7 @@ import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -117,6 +118,14 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         return this;
     }
 
+    /**
+     * Same as {@link #putAny(byte)}, but writes 8 consequent bytes (a long).
+     */
+    public void putAny8(long w) {
+        setAscii(isAscii() & Utf8s.isAscii(w));
+        sink.putLong(w);
+    }
+
     @Override
     public DirectUtf8Sink putAscii(char c) {
         sink.put((byte) c);
@@ -126,6 +135,13 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public DirectUtf8Sink putAscii(@Nullable CharSequence cs) {
         MutableUtf8Sink.super.putAscii(cs);
+        return this;
+    }
+
+    @TestOnly
+    public DirectUtf8Sink putDouble(double value) {
+        setAscii(false);
+        sink.putDouble(value);
         return this;
     }
 
