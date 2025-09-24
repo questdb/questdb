@@ -24,15 +24,13 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class ShortColumn extends ShortFunction implements Function {
+public class ShortColumn extends ShortFunction implements ColumnFunction {
     private static final ObjList<ShortColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -48,6 +46,11 @@ public class ShortColumn extends ShortFunction implements Function {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public short getShort(Record rec) {
         return rec.getShort(columnIndex);
     }
@@ -55,11 +58,6 @@ public class ShortColumn extends ShortFunction implements Function {
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {
