@@ -111,7 +111,6 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
     private final MCSequence walTxnNotificationSubSequence;
 
-
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         try {
             this.configuration = configuration;
@@ -306,7 +305,6 @@ public class MessageBusImpl implements MessageBus {
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
-
 
     @Override
     public SPSequence getCopyExportRequestPubSeq() {

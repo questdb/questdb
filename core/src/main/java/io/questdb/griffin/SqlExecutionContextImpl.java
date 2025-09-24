@@ -364,7 +364,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             circuitBreaker.setCancelledFlag(cancelled);
             simpleCircuitBreaker.setCancelledFlag(cancelled);
         }
-
     }
 
     @Override

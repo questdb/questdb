@@ -58,7 +58,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         TestUtils.unchecked(() -> createDummyConfiguration("cairo.sql.copy.export.root", exportRoot));
     }
 
-
     @Test
     public void testBasicParquetExport() throws Exception {
         getExportTester()

@@ -163,6 +163,4 @@ public interface MessageBus extends Closeable {
     RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
 
     MCSequence getWalTxnNotificationSubSequence();
-
-
 }

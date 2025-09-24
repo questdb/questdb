@@ -868,11 +868,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.cairoSqlCopyExportRoot = new File(installRoot, configuredCairoSqlCopyExportRoot).getAbsolutePath();
                 }
             }
-
         } else {
             this.cairoSqlCopyExportRoot = null;
         }
-
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
