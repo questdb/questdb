@@ -35,6 +35,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
@@ -2323,11 +2324,11 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
-    private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
+    private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
             if (compareNodesExact(qc.getAst(), node)) {
-                return qc.getAlias();
+                return qc;
             }
         }
         return null;
@@ -2795,11 +2796,17 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < n; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
                 if (node.type == FUNCTION || node.type == OPERATION) {
-                    CharSequence alias = findQueryColumnByAst(model.getBottomUpColumns(), node);
-                    if (alias == null) {
+                    var qc = findQueryColumnByAst(model.getBottomUpColumns(), node);
+                    if (qc == null) {
                         // add this function to bottom-up columns and replace this expression with index
-                        alias = SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOfLastUnquoted(node.token, '.'), model.getAliasToColumnMap(), true);
-                        QueryColumn qc = queryColumnPool.next().of(
+                        CharSequence alias = SqlUtil.createColumnAlias(
+                                characterStore,
+                                node.token,
+                                Chars.indexOfLastUnquoted(node.token, '.'),
+                                model.getAliasToColumnMap(),
+                                true
+                        );
+                        qc = queryColumnPool.next().of(
                                 alias,
                                 node,
                                 false
@@ -2811,7 +2818,7 @@ public class SqlOptimiser implements Mutable {
                     // on "else" branch, when order by expression matched projection
                     // we can just replace order by with projection alias without having to
                     // add an extra model
-                    orderBy.setQuick(i, nextLiteral(alias));
+                    orderBy.setQuick(i, nextLiteral(qc.getAlias()));
                 }
             }
 
@@ -3415,7 +3422,12 @@ public class SqlOptimiser implements Mutable {
                     if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
                         throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
                     }
-                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken);
+
+                    int timestampType;
+                    try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                        timestampType = metadata.getTimestampType();
+                    }
+                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
                     break;
                 case QueryModel.SHOW_TRANSACTION:
                 case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
@@ -7044,8 +7056,8 @@ public class SqlOptimiser implements Mutable {
                             break;
                     }
 
-                    ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
-                    ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
+                    ac.setRowsLo(rowsLo);
+                    ac.setRowsHi(rowsHi);
                 }
             }
         }

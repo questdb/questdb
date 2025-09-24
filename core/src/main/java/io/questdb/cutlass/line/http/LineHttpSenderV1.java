@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
@@ -48,7 +49,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                                int maxNameLength,
                                long maxRetriesNanos,
                                long minRequestThroughput,
-                               long flushIntervalNanos) {
+                               long flushIntervalNanos,
+                               Rnd rnd) {
         super(host,
                 port,
                 path,
@@ -62,7 +64,8 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 maxNameLength,
                 maxRetriesNanos,
                 minRequestThroughput,
-                flushIntervalNanos);
+                flushIntervalNanos,
+                rnd);
     }
 
     @Override

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.SwarUtils;
 import io.questdb.std.ThreadLocal;
@@ -42,6 +41,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
+import static io.questdb.std.Misc.getThreadLocalUtf8Sink;
 
 /**
  * UTF-8 specific variant of the {@link Chars} utility.
@@ -1068,11 +1068,15 @@ public final class Utf8s {
         if (hi == lo) {
             return "";
         }
-        Utf16Sink b = getThreadLocalSink();
-        if (!utf8ToUtf16(lo, hi, b)) {
-            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16");
+        Utf16Sink r = getThreadLocalSink();
+        if (!utf8ToUtf16(lo, hi, r)) {
+            Utf8StringSink sink = getThreadLocalUtf8Sink();
+            CairoException ex = CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
+            putSafe(lo, hi, sink);
+            ex.put(sink).put(']');
+            throw ex;
         }
-        return b.toString();
+        return r.toString();
     }
 
     public static String stringFromUtf8Bytes(@NotNull Utf8Sequence seq) {
@@ -1081,7 +1085,14 @@ public final class Utf8s {
         }
         Utf16Sink b = getThreadLocalSink();
         if (!utf8ToUtf16(seq, b)) {
-            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16");
+            if (seq instanceof DirectUtf8Sequence) {
+                Utf8StringSink sink = getThreadLocalUtf8Sink();
+                CairoException ex = CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=");
+                putSafe(seq.ptr(), seq.ptr() + seq.size(), sink);
+                ex.put(sink).put(']');
+                throw ex;
+            }
+            throw CairoException.nonCritical().put("cannot convert invalid UTF-8 sequence to UTF-16 [seq=").put(seq).put(']');
         }
         return b.toString();
     }
@@ -1130,7 +1141,7 @@ public final class Utf8s {
     }
 
     public static String toString(@NotNull Utf8Sequence us, int start, int end, byte unescapeAscii) {
-        final Utf8Sink sink = Misc.getThreadLocalUtf8Sink();
+        final Utf8Sink sink = getThreadLocalUtf8Sink();
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
             byte b = us.byteAt(i);

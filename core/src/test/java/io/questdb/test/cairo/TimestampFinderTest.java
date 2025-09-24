@@ -25,15 +25,15 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NativeTimestampFinder;
 import io.questdb.cairo.ParquetTimestampFinder;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -65,12 +65,14 @@ public class TimestampFinderTest extends AbstractCairoTest {
     private void testFuzz(int duplicatesPerTick) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.YEAR).timestamp();
+            int timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+            TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.YEAR).timestamp(timestampType);
             AbstractCairoTest.create(oracleModel);
-            TableModel model = new TableModel(configuration, "x", PartitionBy.YEAR).timestamp();
+            TableModel model = new TableModel(configuration, "x", PartitionBy.YEAR).timestamp(timestampType);
             AbstractCairoTest.create(model);
 
-            final long minTimestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
+            final long minTimestamp = driver.parseFloorLiteral("1980-01-01T00:00:00.000Z");
             long maxTimestamp = minTimestamp;
             long timestamp = minTimestamp;
             try (
@@ -85,10 +87,10 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     if (--ticks == 0) {
                         if (duplicatesPerTick > 1) {
                             // we want to be in control of the number of duplicates
-                            timestamp += (rnd.nextLong(1) + 1) * Timestamps.MINUTE_MICROS;
+                            timestamp += driver.fromMinutes((int) (rnd.nextLong(1) + 1));
                         } else {
                             // extra duplicates are fine
-                            timestamp += rnd.nextLong(2) * Timestamps.MINUTE_MICROS;
+                            timestamp += driver.fromMinutes((int) rnd.nextLong(2));
                         }
                         ticks = duplicatesPerTick;
                     }
@@ -96,7 +98,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
                 // write one more row, so that the active partition contains it;
                 // that's because we can't convert active partition to parquet
-                long newerTimestamp = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+                long newerTimestamp = driver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
                 oracleWriter.newRow(newerTimestamp).append();
                 writer.newRow(newerTimestamp).append();
 
@@ -149,7 +151,8 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
                 final long start = System.nanoTime();
                 long calls = 0;
-                for (long ts = minTimestamp - Timestamps.MINUTE_MICROS; ts < maxTimestamp + Timestamps.MINUTE_MICROS; ts += Timestamps.MINUTE_MICROS) {
+                long minuteTimestamps = driver.fromMinutes(1);
+                for (long ts = minTimestamp - minuteTimestamps; ts < maxTimestamp + minuteTimestamps; ts += minuteTimestamps) {
                     // full partition
                     Assert.assertEquals(
                             oracleFinder.findTimestamp(ts, 0, 1000 - 1),

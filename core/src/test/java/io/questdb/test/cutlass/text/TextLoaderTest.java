@@ -50,7 +50,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -71,6 +70,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 @RunWith(Parameterized.class)
 public class TextLoaderTest extends AbstractCairoTest {
@@ -779,7 +780,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
+        DateLocale locale = EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -1486,6 +1487,124 @@ public class TextLoaderTest extends AbstractCairoTest {
     @Test
     public void testImportTimestampFromEpochNominatedTimestamp() throws Exception {
         assertTimestampAsLong("timestamp(ts) partition by DAY", "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}");
+    }
+
+    @Test
+    public void testImportTimestampNS() throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyStringDefault;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tts\n" +
+                                "CMP1\t2015-01-13T19:15:09.000000123Z\n" +
+                                "CMP2\t2015-01-13T19:15:09.000234001Z\n" +
+                                "CMP1\t2015-01-13T19:15:09.000455129Z\n" +
+                                "CMP2\t2015-01-13T19:15:09.000754986Z\n" +
+                                "CMP1\t2015-01-13T19:15:09.000903342Z\n";
+
+
+                        String csv = "StrSym,ts\n" +
+                                "CMP1,2015-01-13T19:15:09.000000123Z\n" +
+                                "CMP2,2015-01-13T19:15:09.000234001Z\n" +
+                                "CMP1,2015-01-13T19:15:09.000455129Z\n" +
+                                "CMP2,2015-01-13T19:15:09.000754986Z\n" +
+                                "CMP1,2015-01-13T19:15:09.000903342Z\n";
+
+                        configureLoaderDefaults(textLoader, (byte) ',');
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP_NS\"}],\"timestampIndex\":-1}",
+                                5,
+                                5,
+                                true
+                        );
+                    }
+            );
+        }
+    }
+
+    @Test
+    public void testImportTimestampNSPartitionByDay() throws Exception {
+        final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
+            @Override
+            public int getTextAnalysisMaxLines() {
+                return 3;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyStringDefault;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull TextConfiguration getTextConfiguration() {
+                return textConfiguration;
+            }
+        };
+        try (CairoEngine engine = new CairoEngine(configuration)) {
+            assertNoLeak(
+                    engine,
+                    textLoader -> {
+                        String expected = "StrSym\tts\n" +
+                                "CMP1\t2015-01-13T19:15:09.000000112Z\n" +
+                                "CMP2\t2015-01-14T19:15:09.000234123Z\n" +
+                                "CMP1\t2015-01-15T19:15:09.000455987Z\n" +
+                                "CMP2\t2015-01-16T19:15:09.000754232Z\n" +
+                                "CMP1\t2015-01-17T19:15:09.000903111Z\n";
+
+
+                        String csv = "StrSym,ts\n" +
+                                "CMP1,2015-01-13T19:15:09.000000112Z\n" +
+                                "CMP2,2015-01-14T19:15:09.000234123Z\n" +
+                                "CMP1,2015-01-15T19:15:09.000455987Z\n" +
+                                "CMP2,2015-01-16T19:15:09.000754232Z\n" +
+                                "CMP1,2015-01-17T19:15:09.000903111Z\n";
+
+                        configureLoaderDefaults(textLoader, 0, false, PartitionBy.DAY);
+                        textLoader.setForceHeaders(false);
+                        playText(
+                                engine,
+                                textLoader,
+                                csv,
+                                1024,
+                                expected,
+                                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"" + stringTypeName + "\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP_NS\"}],\"timestampIndex\":1}",
+                                5,
+                                5,
+                                true
+                        );
+
+                        try (TableReader r = getReader("test")) {
+                            Assert.assertEquals(PartitionBy.DAY, r.getPartitionedBy());
+                        }
+                    }
+            );
+        }
     }
 
     @Test
@@ -2590,7 +2709,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.EN_LOCALE;
+        DateLocale locale = EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -3180,6 +3299,40 @@ public class TextLoaderTest extends AbstractCairoTest {
                     1024,
                     expected,
                     "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP\"},{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableToTimestampColumn() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "t1\ts\tt2\tt3\tv\n" +
+                    "2019-11-11T00:00:00.000100Z\tGOOG\t2019-11-11T00:00:00.100000000Z\t2019-11-11T00:00:00.010191000Z\t10.0\n" +
+                    "2019-11-12T00:00:00.000200Z\tGOOG\t2019-11-12T00:00:00.200000000Z\t2019-11-12T00:00:00.000987000Z\t15.0\n" +
+                    "2019-11-13T00:00:00.000300Z\tGOOG\t2019-11-13T00:00:00.300000000Z\t2019-11-13T00:00:00.000555000Z\t20.0\n";
+
+            String csv = "t,s,t2,t3,v\n" +
+                    "2019-11-11T00:00:00.000100001Z,GOOG,2019-11-11T00:00:00.100Z,2019-11-11T00:00:00.010191Z,10\n" +
+                    "2019-11-12T00:00:00.000200002Z,GOOG,2019-11-12T00:00:00.200Z,2019-11-12T00:00:00.000987Z,15\n" +
+                    "2019-11-13T00:00:00.000300003Z,GOOG,2019-11-13T00:00:00.300Z,2019-11-13T00:00:00.000555Z,20\n";
+
+            execute(
+                    "create table test" +
+                            "(t1 timestamp" +
+                            ", s symbol" +
+                            ", t2 timestamp_ns" +
+                            ", t3 timestamp_ns" +
+                            ", v double)"
+            );
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"t1\",\"type\":\"TIMESTAMP\"},{\"index\":1,\"name\":\"s\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"t2\",\"type\":\"TIMESTAMP_NS\"},{\"index\":3,\"name\":\"t3\",\"type\":\"TIMESTAMP_NS\"},{\"index\":4,\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
                     3,
                     3
             );

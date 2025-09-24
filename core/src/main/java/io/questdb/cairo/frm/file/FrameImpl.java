@@ -153,6 +153,7 @@ public class FrameImpl implements Frame {
         this.partitionPath.of(tablePath);
         setSinkForNativePartition(
                 this.partitionPath.slash(),
+                metadata.getTimestampType(),
                 partitionBy,
                 partitionTimestamp,
                 partitionNameTxn

@@ -43,7 +43,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -51,11 +50,13 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
+
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
     private final BuildInformation buildInformation = new BuildInformationHolder();
@@ -285,6 +286,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @Nullable String getDbLogName() {
+        return null;
+    }
+
+    @Override
     public @NotNull String getDbRoot() {
         return dbRoot;
     }
@@ -296,7 +302,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public @NotNull DateLocale getDefaultDateLocale() {
-        return DateFormatUtils.EN_LOCALE;
+        return EN_LOCALE;
     }
 
     @Override
@@ -330,13 +336,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getFileOperationRetryCount() {
-        return 30;
+    public boolean getFileDescriptorCacheEnabled() {
+        return true;
     }
 
     @Override
-    public boolean getFileDescriptorCacheEnabled() {
-        return true;
+    public int getFileOperationRetryCount() {
+        return 30;
     }
 
     @Override
@@ -868,6 +874,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlJitIRMemoryPageSize() {
         return 8192;
+    }
+
+    @Override
+    public int getSqlJitMaxInListSizeThreshold() {
+        return 10;
     }
 
     @Override

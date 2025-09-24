@@ -34,19 +34,27 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Dn)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastDoubleToTimestampFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    public static class CastDoubleToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastDoubleToTimestampFunction(Function arg) {
-            super(arg);
+    public static class Func extends AbstractCastToTimestampFunction {
+
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

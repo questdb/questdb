@@ -32,6 +32,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.net.URL;
@@ -61,6 +62,8 @@ public final class Files {
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
+    // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
+    public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
@@ -124,12 +127,9 @@ public final class Files {
         return -1;
     }
 
-    public static boolean errnoFileCannotRead(int errno) {
-        return errnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
-    }
-
-    public static boolean errnoFileDoesNotExist(int errno) {
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    public static int errnoInvalidParameter() {
+        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
+                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
     }
 
     public static boolean exists(long fd) {
@@ -286,6 +286,17 @@ public final class Files {
         return Chars.equals(name, '.') || Chars.equals(name, "..");
     }
 
+    public static boolean isErrnoFileCannotRead(int errno) {
+        return isErrnoFileDoesNotExist(errno)
+                || (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN)
+                || (Os.isOSX() && errno == CairoException.ERRNO_FILE_READ_TIMEOUT_MACOS);
+    }
+
+    public static boolean isErrnoFileDoesNotExist(int errno) {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST ||
+                (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
     public native static boolean isSoftLink(long lpszPath);
 
     public static boolean isSoftLink(LPSZ path) {
@@ -344,24 +355,14 @@ public final class Files {
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
-        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
-        return mmapCache.cacheMmap(osFd, mmapCacheFd, len, offset, flags, memoryTag);
+        long mmapCacheKey = fdCache.toMmapCacheKey(fd);
+        return mmapCache.cacheMmap(osFd, mmapCacheKey, len, offset, flags, memoryTag);
     }
 
     public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
-        if (newSize < 1) {
-            throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
-                    .put(", newSize=").put(newSize)
-                    .put(", offset=").put(offset)
-                    .put(", fd=").put(fd)
-                    .put(", memoryTag=").put(memoryTag)
-                    .put(']');
-        }
-
         int osFd = fdCache.toOsFd(fd, (flags & MAP_RW) != 0);
-        long mmapCacheFd = fdCache.toMmapCacheFd(fd);
-
-        return mmapCache.mremap(osFd, mmapCacheFd, address, previousSize, newSize, offset, flags, memoryTag);
+        long mmapCacheKey = fdCache.toMmapCacheKey(fd);
+        return mmapCache.mremap(osFd, mmapCacheKey, address, previousSize, newSize, offset, flags, memoryTag);
     }
 
     public static native int msync(long addr, long len, boolean async);
@@ -531,6 +532,11 @@ public final class Files {
             return rmdir(path.ptr());
         }
         return false;
+    }
+
+    @TestOnly
+    public static void setFDCacheCounter(int newValue) {
+        fdCache.setFDCounter(newValue);
     }
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {

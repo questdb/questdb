@@ -46,7 +46,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
@@ -81,7 +81,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
-    private final MicrosecondClock timer;
+    private final Clock timer;
     private CharSequence columnName;
     private long fixedFd;
     private int partitionUpdated;
@@ -136,6 +136,7 @@ public class ConvertOperatorImpl implements Closeable {
             purgingOperator.purge(
                     path.trimTo(rootLen),
                     tableWriter.getTableToken(),
+                    tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
                     tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
                     tableWriter.getTruncateVersion(),
@@ -229,7 +230,12 @@ public class ConvertOperatorImpl implements Closeable {
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
                                 TableUtils.setPathForNativePartition(
-                                        path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                        path,
+                                        tableWriter.getMetadata().getTimestampType(),
+                                        tableWriter.getPartitionBy(),
+                                        partitionTimestamp,
+                                        partitionNameTxn
+                                );
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
@@ -327,7 +333,7 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(tableWriter.getTableToken())
                             .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                             .$(", to=").$(ColumnType.nameOf(newType)).$(", srcFixFd=").$(srcFixFd)
-                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(partitionTimestamp)
+                            .$(", srcVarFd=").$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
                 }
@@ -339,7 +345,7 @@ public class ConvertOperatorImpl implements Closeable {
                     .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", srcFixFd=").$(srcFixFd).$(", srcVarFd=")
-                    .$(srcVarFd).$(", partition ").$ts(partitionTimestamp);
+                    .$(srcVarFd).$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp);
             if (th instanceof CairoException) {
                 log.$(", errno=").$(((CairoException) th).getErrno());
             }
