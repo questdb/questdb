@@ -66,6 +66,7 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
 
     /**
      * Load the parsed decimal into a Decimal256
+     *
      * @return true if decimal is fully loaded, false if the unscaled value was too big for Decimal256
      */
     public boolean load(Decimal256 decimal256) {
