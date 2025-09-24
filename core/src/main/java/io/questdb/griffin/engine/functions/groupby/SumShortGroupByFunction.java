@@ -103,8 +103,15 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcSum = srcValue.getLong(valueIndex);
-        destValue.addLong(valueIndex, srcSum);
+        final long srcSum = srcValue.getLong(valueIndex);
+        if (srcSum != Numbers.LONG_NULL) {
+            final long destSum = destValue.getLong(valueIndex);
+            if (destSum != Numbers.LONG_NULL) {
+                destValue.putLong(valueIndex, destSum + srcSum);
+            } else {
+                destValue.putLong(valueIndex, srcSum);
+            }
+        }
     }
 
     @Override
