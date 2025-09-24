@@ -103,6 +103,7 @@ steps:
         "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -DargLine=\"-Xlog:gc\"
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
@@ -127,6 +128,7 @@ steps:
         "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -DargLine=\"-Xlog:gc\"
         -P qdbr-coverage
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
