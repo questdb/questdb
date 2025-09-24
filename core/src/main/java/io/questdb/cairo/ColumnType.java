@@ -160,6 +160,10 @@ public final class ColumnType {
                 : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
                 : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
+                // cast long and date to date in unions instead of longs.
+                : ((typeA == LONG) && (typeB == DATE)) ? DATE
+                : ((typeA == DATE) && (typeB == LONG)) ? DATE
+
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
                 : ((typeA == STRING) || (typeB == STRING)) ? STRING
