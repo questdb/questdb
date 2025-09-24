@@ -209,7 +209,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "Radix sort light\n" +
                         "  keys: [doubled]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [name,memoize(json_extract()::byte),val*2]\n" +
+                        "      functions: [name,memoize(json_extract()::byte),memoize(val*2)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: items\n",
@@ -710,7 +710,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "Sort light\n" +
                         "  keys: [doubled]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [name,memoize(json_extract()),val*2]\n" +
+                        "      functions: [name,memoize(json_extract()),memoize(val*2)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: items\n",
@@ -733,7 +733,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         "Radix sort light\n" +
                         "  keys: [doubled]\n" +
                         "    VirtualRecord\n" +
-                        "      functions: [name,memoize(json_extract()),val*2]\n" +
+                        "      functions: [name,memoize(json_extract()),memoize(val*2)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: items\n",
