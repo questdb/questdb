@@ -59,6 +59,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
+import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static org.junit.Assert.assertTrue;
 
@@ -151,7 +152,7 @@ public class HttpServerTest extends AbstractTest {
                     .withPort(port)
                     .build(new DefaultTestCairoConfiguration(root));
 
-            final int cpuAvailable = Runtime.getRuntime().availableProcessors() / 2;
+            final int cpuAvailable = max(Runtime.getRuntime().availableProcessors() / 2, 1);
             workerPool = new TestWorkerPool(min(workerCount, cpuAvailable));
             httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
         }
