@@ -4005,7 +4005,7 @@ public class MatViewTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     TableReader viewReader = engine.getReader(viewToken);
-                    WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade())
+                    WalTxnRangeLoader txnRangeLoader = new WalTxnRangeLoader(configuration)
             ) {
                 final LongList intervals = new LongList();
                 final long seqTxn = viewReader.getSeqTxn();
