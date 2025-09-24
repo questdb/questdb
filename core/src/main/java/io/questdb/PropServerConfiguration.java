@@ -153,6 +153,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
     private final boolean cairoAutoScaleSymbolCapacity;
+    private final double cairoAutoScaleSymbolCapacityFactor;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
@@ -861,6 +862,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
         this.cairoCommitLatency = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY, 30_000_000);
         this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, true);
+        this.cairoAutoScaleSymbolCapacityFactor = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_FACTOR, "0.8");
+        if (cairoAutoScaleSymbolCapacityFactor < 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityFactor)) {
+            throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_FACTOR.getPropertyPath() + " has to be a positive non-zero real number.");
+        }
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
         this.checkpointRecoveryEnabled = getBoolean(
@@ -2784,6 +2789,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean autoScaleSymbolCapacity() {
             return cairoAutoScaleSymbolCapacity;
+        }
+
+        @Override
+        public double autoScaleSymbolCapacityFactor() {
+            return cairoAutoScaleSymbolCapacityFactor;
         }
 
         @Override
