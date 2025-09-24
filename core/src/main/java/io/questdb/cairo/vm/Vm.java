@@ -91,12 +91,16 @@ public class Vm {
         return new MemoryCMRImpl();
     }
 
+    public static MemoryCMR getCMRInstance(boolean bypassFdCache) {
+        return new MemoryCMRImpl(bypassFdCache);
+    }
+
     public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryCMOR getMemoryCMOR() {
-        return new MemoryCMORImpl();
+    public static MemoryCMOR getMemoryCMOR(boolean bypassFdCache) {
+        return new MemoryCMORImpl(bypassFdCache);
     }
 
     public static MemoryMAR getPMARInstance(CairoConfiguration configuration) {
