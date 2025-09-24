@@ -99,22 +99,17 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public boolean isDevModeEnabled() {
-        return true;
+    public boolean isColumnAliasExpressionEnabled() {
+        return false;
     }
 
     @Override
-    public boolean isMatViewEnabled() {
+    public boolean isDevModeEnabled() {
         return true;
     }
 
     @Override
     public boolean mangleTableDirNames() {
         return true;
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return false;
     }
 }
