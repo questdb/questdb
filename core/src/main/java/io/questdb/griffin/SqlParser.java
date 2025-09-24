@@ -1691,7 +1691,7 @@ public class SqlParser {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || tok.charAt(0) != '(') {
             lexer.backTo(previousTokenPosition, previousToken);
-            return ColumnType.getDecimalType(18, 3);
+            return ColumnType.DECIMAL_DEFAULT_TYPE;
         }
 
         tok = SqlUtil.fetchNext(lexer);

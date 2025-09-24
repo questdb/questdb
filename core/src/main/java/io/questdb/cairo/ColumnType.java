@@ -140,6 +140,8 @@ public final class ColumnType {
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
+    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
+    public static final int DECIMAL_DEFAULT_TYPE_TAG = DECIMAL64;
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;

@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.udp;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.Decimal256;
 import org.junit.Test;
 
 public class LineUdpInsertDecimalTest extends LineUdpInsertTest {
@@ -32,99 +33,81 @@ public class LineUdpInsertDecimalTest extends LineUdpInsertTest {
     static final String targetColumnName = "value";
 
     @Test
-    public void testInsertDecimalTableExists() throws Exception {
-        assertType(ColumnType.getDecimalType(8, 3), // Default precision/scale for auto-created decimal columns
+    public void testInsertDecimalBasic() throws Exception {
+        assertDecimal("value\ttimestamp\n" +
+                        "123.450\t1970-01-01T00:00:01.000000Z\n",
+                ColumnType.DECIMAL_DEFAULT_TYPE,
+                Decimal256.fromLong(12345, 2)
+        );
+    }
+
+    @Test
+    public void testInsertDecimalDefault() throws Exception {
+        assertDecimal("value\ttimestamp\n" +
+                        "123.450\t1970-01-01T00:00:01.000000Z\n",
+                ColumnType.UNDEFINED,
+                Decimal256.fromLong(12345, 2)
+        );
+    }
+
+    @Test
+    public void testInsertDecimalFromDouble() throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getDecimalType(8, 3),
                 "value\ttimestamp\n" +
-                        "123.45\t1970-01-01T00:00:01.000000Z\n" +
-                        "-99.99\t1970-01-01T00:00:02.000000Z\n" +
-                        "0.00\t1970-01-01T00:00:03.000000Z\n" +
-                        "999.123456\t1970-01-01T00:00:04.000000Z\n" +
-                        "12345.6789\t1970-01-01T00:00:05.000000Z\n" +
-                        "1.0\t1970-01-01T00:00:06.000000Z\n" +
-                        "null\t1970-01-01T00:00:11.000000Z\n",
-                new String[]{
-                        "123.45", // valid decimal literal
-                        "-99.99", // valid negative decimal
-                        "0.00", // valid zero decimal
-                        "999.123456", // valid with more decimal places
-                        "12345.6789", // valid larger number with decimals
-                        "1", // valid integer with decimal suffix
-                        "123.45", // discarded - not a decimal (no 'm' suffix)
-                        "invalid", // discarded bad type symbol
-                        "123.45i", // discarded bad type long
-                        "true", // discarded bad type boolean
-                        "", // valid null
-                        "\"123.45\"", // discarded bad type string
-                        "0t", // discarded bad type timestamp
-                });
+                        "123.456\t1970-01-01T00:00:01.000000Z\n",
+                sender -> sender.metric(tableName).field(targetColumnName, 123.456d).$(1_000_000_000)
+        );
     }
 
     @Test
-    public void testInsertDecimalHighPrecision() throws Exception {
-        assertTypeNoTable("value\ttimestamp\n" +
-                        "123456789012345.123456789\t1970-01-01T00:00:01.000000Z\n" +
-                        "-999999999999999.999999999\t1970-01-01T00:00:02.000000Z\n" +
-                        "0.000000001\t1970-01-01T00:00:03.000000Z\n" +
-                        "99999999999.99999999\t1970-01-01T00:00:04.000000Z\n",
-                new String[]{
-                        "123456789012345.123456789m", // high precision decimal
-                        "-999999999999999.999999999m", // high precision negative
-                        "0.000000001m", // very small decimal
-                        "99999999999.99999999m", // large number with precision
-                        "1.23456789012345678901234567890123456789m", // exceeds precision, should be truncated
-                });
+    public void testInsertDecimalFromLong() throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getDecimalType(8, 2),
+                "value\ttimestamp\n" +
+                        "123.00\t1970-01-01T00:00:01.000000Z\n",
+                sender -> sender.metric(tableName).field(targetColumnName, 123L).$(1_000_000_000)
+        );
+
     }
 
     @Test
-    public void testInsertDecimalEdgeCases() throws Exception {
-        assertTypeNoTable("value\ttimestamp\n" +
-                        "0.0\t1970-01-01T00:00:01.000000Z\n" +
-                        "-0.0\t1970-01-01T00:00:02.000000Z\n" +
-                        "null\t1970-01-01T00:00:05.000000Z\n",
-                new String[]{
-                        "0m", // simple zero
-                        "-0m", // negative zero
-                        "0.0m", // explicit zero with decimal
-                        "00.00m", // zero with leading zeros
-                        "", // null value
-                        "m", // invalid - just suffix without number
-                        "123.45.67m", // invalid - multiple decimal points
-                        "12a3.45m", // invalid - contains non-numeric characters
-                        "123.45mm", // invalid - multiple suffixes
-                });
+    public void testInsertDecimalFromString() throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                ColumnType.getDecimalType(8, 2),
+                "value\ttimestamp\n" +
+                        "123.45\t1970-01-01T00:00:01.000000Z\n",
+                sender -> sender.metric(tableName).field(targetColumnName, "123.45").$(1_000_000_000)
+        );
     }
 
     @Test
-    public void testInsertDecimalRangeValues() throws Exception {
-        assertTypeNoTable("value\ttimestamp\n" +
-                        "99.99\t1970-01-01T00:00:01.000000Z\n" +
-                        "9999.99\t1970-01-01T00:00:02.000000Z\n" +
-                        "9999999.99\t1970-01-01T00:00:03.000000Z\n" +
-                        "999999999999999999.999999\t1970-01-01T00:00:04.000000Z\n" +
-                        "12345678901234567890123456789.123456789\t1970-01-01T00:00:05.000000Z\n",
-                new String[]{
-                        "99.99m", // fits in DECIMAL8
-                        "9999.99m", // fits in DECIMAL16
-                        "9999999.99m", // fits in DECIMAL32
-                        "999999999999999999.999999m", // fits in DECIMAL64
-                        "12345678901234567890123456789.123456789m", // requires DECIMAL128 or DECIMAL256
-                });
+    public void testInsertDecimalLossyScaling() throws Exception {
+        assertDecimal("value\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                ColumnType.getDecimalType(8, 2),
+                Decimal256.fromLong(123456, 3)
+        );
     }
 
-    private static void assertType(int columnType, String expected, String[] values) throws Exception {
-        assertType(tableName, targetColumnName, columnType, expected, sender -> {
-            long ts = 0L;
-            for (int i = 0, n = values.length; i < n; i++) {
-                sender.metric(tableName).putAsciiInternal(' ')
-                        .put(targetColumnName)
-                        .putAsciiInternal('=')
-                        .putAsciiInternal(values[i])
-                        .$(ts += 1000000000);
-            }
-        });
+    @Test
+    public void testInsertDecimalTooHighPrecision() throws Exception {
+        assertDecimal("value\ttimestamp\n" +
+                        "\t1970-01-01T00:00:01.000000Z\n",
+                ColumnType.getDecimalType(4, 0),
+                Decimal256.fromLong(123456, 0)
+        );
     }
 
-    private static void assertTypeNoTable(String expected, String[] values) throws Exception {
-        assertType(ColumnType.UNDEFINED, expected, values);
+    private void assertDecimal(String expected, int type, Decimal256 value) throws Exception {
+        assertType(tableName,
+                targetColumnName,
+                type,
+                expected,
+                sender -> sender.metric(tableName).field(targetColumnName, value).$(1_000_000_000)
+        );
     }
 }

@@ -131,6 +131,6 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
     }
 
     protected static AbstractLineSender createLineProtoSender() {
-        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 80, 1);
+        return new LineUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 200, 1);
     }
 }

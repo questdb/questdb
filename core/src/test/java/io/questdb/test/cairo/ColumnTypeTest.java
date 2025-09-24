@@ -51,6 +51,11 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testDecimalDefaultType() {
+        Assert.assertEquals(ColumnType.DECIMAL_DEFAULT_TYPE_TAG, ColumnType.tagOf(ColumnType.DECIMAL_DEFAULT_TYPE));
+    }
+
+    @Test
     public void testGetDecimalTypeCombinatorics() {
         // Combinations of precision, scale -> expected type
         int[][] combinations = {

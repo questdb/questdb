@@ -1299,16 +1299,25 @@ public class Decimal256 implements Sinkable {
      * @return the precision of the decimal
      */
     public int ofString(CharSequence cs, int precision, int scale) throws NumericException {
-        int lo = 0;
-        int hi = cs.length();
+        return ofString(cs, 0, cs.length(), precision, scale, false);
+    }
 
-        boolean strict = false;
-        int ch = hi > 0 ? cs.charAt(hi - 1) | 32 : 0;
+    /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
+     * @param cs        is the CharSequence to be parsed
+     * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
+     * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
+     * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one).
+     * @return the precision of the decimal
+     */
+    public int ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict) throws NumericException {
+        int ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
         // We don't want to parse the m suffix, we can safely skip it
         if (ch == 'm') {
             strict = true;
             hi--;
-            ch = hi > 0 ? cs.charAt(hi - 1) | 32 : 0;
+            ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
         }
 
         // We also need to skip 'd' and 'f' when parsing doubles/floats

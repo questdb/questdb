@@ -72,7 +72,7 @@ public class DefaultColumnTypes {
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = defaultTimestampType;
         DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_ARRAY] = ColumnType.ARRAY;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DECIMAL] = ColumnType.getDecimalType(18, 3);
+        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DECIMAL] = ColumnType.DECIMAL_DEFAULT_TYPE;
 
         // we could remove this mapping by sending the column type to the writer
         // currently we are passing the ILP entity type instead
