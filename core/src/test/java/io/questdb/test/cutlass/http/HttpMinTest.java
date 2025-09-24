@@ -69,22 +69,19 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                HttpServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
-                HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
-                long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
-                        + httpMinConfig.getRecvBufferSize()
-                        + httpMinContextConfig.getRequestHeaderBufferSize() + 64
-                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64;
-
-                // Wait http min threads to start, they will need to allocate some memory
-                // directly after the server start.
-                while (Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) < expectedAllocation) {
-                    Os.sleep(10);
-                }
 
                 int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
                 long buff = 0, rssAvailable = 0;
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    String expectedText = "questdb_memory_tag_NATIVE_DEFAULT " + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
+                    final Utf8StringSink sink = new Utf8StringSink();
+
+
+                    // 2 requests to warm up the server -  we have to ensure the essential infrastructure is allocated
+                    // before we simulate memory pressure
+                    checkResponse(httpClient, "/metrics", sink, expectedText, httpMinPort);
+                    checkResponse(httpClient, "/status", sink, "Status: Healthy", httpMinPort);
+
                     while (true) {
                         try {
                             rssAvailable = Unsafe.getRssMemLimit() - Unsafe.getRssMemUsed();
@@ -95,9 +92,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
                         }
                     }
 
-                    String expectedText = "questdb_memory_tag_NATIVE_DEFAULT " + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
-                    final Utf8StringSink sink = new Utf8StringSink();
-
+                    expectedText = "questdb_memory_tag_NATIVE_DEFAULT " + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DEFAULT);
                     for (int i = 0; i < 10; i++) {
                         checkResponse(httpClient, "/metrics", sink, expectedText, httpMinPort);
                         checkResponse(httpClient, "/status", sink, "Status: Healthy", httpMinPort);
