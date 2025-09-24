@@ -5587,11 +5587,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 // in case it's symbol capacity rebuild copy symbol offset file.
                 // it's almost the same but the capacity in the file header is changed
-                if (
-                        ff.copy(
-                                offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn),
-                                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn)) < 0
-                ) {
+                offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn);
+                if (Os.isWindows() && ff.exists(other.$())) {
+                    ff.remove(other.$());
+                }
+                if (ff.copy(offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn), other.$()) < 0) {
                     throw CairoException.critical(ff.errno())
                             .put("Could not copy [from=").put(path)
                             .put(", to=").put(path)
