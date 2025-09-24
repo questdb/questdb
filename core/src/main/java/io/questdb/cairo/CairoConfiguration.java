@@ -134,6 +134,12 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    default boolean getBypassWalFdCache() {
+        // If wal fd re-usage is not allowed it means fd cache should not be used for wal and sequencer files.
+        // This typically means that those files be renamed/replaced outside QuestDB java code.
+        return getWalMaxSegmentFileDescriptorsCache() < 1;
+    }
+
     boolean getCairoSqlLegacyOperatorPrecedence();
 
     @NotNull
