@@ -40,16 +40,22 @@ import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
+    private final boolean bypassFdCache;
     protected long fd = -1;
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
 
     public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+        bypassFdCache = false;
         of(ff, name, 0, size, memoryTag, 0);
     }
 
     public MemoryCMRImpl() {
-        // intentionally left empty
+        this(false);
+    }
+
+    public MemoryCMRImpl(boolean bypassFdCache) {
+        this.bypassFdCache = bypassFdCache;
     }
 
     @Override
@@ -139,7 +145,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private void openFile(FilesFacade ff, LPSZ name) {
         close();
         this.ff = ff;
-        fd = TableUtils.openRO(ff, name, LOG);
+        if (bypassFdCache) {
+            fd = TableUtils.openRONoCache(ff, name, LOG);
+        } else {
+            fd = TableUtils.openRO(ff, name, LOG);
+        }
     }
 
     private void setSize0(long newSize) {
