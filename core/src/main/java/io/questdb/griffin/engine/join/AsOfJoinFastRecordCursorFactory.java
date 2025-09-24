@@ -32,11 +32,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -46,6 +49,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
+    private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
+    private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
+    private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
     private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
@@ -57,6 +63,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
+            int masterSymbolColumnIndex,
+            int slaveSymbolColumnIndex,
             SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext,
             long toleranceInterval
@@ -71,9 +79,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
+                masterSymbolColumnIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampType(),
+                slaveSymbolColumnIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
@@ -128,24 +138,69 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
+        public static final int NOT_REMEMBERED = -1;
+
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
+                int masterSymbolColumnIndex,
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
+                int slaveSymbolColumnIndex,
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit,
+                    nullRecord,
+                    masterTimestampIndex,
+                    masterTimestampType,
+                    masterSymbolColumnIndex,
+                    masterSinkTarget,
+                    slaveTimestampIndex,
+                    slaveTimestampType,
+                    slaveSymbolColumnIndex,
+                    slaveSinkTarget,
+                    lookahead);
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolShortCircuit.of(slaveCursor);
+        }
+
+        private boolean isSlaveWithinToleranceInterval(long masterTimestamp, long slaveTimestamp) {
+            return toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval;
+        }
+
+        private void rememberSymbolLocation(long masterTimestamp, long slaveTimestamp, int slaveSymbolKey, long slaveRowId) {
+            int rowIdKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
+            if (rowIdKeyIndex >= 0) {
+                // nothing remembered so far, store all the data with no further questions
+                symKeyToRowId.put(slaveSymbolKey, slaveRowId);
+                symKeyToValidityPeriodStart.put(slaveSymbolKey, slaveTimestamp);
+                symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
+            } else {
+                int periodStartKeyIndex = symKeyToValidityPeriodStart.keyIndex(slaveSymbolKey);
+                int periodEndKeyIndex = symKeyToValidityPeriodEnd.keyIndex(slaveSymbolKey);
+                long periodStart = symKeyToValidityPeriodStart.valueAt(periodStartKeyIndex);
+                long periodEnd = symKeyToValidityPeriodStart.valueAt(periodEndKeyIndex);
+                if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
+                    // Period to remember overlaps existing remembered period -> merge them.
+
+                    // Remembered period start indicates where we previously found the symbol, and we must not
+                    // move it back. But we can move back if we remembered a period where we DIDN'T find the symbol.
+                    if (slaveTimestamp < periodStart && slaveSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                        symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
+                    }
+                    if (masterTimestamp > periodEnd) {
+                        symKeyToValidityPeriodEnd.putAt(periodEndKeyIndex, slaveSymbolKey, masterTimestamp);
+                    }
+                }
+            }
         }
 
         @Override
@@ -166,29 +221,74 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
+            StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
+            CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
+            int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
+            long rememberedRowId = symKeyToRowId.get(slaveSymbolKey);
+            long validityPeriodStart, validityPeriodEnd;
+            if (rememberedRowId != NOT_REMEMBERED) {
+                validityPeriodStart = symKeyToValidityPeriodStart.get(slaveSymbolKey);
+                validityPeriodEnd = symKeyToValidityPeriodEnd.get(slaveSymbolKey);
+            } else {
+                validityPeriodStart = validityPeriodEnd = Numbers.LONG_NULL;
+            }
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
+                if (!isSlaveWithinToleranceInterval(masterTimestamp, slaveTimestamp)) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
+                    rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, SymbolTable.VALUE_NOT_FOUND);
                     break;
+                }
+                if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
+                    // Our search is now within the validity period of the remembered symbol. Let's use it.
+                    if (masterTimestamp > validityPeriodEnd) {
+                        // Extend remembered period end to current masterTimestamp. The fact that we got to this point
+                        // in our search means we haven't found a more recent symbol. Therefore, the remembered symbol
+                        // is still the applicable one.
+                        symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
+                    }
+                    if (rememberedRowId != SymbolTable.VALUE_NOT_FOUND) {
+                        if (isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
+                            record.hasSlave(true);
+                            slaveTimeFrameCursor.recordAt(slaveRecB, rememberedRowId);
+                        } else {
+                            record.hasSlave(false);
+                        }
+                        break;
+                    } else {
+                        // We remembered a period within which the symbol doesn't occur. Jump over the entire
+                        // period and continue searching, unless that's outside the tolerance interval.
+                        if (!isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
+                            record.hasSlave(false);
+                            break;
+                        }
+                        keyedFrameIndex = Rows.toPartitionIndex(rememberedRowId);
+                        keyedRowId = Rows.toLocalRowID(rememberedRowId);
+                        slaveTimeFrameCursor.jumpTo(keyedFrameIndex);
+                        slaveTimeFrameCursor.open();
+                        slaveTimeFrameCursor.recordAt(slaveRecB, rememberedRowId);
+                        rowLo = slaveTimeFrame.getRowLo();
+                    }
                 }
 
                 slaveSinkTarget.clear();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
                 if (masterSinkTarget.memeq(slaveSinkTarget)) {
                     record.hasSlave(true);
+                    rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, slaveRecB.getRowId());
                     break;
                 }
 
                 // let's try to move backwards in the slave cursor until we have a match
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
-                    // ops, we exhausted this frame, let's try the previous one
+                    // we exhausted this frame, let's try the previous one
                     if (!slaveTimeFrameCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
-                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
-                        // until we either exhaust the cursor or find a matching key.
+                        // if we are here, chances are we are also pretty slow because we are scanning
+                        // the entire slave cursor, until we either find a matching key or exhaust the cursor.
+                        rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, SymbolTable.VALUE_NOT_FOUND);
                         record.hasSlave(false);
                         break;
                     }
@@ -198,7 +298,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     keyedRowId = slaveTimeFrame.getRowHi() - 1;
                     rowLo = slaveTimeFrame.getRowLo();
                 }
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                long foundRowId = Rows.toRowID(keyedFrameIndex, keyedRowId);
+                rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, foundRowId);
+                slaveTimeFrameCursor.recordAt(slaveRecB, foundRowId);
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }

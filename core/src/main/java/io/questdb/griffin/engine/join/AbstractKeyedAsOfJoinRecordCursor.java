@@ -39,7 +39,9 @@ import io.questdb.std.Rows;
  */
 public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoinFastRecordCursor {
     protected final SingleRecordSink masterSinkTarget;
+    protected final int masterSymbolColumnIndex;
     protected final SingleRecordSink slaveSinkTarget;
+    protected final int slaveSymbolColumnIndex;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean origHasSlave;
     protected int origSlaveFrameIndex = -1;
@@ -50,14 +52,18 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             Record nullRecord,
             int masterTimestampIndex,
             int masterTimestampType,
+            int masterSymbolColumnIndex,
             SingleRecordSink masterSinkTarget,
             int slaveTimestampIndex,
             int slaveTimestampType,
+            int slaveSymbolColumnIndex,
             SingleRecordSink slaveSinkTarget,
             int lookahead
     ) {
         super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+        this.masterSymbolColumnIndex = masterSymbolColumnIndex;
         this.masterSinkTarget = masterSinkTarget;
+        this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.slaveSinkTarget = slaveSinkTarget;
     }
 

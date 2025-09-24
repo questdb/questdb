@@ -51,8 +51,6 @@ import io.questdb.std.Rows;
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
-    private final int masterSymbolColumnIndex;
-    private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
     public AsOfJoinIndexedRecordCursorFactory(
@@ -68,8 +66,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterSymbolColumnIndex = masterSymbolColumnIndex;
-        this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
@@ -78,9 +74,11 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 NullRecordFactory.getInstance(slaveMeta),
                 masterMeta.getTimestampIndex(),
                 masterMeta.getTimestampType(),
+                masterSymbolColumnIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveMeta.getTimestampIndex(),
                 slaveMeta.getTimestampType(),
+                slaveSymbolColumnIndex,
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
@@ -139,14 +137,16 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
+                int masterSymbolColumnIndex,
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
+                int slaveSymbolColumnIndex,
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget,
-                    slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSymbolColumnIndex, masterSinkTarget,
+                    slaveTimestampIndex, slaveTimestampType, slaveSymbolColumnIndex, slaveSinkTarget, lookahead);
         }
 
         @Override
