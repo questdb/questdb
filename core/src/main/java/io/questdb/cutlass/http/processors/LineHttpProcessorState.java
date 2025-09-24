@@ -44,6 +44,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakClosableObjectPool;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 
@@ -70,6 +71,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
+    private DirectUtf8Sink sink = new DirectUtf8Sink(16);
 
     public LineHttpProcessorState(
             int initRecvBufSize,
@@ -88,6 +90,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 configuration.autoCreateNewColumns(),
                 configuration.isStringToCharCastAllowed(),
                 configuration.getTimestampUnit(),
+                sink,
                 engine.getConfiguration().getMaxFileNameLength()
         );
         final DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(configuration);
@@ -121,6 +124,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
         Misc.free(parser);
+        Misc.free(sink);
     }
 
     public void commit() {

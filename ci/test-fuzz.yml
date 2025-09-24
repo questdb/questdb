@@ -3,11 +3,12 @@ trigger: none
 pr: none
 
 schedules:
-  - cron: "*/10 * * * *"
+  - cron: "*/15 * * * *"
     displayName: Run every 15 minutes
     branches:
       include:
         - master
+        - master-ent-next
     always: true
 
 variables:
