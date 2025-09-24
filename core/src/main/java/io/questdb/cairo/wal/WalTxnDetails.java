@@ -34,7 +34,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -100,8 +99,8 @@ public class WalTxnDetails implements QuietCloseable {
     private long totalRowsLoadedToApply = 0;
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
 
-    public WalTxnDetails(FilesFacade ff, CairoConfiguration configuration, long maxLookaheadRows) {
-        walEventReader = new WalEventReader(ff);
+    public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
+        walEventReader = new WalEventReader(configuration);
         this.config = configuration;
         this.maxLookaheadRows = maxLookaheadRows;
     }
@@ -709,7 +708,7 @@ public class WalTxnDetails implements QuietCloseable {
                             if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
                                 WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
-                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestampUs());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);

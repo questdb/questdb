@@ -40,7 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -92,7 +92,7 @@ public class TableSequencerImpl implements TableSequencer {
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
+            metadata = new SequencerMetadata(configuration);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = IDGeneratorFactory.newIDGenerator(
                     configuration,

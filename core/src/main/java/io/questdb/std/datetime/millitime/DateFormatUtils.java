@@ -33,19 +33,15 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.std.datetime.CommonUtils.*;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public class DateFormatUtils {
-    public static final DateLocale EN_LOCALE = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final int HOUR_24 = 2;
-    public static final int HOUR_AM = 0;
-    public static final int HOUR_PM = 1;
     public static final DateFormat PG_DATE_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat UTC_FORMAT;
-    public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     private static final DateFormat[] DATE_FORMATS;
     private static final int DATE_FORMATS_SIZE;
     private static final DateFormat HTTP_FORMAT;
@@ -93,7 +89,7 @@ public class DateFormatUtils {
         if (millis == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(millis, EN_LOCALE, "Z", sink);
+        UTC_FORMAT.format(millis, DateLocaleFactory.EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
@@ -251,7 +247,7 @@ public class DateFormatUtils {
     }
 
     public static void formatHTTP(@NotNull CharSink<?> sink, long millis) {
-        HTTP_FORMAT.format(millis, EN_LOCALE, "GMT", sink);
+        HTTP_FORMAT.format(millis, DateLocaleFactory.EN_LOCALE, "GMT", sink);
     }
 
     // YYYY-MM
@@ -284,7 +280,7 @@ public class DateFormatUtils {
         final int hi = value.length();
         for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
             try {
-                return DATE_FORMATS[i].parse(value, 0, hi, DateFormatUtils.EN_LOCALE);
+                return DATE_FORMATS[i].parse(value, 0, hi, DateLocaleFactory.EN_LOCALE);
             } catch (NumericException ignore) {
             }
         }
@@ -293,7 +289,7 @@ public class DateFormatUtils {
 
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseUTCDate(@NotNull CharSequence value) throws NumericException {
-        return UTC_FORMAT.parse(value, 0, value.length(), EN_LOCALE);
+        return UTC_FORMAT.parse(value, 0, value.length(), DateLocaleFactory.EN_LOCALE);
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {

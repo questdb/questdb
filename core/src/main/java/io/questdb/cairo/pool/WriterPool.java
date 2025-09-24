@@ -43,7 +43,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -557,8 +557,8 @@ public class WriterPool extends AbstractPool {
         }
 
         if (isDistressed) {
-            entries.remove(tableToken.getDirName());
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
+            entries.remove(tableToken.getDirName());
             notifyListener(thread, tableToken, PoolListener.EV_RETURN);
             return true;
         }

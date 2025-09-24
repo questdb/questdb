@@ -24,7 +24,7 @@
 
 package io.questdb.test.std.datetime.microtime;
 
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -32,8 +32,8 @@ public class HourOfDayTest {
 
     @Test
     public void testSimple() {
-        Assert.assertEquals(19, Timestamps.getHourOfDay(1592078287051004L));
-        Assert.assertEquals(15, Timestamps.getHourOfDay(1592063943181693L));
-        Assert.assertEquals(8, Timestamps.getHourOfDay(-1592063943181693L));
+        Assert.assertEquals(19, Micros.getHourOfDay(1592078287051004L));
+        Assert.assertEquals(15, Micros.getHourOfDay(1592063943181693L));
+        Assert.assertEquals(8, Micros.getHourOfDay(-1592063943181693L));
     }
 }
