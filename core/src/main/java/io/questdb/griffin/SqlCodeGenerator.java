@@ -1677,7 +1677,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case ColumnType.IPv4:
                         if (fromTag == ColumnType.IPv4) {
-                            castFunctions.add(new IPv4Column(i));
+                            castFunctions.add(IPv4Column.newInstance(i));
                         } else {
                             throw SqlException.unsupportedCast(
                                     modelPosition,
@@ -1927,7 +1927,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.IPv4:
-                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(IPv4Column.newInstance(i)));
                                 break;
                         }
                         break;
@@ -2181,7 +2181,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(UuidColumn.newInstance(i)));
                                 break;
                             case ColumnType.IPv4:
-                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(new IPv4Column(i)));
+                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(IPv4Column.newInstance(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
@@ -4852,7 +4852,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
-
                                     ),
                                     keyFunctions,
                                     extractWorkerFunctionsConditionally(

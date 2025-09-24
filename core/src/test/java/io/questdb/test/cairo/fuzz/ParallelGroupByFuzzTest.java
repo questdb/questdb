@@ -1076,6 +1076,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelIPv4CastToVarcharKeyGroupBy() throws Exception {
+        testParallelIPv4KeyGroupBy(
+                "SELECT key::varchar key, max(value) FROM tab WHERE key > '0.0.0.101' ORDER BY key LIMIT 5",
+                "key\tmax\n" +
+                        "0.0.0.102\t3902.0\n" +
+                        "0.0.0.103\t3903.0\n" +
+                        "0.0.0.104\t3904.0\n" +
+                        "0.0.0.105\t3905.0\n" +
+                        "0.0.0.106\t3906.0\n"
+        );
+    }
+
+    @Test
     public void testParallelJsonKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -3444,6 +3457,37 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         } finally {
                             Misc.free(circuitBreaker);
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelIPv4KeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key IPv4," +
+                                        "  value DOUBLE" +
+                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select (x * 864000000)::timestamp, ((x % 200)::int)::ipv4, x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
                     LOG
