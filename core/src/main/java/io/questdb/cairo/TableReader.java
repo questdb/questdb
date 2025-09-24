@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
 import io.questdb.cairo.vm.NullMemoryCMR;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -80,7 +79,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final int timestampType;
-    private final MemoryMR todoMem = Vm.getCMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
@@ -241,7 +239,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeBitmapIndexCache();
             Misc.free(metadata);
             Misc.free(txFile);
-            Misc.free(todoMem);
             freeColumns();
             freeParquetPartitions();
             freeTempMem();
