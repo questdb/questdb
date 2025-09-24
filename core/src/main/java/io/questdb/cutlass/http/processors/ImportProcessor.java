@@ -462,6 +462,19 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         b.putAscii("+\r\n");
     }
 
+    private String checkFilenameIsSafeToImport(DirectUtf8Sequence filename, CairoConfiguration configuration)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        final String filenameStr = filename.toString();
+        if (Chars.contains(filenameStr, "../") || Chars.contains(filenameStr, "..\\")) {
+            sendErrorAndThrowDisconnect("relative path is not allowed in parquet filename");
+        }
+
+        if (Chars.startsWith(filenameStr, '/') || (filenameStr.length() > 1 && filenameStr.charAt(1) == ':')) {
+            sendErrorAndThrowDisconnect("absolute path is not allowed in parquet filename");
+        }
+        return filenameStr;
+    }
+
     private void doResumeSend(
             ImportProcessorState state,
             HttpChunkedResponse socket
@@ -517,6 +530,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         if (filename == null || filename.size() == 0) {
             sendErrorAndThrowDisconnect("parquet import requires filename in Content-Disposition header");
         }
+        String importPath = checkFilenameIsSafeToImport(filename, configuration);
 
         final DirectUtf8Sequence sizeParam = context.getRequestHeader().getUrlParam(URL_PARAM_TOTAL_SIZE);
         if (sizeParam == null) {
@@ -531,8 +545,8 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         } catch (NumericException e) {
             sendErrorAndThrowDisconnect("parquet import requires valid numeric 'total_size' URL parameter");
         }
-        state.initParquetImport(filename, sqlCopyInputRoot.toString(), contentLength);
-        LOG.info().$("starting parquet import [filename=").$(filename)
+        state.initParquetImport(importPath, sqlCopyInputRoot, contentLength);
+        LOG.info().$("starting parquet import [filename=").$(importPath)
                 .$(", target=").$(state.parquetPath)
                 .$(", size=").$(contentLength).$(']').$();
     }

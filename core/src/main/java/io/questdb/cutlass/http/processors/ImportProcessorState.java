@@ -32,7 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -128,7 +127,7 @@ public class ImportProcessorState implements Mutable, Closeable {
         parquetBytesWritten = 0;
     }
 
-    void initParquetImport(DirectUtf8Sequence filename, CharSequence sqlCopyInputRoot, long expectedSize) {
+    void initParquetImport(CharSequence filename, CharSequence sqlCopyInputRoot, long expectedSize) {
         this.parquetFilename = filename.toString();
         parquetPath.of(sqlCopyInputRoot).concat(filename);
         this.parquetFileSize = expectedSize;
