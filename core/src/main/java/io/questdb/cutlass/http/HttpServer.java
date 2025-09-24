@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.http.processors.v1.ImportRouter;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -52,11 +53,13 @@ import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -229,6 +232,30 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestHandler newInstance() {
+                return new io.questdb.cutlass.http.processors.ImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return io.questdb.cutlass.http.processors.v1.ImportRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new io.questdb.cutlass.http.processors.v1.ImportRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return httpServerConfiguration.getContextPathImport();
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
                 return new ImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
@@ -261,10 +288,22 @@ public class HttpServer implements Closeable {
             }
         });
 
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return ImportRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ImportRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
         server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
     }
 
-    public static Utf8Sequence normalizeUrl(DirectUtf8String url) {
+    public static DirectUtf8Sequence normalizeUrl(DirectUtf8String url) {
         long p = url.ptr();
         long shift = 0;
         boolean lastSlash = false;
@@ -374,8 +413,31 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
+//    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
+//
+//        private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
+//        private HttpRequestProcessor defaultRequestProcessor = null;
+//
+//        @Override
+//        public void close() {
+//            Misc.freeIfCloseable(defaultRequestProcessor);
+//            ObjList<Utf8String> requestHandlerKeys = requestHandlerMap.keys();
+//            for (int i = 0, n = requestHandlerKeys.size(); i < n; i++) {
+//                Misc.freeIfCloseable(requestHandlerMap.get(requestHandlerKeys.getQuick(i)));
+//            }
+//        }
+//
+//        @Override
+//        public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
+//            final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
+//            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+//            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
+//        }
+//    }
 
+
+    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
+        private static final ThreadLocal<DirectUtf8String> routingUrl = new ThreadLocal<>(DirectUtf8String::new);
         private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 
@@ -390,8 +452,19 @@ public class HttpServer implements Closeable {
 
         @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-            final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
-            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+            final DirectUtf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
+            HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+
+            if (requestHandler == null) {
+                if (Utf8s.startsWith(normalizedUrl, HttpConstants.URL_PREFIX_API_V1)) { // configurable
+                    // fallback to find most specific selector
+                    DirectUtf8String partialUrl = routingUrl.get().of(normalizedUrl.lo(), normalizedUrl.hi());
+                    int hi;
+                    while (requestHandler == null && (hi = Utf8s.lastIndexOfAscii(partialUrl, '/')) > 1) {
+                        requestHandler = requestHandlerMap.get(partialUrl.setHi(hi));
+                    }
+                }
+            }
             return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }

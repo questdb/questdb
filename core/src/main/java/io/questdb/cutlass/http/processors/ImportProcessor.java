@@ -570,9 +570,9 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
                 response.putAscii("\"size\":").put(state.parquetBytesWritten).putAscii(',');
                 response.putAscii("\"status\":\"imported\"}");
             } else {
-                response.putAscii("Parquet file imported successfully").putEOL();
                 response.putAscii("File: ").put(state.parquetFilename).putEOL();
-                response.putAscii("Size: ").put(state.parquetBytesWritten).putAscii(" bytes").putEOL();
+                response.putAscii("Size: ").put(state.parquetBytesWritten).putEOL();
+                response.putAscii("Location: ").put(state.parquetPath).putEOL();
                 response.putAscii("Status: imported").putEOL();
             }
             response.sendChunk(true);

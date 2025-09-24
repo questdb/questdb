@@ -82,6 +82,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
     public static final Utf8String URL_PARAM_TOTAL_SIZE = new Utf8String("total_size");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
+    public static final Utf8String URL_PREFIX_API_V1 = new Utf8String("/api/v1");
 
     private HttpConstants() {
     }

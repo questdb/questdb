@@ -207,6 +207,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
+    private final ObjList<String> httpContextPathApiV1 = new ObjList<>();
     private final ObjList<String> httpContextPathExec = new ObjList<>();
     private final ObjList<String> httpContextPathExport = new ObjList<>();
     private final ObjList<String> httpContextPathILP = new ObjList<>();
@@ -990,6 +991,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_API_V1, this.httpContextPathApiV1, httpContextWebConsole + "/api/v1");
+
 
             // If any REST services that the Web Console depends on are overridden,
             // ensure the required context paths remain available,
@@ -4370,6 +4373,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LongGauge getConnectionCountGauge() {
             return metrics.httpMetrics().connectionCountGauge();
+        }
+
+        @Override
+        public ObjList<String> getContextPathApiV1() {
+            return httpContextPathApiV1;
         }
 
         @Override
