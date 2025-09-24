@@ -35,7 +35,7 @@ import io.questdb.std.QuietCloseable;
 public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource {
 
     /**
-     * Gets the bitmap index reader for the specified column in the current partition.
+     * Gets the bitmap index reader for the specified column in the current frame (partition).
      * This method enables efficient symbol-based lookups in ASOF JOIN operations.
      *
      * @param columnIndex the column index to get the bitmap index for
@@ -43,7 +43,7 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
      * or if this cursor doesn't support indexed access
      */
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
+    BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction);
 
     /**
      * @return record at current position

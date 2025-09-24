@@ -164,7 +164,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
-                BitmapIndexReader indexReader = slaveTimeFrameCursor.getBitmapIndexReader(
+                BitmapIndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
                         slaveSymbolColumnIndex,
                         BitmapIndexReader.DIR_BACKWARD
                 );

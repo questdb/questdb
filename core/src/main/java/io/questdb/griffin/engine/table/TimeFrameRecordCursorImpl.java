@@ -88,7 +88,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
-    public BitmapIndexReader getBitmapIndexReader(int logicalColumnIndex, int direction) {
+    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
         int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
         int frameIndex = timeFrame.frameIndex;
         if (frameIndex == -1) {
