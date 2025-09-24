@@ -27,6 +27,7 @@ package io.questdb.cutlass.line;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.Decimal256;
 import org.jetbrains.annotations.NotNull;
 
 public class LineTcpSenderV1 extends AbstractLineTcpSender {
@@ -57,6 +58,18 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
     @Override
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name).put(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        // Serializing the Decimal256 as text
+        writeFieldName(name);
+        if (value.isNull()) {
+            put("NaNd");
+        } else {
+            put(value).putAscii('d');
+        }
         return this;
     }
 

@@ -527,6 +527,22 @@ public class LineWalAppender {
                             throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
                         }
                         break;
+                    case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        final int scale = ColumnType.getDecimalScale(colType);
+                        Decimal256 decimal = ent.getDecimalValue();
+                        if (decimal.getScale() != scale) {
+                            try {
+                                decimal.rescale(scale);
+                            } catch (NumericException ignored) {
+                                throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                            }
+                        }
+                        if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
+                            throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(),
+                                    writer.getMetadata().getColumnName(columnIndex));
+                        }
+                        DecimalUtil.store(decimal, r, columnIndex, colType);
+                        break;
                     default:
                         break; // unsupported types are ignored
                 }

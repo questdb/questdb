@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Decimal256;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -88,6 +89,13 @@ public class LineUdpSender extends AbstractLineSender {
     @Override
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name).put(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        writeFieldName(name).put(value);
+        putAsciiInternal('d');
         return this;
     }
 

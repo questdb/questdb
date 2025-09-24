@@ -35,6 +35,7 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -65,6 +66,25 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
             channel.close();
             throw t;
         }
+    }
+
+    @Override
+    public Sender decimalColumn(@NotNull CharSequence name, Decimal256 value) {
+        writeFieldName(name)
+                .putAsciiInternal('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale());
+        if (value.isNull()) {
+            put((byte) 0); // Length (0 -> null)
+            return this;
+        }
+
+        put((byte) 32); // Length
+        putLong(Long.reverseBytes(value.getHh()));
+        putLong(Long.reverseBytes(value.getHl()));
+        putLong(Long.reverseBytes(value.getLh()));
+        putLong(Long.reverseBytes(value.getLl()));
+        return this;
     }
 
     @Override
@@ -147,7 +167,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         values.appendToBufPtr(this);
         return this;
     }
-
 
     @Override
     public void putBlockOfBytes(long from, long len) {

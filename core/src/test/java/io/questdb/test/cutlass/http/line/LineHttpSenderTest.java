@@ -28,8 +28,10 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -38,6 +40,7 @@ import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -1140,6 +1143,37 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertDecimalCreateTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table("decimal_test")
+                            .decimalColumn("a", Decimal256.fromLong(12345, 2))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("decimal_test");
+                var engine = serverMain.getEngine();
+                try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("decimal_test"))) {
+                    Assert.assertEquals(ColumnType.getDecimalType(18, 3), metadata.getColumnType("a"));
+                }
+
+                serverMain.assertSql("SELECT * FROM decimal_test", "a\ttimestamp\n" +
+                        "123.450\t1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertDecimals() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -1161,50 +1195,65 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .protocolVersion(protocol)
                             .build()
                     ) {
+                        sender.table(tableName)
+                                .decimalColumn("a", Decimal256.fromLong(12345, 0))
+                                .decimalColumn("b", Decimal256.fromLong(12345, 2))
+                                .at(100000000000L + protocol * 100, ChronoUnit.MICROS);
+
+                        // Decimal without rescale
+                        sender.table(tableName)
+                                .decimalColumn("a", Decimal256.NULL_VALUE)
+                                .decimalColumn("b", Decimal256.fromLong(123456, 3))
+                                .at(100000000001L + protocol * 100, ChronoUnit.MICROS);
+
                         // Integers -> Decimal
                         sender.table(tableName)
                                 .longColumn("a", 42)
                                 .longColumn("b", 42)
-                                .at(100000000000L + protocol * 100, ChronoUnit.MICROS);
+                                .at(100000000002L + protocol * 100, ChronoUnit.MICROS);
 
                         // Strings -> Decimal without rescale
                         sender.table(tableName)
                                 .stringColumn("a", "42")
                                 .stringColumn("b", "42.123")
-                                .at(100000000001L + protocol * 100, ChronoUnit.MICROS);
+                                .at(100000000003L + protocol * 100, ChronoUnit.MICROS);
 
                         // Strings -> Decimal with rescale
                         sender.table(tableName)
                                 .stringColumn("a", "42.0")
                                 .stringColumn("b", "42.1")
-                                .at(100000000002L + protocol * 100, ChronoUnit.MICROS);
+                                .at(100000000004L + protocol * 100, ChronoUnit.MICROS);
 
                         // Doubles -> Decimal
                         sender.table(tableName)
                                 .doubleColumn("a", 42d)
                                 .doubleColumn("b", 42.1d)
-                                .at(100000000003L + protocol * 100, ChronoUnit.MICROS);
+                                .at(100000000005L + protocol * 100, ChronoUnit.MICROS);
 
                         // NaN/Inf Doubles -> Decimal
                         sender.table(tableName)
                                 .doubleColumn("a", Double.NaN)
                                 .doubleColumn("b", Double.POSITIVE_INFINITY)
-                                .at(100000000004L + protocol * 100, ChronoUnit.MICROS);
+                                .at(100000000006L + protocol * 100, ChronoUnit.MICROS);
                         sender.flush();
                     }
                 }
                 serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("select * from " + tableName, "a\tb\tts\n" +
-                        "42\t42.000\t1970-01-02T03:46:40.000100Z\n" +
-                        "42\t42.123\t1970-01-02T03:46:40.000101Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000102Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000103Z\n" +
-                        "\t\t1970-01-02T03:46:40.000104Z\n" +
-                        "42\t42.000\t1970-01-02T03:46:40.000200Z\n" +
-                        "42\t42.123\t1970-01-02T03:46:40.000201Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000202Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000203Z\n" +
-                        "\t\t1970-01-02T03:46:40.000204Z\n");
+                        "12345\t123.450\t1970-01-02T03:46:40.000100Z\n" +
+                        "\t123.456\t1970-01-02T03:46:40.000101Z\n" +
+                        "42\t42.000\t1970-01-02T03:46:40.000102Z\n" +
+                        "42\t42.123\t1970-01-02T03:46:40.000103Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000104Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000105Z\n" +
+                        "\t\t1970-01-02T03:46:40.000106Z\n" +
+                        "12345\t123.450\t1970-01-02T03:46:40.000200Z\n" +
+                        "\t123.456\t1970-01-02T03:46:40.000201Z\n" +
+                        "42\t42.000\t1970-01-02T03:46:40.000202Z\n" +
+                        "42\t42.123\t1970-01-02T03:46:40.000203Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000204Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000205Z\n" +
+                        "\t\t1970-01-02T03:46:40.000206Z\n");
             }
         });
     }
@@ -1371,6 +1420,22 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         flushAndAssertError(
                                 sender,
                                 "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+
+                        // Decimal with a too big precision.
+                        sender.table(tableName)
+                                .decimalColumn("x", Decimal256.fromLong(12345678, 3))
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "12345.678 is out bounds of column type: DECIMAL(6,3)");
+
+                        // Decimal with a too big precision when scaled.
+                        sender.table(tableName)
+                                .decimalColumn("y", Decimal256.fromLong(12345, 0))
+                                .at(100000000000L, ChronoUnit.MICROS);
+                        flushAndAssertError(
+                                sender,
+                                "cast error from protocol type: DECIMAL to column type: DECIMAL(76,73)");
                     }
                 }
             }
