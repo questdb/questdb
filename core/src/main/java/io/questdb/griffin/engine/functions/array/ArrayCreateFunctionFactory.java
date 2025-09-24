@@ -186,7 +186,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 int nestedNDims
         ) {
             try {
-                this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
+                this.type = ColumnType.encodeArrayType(ColumnType.tagOf(commonElemType), nestedNDims + 1);
                 this.args = args;
                 this.argPositions = argPositions;
                 this.arrayOut = new DirectArray(configuration);

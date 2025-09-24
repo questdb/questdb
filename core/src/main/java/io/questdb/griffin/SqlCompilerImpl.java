@@ -724,7 +724,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
-            columnType = ColumnType.encodeArrayType(columnType, dim);
+            columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
         }
 
         tok = SqlUtil.fetchNext(lexer);

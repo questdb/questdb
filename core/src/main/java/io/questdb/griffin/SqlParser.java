@@ -3935,7 +3935,7 @@ public class SqlParser {
                         .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
                         .put(']');
             }
-            return ColumnType.encodeArrayType(columnType, nDims);
+            return ColumnType.encodeArrayType(ColumnType.tagOf(columnType), nDims);
         }
 
         if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
