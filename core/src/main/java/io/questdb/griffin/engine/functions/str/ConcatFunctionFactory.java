@@ -244,7 +244,29 @@ public class ConcatFunctionFactory implements FunctionFactory {
             final int functionCount = functions.size();
             final ObjList<TypeAdapter> adapters = new ObjList<>(functionCount);
             populateAdapters(adapters, functions, argPositions);
-            for (int i = 0; i < functionCount; i++) {
+            // todo: extract this boilerplate code in a separate method
+            switch (functionCount) {
+                case 0:
+                    return;
+                case 1:
+                    adapters.getQuick(0).sink(sink, functions.getQuick(0), null);
+                    return;
+                case 2:
+                    adapters.getQuick(0).sink(sink, functions.getQuick(0), null);
+                    adapters.getQuick(1).sink(sink, functions.getQuick(1), null);
+                    return;
+                case 3:
+                    adapters.getQuick(0).sink(sink, functions.getQuick(0), null);
+                    adapters.getQuick(1).sink(sink, functions.getQuick(1), null);
+                    adapters.getQuick(2).sink(sink, functions.getQuick(2), null);
+                    return;
+                default:
+                    adapters.getQuick(0).sink(sink, functions.getQuick(0), null);
+                    adapters.getQuick(1).sink(sink, functions.getQuick(1), null);
+                    adapters.getQuick(2).sink(sink, functions.getQuick(2), null);
+                    adapters.getQuick(3).sink(sink, functions.getQuick(3), null);
+            }
+            for (int i = 4; i < functionCount; i++) {
                 adapters.getQuick(i).sink(sink, functions.getQuick(i), null);
             }
         }
