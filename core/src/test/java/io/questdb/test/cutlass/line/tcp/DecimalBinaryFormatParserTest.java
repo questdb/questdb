@@ -81,14 +81,14 @@ public class DecimalBinaryFormatParserTest {
 
     @Test
     public void testNegativeValue() throws DecimalBinaryFormatParser.ParseException {
-        // Test -1000 with scale 2 = -10.00
+        // Test -10 with scale 2 = -0.10
         Decimal256 decimal256 = parse(new byte[]{
                 2, // Scale
                 2, // Length
-                (byte) 0b11111111, (byte) 0b11110110, // -1000 in two's complement big-endian
+                (byte) 0b11111111, (byte) 0b11110110, // -00 in two's complement big-endian
         });
         Assert.assertEquals(2, decimal256.getScale());
-        Assert.assertEquals("-10.00", decimal256.toString());
+        Assert.assertEquals("-0.10", decimal256.toString());
     }
 
     @Test

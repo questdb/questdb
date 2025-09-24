@@ -512,9 +512,8 @@ public class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_STRING: {
-                    final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
                     final DirectUtf8Sequence entityValue = entity.getValue();
-                    if (!ColumnType.isGeoType(colType)) { // not geohash
+                    if (!ColumnType.isGeoHash(colType)) { // not geohash
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.IPv4:
                                 try {
@@ -577,6 +576,7 @@ public class LineTcpMeasurementEvent implements Closeable {
                                 throw castError(tud.getTableNameUtf16(), "string", colType, entity.getName());
                         }
                     } else {
+                        final int colTypeMeta = localDetails.getColumnTypeMeta(columnWriterIndex);
                         offset = buffer.addGeoHash(offset, entityValue, colTypeMeta);
                     }
                     break;

@@ -96,25 +96,25 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                 hh = (long) unscaledValues.getQuick(size - 8) << 32;
                 // fall through
             case 6:
-                hh |= unscaledValues.getQuick(size - 7);
+                hh = (hh & 0xFFFFFFFF00000000L) | (unscaledValues.getQuick(size - 7) & 0xFFFFFFFFL);
                 // fall through
             case 5:
                 hl = (long) unscaledValues.getQuick(size - 6) << 32;
                 // fall through
             case 4:
-                hl |= unscaledValues.getQuick(size - 5);
+                hl = (hl & 0xFFFFFFFF00000000L) | (unscaledValues.getQuick(size - 5) & 0xFFFFFFFFL);
                 // fall through
             case 3:
                 lh = (long) unscaledValues.getQuick(size - 4) << 32;
                 // fall through
             case 2:
-                lh |= unscaledValues.getQuick(size - 3);
+                lh = (lh & 0xFFFFFFFF00000000L) | (unscaledValues.getQuick(size - 3) & 0xFFFFFFFFL);
                 // fall through
             case 1:
                 ll = (long) unscaledValues.getQuick(size - 2) << 32;
                 // fall through
             case 0:
-                ll |= unscaledValues.getQuick(size - 1);
+                ll = (ll & 0xFFFFFFFF00000000L) | (unscaledValues.getQuick(size - 1) & 0xFFFFFFFFL);
         }
 
         decimal256.of(hh, hl, lh, ll, scale);
@@ -158,13 +158,17 @@ public class DecimalBinaryFormatParser implements QuietCloseable {
                         case 1:
                             unscaledValues.setQuick(0, Unsafe.getUnsafe().getByte(addr));
                             break;
-                        case 2:
-                            unscaledValues.setQuick(0, Unsafe.getUnsafe().getShort(addr));
+                        case 2: {
+                            short s = Short.reverseBytes(Unsafe.getUnsafe().getShort(addr));
+                            unscaledValues.setQuick(0, s);
                             break;
-                        case 3:
-                            int value = Unsafe.getUnsafe().getShort(addr) << 8 | (Unsafe.getUnsafe().getByte(addr + 2) & 0xFF);
+                        }
+                        case 3: {
+                            short s = Short.reverseBytes(Unsafe.getUnsafe().getShort(addr));
+                            int value = s << 8 | (Unsafe.getUnsafe().getByte(addr + 2) & 0xFF);
                             unscaledValues.setQuick(0, value);
                             break;
+                        }
                     }
                 }
                 state = ParserState.FINISH;
