@@ -200,7 +200,7 @@ public class ImportParquetTest extends AbstractCairoTest {
                                                 "\r\n" +
                                                 "6e\r\n" +
                                                 "Parquet file imported successfully\r\n" +
-                                                "File: dir/dir1/large_test.parquet\r\n" +
+                                                "File: " + fileName + "\r\n" +
                                                 "Size: 2594145 bytes\r\n" +
                                                 "Status: imported\r\n" +
                                                 "\r\n" +
