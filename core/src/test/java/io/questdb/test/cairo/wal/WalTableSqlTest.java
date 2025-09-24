@@ -442,13 +442,6 @@ public class WalTableSqlTest extends AbstractCairoTest {
         drainWalQueue();
 
         TableToken tt = engine.verifyTableName(tableName);
-        int timestampType;
-        int partitionBy;
-        try (TableMetadata m = engine.getTableMetadata(tt)) {
-            timestampType = m.getTimestampType();
-            partitionBy = m.getPartitionBy();
-        }
-
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
             tw.ofRW(p.$());
