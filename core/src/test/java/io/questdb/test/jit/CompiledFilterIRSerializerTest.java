@@ -98,6 +98,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 .col("ageolong", ColumnType.GEOLONG)
                 .col("adate", ColumnType.DATE)
                 .col("atimestamp", ColumnType.TIMESTAMP)
+                .col("atimestampns", ColumnType.TIMESTAMP_NANO)
                 .col("adouble", ColumnType.DOUBLE)
                 .col("astring", ColumnType.STRING)
                 .col("astring2", ColumnType.STRING)
@@ -163,6 +164,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.setDate("adate", 1443479385706L);
         bindVariableService.setGeoHash("ageolong", 0b11010000001110101000110100011010L, ColumnType.getGeoHashTypeWithBits(32));
         bindVariableService.setTimestamp("atimestamp", 400500000000L);
+        bindVariableService.setTimestampNano("atimestampns", 400500000000000L);
         bindVariableService.setUuid("auuid", 2085282008, 2085282008);
 
         serialize(
@@ -170,21 +172,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                         " or aboolean = :aboolean or abyte = :abyte or ageobyte = :ageobyte" + // i8
                         " or ashort = :ashort or ageoshort = :ageoshort or achar = :achar" + // i16
                         " or anint = :anint or ageoint = :ageoint or asymbol = :asymbol" + // i32
-                        " or along = :along or adate = :adate or ageolong = :ageolong or atimestamp = :atimestamp" + // i64
+                        " or along = :along or adate = :adate or ageolong = :ageolong or atimestamp = :atimestamp or atimestampns = :atimestampns" + // i64
                         " or afloat = :afloat" + // f32
                         " or adouble = :adouble" // f64
         );
         assertIR(
-                "(f64 :0)(f64 adouble)" +
-                        "(=)(f32 :1)(f32 afloat)(=)" +
-                        "(i64 :2)(i64 atimestamp)(=)(i64 :3)(i64 ageolong)(=)(i64 :4)(i64 adate)(=)(i64 :5)(i64 along)(=)" +
-                        "(i32 :6)(i32 asymbol)(=)(i32 :7)(i32 ageoint)(=)(i32 :8)(i32 anint)(=)" +
-                        "(i16 :9)(i16 achar)(=)(i16 :10)(i16 ageoshort)(=)(i16 :11)(i16 ashort)(=)" +
-                        "(i8 :12)(i8 ageobyte)(=)(i8 :13)(i8 abyte)(=)(i8 :14)(i8 aboolean)(=)" +
-                        "(i128 :15)(i128 auuid)(=)" +
-                        "(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)");
+                "(f64 :0)(f64 adouble)(=)(f32 :1)(f32 afloat)(=)(i64 :2)(i64 atimestampns)(=)(i64 :3)" +
+                        "(i64 atimestamp)(=)(i64 :4)(i64 ageolong)(=)(i64 :5)(i64 adate)(=)(i64 :6)(i64 along)(=)(i32 :7)" +
+                        "(i32 asymbol)(=)(i32 :8)(i32 ageoint)(=)(i32 :9)(i32 anint)(=)(i16 :10)" +
+                        "(i16 achar)(=)(i16 :11)(i16 ageoshort)(=)(i16 :12)(i16 ashort)(=)(i8 :13)(i8 ageobyte)(=)" +
+                        "(i8 :14)(i8 abyte)(=)(i8 :15)(i8 aboolean)(=)(i128 :16)(i128 auuid)" +
+                        "(=)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(||)(ret)");
 
-        Assert.assertEquals(16, bindVarFunctions.size());
+        Assert.assertEquals(17, bindVarFunctions.size());
     }
 
     @Test
@@ -225,7 +225,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
         typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
         typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
-        typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
+        typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp", "atimestampns"});
         typeToColumn.put("i128", new String[]{"auuid", "along128"});
         typeToColumn.put("f32", new String[]{"afloat"});
         typeToColumn.put("f64", new String[]{"adouble"});
@@ -339,6 +339,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
         serialize("atimestamp IN ('2020-01-01')");
         assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
+        serialize("atimestampns IN ('2020-01-01')");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(=)(ret)");
     }
 
     @Test(expected = SqlException.class)
@@ -358,6 +360,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(2, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
         Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInvalidNanoTimestampLiteral() throws Exception {
+        serialize("atimestampns > ''");
     }
 
     @Test(expected = SqlException.class)
@@ -392,6 +399,47 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testMixedConstantColumnIntOverflow() throws Exception {
         serialize("anint * 2147483648 + 42.5 + adouble > 1");
         assertIR("(i32 1L)(f64 adouble)(f64 42.5D)(i64 2147483648L)(i32 anint)(*)(+)(+)(>)(ret)");
+    }
+
+    @Test
+    public void testNanoTimestampInLiteral() throws Exception {
+        serialize("atimestampns in '2020-01-01'");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923199999999999L)(i64 atimestampns)(<=)(&&)(ret)");
+        serialize("atimestampns in '2020-01-01;15s'");
+        assertIR("(i64 1577836800000000000L)(i64 atimestampns)(>=)(i64 1577923214999999999L)(i64 atimestampns)(<=)(&&)(ret)");
+        serialize("atimestampns in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)(||)(||)(ret)");
+        serialize("along = 42 and atimestampns in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000000L)(i64 atimestampns)(>=)(i64 1577750402999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577836798000000000L)(i64 atimestampns)(>=)(i64 1577836802999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(i64 1577923198000000000L)(i64 atimestampns)(>=)(i64 1577923202999999999L)(i64 atimestampns)(<=)(&&)" +
+                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+    }
+
+    @Test
+    public void testNanoTimestampInLiteralNull() throws Exception {
+        serialize("atimestampns in null");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestampns)(>=)(i64 -9223372036854775808L)(i64 atimestampns)(<=)(&&)(ret)");
+    }
+
+    @Test
+    public void testNanoTimestampLiteral() throws Exception {
+        serialize("atimestampns = '2023-02-11T11:12:22.116234987Z'");
+        assertIR("(i64 1676113942116234987L)(i64 atimestampns)(=)(ret)");
+        serialize("atimestampns = '2023-02-11T11:12:22.116234Z'");
+        assertIR("(i64 1676113942116234000L)(i64 atimestampns)(=)(ret)");
+        serialize("atimestampns >= '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000000000L)(i64 atimestampns)(>=)(ret)");
+        serialize("atimestampns <= '2023-02-11T11'");
+        assertIR("(i64 1676113200000000000L)(i64 atimestampns)(<=)(ret)");
+        serialize("atimestampns > '2023-02-11'");
+        assertIR("(i64 1676073600000000000L)(i64 atimestampns)(>)(ret)");
+        serialize("atimestampns < '2023-02'");
+        assertIR("(i64 1675209600000000000L)(i64 atimestampns)(<)(ret)");
+        serialize("atimestampns != '2023'");
+        assertIR("(i64 1672531200000000000L)(i64 atimestampns)(<>)(ret)");
     }
 
     @Test
@@ -547,6 +595,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("ageolong <> null", 8);
         filterToOptions.put("adate <> null", 8);
         filterToOptions.put("atimestamp <> null", 8);
+        filterToOptions.put("atimestampns <> null", 8);
         filterToOptions.put("adouble = 0", 8);
         filterToOptions.put("adouble = 0 and along = 0", 8);
         filterToOptions.put("astring = null", 8);
@@ -607,6 +656,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.clear();
         bindVariableService.setStr("str", "2020");
         serialize("atimestamp in :str");
+
+        bindVariableService.clear();
+        bindVariableService.setStr("str", "2020");
+        serialize("atimestampns in :str");
     }
 
     @Test
@@ -617,6 +670,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testTimestampLiteral() throws Exception {
+        serialize("atimestamp = '2023-02-11T11:12:22.116234987Z'");
+        assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
         serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
         assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
         serialize("atimestamp >= '2023-02-11T11:12:22'");
