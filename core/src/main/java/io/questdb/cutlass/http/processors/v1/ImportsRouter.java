@@ -55,6 +55,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -105,6 +106,15 @@ public class ImportsRouter implements HttpRequestHandler {
         State state;
 
 
+        /**
+         * Handles basic file upload (mainly for parquet, csv imports).
+         * Returns:
+         * 201 if successful with no location header and stored filenames in body
+         * 409 if there's a write conflict
+         * 400 if input root or filename are improperly set
+         * 422 if the file ends with .parquet and it cannot be decoded
+         * 500 for other errors
+         */
         public ImportPostProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
             engine = cairoEngine;
             requiredAuthType = configuration.getRequiredAuthType();
@@ -145,8 +155,8 @@ public class ImportsRouter implements HttpRequestHandler {
 
         @Override
         public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
 
+            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
             if (Chars.isBlank(importRoot)) {
                 // throw error 400
                 state.errorMsg.put("invalid destination directory (sql.copy.input.root) [path=").put(importRoot).put(']');
@@ -156,7 +166,6 @@ public class ImportsRouter implements HttpRequestHandler {
             }
 
             final DirectUtf8Sequence filename = partHeader.getContentDispositionFilename();
-
             if (filename == null || filename.size() == 0) {
                 state.errorMsg.put("received Content-Disposition without a filename");
                 state.errorCode = 400;
@@ -164,12 +173,11 @@ public class ImportsRouter implements HttpRequestHandler {
                 assert false;
             }
 
-            final DirectUtf8Sequence overwrite = context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE);
-
             state.clear();
             state.of(name, importRoot);
 
             // don't overwrite files by default
+            final DirectUtf8Sequence overwrite = context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE);
             boolean _overwrite = HttpKeywords.isTrue(overwrite);
 
             if (!_overwrite && state.ff.exists(state.path.$())) {
@@ -180,8 +188,8 @@ public class ImportsRouter implements HttpRequestHandler {
                 assert false;
             }
 
-            LOG.info().$("starting parquet import [src=").$(filename)
-                    .$(", dest=").$(state.path).$(']').$();
+            LOG.info().$("starting import [src=").$(filename)
+                    .$(", dest=").$(state.path).I$();
         }
 
         @Override
@@ -189,26 +197,29 @@ public class ImportsRouter implements HttpRequestHandler {
             assert state.mem != null;
             state.mem.setTruncateSize(state.written);
 
-            try {
-                decoder.of(state.mem.addressOf(0), state.written, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            if (Utf8s.endsWithAscii(state.path, ".parquet")) {
+                try {
+                    decoder.of(state.mem.addressOf(0), state.written, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-                if (decoder.metadata().columnCount() <= 0) {
-                    // throw error 422
-                    state.errorMsg.put("parquet file could not be decoded");
-                    state.errorCode = 422;
+                    if (decoder.metadata().columnCount() <= 0) {
+                        // throw error 422
+                        state.errorMsg.put("parquet file could not be decoded");
+                        state.errorCode = 422;
+                        sendError(context);
+                        assert false;
+                    }
+                } catch (CairoException ce) {
+                    LOG.error().$(ce.getMessage()).$();
+                    state.errorMsg.put("internal server error");
+                    state.errorCode = 500;
                     sendError(context);
                     assert false;
                 }
-            } catch (CairoException ce) {
-                LOG.error().$(ce.getMessage()).$();
-                state.errorMsg.put("internal server error");
-                state.errorCode = 500;
-                sendError(context);
-                assert false;
             }
 
-
             state.mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+            LOG.info().$("finished import [dest=").$(state.path).$(", size=").$(state.written).I$();
         }
 
         @Override
@@ -290,7 +301,6 @@ public class ImportsRouter implements HttpRequestHandler {
             } finally {
                 state.clear();
             }
-
         }
 
         private void sendSuccess(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
