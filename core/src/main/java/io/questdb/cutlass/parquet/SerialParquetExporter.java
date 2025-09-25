@@ -173,7 +173,7 @@ public class SerialParquetExporter implements Closeable {
                             PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
                             CharSequence actualPartitionDir = findHighestVersionedPartitionDir(ff, fromParquet, nameSink.toString());
-                            fromParquet.concat(actualPartitionDir).slash().concat("data.parquet");
+                            fromParquet.concat(actualPartitionDir).concat("data.parquet");
                             if (exportResult != null) {
                                 exportResult.addFilePath(fromParquet, false);
                                 files.put(tableToken.getDirName()).put(File.separator).put(actualPartitionDir).put(".parquet");
@@ -188,7 +188,7 @@ public class SerialParquetExporter implements Closeable {
                             nameSink.clear();
                             PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
-                            toParquet.slash().put(nameSink).put(".parquet");
+                            toParquet.concat(nameSink).put(".parquet");
                             createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
 
                             // copy file directly
@@ -221,7 +221,7 @@ public class SerialParquetExporter implements Closeable {
                         nameSink.clear();
                         PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                 .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
-                        toParquet.slash().put(nameSink).put(".parquet");
+                        toParquet.concat(nameSink).put(".parquet");
                         // log start
                         LOG.infoW().$("converting partition to parquet [table=").$(tableToken)
                                 .$(", partition=").$(nameSink).$();
