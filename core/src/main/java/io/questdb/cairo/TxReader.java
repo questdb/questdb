@@ -405,12 +405,21 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
-    public void initRO(MemoryMR txnFile, int timestampType, int partitionBy) {
-        this.roTxMemBase = txnFile;
+    public void initPartitionBy(int timestampType, int partitionBy) {
+        this.timestampType = timestampType;
+        this.partitionBy = partitionBy;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
         this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
-        this.partitionBy = partitionBy;
-        this.timestampType = timestampType;
+
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            // Add transient row count as the only partition in attached partitions list
+            attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+        }
+    }
+
+    public void initRO(MemoryMR txnFile) {
+        this.roTxMemBase = txnFile;
     }
 
     public boolean isLagOrdered() {
@@ -488,9 +497,7 @@ public class TxReader implements Closeable, Mutable {
         clear();
         try {
             openTxnFile(ff, path);
-            this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(timestampType, partitionBy);
-            this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(timestampType, partitionBy);
-            this.partitionBy = partitionBy;
+            initPartitionBy(timestampType, partitionBy);
         } catch (Throwable e) {
             close();
             throw e;
@@ -720,9 +727,11 @@ public class TxReader implements Closeable, Mutable {
                 attachedPartitions.clear();
             }
         } else {
-            // Add transient row count as the only partition in attached partitions list
+            // If partitionBy is NONE, we have no partitions, but we still need to
+            // have a single partition with transient row count.
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
             initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, -1L);
+            attachedPartitionsSize = 1;
         }
     }
 

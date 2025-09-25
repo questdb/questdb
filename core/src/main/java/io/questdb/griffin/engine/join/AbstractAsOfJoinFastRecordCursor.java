@@ -63,8 +63,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             int columnSplit,
             Record nullRecord,
             int masterTimestampIndex,
-            int slaveTimestampIndex,
             int masterTimestampType,
+            int slaveTimestampIndex,
             int slaveTimestampType,
             int lookahead
     ) {
@@ -195,7 +195,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
 
     /**
      * Returns true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp.
-     * This means we do not have to scan the slave cursor further, e.g. by binary search.
+     * This means we do not have to scan the slave cursor further, e.g., by binary search.
      *
      * @param masterTimestamp master timestamp
      * @return true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp, false otherwise
@@ -277,7 +277,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     // Both rowLo and rowHi are inclusive.
     // When multiple rows have the same matching timestamp, the last one is returned.
     // When all rows have timestamps greater than the master timestamp, rowLo - 1 is returned.
-    protected long binarySearch(long value, long rowLo, long rowHi) {
+    protected long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
         // this is the same algorithm as implemented in C (util.h)
         // template<class T, class V>
         // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
@@ -299,9 +299,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             slaveTimeFrameCursor.recordAtRowIndex(slaveRecA, mid);
             long midVal = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
 
-            if (midVal < value) {
+            if (midVal < masterTimestamp) {
                 low = mid;
-            } else if (midVal > value) {
+            } else if (midVal > masterTimestamp) {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the last
@@ -309,7 +309,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             }
         }
 
-        return binarySearchScanDown(value, low, high + 1, rowLo);
+        return binarySearchScanDown(masterTimestamp, low, high + 1, rowLo);
     }
 
     protected void nextSlave(long masterTimestamp) {
@@ -320,7 +320,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     return;
                 }
                 if (slaveFrameRow < slaveTimeFrame.getRowHi()) {
-                    // Fallback to binary search.
+                    // Fall back to binary search.
                     // Find the last value less or equal to the master timestamp.
                     long foundRow = binarySearch(masterTimestamp, slaveFrameRow, slaveTimeFrame.getRowHi() - 1);
                     if (foundRow < slaveFrameRow) {
@@ -333,12 +333,13 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                     long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     if (slaveFrameRow < slaveTimeFrame.getRowHi() - 1) {
+                        // Set lookaheadTimestamp to the first one larger than masterTimestamp, and return
                         slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
                         lookaheadTimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                    } else {
-                        lookaheadTimestamp = slaveTimestamp;
+                        return;
                     }
-                    if (foundRow < slaveTimeFrame.getRowHi() - 1 || slaveTimestamp == masterTimestamp) {
+                    lookaheadTimestamp = slaveTimestamp;
+                    if (slaveTimestamp == masterTimestamp) {
                         // We've found the row, so there is no point in checking the next partition.
                         return;
                     }

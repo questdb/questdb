@@ -1182,7 +1182,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1218,7 +1218,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Sort\n" +
                             "      keys: [ts, s]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1254,7 +1254,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Sort\n" +
                             "      keys: [s, ts1]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1291,7 +1291,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Sort\n" +
                             "      keys: [s1, ts1]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1327,7 +1327,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -3940,98 +3940,120 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(SampleByTest.FROM_TO_DDL);
             execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
-            final String unionAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
-                    "union all\n" +
-                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+            final String unionAllQuery = "select *" +
+                    "from (" +
+                    "  select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null) " +
+                    "  union all " +
+                    "  select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)" +
+                    ")" +
+                    "order by ts";
 
             final String unionQuery = unionAllQuery.replace("union all", "union");
 
-            assertPlanNoLeakCheck(unionAllQuery, "Union All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertPlanNoLeakCheck(
+                    unionAllQuery,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Union All\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto2\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
 
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionAllQuery);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\tsum\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n",
+                    unionAllQuery,
+                    "ts",
+                    true,
+                    false
+            );
 
-            assertPlanNoLeakCheck(unionQuery, "Union\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertPlanNoLeakCheck(
+                    unionQuery,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Union\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto2\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
 
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionQuery);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\tsum\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n",
+                    unionQuery,
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
