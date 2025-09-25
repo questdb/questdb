@@ -306,8 +306,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -823,11 +823,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int k = TimestampSamplerFactory.findIntervalEndIndex(tolerance.token, tolerance.position, "tolerance");
             assert tolerance.token.length() > k;
             char unit = tolerance.token.charAt(k);
-            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(Math.max(leftTimestamp, rightTimestampType));
-
+            TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(leftTimestamp, rightTimestampType));
             long multiplier;
             switch (unit) {
                 case 'n':
+                    toleranceInterval = TimestampSamplerFactory.parseInterval(tolerance.token, k, tolerance.position, "tolerance", Integer.MAX_VALUE, unit);
                     return timestampDriver.fromNanos(toleranceInterval);
                 case 'U':
                     multiplier = timestampDriver.fromMicros(1);
@@ -1677,7 +1677,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         break;
                     case ColumnType.IPv4:
                         if (fromTag == ColumnType.IPv4) {
-                            castFunctions.add(new IPv4Column(i));
+                            castFunctions.add(IPv4Column.newInstance(i));
                         } else {
                             throw SqlException.unsupportedCast(
                                     modelPosition,
@@ -1927,7 +1927,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
                                 break;
                             case ColumnType.IPv4:
-                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
+                                castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(IPv4Column.newInstance(i)));
                                 break;
                         }
                         break;
@@ -2181,7 +2181,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastUuidToVarcharFunctionFactory.Func(UuidColumn.newInstance(i)));
                                 break;
                             case ColumnType.IPv4:
-                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(new IPv4Column(i)));
+                                castFunctions.add(new CastIPv4ToVarcharFunctionFactory.Func(IPv4Column.newInstance(i)));
                                 break;
                             case ColumnType.SYMBOL:
                                 castFunctions.add(
@@ -4852,7 +4852,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
-
                                     ),
                                     keyFunctions,
                                     extractWorkerFunctionsConditionally(
