@@ -35,7 +35,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
-import io.questdb.cutlass.http.processors.v1.ImportRouter;
+import io.questdb.cutlass.http.processors.v1.ImportsRouter;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -239,12 +239,12 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestHandlerFactory() {
             @Override
             public ObjList<String> getUrls() {
-                return io.questdb.cutlass.http.processors.v1.ImportRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+                return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
             }
 
             @Override
             public HttpRequestHandler newInstance() {
-                return new io.questdb.cutlass.http.processors.v1.ImportRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+                return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
 
@@ -291,12 +291,12 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestHandlerFactory() {
             @Override
             public ObjList<String> getUrls() {
-                return ImportRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+                return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
             }
 
             @Override
             public HttpRequestHandler newInstance() {
-                return new ImportRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+                return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
 

@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors.v1;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -37,7 +38,6 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.http.processors.ImportProcessorState;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
@@ -54,24 +54,25 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class ImportRouter implements HttpRequestHandler {
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
+
+public class ImportsRouter implements HttpRequestHandler {
     private final HttpMultipartContentProcessor postProcessor;
-    private HttpConnectionContext transientContext;
-    private ImportProcessorState transientState;
 
-
-    public ImportRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+    public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         postProcessor = new ImportPostProcessor(cairoEngine, configuration);
     }
 
     public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
         ObjList<String> out = new ObjList<>(parentRoutes.size());
         for (int i = 0; i < parentRoutes.size(); i++) {
-            out.extendAndSet(i, parentRoutes.get(i) + "/import");
+            out.extendAndSet(i, parentRoutes.get(i) + "/imports");
         }
         return out;
     }
@@ -88,7 +89,7 @@ public class ImportRouter implements HttpRequestHandler {
     }
 
     /**
-     * Expects requests of form POST /api/v1/import
+     * Expects requests of the form POST /api/v1/import
      * multiple form/data requests can come in to upload multiple files at once
      * For now, locked to parquet files
      *
@@ -147,46 +148,75 @@ public class ImportRouter implements HttpRequestHandler {
             final DirectUtf8Sequence name = partHeader.getContentDispositionName();
 
             if (Chars.isBlank(importRoot)) {
-                // throw error
-                return;
+                // throw error 400
+                state.errorMsg.put("invalid destination directory (sql.copy.input.root) [path=").put(importRoot).put(']');
+                state.errorCode = 400;
+                sendError(context);
+                assert false; // exception should be thrown
             }
 
             final DirectUtf8Sequence filename = partHeader.getContentDispositionFilename();
 
             if (filename == null || filename.size() == 0) {
-                // throw error
-                return;
+                state.errorMsg.put("received Content-Disposition without a filename");
+                state.errorCode = 400;
+                sendError(context);
+                assert false;
             }
+
+            final DirectUtf8Sequence overwrite = context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE);
 
             state.clear();
             state.of(name, importRoot);
 
-            LOG.info().$("starting parquet import [filename=").$(filename)
-                    .$(", target=").$(state.path).$(']').$();
+            // don't overwrite files by default
+            boolean _overwrite = HttpKeywords.isTrue(overwrite);
+
+            if (!_overwrite && state.ff.exists(state.path.$())) {
+                // error 409 conflict
+                state.errorMsg.put("file already exists and overwriting is disabled [file=").put(state.path).put(", overwrite=").put(false).put(']');
+                state.errorCode = 409;
+                sendError(context);
+                assert false;
+            }
+
+            LOG.info().$("starting parquet import [src=").$(filename)
+                    .$(", dest=").$(state.path).$(']').$();
         }
 
         @Override
         public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            if (state.size != -1 && state.written != state.size) {
-                // throw error
-            }
-
+            assert state.mem != null;
             state.mem.setTruncateSize(state.written);
-            decoder.of(state.mem.addressOf(0), state.written, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-            if (decoder.metadata().columnCount() <= 0) {
-                // throw error
+            try {
+                decoder.of(state.mem.addressOf(0), state.written, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                if (decoder.metadata().columnCount() <= 0) {
+                    // throw error 422
+                    state.errorMsg.put("parquet file could not be decoded");
+                    state.errorCode = 422;
+                    sendError(context);
+                    assert false;
+                }
+            } catch (CairoException ce) {
+                LOG.error().$(ce.getMessage()).$();
+                state.errorMsg.put("internal server error");
+                state.errorCode = 500;
+                sendError(context);
+                assert false;
             }
+
 
             state.mem.close(true, Vm.TRUNCATE_TO_POINTER);
-            sendResponse(context);
-            state.close();
         }
 
         @Override
-        public void onRequestComplete(HttpConnectionContext context) {
+        public void onRequestComplete(HttpConnectionContext context) throws PeerIsSlowToReadException, ServerDisconnectException, PeerDisconnectedException {
+            sendSuccess(context);
             if (state != null) {
                 state.clear();
+                state.filenames.clear();
             }
         }
 
@@ -216,22 +246,72 @@ public class ImportRouter implements HttpRequestHandler {
             context.resumeResponseSend();
             State state = LV.get(context);
             HttpChunkedResponse response = context.getChunkedResponse();
+            assert state.errorMsg == null || state.errorMsg.size() < 1;
+            encodeSuccessJson(response, state);
             response.sendChunk(true);
             response.done();
         }
 
-        private void sendResponse(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-            // check for error
-            HttpChunkedResponse response = context.getChunkedResponse();
+        private void encodeErrorJson(HttpChunkedResponse response, State state) {
             response.bookmark();
-            response.status(201, "text/plain");
-            response.sendHeader();
-            resumeSend(context);
+            response.put("{\"errors\":[{")
+                    .put("\"status\":\"").put(state.errorCode)
+                    .put("\",\"detail\":\"").put(state.errorMsg)
+                    .put("\"}]}");
+        }
+
+        private void encodeSuccessJson(HttpChunkedResponse response, State state) {
+            response.put("{\"data\":[");
+            for (int i = 0, n = state.filenames.size(); i < n; i++) {
+                response.put("{\"type\":\"imports\",\"id\":\"");
+                response.put(state.filenames.getQuick(i));
+                response.put("\"}");
+                if (i + 1 < n) {
+                    response.put(",");
+                }
+            }
+            response.put("]}");
+        }
+
+        private void sendError(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+            try {
+                final State state = LV.get(context);
+                final HttpChunkedResponse response = context.getChunkedResponse();
+                if (state.errorCode < 500) {
+                    LOG.error().$("POST /imports failed [status=").$(state.errorCode).$(", fd=").$(context.getFd()).$(", msg=").$safe(state.errorMsg).I$();
+                }
+                response.status(state.errorCode, state.errorMsg.asAsciiCharSequence());
+                response.sendHeader();
+                response.sendChunk(false);
+                encodeErrorJson(response, state);
+                response.sendChunk(true);
+                response.shutdownWrite();
+                throw ServerDisconnectException.INSTANCE;
+            } finally {
+                state.clear();
+            }
+
+        }
+
+        private void sendSuccess(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+            try {
+                HttpChunkedResponse response = context.getChunkedResponse();
+                response.bookmark();
+                // We do not send a location header since there may be multiple locations.
+                response.status(201, CONTENT_TYPE_JSON_API);
+                response.sendHeader();
+                resumeSend(context);
+            } finally {
+                state.clear();
+            }
         }
 
         public static class State implements Mutable, Closeable {
+            int errorCode;
+            Utf8StringSink errorMsg;
             FilesFacade ff;
             @Nullable DirectUtf8Sequence filename;
+            ObjList<String> filenames;
             long hi;
             long lo;
             @Nullable MemoryCMARW mem;
@@ -242,23 +322,29 @@ public class ImportRouter implements HttpRequestHandler {
             public State(FilesFacade ff) {
                 this.ff = ff;
                 path = new Path();
+                filenames = new ObjList<>();
+                errorMsg = new Utf8StringSink();
             }
 
             public void clear() {
-
+                close();
             }
 
             @Override
             public void close() {
                 Misc.free(mem);
+                mem = null;
                 Misc.free(path);
                 filename = null;
                 size = -1;
                 written = -1;
+                errorMsg.clear();
+                errorCode = -1;
             }
 
             public void of(DirectUtf8Sequence filename, CharSequence importRoot) {
                 this.filename = filename;
+                filenames.add(filename.toString());
                 path.of(importRoot).concat(filename);
             }
 
