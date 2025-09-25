@@ -339,9 +339,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     // continue to next line
                     return false;
                 }
-                handleAppendException(measurementName, tud, ex);
+                handleWriterException(measurementName, tud, ex);
+            } catch (LineProtocolException ex) {
+                throw CairoException.nonCritical().put("could not write ILP message [tableName=").put(measurementName)
+                        .put(", error=").put(ex.getMessage())
+                        .put(']');
             } catch (Throwable ex) {
-                handleAppendException(measurementName, tud, ex);
+                handleWriterException(measurementName, tud, ex);
             }
             return false;
         }
@@ -352,7 +356,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
-    private static void handleAppendException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
+    private static void handleWriterException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
         tud.setWriterInError();
         LogRecord logRecord;
         if (ex instanceof CairoException && !((CairoException) ex).isCritical()) {
@@ -363,7 +367,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         logRecord.$("closing writer because of error [table=").$(tud.getTableNameUtf16())
                 .$(", ex=").$(ex)
                 .I$();
-        throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+        throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName)
+                .put(", error=").put(ex.getMessage())
+                .put(']');
     }
 
     private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {

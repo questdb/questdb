@@ -246,10 +246,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }).start();
 
-            // this will wait until the writer is returned into the pool
             dataSent.await();
             Assert.assertEquals(0, sendFailureCounter.get());
 
+            // this will wait until the writer is returned into the pool
             dataConsumed.await();
             mayDrainWalQueue();
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
