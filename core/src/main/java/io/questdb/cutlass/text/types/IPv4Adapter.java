@@ -45,23 +45,15 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        if (text.size() < 7) {
-            return false;
-        }
-        boolean noDots = true;
-        if (Numbers.notDigit(text.byteAt(0))) {
-            if (text.byteAt(0) != '.') {
-                return false;
-            } else {
-                noDots = false;
-            }
-        }
-
         try {
-            if (noDots) {
+            final boolean hasDots = Utf8s.hasDots(text);
+            if (hasDots) {
                 Numbers.parseIPv4(text);
             } else {
-                Numbers.parseInt(text);
+                final boolean isNull = SqlKeywords.isNullKeyword(text);
+                if (!isNull) {
+                    Numbers.parseInt(text);
+                }
             }
             return true;
         } catch (NumericException e) {
