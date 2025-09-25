@@ -886,11 +886,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = "id\tts\tid1\tts1\n" +
@@ -953,11 +969,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = "id\tts\tid1\tts1\n" +

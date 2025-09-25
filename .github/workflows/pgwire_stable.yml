@@ -65,6 +65,3 @@ jobs:
           path: ~/.questdb/log/*
           name: logs
           retention-days: 5
-
-        
-
