@@ -25,16 +25,19 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.str.Utf8Sequence;
 
-public class VarcharColumn extends VarcharFunction implements Function {
+public class VarcharColumn extends VarcharFunction implements ColumnFunction {
     private final int columnIndex;
 
     public VarcharColumn(int columnIndex) {
         this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -50,10 +53,5 @@ public class VarcharColumn extends VarcharFunction implements Function {
     @Override
     public int getVarcharSize(Record rec) {
         return rec.getVarcharSize(columnIndex);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 }

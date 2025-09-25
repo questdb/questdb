@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class DoubleColumn extends DoubleFunction implements Function {
+public class DoubleColumn extends DoubleFunction implements ColumnFunction {
     private static final ObjList<DoubleColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -48,6 +46,11 @@ public class DoubleColumn extends DoubleFunction implements Function {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return rec.getDouble(columnIndex);
     }
@@ -55,11 +58,6 @@ public class DoubleColumn extends DoubleFunction implements Function {
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {
