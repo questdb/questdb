@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -66,8 +65,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             long cancelCopyID,
             String cancelCopyIDStr,
             RecordCursorFactory importBaseFactory,
-            RecordCursorFactory exportBaseFactory,
-            CairoConfiguration configuration
+            RecordCursorFactory exportBaseFactory
     ) {
         super(METADATA);
         this.copyImportContext = copyImportContext;

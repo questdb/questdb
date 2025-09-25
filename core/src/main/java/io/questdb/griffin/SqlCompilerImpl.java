@@ -2287,8 +2287,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 cancelCopyID,
                 cancelCopyIDStr,
                 _import,
-                _export,
-                engine.getConfiguration()
+                _export
         );
     }
 

@@ -470,10 +470,8 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" SQL
     @Nullable CharSequence getSqlCopyExportRoot();
 
-    // null or empty input root disables "copy" SQL
     @Nullable CharSequence getSqlCopyInputRoot();
 
     @Nullable CharSequence getSqlCopyInputWorkRoot();
