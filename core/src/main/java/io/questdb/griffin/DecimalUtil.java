@@ -453,7 +453,7 @@ public final class DecimalUtil {
             int scale
     ) throws SqlException {
         try {
-            int p = decimal.ofString(tok, precision, scale);
+            int p = Numbers.decodeLowInt(decimal.ofString(tok, precision, scale));
             precision = precision == -1 ? p : precision;
         } catch (NumericException ex) {
             throw SqlException.position(position).put(ex);

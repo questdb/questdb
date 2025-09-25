@@ -27,6 +27,7 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -40,6 +41,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 
 public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
+    private final ObjectPool<DecimalAdapter> decimalAdapterPool;
     private final SymbolAdapter indexedSymbolAdapter;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final SymbolAdapter notIndexedSymbolAdapter;
@@ -53,11 +55,13 @@ public class TypeManager implements Mutable {
     public TypeManager(
             TextConfiguration configuration,
             DirectUtf16Sink utf16Sink,
-            DirectUtf8Sink utf8Sink
+            DirectUtf8Sink utf8Sink,
+            Decimal256 decimal256
     ) {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf16Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf16Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
+        this.decimalAdapterPool = new ObjectPool<>(() -> new DecimalAdapter(decimal256), configuration.getDecimalAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf16Sink);
         this.varcharAdapter = new VarcharAdapter(utf8Sink);
@@ -108,6 +112,7 @@ public class TypeManager implements Mutable {
         dateAdapterPool.clear();
         timestampUtf8AdapterPool.clear();
         timestampAdapterPool.clear();
+        decimalAdapterPool.clear();
     }
 
     public ObjList<TypeAdapter> getAllAdapters() {
@@ -165,12 +170,21 @@ public class TypeManager implements Mutable {
                     return adapter;
                 }
             default:
+                if (ColumnType.isDecimal(columnType)) {
+                    return nextDecimalAdapter(columnType);
+                }
                 throw CairoException.nonCritical().put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
     }
 
     public DateUtf8Adapter nextDateAdapter() {
         return dateAdapterPool.next();
+    }
+
+    public DecimalAdapter nextDecimalAdapter(int columnType) {
+        DecimalAdapter adapter = decimalAdapterPool.next();
+        adapter.of(columnType);
+        return adapter;
     }
 
     public TypeAdapter nextSymbolAdapter(boolean indexed) {
@@ -229,5 +243,6 @@ public class TypeManager implements Mutable {
         probes.add(getTypeAdapter(ColumnType.LONG256));
         probes.add(getTypeAdapter(ColumnType.UUID));
         probes.add(getTypeAdapter(ColumnType.IPv4));
+        probes.add(DecimalAdapter.DEFAULT_INSTANCE);
     }
 }

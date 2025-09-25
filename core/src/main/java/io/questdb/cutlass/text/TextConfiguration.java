@@ -31,6 +31,8 @@ public interface TextConfiguration {
 
     int getDateAdapterPoolCapacity();
 
+    int getDecimalAdapterPoolCapacity();
+
     DateLocale getDefaultDateLocale();
 
     InputFormatConfiguration getInputFormatConfiguration();

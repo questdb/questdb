@@ -56,6 +56,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -209,7 +210,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int utf8SinkSize = textConfiguration.getUtf8SinkSize();
             this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
             this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
-            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink, new Decimal256());
             this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
             this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
 

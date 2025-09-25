@@ -26,64 +26,71 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cutlass.text.Utf8Exception;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8s;
 
-public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
-    private final DirectUtf16Sink utf16Sink;
-    private DateFormat format;
-    private DateLocale locale;
+public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
+    public static final DecimalAdapter DEFAULT_INSTANCE = new DecimalAdapter(new Decimal256()).of(ColumnType.DECIMAL_DEFAULT_TYPE);
 
-    public DateUtf8Adapter(DirectUtf16Sink utf16Sink) {
-        this.utf16Sink = utf16Sink;
+    private final Decimal256 decimal256;
+    private int precision;
+    private int scale;
+    private short tag;
+    private int type;
+
+    public DecimalAdapter(Decimal256 decimal256) {
+        this.decimal256 = decimal256;
     }
 
     @Override
     public void clear() {
-        this.format = null;
-        this.locale = null;
     }
 
     @Override
     public int getType() {
-        return ColumnType.DATE;
+        return type;
     }
 
-    public DateUtf8Adapter of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
+    public DecimalAdapter of(int type) {
+        this.type = type;
+        this.precision = ColumnType.getDecimalPrecision(type);
+        this.scale = ColumnType.getDecimalScale(type);
+        this.tag = ColumnType.tagOf(type);
         return this;
     }
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
+        int len = text.size();
+
+        // We expect the format of decimals to be suffixed with 'm'
+        if (len < 2 || text.byteAt(len - 1) != 'm') {
+            return false;
+        }
+
         try {
-            format.parse(text.asAsciiCharSequence(), locale);
+            // We use concurrently decimal256, but it's fine because we don't care about the resulting value, only
+            // if parsing succeeds or not.
+            decimal256.ofString(text.asAsciiCharSequence(), 0, len - 1, -1, -1, true);
             return true;
-        } catch (NumericException e) {
+        } catch (NumericException ignored) {
             return false;
         }
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) throws Exception {
-        utf16Sink.clear();
-        if (!Utf8s.utf8ToUtf16EscConsecutiveQuotes(value.lo(), value.hi(), utf16Sink)) {
-            throw Utf8Exception.INSTANCE;
-        }
-        row.putDate(column, format.parse(utf16Sink, locale));
+        decimal256.ofString(value.asAsciiCharSequence(), precision, scale);
+        WriterRowUtils.putDecimalQuick(column, decimal256, tag, row);
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        write(row, column, value, utf16Sink, null, null);
+        write(row, column, value, null, null, decimal256);
     }
 }

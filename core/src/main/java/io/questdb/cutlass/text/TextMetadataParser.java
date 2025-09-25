@@ -260,6 +260,14 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             case ColumnType.SYMBOL:
                 columnTypes.add(typeManager.nextSymbolAdapter(index));
                 break;
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                columnTypes.add(typeManager.nextDecimalAdapter(type));
+                break;
             default:
                 columnTypes.add(typeManager.getTypeAdapter(type));
                 break;

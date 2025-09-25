@@ -29,6 +29,7 @@ import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextMetadataParser;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -53,7 +54,8 @@ public class TextMetadataParserTest {
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
                 utf16Sink,
-                utf8Sink
+                utf8Sink,
+                new Decimal256()
         );
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),

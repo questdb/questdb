@@ -40,7 +40,7 @@ public class WriterRowUtils {
     }
 
     /**
-     * Puts decimal value into a row column. The Decimal should already have the right scale/precision.
+     * Puts decimal value into a row column. The Decimal should already have the right scale.
      *
      * @param index      column index
      * @param value      decimal value to be copied to the row column
@@ -57,6 +57,22 @@ public class WriterRowUtils {
             throw CairoException.nonCritical().put("value does not fit in column type ").put(ColumnType.nameOf(columnType));
         }
         putDecimal0(index, value, tag, row);
+    }
+
+    /**
+     * Puts decimal value into a row column. The Decimal should already have the right scale and precision.
+     *
+     * @param index      column index
+     * @param value      decimal value to be copied to the row column
+     * @param columnTag column tag ({@code tagOf(type)})
+     * @param row        row to be updated
+     */
+    public static void putDecimalQuick(int index, Decimal256 value, short columnTag, TableWriter.Row row) {
+        if (value.isNull()) {
+            putNullDecimal(row, index, columnTag);
+            return;
+        }
+        putDecimal0(index, value, columnTag, row);
     }
 
     public static void putDecimalStr(int index, Decimal256 decimal, CharSequence cs, int type, TableWriter.Row row) {
@@ -143,7 +159,11 @@ public class WriterRowUtils {
     }
 
     public static void putNullDecimal(TableWriter.Row row, int col, int toType) {
-        switch (ColumnType.tagOf(toType)) {
+        putNullDecimal(row, col, ColumnType.tagOf(toType));
+    }
+
+    public static void putNullDecimal(TableWriter.Row row, int col, short toTag) {
+        switch (toTag) {
             case ColumnType.DECIMAL8:
                 row.putByte(col, Decimals.DECIMAL8_NULL);
                 break;

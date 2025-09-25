@@ -1286,7 +1286,7 @@ public class Decimal256 implements Sinkable {
      * @param cs is the CharSequence to be parsed
      * @return the precision of the decimal
      */
-    public int ofString(CharSequence cs) throws NumericException {
+    public long ofString(CharSequence cs) throws NumericException {
         return ofString(cs, -1, -1);
     }
 
@@ -1298,7 +1298,7 @@ public class Decimal256 implements Sinkable {
      * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
      * @return the precision of the decimal
      */
-    public int ofString(CharSequence cs, int precision, int scale) throws NumericException {
+    public long ofString(CharSequence cs, int precision, int scale) throws NumericException {
         return ofString(cs, 0, cs.length(), precision, scale, false);
     }
 
@@ -1309,9 +1309,10 @@ public class Decimal256 implements Sinkable {
      * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
      * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
      * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one).
-     * @return the precision of the decimal
+     * @return the precision and scale of the decimal, use {@link Numbers#decodeLowInt} to retrieve the precision and
+     * {@link Numbers#decodeHighInt} to retrieve the scale
      */
-    public int ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict) throws NumericException {
+    public long ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict) throws NumericException {
         int ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
         // We don't want to parse the m suffix, we can safely skip it
         if (ch == 'm') {
@@ -1484,7 +1485,7 @@ public class Decimal256 implements Sinkable {
             negate();
         }
 
-        return finalPrecision;
+        return Numbers.encodeLowHighInts(finalPrecision, scale);
     }
 
     /**
