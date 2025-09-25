@@ -3114,6 +3114,60 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteTrivialExpressionsInOuterJoin2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "WITH x1 AS ( " +
+                    "  SELECT id id0, id / 2 id1, id / 2 + 1 id2, count(*) AS c " +
+                    "  FROM x " +
+                    "  GROUP BY id, id / 2, id / 2 + 1 " +
+                    "  ORDER BY c DESC" +
+                    ") " +
+                    "SELECT * " +
+                    "FROM x x0 " +
+                    "JOIN x1 ON x0.id = x1.id0;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: x1.id0=x0.id\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [c desc]\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [id,id/2,id/2+1,c]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [id]\n" +
+                            "                      values: [count(*)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id\tts\tid0\tid1\tid2\tc\n" +
+                            "1\t2021-01-01T12:34:00.000000Z\t1\t0\t1\t1\n" +
+                            "2\t2021-01-01T12:35:00.000000Z\t2\t1\t2\t1\n",
+                    query,
+                    "ts"
+            );
+        });
+    }
+
+    @Test
     public void testRewriteTrivialExpressionsInOuterUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute(

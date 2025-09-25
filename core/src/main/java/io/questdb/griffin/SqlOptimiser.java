@@ -170,6 +170,8 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
+    private final TrivialExpressionVisitor trivialExpressionVisitor = new TrivialExpressionVisitor();
     private final LowerCaseCharSequenceIntHashMap trivialExpressions = new LowerCaseCharSequenceIntHashMap();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
@@ -302,19 +304,6 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
-    }
-
-    private static boolean isRewriteTrivialExpressionsValidOp(char token) {
-        switch (token) {
-            case '-':
-            case '+':
-            case '/':
-            case '*':
-            case '%':
-                return true;
-            default:
-                return false;
-        }
     }
 
     private static boolean isSymbolColumn(ExpressionNode countDistinctExpr, QueryModel nested) {
@@ -6641,7 +6630,7 @@ public class SqlOptimiser implements Mutable {
      * );
      * </pre>
      */
-    private void rewriteTrivialGroupByExpressions(QueryModel model) {
+    private void rewriteTrivialGroupByExpressions(QueryModel model) throws SqlException {
         if (model == null) {
             return;
         }
@@ -6655,23 +6644,30 @@ public class SqlOptimiser implements Mutable {
                 && nestedModel.getUnionModel() == null
                 && nestedModel.getSampleBy() == null) {
             trivialExpressions.clear();
+            trivialExpressionCandidates.clear();
+
             final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
+            trivialExpressionCandidates.setAll(nestedColumns.size(), null);
 
             for (int i = 0, n = nestedColumns.size(); i < n; i++) {
                 final QueryColumn nestedColumn = nestedColumns.getQuick(i);
                 final ExpressionNode nestedAst = nestedColumn.getAst();
                 if (nestedAst.type == OPERATION && nestedAst.paramCount == 2) {
                     // Is it an operation we care about?
-                    if (nestedAst.token.length() == 1 && isRewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
-                        // Check if it's a simple pattern i.e A + 1 or 1 + A
-                        final CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT
-                                ? nestedAst.lhs.token
-                                : nestedAst.lhs.type == CONSTANT && nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
-
+                    // Check if it's a simple pattern, e.g. A + 1 or 1 + A.
+                    trivialExpressionVisitor.clear();
+                    traversalAlgo.traverse(nestedAst, trivialExpressionVisitor);
+                    if (trivialExpressionVisitor.isTrivial()) {
+                        final CharSequence token = trivialExpressionVisitor.getColumnNode() != null
+                                ? trivialExpressionVisitor.getColumnNode().token
+                                : null;
                         if (token != null) {
                             // Add it to candidates list.
                             trivialExpressions.putIfAbsent(token, 0);
                             trivialExpressions.increment(token);
+                            // Put the literal to the candidate list, so that we don't have
+                            // to look it up later.
+                            trivialExpressionCandidates.setQuick(i, token);
                         }
                     }
                 }
@@ -6701,20 +6697,16 @@ public class SqlOptimiser implements Mutable {
                             continue;
                         }
 
-                        if (nestedAst.type == OPERATION) {
-                            final CharSequence candidate = nestedAst.lhs.type == LITERAL
-                                    ? nestedAst.lhs.token
-                                    : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
+                        final CharSequence candidate = trivialExpressionCandidates.getQuick(i);
+                        // Check if the candidate is valid to be pulled up.
+                        if (candidate != null && trivialExpressions.get(candidate) > 1) {
+                            assert nestedAst.type == OPERATION;
+                            // Remove from current, keep in new.
+                            final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
+                            currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
 
-                            // Check if the candidates is valid to be pulled up.
-                            if (candidate != null && trivialExpressions.get(candidate) > 1) {
-                                // Remove from current, keep in new.
-                                final QueryColumn currentColumn = model.getAliasToColumnMap().get(currentAlias);
-                                currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
-
-                                final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
-                                nestedModel.removeColumn(nestedColumnIndex);
-                            }
+                            final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
+                            nestedModel.removeColumn(nestedColumnIndex);
                         }
                     }
                 }
@@ -7304,6 +7296,72 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
+    /**
+     * Analyzes the given node for being a trivial expression. A trivial expression is a single column
+     * with any number of arithmetical operations and constants.
+     * <p>
+     * Examples:
+     * <pre>
+     *   id + 1
+     *   id / 2 + 1
+     *   42 * id - 10001
+     * </pre>
+     */
+    private static class TrivialExpressionVisitor implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
+        private ExpressionNode columnNode;
+        private boolean trivial = true;
+
+        @Override
+        public void clear() {
+            trivial = true;
+            columnNode = null;
+        }
+
+        public ExpressionNode getColumnNode() {
+            return columnNode;
+        }
+
+        public boolean isTrivial() {
+            return trivial;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            switch (node.type) {
+                case CONSTANT:
+                    return; // trivial expression may have any number of constants
+                case LITERAL:
+                    if (columnNode == null) {
+                        columnNode = node;
+                        return; // so far, we've only seen a single column literal
+                    }
+                    break;
+                case OPERATION:
+                    if (node.token.length() == 1) {
+                        char op = node.token.charAt(0);
+                        switch (op) {
+                            case '/':
+                            case '*':
+                            case '%':
+                                if (node.paramCount == 2) {
+                                    return; // arithmetical operations are fine
+                                }
+                                break;
+                            case '-':
+                            case '+':
+                                if (node.paramCount == 1 || node.paramCount == 2) {
+                                    return; // +number/-number expressions and arithmetical operations are fine
+                                }
+                                break;
+                        }
+                    }
+                    break;
+            }
+            // we've seen something that makes the expression non-trivial
+            trivial = false;
+        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
