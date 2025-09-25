@@ -222,11 +222,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
         final AtomicInteger sendFailureCounter = new AtomicInteger();
 
+        final byte awaitedFactoryType = walEnabled ? PoolListener.SRC_WAL_WRITER : PoolListener.SRC_WRITER;
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if ((factoryType == PoolListener.SRC_WAL_WRITER) && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.verifyTableName(tableName))) {
+                if (factoryType == awaitedFactoryType && event == PoolListener.EV_RETURN) {
+                    if (Chars.equalsNc(name.getTableName(), tableName) && name.equals(engine.verifyTableName(tableName))) {
                         dataConsumed.countDown();
                     }
                 }
