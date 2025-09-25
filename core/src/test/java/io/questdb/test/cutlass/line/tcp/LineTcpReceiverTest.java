@@ -224,7 +224,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                if ((factoryType == PoolListener.SRC_WAL_WRITER) && event == PoolListener.EV_RETURN) {
                     if (Chars.equalsNc(name.getTableName(), tableName)
                             && name.equals(engine.verifyTableName(tableName))) {
                         dataConsumed.countDown();
