@@ -32,7 +32,7 @@ jobs:
         # even if the original tag is moved or deleted
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
-          toolchain: nightly-2025-09-18
+          toolchain: 1.90.0
           cache-workspaces: compat/src/test/rust/scenarios
       - name: Setup Python version
         uses: actions/setup-python@v2
