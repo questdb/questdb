@@ -240,6 +240,228 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalDeduplicationDisableEnable() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with decimal dedup key
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, amount DECIMAL(10,2), description STRING) " +
+                            "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, amount)"
+            );
+
+            // Insert initial data
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'first')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate1')");
+            drainWalQueue();
+
+            assertSql(
+                    "count\n1\n",
+                    "SELECT count(*) FROM " + tableName
+            );
+
+            // Disable deduplication
+            execute("ALTER table " + tableName + " dedup disable");
+            drainWalQueue();
+
+            // Insert duplicate - should be allowed now
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate2')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 'duplicate3')");
+            drainWalQueue();
+
+            assertSql(
+                    "count\n3\n",
+                    "SELECT count(*) FROM " + tableName
+            );
+
+            // Re-enable deduplication with decimal key
+            execute("ALTER table " + tableName + " dedup enable UPSERT KEYS(ts, amount)");
+            drainWalQueue();
+
+            // New duplicates should be prevented again
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 200.00m, 'new1')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 200.00m, 'new2')");
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tamount\tdescription\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate1\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate2\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\tduplicate3\n" +
+                            "2024-01-01T00:00:00.000000Z\t200.00\tnew2\n",
+                    "SELECT * FROM " + tableName + " ORDER BY amount, description"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalDeduplicationHighPrecision() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with high precision decimals
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, measurement DECIMAL(38,15), sensor_id INT) " +
+                            "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, measurement)"
+            );
+
+            // Insert data with very precise decimal values
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 123456789012345.123456789012345m, 1)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 123456789012345.123456789012345m, 2)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 123456789012345.123456789012346m, 3)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 123456789012345.123456789012344m, 4)");
+            drainWalQueue();
+
+            // Should have 3 unique measurement values
+            assertSql(
+                    "ts\tmeasurement\tsensor_id\n" +
+                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012344\t4\n" +
+                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012345\t2\n" +
+                            "2024-01-01T00:00:00.000000Z\t123456789012345.123456789012346\t3\n",
+                    "SELECT * FROM " + tableName + " ORDER BY measurement"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalDeduplicationMixedTypes() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with mixed types including decimal as dedup keys
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, symbol SYMBOL, price DECIMAL(10,2), volume LONG, active BOOLEAN) " +
+                            "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, symbol, price)"
+            );
+
+            // Insert data with duplicates
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 'AAPL', 150.50m, 1000, true)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 'AAPL', 150.50m, 2000, false)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 'AAPL', 150.51m, 3000, true)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 'GOOGL', 150.50m, 4000, true)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 'GOOGL', 150.50m, 5000, false)");
+            drainWalQueue();
+
+            // Should have 3 unique combinations
+            assertSql(
+                    "ts\tsymbol\tprice\tvolume\tactive\n" +
+                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.50\t2000\tfalse\n" +
+                            "2024-01-01T00:00:00.000000Z\tAAPL\t150.51\t3000\ttrue\n" +
+                            "2024-01-01T00:00:00.000000Z\tGOOGL\t150.50\t5000\tfalse\n",
+                    "SELECT * FROM " + tableName + " ORDER BY symbol, price"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalDeduplicationMultipleKeys() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with multiple decimal columns as dedup keys
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, price DECIMAL(10,2), tax DECIMAL(5,3), discount DECIMAL(4,2), notes STRING) " +
+                            "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price, tax, discount)"
+            );
+
+            // Verify dedup keys
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.isDeduplicationEnabled());
+                Assert.assertTrue(writer.getMetadata().isDedupKey(0)); // ts
+                Assert.assertTrue(writer.getMetadata().isDedupKey(1)); // price
+                Assert.assertTrue(writer.getMetadata().isDedupKey(2)); // tax
+                Assert.assertTrue(writer.getMetadata().isDedupKey(3)); // discount
+                Assert.assertFalse(writer.getMetadata().isDedupKey(4)); // notes
+            }
+
+            // Insert data with duplicates
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 8.250m, 5.00m, 'first')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 8.250m, 5.00m, 'second')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 8.250m, 5.00m, 'third')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 8.250m, 5.01m, 'different discount')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 8.251m, 5.00m, 'different tax')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.01m, 8.250m, 5.00m, 'different price')");
+            drainWalQueue();
+
+            // Should have 4 rows (unique combinations of dedup keys)
+            assertSql(
+                    "ts\tprice\ttax\tdiscount\tnotes\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.00\tthird\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\t8.250\t5.01\tdifferent discount\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\t8.251\t5.00\tdifferent tax\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.01\t8.250\t5.00\tdifferent price\n",
+                    "SELECT * FROM " + tableName + " ORDER BY price, tax, discount"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalDeduplicationSingleKey() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with decimal as dedup key
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, price DECIMAL(10,2), quantity INT) timestamp(ts)" +
+                            " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price)"
+            );
+
+            // Verify dedup keys are set correctly
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertTrue(writer.isDeduplicationEnabled());
+                Assert.assertTrue(writer.getMetadata().isDedupKey(0)); // ts
+                Assert.assertTrue(writer.getMetadata().isDedupKey(1)); // price
+                Assert.assertFalse(writer.getMetadata().isDedupKey(2)); // quantity
+            }
+
+            // Insert duplicate rows
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 99.99m, 10)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 99.99m, 20)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 99.99m, 30)");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 100.00m, 40)");
+            drainWalQueue();
+
+            // Should have only 2 rows (one for each unique ts+price combination)
+            assertSql(
+                    "ts\tprice\tquantity\n" +
+                            "2024-01-01T00:00:00.000000Z\t99.99\t30\n" +
+                            "2024-01-01T00:00:00.000000Z\t100.00\t40\n",
+                    "SELECT * FROM " + tableName + " ORDER BY price"
+            );
+        });
+    }
+
+    @Test
+    public void testDecimalDeduplicationWithNulls() throws Exception {
+        String tableName = testName.getMethodName();
+        assertMemoryLeak(() -> {
+            // Create table with decimal that can have nulls
+            execute(
+                    "create table " + tableName +
+                            " (ts TIMESTAMP, price DECIMAL(10,2), notes STRING) " +
+                            "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price)"
+            );
+
+            // Insert data with null decimal values
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 99.99m, 'first')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 99.99m, 'duplicate')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', null, 'null price 1')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', null, 'null price 2')");
+            execute("insert into " + tableName + " values ('2024-01-01T00:00:00', 0.00m, 'zero price')");
+            drainWalQueue();
+
+            // Nulls should be treated as distinct values for deduplication
+            assertSql(
+                    "ts\tprice\tnotes\n" +
+                            "2024-01-01T00:00:00.000000Z\t\tnull price 2\n" +
+                            "2024-01-01T00:00:00.000000Z\t0.00\tzero price\n" +
+                            "2024-01-01T00:00:00.000000Z\t99.99\tduplicate\n",
+                    "SELECT * FROM " + tableName + " ORDER BY price"
+            );
+        });
+    }
+
+    @Test
     public void testDedupEnabledTimestampOnly() throws Exception {
         String tableName = testName.getMethodName();
         assertMemoryLeak(() -> {
