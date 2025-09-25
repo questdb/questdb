@@ -61,8 +61,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
 public class TextImportProcessor implements HttpMultipartContentProcessor, HttpRequestHandler {
-    static final int MESSAGE_PARQUET = 3;
-    static final int MESSAGE_UNKNOWN = 4;
+    static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
     private static final Log LOG = LogFactory.getLog(TextImportProcessor.class);
     // Local value has to be static because each thread will have its own instance of
@@ -272,7 +271,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
                     final int warningFlags = completeState.getWarnings();
                     response.putAsciiQuoted("warnings").putAscii(':').putAscii('[');
                     boolean isFirst = true;
-                    if ((warningFlags & TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
+                    if ((warningFlags & TextLoadWarning.TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
                         isFirst = false;
                         response.putAsciiQuoted("Existing table timestamp column is used");
                     }
@@ -317,7 +316,6 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
                 break;
         }
     }
-
 
     private static void resumeText(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
@@ -488,9 +486,7 @@ public class TextImportProcessor implements HttpMultipartContentProcessor, HttpR
 
     static void sendErrorAndThrowDisconnect(CharSequence message, HttpConnectionContext transientContext, TextImportProcessorState transientState)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        LOG.error().$("import error [message=").$(message).$(", fd=").$(transientContext.getFd()).$(']').$();
         transientState.snapshotStateAndCloseWriter();
-        transientState.clearParquetState();
         sendErr(transientContext, message);
     }
 }

@@ -239,30 +239,6 @@ public class HttpServer implements Closeable {
         server.bind(new HttpRequestHandlerFactory() {
             @Override
             public ObjList<String> getUrls() {
-                return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
-            }
-
-            @Override
-            public HttpRequestHandler newInstance() {
-                return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
-            }
-        });
-
-        server.bind(new HttpRequestHandlerFactory() {
-            @Override
-            public ObjList<String> getUrls() {
-                return httpServerConfiguration.getContextPathImport();
-            }
-
-            @Override
-            public HttpRequestHandler newInstance() {
-                return new TextImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
-            }
-        });
-
-        server.bind(new HttpRequestHandlerFactory() {
-            @Override
-            public ObjList<String> getUrls() {
                 return httpServerConfiguration.getContextPathExport();
             }
 
@@ -412,29 +388,6 @@ public class HttpServer implements Closeable {
             );
         }
     }
-
-//    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
-//
-//        private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
-//        private HttpRequestProcessor defaultRequestProcessor = null;
-//
-//        @Override
-//        public void close() {
-//            Misc.freeIfCloseable(defaultRequestProcessor);
-//            ObjList<Utf8String> requestHandlerKeys = requestHandlerMap.keys();
-//            for (int i = 0, n = requestHandlerKeys.size(); i < n; i++) {
-//                Misc.freeIfCloseable(requestHandlerMap.get(requestHandlerKeys.getQuick(i)));
-//            }
-//        }
-//
-//        @Override
-//        public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-//            final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
-//            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
-//            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
-//        }
-//    }
-
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
         private static final ThreadLocal<DirectUtf8String> routingUrl = new ThreadLocal<>(DirectUtf8String::new);
