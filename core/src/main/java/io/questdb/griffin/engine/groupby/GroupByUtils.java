@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
@@ -78,7 +79,6 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
-
     public static final int PROJECTION_FUNCTION_FLAG_ANY = -1;
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
@@ -119,10 +119,10 @@ public class GroupByUtils {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                final int index = baseMetadata.getColumnIndexQuiet(node.token);
+                int index = baseMetadata.getColumnIndexQuiet(node.token);
                 TableColumnMetadata m = null;
                 if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
-                    Function func = functionParser.parseFunction(
+                    final Function func = functionParser.parseFunction(
                             node,
                             baseMetadata,
                             executionContext
@@ -132,8 +132,12 @@ public class GroupByUtils {
                     outerProjectionFunctions.add(func);
                     innerProjectionFunctions.add(func);
 
-                    if (node.type != LITERAL) {
-
+                    index = findColumnKeyIndex(node, func, baseMetadata);
+                    if (index != -1) {
+                        // it's a column key
+                        projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
+                    } else {
+                        // it's either a function key or an aggregate function
                         m = new TableColumnMetadata(
                                 Chars.toString(column.getName()),
                                 func.getType(),
@@ -148,11 +152,9 @@ public class GroupByUtils {
                         } else {
                             projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_VIRTUAL);
                         }
-                    } else {
-                        projectionFunctionFlags.add(PROJECTION_FUNCTION_FLAG_COLUMN);
                     }
                 } else {
-                    // set this function to null, cursor will replace it with an instance class
+                    // set this function to null, cursor will replace it with an instance class;
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     outerProjectionFunctions.add(null);
@@ -188,57 +190,10 @@ public class GroupByUtils {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
+                final Function func = outerProjectionFunctions.getQuick(i);
 
-                if (node.type != LITERAL) {
-                    Function function = outerProjectionFunctions.getQuick(i);
-                    if (function instanceof GroupByFunction) {
-                        // configure map value columns for group-by functions
-                        // some functions may need more than one column in values,
-                        // so we have them do all the work
-                        GroupByFunction func = (GroupByFunction) function;
-
-                        // insert the function into our function list even before we validate it support a given
-                        // fill type. it's to close the function properly when the validation fails
-                        outGroupByFunctions.add(func);
-                        outGroupByFunctionPositions.add(node.position);
-                        if (fillCount > 0) {
-                            // index of the function relative to the list of fill values
-                            // we might have the same fill value for all functions
-                            int funcIndex = outGroupByFunctions.size();
-                            int sampleByFlags = func.getSampleByFlags();
-                            ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
-                            if (validateFill) {
-                                if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
-                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(func.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
-                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(func.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
-                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(func.getClass().getName())
-                                            .put(']');
-                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
-                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(func.getClass().getName())
-                                            .put(']');
-                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
-                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
-                                            .put(", class=").put(func.getClass().getName())
-                                            .put(']');
-                                }
-                            }
-                        }
-                        func.initValueTypes(outValueTypes);
-                    }
-                } else {
-                    int index = baseMetadata.getColumnIndexQuiet(node.token);
-                    if (index == -1) {
-                        throw SqlException.invalidColumn(node.position, node.token);
-                    }
-
+                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                if (index != -1) {
                     if (index != timestampIndex || timestampUnimportant) {
                         // when we have the same column several times in a row,
                         // we only add it once to map keys
@@ -246,6 +201,54 @@ public class GroupByUtils {
                             columnKeyCount++;
                             lastIndex = index;
                         }
+                    }
+                } else {
+                    if (node.type == LITERAL) {
+                        // looks like we failed to find the column by the literal
+                        throw SqlException.invalidColumn(node.position, node.token);
+                    }
+
+                    if (func instanceof GroupByFunction) {
+                        // configure map value columns for group-by functions
+                        // some functions may need more than one column in values,
+                        // so we have them do all the work
+                        GroupByFunction groupByFunc = (GroupByFunction) func;
+
+                        // insert the function into our function list even before we validate it support a given
+                        // fill type. it's to close the function properly when the validation fails
+                        outGroupByFunctions.add(groupByFunc);
+                        outGroupByFunctionPositions.add(node.position);
+                        if (fillCount > 0) {
+                            // index of the function relative to the list of fill values
+                            // we might have the same fill value for all functions
+                            int funcIndex = outGroupByFunctions.size();
+                            int sampleByFlags = groupByFunc.getSampleByFlags();
+                            ExpressionNode fillNode = sampleByFill.getQuick(Math.min(funcIndex, fillCount - 1));
+                            if (validateFill) {
+                                if (SqlKeywords.isNullKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NULL) == 0) {
+                                    throw SqlException.$(node.position, "support for NULL fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(groupByFunc.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isPrevKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_PREVIOUS) == 0) {
+                                    throw SqlException.$(node.position, "support for PREV fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(groupByFunc.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isLinearKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_LINEAR) == 0) {
+                                    throw SqlException.$(node.position, "support for LINEAR fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(groupByFunc.getClass().getName())
+                                            .put(']');
+                                } else if (SqlKeywords.isNoneKeyword(fillNode.token) && (sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_NONE) == 0) {
+                                    throw SqlException.$(node.position, "support for NONE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(groupByFunc.getClass().getName())
+                                            .put(']');
+                                } else if ((sampleByFlags & GroupByFunction.SAMPLE_BY_FILL_VALUE) == 0) {
+                                    throw SqlException.$(node.position, "support for VALUE fill is not yet implemented [function=").put(node)
+                                            .put(", class=").put(groupByFunc.getClass().getName())
+                                            .put(']');
+                                }
+                            }
+                        }
+                        groupByFunc.initValueTypes(outValueTypes);
                     }
                 }
                 projectionFunctionPositions.add(node.position);
@@ -260,12 +263,11 @@ public class GroupByUtils {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                final int type;
+                final Function func = outerProjectionFunctions.getQuick(i);
 
-                if (node.type == LITERAL) {
-                    // column index has already been validated
-                    int index = baseMetadata.getColumnIndexQuiet(node.token);
-                    type = baseMetadata.getColumnType(index);
+                final int index = findColumnKeyIndex(node, func, baseMetadata);
+                if (index != -1) {
+                    final int type = baseMetadata.getColumnType(index);
 
                     if (index != timestampIndex || timestampUnimportant) {
                         if (lastIndex != index) {
@@ -279,22 +281,18 @@ public class GroupByUtils {
 
                     // and finish with populating metadata for this factory
                     inferredKeyColumnCount++;
-                } else {
-                    Function func = outerProjectionFunctions.getQuick(i);
-
-                    if (!(func instanceof GroupByFunction)) {
-                        // leave group-by function alone but re-write non-group-by functions as column references
-                        functionKeyColumnIndex++;
-                        Function columnRefFunc = createColumnFunction(null, functionKeyColumnIndex, func.getType(), -1);
-                        outKeyTypes.add(functionKeyColumnIndex - valueCount - 1, columnRefFunc.getType());
-                        if (func.getType() == ColumnType.SYMBOL && columnRefFunc.getType() == ColumnType.STRING) {
-                            // must be a function key, so we need to cast it to symbol
-                            columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
-                        }
-                        // override function with column ref function
-                        outerProjectionFunctions.set(i, columnRefFunc);
-                        inferredKeyColumnCount++;
+                } else if (!(func instanceof GroupByFunction)) {
+                    // leave group-by function alone but re-write non-group-by functions as column references
+                    functionKeyColumnIndex++;
+                    Function columnRefFunc = createColumnFunction(null, functionKeyColumnIndex, func.getType(), -1);
+                    outKeyTypes.add(functionKeyColumnIndex - valueCount - 1, columnRefFunc.getType());
+                    if (func.getType() == ColumnType.SYMBOL && columnRefFunc.getType() == ColumnType.STRING) {
+                        // must be a function key, so we need to cast it to symbol
+                        columnRefFunc = new CastStrToSymbolFunctionFactory.Func(columnRefFunc);
                     }
+                    // override function with column ref function
+                    outerProjectionFunctions.set(i, columnRefFunc);
+                    inferredKeyColumnCount++;
                 }
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
@@ -402,9 +400,6 @@ public class GroupByUtils {
         return func;
     }
 
-    // prepareGroupByFunctions must be called first to get the idea of how many map values
-    // we will have. Map value count is needed to calculate offsets for map key columns.
-
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
@@ -423,6 +418,8 @@ public class GroupByUtils {
         return true;
     }
 
+    // assembleGroupByFunctions must be called before this call to get the idea of how many map values
+    // we will have. Map value count is needed to calculate offsets for map key columns.
     public static void prepareWorkerGroupByFunctions(
             @NotNull QueryModel model,
             @NotNull RecordMetadata metadata,
@@ -621,5 +618,20 @@ public class GroupByUtils {
         }
 
         return false;
+    }
+
+    /**
+     * Returns the column index from the given base metadata in two cases:
+     * 1. it's a column literal
+     * 2. cast(a_column as same_type) which is compiled as a_column (the case is no-op)
+     */
+    private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
+        if (node.type == LITERAL) {
+            return baseMetadata.getColumnIndexQuiet(node.token);
+        }
+        if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
+            return ((ColumnFunction) func).getColumnIndex();
+        }
+        return -1;
     }
 }

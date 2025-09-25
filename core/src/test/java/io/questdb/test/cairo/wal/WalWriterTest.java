@@ -100,6 +100,7 @@ import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -2399,7 +2400,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (Path path = new Path();
                  MemoryCMR txnMem = Vm.getCMRInstance();
                  BlockFileReader reader = new BlockFileReader(configuration);
-                 WalEventReader walEventReader = new WalEventReader(ff)
+                 WalEventReader walEventReader = new WalEventReader(configuration)
             ) {
                 MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -2440,7 +2441,7 @@ public class WalWriterTest extends AbstractCairoTest {
                  MemoryCMR txnMem = Vm.getCMRInstance();
                  MemoryCMARW txnLogMem = Vm.getCMARWInstance();
                  BlockFileReader reader = new BlockFileReader(configuration);
-                 WalEventReader walEventReader = new WalEventReader(ff)
+                 WalEventReader walEventReader = new WalEventReader(configuration)
             ) {
                 MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -3594,6 +3595,62 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSequencerFilesNotCached() throws Exception {
+        AtomicInteger fdOpenCount = new AtomicInteger();
+        AtomicInteger fdOpenNoCacheCount = new AtomicInteger();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            public long openRO(@NotNull LPSZ path) {
+                long fd = super.openRO(path);
+                if (Utf8s.containsAscii(path, WalUtils.WAL_NAME_BASE) || Utf8s.containsAscii(path, WalUtils.SEQ_DIR)) {
+                    fdOpenCount.incrementAndGet();
+                }
+
+                return fd;
+            }
+
+            public long openRONoCache(@NotNull LPSZ path) {
+                long fd = super.openRONoCache(path);
+                if (Utf8s.containsAscii(path, WalUtils.WAL_NAME_BASE) || Utf8s.containsAscii(path, WalUtils.SEQ_DIR)) {
+                    fdOpenNoCacheCount.incrementAndGet();
+                }
+
+                return fd;
+            }
+        };
+
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 0);
+        final String tableName = testName.getMethodName();
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table " + tableName + " (ts timestamp) timestamp(ts) partition by day wal;");
+            TableToken tt = engine.verifyTableName(tableName);
+
+            engine.releaseInactive();
+
+            // Keep _txnlog.meta.i open while replica is running to force it stying in fd cache.
+            Path p = Path.getThreadLocal(root).concat(tt).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_FILE_NAME_META_INX);
+            long fd = ff.openRO(p.$());
+            Assert.assertTrue(fd > 0);
+            Assert.assertEquals(1, fdOpenCount.get());
+
+            for (int i = 0; i < 10; i++) {
+                engine.execute("alter table " + tableName + " add column x" + i + " int;");
+                engine.execute("insert into " + tableName + "(ts, x0) values ('2022-03-24', 1)");
+            }
+
+            drainWalQueue();
+
+            assertSql("count\n10\n", "select count() from " + tableName);
+            ff.close(fd);
+
+            Assert.assertEquals(1, fdOpenCount.get());
+            Assert.assertTrue(fdOpenNoCacheCount.get() > 0);
+        });
+
+    }
+
+    @Test
     public void testSymbolWal() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testSymTable";
@@ -4136,7 +4193,7 @@ public class WalWriterTest extends AbstractCairoTest {
     @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
-             WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
+             WalEventReader walEventReader = new WalEventReader(configuration);
              TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
             int pathLen = path.size();
@@ -4207,7 +4264,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 Path path = new Path();
                 MemoryCMR txnMem = Vm.getCMRInstance();
                 BlockFileReader reader = new BlockFileReader(configuration);
-                WalEventReader walEventReader = new WalEventReader(ff)
+                WalEventReader walEventReader = new WalEventReader(configuration)
         ) {
             MatViewStateReader matViewStateReader = new MatViewStateReader();
             path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
