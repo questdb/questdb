@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionBy;
@@ -130,6 +131,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (Path path = new Path();
+                     ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                      TxReader txReader = new TxReader(configuration.getFilesFacade()).ofRO(
                              path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                              ColumnType.TIMESTAMP,
@@ -152,7 +154,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                                     col,
                                     path,
                                     new TestTableWriterAPI(rdr.getColumnVersionReader()),
-                                    txReader
+                                    txReader,
+                                    columnVersionReader
                             );
                             symbolCacheObjList.add(symbolCache);
                         }
@@ -219,6 +222,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
+                        ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
@@ -234,7 +238,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             writer,
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     final int initialCapacity = cache.getCacheCapacity();
@@ -255,7 +260,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             symColIndex, path.of(configuration.getDbRoot()).concat(tableToken),
                             writer,
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     for (int i = 0; i < N; i++) {
@@ -297,6 +303,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration(configuration));
                     Path path = new Path();
+                    ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                     TxReader txReader = new TxReader(ff).ofRO(
                             path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                             ColumnType.TIMESTAMP,
@@ -312,7 +319,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         1,
                         path,
                         new TestTableWriterAPI(reader.getColumnVersionReader()),
-                        txReader
+                        txReader,
+                        columnVersionReader
                 );
 
                 final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -421,6 +429,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, engine);
+                        ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
@@ -436,7 +445,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             writer,
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     final int initialCapacity = cache.getCacheCapacity();
@@ -457,7 +467,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             writer,
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     for (int i = 0; i < N; i++) {
@@ -497,6 +508,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
+                        ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
@@ -522,7 +534,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex2,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             new TestTableWriterAPI(writer.getColumnVersionReader()),
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     TableWriter.Row r = writer.newRow();
@@ -609,7 +622,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             0,
                             path,
                             new TestTableWriterAPI(writer.getColumnVersionReader()),
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     rc = cache.keyOf(copyUtf8StringChars("sym24", mem, dus));
@@ -655,6 +669,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
+                        ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
@@ -687,7 +702,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             new TestTableWriterAPI(writer.getColumnVersionReader(), 1),
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     int rc = cache.keyOf(copyUtf8StringChars("missing", mem, dus));
@@ -738,6 +754,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName);
                         MemoryMR txMem = Vm.getCMRInstance();
+                        ColumnVersionReader columnVersionReader = openColumnVersion(configuration, tableToken);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
@@ -770,7 +787,8 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
                             new TestTableWriterAPI(writer.getColumnVersionReader(), 0),
-                            txReader
+                            txReader,
+                            columnVersionReader
                     );
 
                     int rc = cache.keyOf(copyUtf8StringChars("sym1", mem, dus));
@@ -796,6 +814,14 @@ public class SymbolCacheTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.timestamp();
         TestUtils.createTable(engine, model);
+    }
+
+    private ColumnVersionReader openColumnVersion(CairoConfiguration configuration, TableToken tableToken) {
+        var columnVersionReader = new ColumnVersionReader();
+        Path p = Path.getThreadLocal2(configuration.getDbRoot());
+        p.concat(tableToken).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+        columnVersionReader.ofRO(configuration.getFilesFacade(), p.$());
+        return columnVersionReader;
     }
 
     private static class Holder implements Mutable {

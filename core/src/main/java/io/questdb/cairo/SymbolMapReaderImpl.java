@@ -201,12 +201,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // partition txn does not matter, because symbol is at the root of the table dir (not at partition level)
             indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, -1, 0);
 
+            long charSize = offsetMem.getLong(maxOffset);
+            // char file size can be zero only if symbolCount is zero
+            assert charSize > 0 || symbolCount == 0;
             // this is the place where symbol values are stored
             charMem.of(
                     ff,
                     charFileName(path.trimTo(plen), columnName, columnNameTxn),
                     ff.getMapPageSize(),
-                    offsetMem.getLong(maxOffset),
+                    charSize,
                     MemoryTag.MMAP_INDEX_READER,
                     CairoConfiguration.O_NONE,
                     -1
@@ -241,7 +244,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we need to make sure we have access to the last element
             // which will indicate size of the char column
             offsetMem.extend(maxOffset + Long.BYTES);
-            charMem.extend(offsetMem.getLong(maxOffset));
+
+            long charSize = offsetMem.getLong(maxOffset);
+            // char file size can be zero only if symbolCount is zero
+            assert charSize > 0 || symbolCount == 0;
+            charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;

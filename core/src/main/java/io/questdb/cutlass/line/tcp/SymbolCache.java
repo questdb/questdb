@@ -25,10 +25,12 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.datetime.Clock;
@@ -58,6 +60,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private long lastSymbolReaderReloadTimestamp;
     private Utf8Sequence pathToTableDir;
     private TxReader txReader;
+    private ColumnVersionReader columnVersionReader;
     private TableWriterAPI writerAPI;
 
     public SymbolCache(LineTcpReceiverConfiguration configuration) {
@@ -73,6 +76,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     public void close() {
         txReader = null;
         writerAPI = null;
+        columnVersionReader = null;
         symbolMapReader.close();
         symbolValueToKeyMap.reset();
     }
@@ -101,7 +105,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         ) {
             // when symbol capacity auto-scales, we also need to reload symbol map reader, as in
             // make it open different set of files altogether
-            long nextColumnNameTxn = writerAPI.getColumnVersionReader().getSymbolTableNameTxn(columnIndex);
+            long nextColumnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
             if (nextColumnNameTxn != columnNameTxn) {
                 // reload
                 symbolMapReader.of(
@@ -138,16 +142,18 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
             // to never mutate it. So that the cache can use it to re-open symbol map.
             Utf8Sequence pathToTableDir,
             TableWriterAPI writerAPI,
-            TxReader txReader
+            TxReader txReader,
+            ColumnVersionReader columnVersionReader
     ) {
         this.configuration = configuration;
         this.writerAPI = writerAPI;
         this.columnIndex = columnIndex;
         this.denseSymbolIndex = denseSymbolIndex;
         this.txReader = txReader;
+        this.columnVersionReader = columnVersionReader;
         int symCount = readSymbolCount(denseSymbolIndex, false);
         // hold on to the column name txn so that we know when to reload
-        this.columnNameTxn = writerAPI.getColumnVersionReader().getSymbolTableNameTxn(columnIndex);
+        this.columnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
         this.columnName = columnName;
         // yes, it is ok to store, ILP and this are friends
         this.pathToTableDir = pathToTableDir;
@@ -166,16 +172,26 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
         boolean offsetReloadOk = initialStateOk;
+        boolean cvReadOk = initialStateOk;
         while (true) {
             if (offsetReloadOk) {
                 int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
+                long txColumnVersion = txReader.unsafeReadColumnVersion();
                 Unsafe.getUnsafe().loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {
-                    return count;
+                    // Check if _cv file has to be reloaded
+                    if (!cvReadOk || columnVersionReader.getVersion() != txColumnVersion) {
+                        cvReadOk = columnVersionReader.readSafe();
+                        cvReadOk &= columnVersionReader.getVersion() == txColumnVersion;
+                    }
+                    if (cvReadOk) {
+                        return count;
+                    }
                 }
             }
             offsetReloadOk = txReader.unsafeLoadBaseOffset();
+            Os.pause();
         }
     }
 }

@@ -269,35 +269,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
-            long version = unsafeGetVersion();
-            if (version == this.version) {
+            if (readSafe()) {
                 return;
-            }
-            Unsafe.getUnsafe().loadFence();
-
-            final long offset;
-            final long size;
-
-            final boolean areaA = (version & 1L) == 0;
-            if (areaA) {
-                offset = mem.getLong(OFFSET_OFFSET_A_64);
-                size = mem.getLong(OFFSET_SIZE_A_64);
-            } else {
-                offset = mem.getLong(OFFSET_OFFSET_B_64);
-                size = mem.getLong(OFFSET_SIZE_B_64);
-            }
-
-            Unsafe.getUnsafe().loadFence();
-            if (version == unsafeGetVersion()) {
-                mem.resize(offset + size);
-                readUnsafe(offset, size, cachedColumnVersionList, mem);
-
-                Unsafe.getUnsafe().loadFence();
-                if (version == unsafeGetVersion()) {
-                    this.version = version;
-                    LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
-                    return;
-                }
             }
 
             if (microsecondClock.getTicks() - tick > spinLockTimeout) {
@@ -307,6 +280,40 @@ public class ColumnVersionReader implements Closeable, Mutable {
             Os.pause();
             LOG.debug().$("read dirty version ").$(version).$(", retrying").$();
         }
+    }
+
+    public boolean readSafe() {
+        long version = unsafeGetVersion();
+        if (version == this.version) {
+            return true;
+        }
+        Unsafe.getUnsafe().loadFence();
+
+        final long offset;
+        final long size;
+
+        final boolean areaA = (version & 1L) == 0;
+        if (areaA) {
+            offset = mem.getLong(OFFSET_OFFSET_A_64);
+            size = mem.getLong(OFFSET_SIZE_A_64);
+        } else {
+            offset = mem.getLong(OFFSET_OFFSET_B_64);
+            size = mem.getLong(OFFSET_SIZE_B_64);
+        }
+
+        Unsafe.getUnsafe().loadFence();
+        if (version == unsafeGetVersion()) {
+            mem.resize(offset + size);
+            readUnsafe(offset, size, cachedColumnVersionList, mem);
+
+            Unsafe.getUnsafe().loadFence();
+            if (version == unsafeGetVersion()) {
+                this.version = version;
+                LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
+                return true;
+            }
+        }
+        return false;
     }
 
     public long readUnsafe() {
