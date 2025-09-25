@@ -342,7 +342,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 handleWriterException(measurementName, tud, ex);
             } catch (LineProtocolException ex) {
                 throw CairoException.nonCritical().put("could not write ILP message [tableName=").put(measurementName)
-                        .put(", error=").put(ex.getMessage())
+                        .put(", error=").put(ex.getFlyweightMessage())
                         .put(']');
             } catch (Throwable ex) {
                 handleWriterException(measurementName, tud, ex);
