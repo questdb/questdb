@@ -40,7 +40,8 @@ where
         ));
     }
 
-    if !data.len().is_multiple_of(size_of::<T>()) {
+    #[allow(clippy::manual_is_multiple_of)]
+    if data.len() % size_of::<T>() != 0 {
         return Err(fmt_err!(
             InvalidLayout,
             "size {} is not divisible by target type {} size of {} bytes",

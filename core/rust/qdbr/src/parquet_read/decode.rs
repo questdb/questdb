@@ -1353,7 +1353,7 @@ fn append_array<T: DataPageSlicer>(
             ));
         }
         // add an optional padding
-        if !max_rep_level.is_multiple_of(2) {
+        if max_rep_level % 2 != 0 {
             data_mem.extend_from_slice(&0_u32.to_le_bytes())?;
         }
 
