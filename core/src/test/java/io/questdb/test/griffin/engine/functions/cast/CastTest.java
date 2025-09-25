@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.cast;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.CreateTableTestUtils;
 import org.junit.Test;
 
 public class CastTest extends AbstractCairoTest {
@@ -5255,6 +5258,70 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfCastInGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.DAY, ColumnType.TIMESTAMP);
+            execute(
+                    "insert into all2 select * from (" +
+                            "select" +
+                            " rnd_int()," +
+                            " rnd_short()," +
+                            " rnd_byte()," +
+                            " rnd_double()," +
+                            " rnd_float()," +
+                            " rnd_long()," +
+                            " rnd_str(2,3,0)," +
+                            " rnd_symbol('A','D')," +
+                            " rnd_boolean()," +
+                            " rnd_bin()," +
+                            " rnd_date()," +
+                            " rnd_long256()," +
+                            " rnd_char()," +
+                            " rnd_uuid4()," +
+                            " rnd_ipv4()," +
+                            " rnd_varchar(2,3,0)," +
+                            " timestamp_sequence(0L, 10L) ts " +
+                            "from long_sequence(3)" +
+                            ") timestamp(ts);"
+            );
+
+            assertQuery(
+                    "ts\ti\tsh\tb\td\tf\tl\tstr\tsym\tbool\tbin\tdat\tl256\tc\tu\tip\tv\tcount\n" +
+                            "1970-01-01T00:00:00.000000Z\t-1148479920\t24814\t27\t0.12966659791573354\t0.2845577597618103\t-7611843578141082998\tYR\tA\tfalse\t00000000 f1 59 88 c4 91 3b 72 db f3 04 1b c7 88 de a0 79\n" +
+                            "00000010 3c 77 15 68 61 26 af 19 c4 95 94 36 53 49 b4 59\t1970-01-01T00:47:07.518Z\t0x63eb3740c80f661e9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b\tD\tcec82869-edec-421b-8259-3f82b430328d\t235.156.195.158\tjF\t1\n" +
+                            "1970-01-01T00:00:00.000010Z\t2085282008\t-1379\t44\t0.12026122412833129\t0.6761934757232666\t8325936937764905778\tQU\tD\ttrue\t00000000 42 fc 31 79 5f 8b 81 2b 93 4d 1a 8e 78 b5 b9 11\n" +
+                            "00000010 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t1970-01-01T00:06:35.663Z\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\tI\ta5f80be4-b45b-4437-8929-90e1a29afcac\t184.92.27.200\tkV\t1\n" +
+                            "1970-01-01T00:00:00.000020Z\t532665695\t-4874\t54\t0.7588175403454873\t0.5406709313392639\t-8081265393416742311\tYCT\tA\tfalse\t00000000 7f d7 6f b8 c9 ae 28 c7 84 47 dc d2 85 7f a5 b8\n" +
+                            "00000010 7b 4a 9d 46 7c 8d dd 93 e6 d0 b3 2b 07 98 cc 76\t1970-01-01T00:19:39.064Z\t0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3\tS\taf44c40a-67ef-4e1c-9b3e-f21223ee8849\t130.40.224.242\t軦۽㒾\t1\n",
+                    "select" +
+                            " timestamp::timestamp ts," +
+                            " int::int i," +
+                            " short::short sh," +
+                            " byte::byte b," +
+                            " double::double d," +
+                            " float::float f," +
+                            " long::long l," +
+                            " str::string str," +
+                            " sym::symbol sym," +
+                            " bool::boolean bool," +
+                            " bin::binary bin," +
+                            " date::date dat," +
+                            " long256::long256 l256," +
+                            " chr::char c," +
+                            " uuid::uuid u," +
+                            " ipv4::ipv4 ip," +
+                            " varchar::varchar v," +
+                            " count() " +
+                            "from all2 " +
+                            "order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testShortToBoolean() throws Exception {
         assertQuery(
                 "a\n",
@@ -6366,6 +6433,141 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy1() throws Exception {
+        assertQuery(
+                "timestamp\tID\tEvt1\n",
+                "SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                        "FROM 'trades'" +
+                        "ORDER BY 1",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "timestamp\tID\tEvt1\n" +
+                        "1\t1\t1\n" +
+                        "2\t2\t2\n" +
+                        "3\t3\t3\n" +
+                        "4\t4\t4\n" +
+                        "5\t5\t5\n" +
+                        "6\t6\t6\n" +
+                        "7\t7\t7\n" +
+                        "8\t8\t8\n" +
+                        "9\t9\t9\n" +
+                        "10\t10\t10\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy2() throws Exception {
+        assertQuery(
+                "cast\tavg\n",
+                "SELECT cast(symbol as SYMBOL), avg(price) " +
+                        "FROM 'trades' " +
+                        "ORDER BY avg(price)",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "cast\tavg\n" +
+                        "1\t1.0\n" +
+                        "2\t2.0\n" +
+                        "3\t3.0\n" +
+                        "4\t4.0\n" +
+                        "5\t5.0\n" +
+                        "6\t6.0\n" +
+                        "7\t7.0\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n" +
+                        "10\t10.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy3() throws Exception {
+        assertQuery(
+                "coalesce\tavg\n",
+                "SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
+                        "FROM 'trades' " +
+                        "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "coalesce\tavg\n" +
+                        "1\t1.0\n" +
+                        "10\t10.0\n" +
+                        "2\t2.0\n" +
+                        "3\t3.0\n" +
+                        "4\t4.0\n" +
+                        "5\t5.0\n" +
+                        "6\t6.0\n" +
+                        "7\t7.0\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInGroupBy4() throws Exception {
+        assertQuery(
+                "i\ts\tmax\n",
+                "SELECT i::int i, symbol::symbol s, max(price)" +
+                        "FROM 'trades'" +
+                        "ORDER BY 1",
+                "create table trades (timestamp timestamp, i int, symbol symbol, price double) timestamp(timestamp)",
+                null,
+                "insert into trades select x::timestamp, x, x::string, x from long_sequence(10)",
+                "i\ts\tmax\n" +
+                        "1\t1\t1.0\n" +
+                        "2\t2\t2.0\n" +
+                        "3\t3\t3.0\n" +
+                        "4\t4\t4.0\n" +
+                        "5\t5\t5.0\n" +
+                        "6\t6\t6.0\n" +
+                        "7\t7\t7.0\n" +
+                        "8\t8\t8.0\n" +
+                        "9\t9\t9.0\n" +
+                        "10\t10\t10.0\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolColumnToSymbolInSampleBy() throws Exception {
+        assertQuery(
+                "timestamp\tID\tEvt1\n",
+                "SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                        "FROM 'trades'" +
+                        "SAMPLE BY 1h",
+                "create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)",
+                "timestamp",
+                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
+                "timestamp\tID\tEvt1\n" +
+                        "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                        "1970-01-01T00:00:00.000000Z\t2\t2\n" +
+                        "1970-01-01T00:00:00.000000Z\t3\t3\n" +
+                        "1970-01-01T00:00:00.000000Z\t4\t4\n" +
+                        "1970-01-01T00:00:00.000000Z\t5\t5\n" +
+                        "1970-01-01T00:00:00.000000Z\t6\t6\n" +
+                        "1970-01-01T00:00:00.000000Z\t7\t7\n" +
+                        "1970-01-01T00:00:00.000000Z\t8\t8\n" +
+                        "1970-01-01T00:00:00.000000Z\t9\t9\n" +
+                        "1970-01-01T00:00:00.000000Z\t10\t10\n",
+                true,
+                true,
+                false
         );
     }
 

@@ -62,19 +62,22 @@ public class HttpMinTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
+            int httpMinConnectionLimit = 2;
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512M",
                     PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "512M",
+                    PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY.getEnvVarName(), String.valueOf(httpMinConnectionLimit),
+                    PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(httpMinConnectionLimit),
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
                 HttpServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
                 HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
-                long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
+                int expectedAllocation = (httpMinConfig.getSendBufferSize() + 20
                         + httpMinConfig.getRecvBufferSize()
                         + httpMinContextConfig.getRequestHeaderBufferSize() + 64
-                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64;
+                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64) * httpMinConnectionLimit;
 
                 // Wait http min threads to start, they will need to allocate some memory
                 // directly after the server start.
