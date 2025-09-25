@@ -36,9 +36,9 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class ImportProcessorState implements Mutable, Closeable {
+public class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_OK = 0;
-    private static final Log LOG = LogFactory.getLog(ImportProcessorState.class);
+    private static final Log LOG = LogFactory.getLog(TextImportProcessorState.class);
     // Store engine reference for parquet operations
     private final CairoEngine cairoEngine;
     public int columnIndex = 0;
@@ -49,7 +49,7 @@ public class ImportProcessorState implements Mutable, Closeable {
     long hi;
     boolean json = false;
     long lo;
-    int messagePart = ImportProcessor.MESSAGE_UNKNOWN;
+    int messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
     long parquetBytesWritten = 0;
     long parquetFileDescriptor = -1;
     long parquetFileSize = 0;
@@ -57,21 +57,21 @@ public class ImportProcessorState implements Mutable, Closeable {
     String parquetFilename;
     long parquetMappedAddress = 0;
     Path parquetPath = new Path();
-    int responseState = ImportProcessor.RESPONSE_PREFIX;
+    int responseState = TextImportProcessor.RESPONSE_PREFIX;
     int state;
     String stateMessage;
     TextLoader textLoader;
 
 
-    ImportProcessorState(CairoEngine engine) {
+    TextImportProcessorState(CairoEngine engine) {
         this.cairoEngine = engine;
         this.textLoader = new TextLoader(engine);
     }
 
     @Override
     public void clear() {
-        responseState = ImportProcessor.RESPONSE_PREFIX;
-        messagePart = ImportProcessor.MESSAGE_UNKNOWN;
+        responseState = TextImportProcessor.RESPONSE_PREFIX;
+        messagePart = TextImportProcessor.MESSAGE_UNKNOWN;
         columnIndex = 0;
         analysed = false;
         json = false;

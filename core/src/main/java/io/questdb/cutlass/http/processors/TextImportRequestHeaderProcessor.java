@@ -12,6 +12,6 @@ public interface TextImportRequestHeaderProcessor {
     void processRequestHeader(
             HttpRequestHeader partHeader,
             HttpConnectionContext transientContext,
-            ImportProcessorState transientState
+            TextImportProcessorState transientState
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException;
 }

@@ -24,14 +24,12 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -44,24 +42,17 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -69,15 +60,15 @@ import io.questdb.std.str.Utf8s;
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.text.TextLoadWarning.*;
 
-public class ImportProcessor implements HttpMultipartContentProcessor, HttpRequestHandler {
+public class TextImportProcessor implements HttpMultipartContentProcessor, HttpRequestHandler {
     static final int MESSAGE_PARQUET = 3;
     static final int MESSAGE_UNKNOWN = 4;
     static final int RESPONSE_PREFIX = 1;
-    private static final Log LOG = LogFactory.getLog(ImportProcessor.class);
+    private static final Log LOG = LogFactory.getLog(TextImportProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
-    private static final LocalValue<ImportProcessorState> LV = new LocalValue<>();
+    private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
     private static final int MESSAGE_DATA = 2;
     private static final int MESSAGE_SCHEMA = 1;
     private static final String OVERRIDDEN_FROM_TABLE = "From Table";
@@ -95,9 +86,9 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
     private final TextImportRequestHeaderProcessor requestHeaderProcessor;
     private final byte requiredAuthType;
     private HttpConnectionContext transientContext;
-    private ImportProcessorState transientState;
+    private TextImportProcessorState transientState;
 
-    public ImportProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+    public TextImportProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
         requestHeaderProcessor = configuration.getFactoryProvider().getTextImportRequestHeaderProcessor();
@@ -125,14 +116,10 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
             try {
                 transientState.lo = lo;
                 transientState.hi = hi;
-                if (transientState.messagePart == MESSAGE_PARQUET) {
-                    writeParquetChunk(lo, hi);
-                } else {
-                    transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
-                    if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
-                        transientState.analysed = true;
-                        transientState.textLoader.setState(TextLoader.LOAD_DATA);
-                    }
+                transientState.textLoader.parse(lo, hi, transientContext.getSecurityContext());
+                if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
+                    transientState.analysed = true;
+                    transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
             } catch (EntryUnavailableException e) {
                 throw RetryOperationException.INSTANCE;
@@ -146,10 +133,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
     public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         final DirectUtf8Sequence contentDisposition = partHeader.getContentDispositionName();
         LOG.debug().$("part begin [name=").$(contentDisposition).$(']').$();
-        if (Utf8s.equalsNcAscii("parquet", contentDisposition)) {
-            initParquetImport(partHeader, transientContext, transientState);
-            transientState.messagePart = MESSAGE_PARQUET;
-        } else if (Utf8s.equalsNcAscii("data", contentDisposition)) {
+        if (Utf8s.equalsNcAscii("data", contentDisposition)) {
             requestHeaderProcessor.processRequestHeader(partHeader, transientContext, transientState);
             transientState.messagePart = MESSAGE_DATA;
         } else if (Utf8s.equalsNcAscii("schema", contentDisposition)) {
@@ -167,25 +151,13 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
     @Override
     public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-            if (transientState.messagePart == MESSAGE_PARQUET) {
-                validateParquetFile();
-
-                LOG.info().$("completed parquet import [path=").$(transientState.parquetPath)
-                        .$(", size=").$(transientState.parquetBytesWritten).$(']').$();
-                sendParquetResponse(transientContext);
-                transientState.clearParquetState();
-            } else {
-                transientState.textLoader.wrapUp();
-                if (transientState.messagePart == MESSAGE_DATA) {
-                    sendResponse(transientContext);
-                }
+            LOG.debug().$("part end").$();
+            transientState.textLoader.wrapUp();
+            if (transientState.messagePart == MESSAGE_DATA) {
+                sendResponse(transientContext);
             }
         } catch (TextException | CairoException | CairoError e) {
             sendErrorAndThrowDisconnect(e.getFlyweightMessage());
-        } catch (Throwable e) {
-            sendErrorAndThrowDisconnect(e.getMessage());
-        } finally {
-            transientState.clearParquetState();
         }
     }
 
@@ -217,7 +189,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         this.transientState = LV.get(context);
         if (transientState == null) {
             LOG.debug().$("new text state").$();
-            LV.set(context, this.transientState = new ImportProcessorState(engine));
+            LV.set(context, this.transientState = new TextImportProcessorState(engine));
         }
         transientState.json = isJson(context);
     }
@@ -227,8 +199,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         context.resumeResponseSend();
-        final ImportProcessorState state = LV.get(context);
-        doResumeSend(state, context.getChunkedResponse());
+        doResumeSend(LV.get(context), context.getChunkedResponse());
     }
 
     private static void pad(Utf8Sink b, int w, long value) {
@@ -261,7 +232,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         }
     }
 
-    private static void resumeError(ImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+    private static void resumeError(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (state.responseState == RESPONSE_ERROR) {
             socket.bookmark();
             if (state.json) {
@@ -276,7 +247,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         throw ServerDisconnectException.INSTANCE;
     }
 
-    private static void resumeJson(ImportProcessorState state, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private static void resumeJson(TextImportProcessorState state, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoaderCompletedState completeState = state.completeState;
         final RecordMetadata metadata = completeState.getMetadata();
         final LongList errors = completeState.getColumnErrorCounts();
@@ -297,15 +268,15 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
                 if (tsIdx != -1) {
                     response.putAsciiQuoted("timestamp").putAscii(':').putQuoted(metadata.getColumnName(tsIdx)).putAscii(',');
                 }
-                if (completeState.getWarnings() != NONE) {
+                if (completeState.getWarnings() != TextLoadWarning.NONE) {
                     final int warningFlags = completeState.getWarnings();
                     response.putAsciiQuoted("warnings").putAscii(':').putAscii('[');
                     boolean isFirst = true;
-                    if ((warningFlags & TIMESTAMP_MISMATCH) != NONE) {
+                    if ((warningFlags & TIMESTAMP_MISMATCH) != TextLoadWarning.NONE) {
                         isFirst = false;
                         response.putAsciiQuoted("Existing table timestamp column is used");
                     }
-                    if ((warningFlags & PARTITION_TYPE_MISMATCH) != NONE) {
+                    if ((warningFlags & PARTITION_TYPE_MISMATCH) != TextLoadWarning.NONE) {
                         if (!isFirst) response.putAscii(',');
                         response.putAsciiQuoted("Existing table PartitionBy is used");
                     }
@@ -348,7 +319,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
     }
 
 
-    private static void resumeText(ImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private static void resumeText(TextImportProcessorState state, HttpChunkedResponse socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoaderCompletedState textLoaderCompletedState = state.completeState;
         final RecordMetadata metadata = textLoaderCompletedState.getMetadata();
         LongList errors = textLoaderCompletedState.getColumnErrorCounts();
@@ -445,7 +416,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
     }
 
     private static void sendErr(HttpConnectionContext context, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final ImportProcessorState state = LV.get(context);
+        final TextImportProcessorState state = LV.get(context);
         state.responseState = RESPONSE_ERROR;
         state.errorMessage = message;
 
@@ -462,28 +433,13 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         b.putAscii("+\r\n");
     }
 
-    private String checkFilenameIsSafeToImport(DirectUtf8Sequence filename, CairoConfiguration configuration)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final String filenameStr = filename.toString();
-        if (Chars.contains(filenameStr, "../") || Chars.contains(filenameStr, "..\\")) {
-            sendErrorAndThrowDisconnect("relative path is not allowed in parquet filename");
-        }
-
-        if (Chars.startsWith(filenameStr, '/') || (filenameStr.length() > 1 && filenameStr.charAt(1) == ':')) {
-            sendErrorAndThrowDisconnect("absolute path is not allowed in parquet filename");
-        }
-        return filenameStr;
-    }
-
     private void doResumeSend(
-            ImportProcessorState state,
+            TextImportProcessorState state,
             HttpChunkedResponse socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
             if (state.errorMessage != null) {
                 resumeError(state, socket);
-            } else if (state.messagePart == MESSAGE_PARQUET) {
-                resumeParquetSend(state, socket);
             } else if (state.json) {
                 resumeJson(state, socket);
             } else {
@@ -505,87 +461,8 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         state.clear();
     }
 
-    private void initParquetFile(FilesFacade ff) throws CairoException {
-        Path path = transientState.parquetPath;
-        TableUtils.createDirsOrFail(ff, path, engine.getConfiguration().getMkDirMode());
-        transientState.parquetFileDescriptor = TableUtils.openRW(ff, path.$(), LOG, engine.getConfiguration().getWriterFileOpenOpts());
-        ff.truncate(transientState.parquetFileDescriptor, transientState.parquetFileSize);
-        transientState.parquetMappedAddress = TableUtils.mapRW(ff, transientState.parquetFileDescriptor,
-                transientState.parquetFileSize, MemoryTag.MMAP_IMPORT);
-
-        LOG.info().$("created parquet file [path=").$(path)
-                .$(", size=").$(transientState.parquetFileSize).$(']').$();
-    }
-
-    private void initParquetImport(HttpRequestHeader partHeader, HttpConnectionContext context, ImportProcessorState state)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final CairoConfiguration configuration = engine.getConfiguration();
-        final CharSequence sqlCopyInputRoot = configuration.getSqlCopyInputRoot();
-
-        if (Chars.isBlank(sqlCopyInputRoot)) {
-            sendErrorAndThrowDisconnect("parquet files can only be imported when sql.copy.input.root is configured");
-        }
-
-        final DirectUtf8Sequence filename = partHeader.getContentDispositionFilename();
-        if (filename == null || filename.size() == 0) {
-            sendErrorAndThrowDisconnect("parquet import requires filename in Content-Disposition header");
-        }
-        String importPath = checkFilenameIsSafeToImport(filename, configuration);
-
-        final DirectUtf8Sequence sizeParam = context.getRequestHeader().getUrlParam(URL_PARAM_TOTAL_SIZE);
-        if (sizeParam == null) {
-            sendErrorAndThrowDisconnect("parquet import requires 'total_size' URL parameter to pre-allocate file size");
-        }
-        long contentLength = 0;
-        try {
-            contentLength = Numbers.parseLong(sizeParam);
-            if (contentLength <= 0) {
-                sendErrorAndThrowDisconnect("parquet import requires positive 'total_size' URL parameter value");
-            }
-        } catch (NumericException e) {
-            sendErrorAndThrowDisconnect("parquet import requires valid numeric 'total_size' URL parameter");
-        }
-        state.initParquetImport(importPath, sqlCopyInputRoot, contentLength);
-        LOG.info().$("starting parquet import [filename=").$(importPath)
-                .$(", target=").$(state.parquetPath)
-                .$(", size=").$(contentLength).$(']').$();
-    }
-
     private boolean isJson(HttpConnectionContext transientContext) {
         return HttpKeywords.isJson(transientContext.getRequestHeader().getUrlParam(URL_PARAM_FMT));
-    }
-
-    private void resumeParquetSend(ImportProcessorState state, HttpChunkedResponse response)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        try {
-            if (state.errorMessage != null) {
-                resumeError(state, response);
-                return;
-            }
-
-            if (state.json) {
-                response.putAscii('{');
-                response.putAscii("\"operation\":\"parquet_import\",");
-                response.putAscii("\"file\":").putQuote().escapeJsonStr(state.parquetFilename).putQuote().putAscii(',');
-                response.putAscii("\"size\":").put(state.parquetBytesWritten).putAscii(',');
-                response.putAscii("\"status\":\"imported\"}");
-            } else {
-                response.putAscii("File: ").put(state.parquetFilename).putEOL();
-                response.putAscii("Size: ").put(state.parquetBytesWritten).putEOL();
-                response.putAscii("Location: ").put(state.parquetPath).putEOL();
-                response.putAscii("Status: imported").putEOL();
-            }
-            response.sendChunk(true);
-        } catch (NoSpaceLeftInResponseBufferException ignored) {
-            if (response.resetToBookmark()) {
-                response.sendChunk(false);
-            } else {
-                response.shutdownWrite();
-                throw ServerDisconnectException.INSTANCE;
-            }
-        }
-
-        response.done();
     }
 
     private void sendErrorAndThrowDisconnect(CharSequence message)
@@ -593,23 +470,14 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         sendErrorAndThrowDisconnect(message, transientContext, transientState);
     }
 
-    private void sendParquetResponse(HttpConnectionContext context)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final ImportProcessorState state = LV.get(context);
-        final HttpChunkedResponse response = context.getChunkedResponse();
-        response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
-        response.sendHeader();
-        doResumeSend(state, response);
-    }
-
     private void sendResponse(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        final ImportProcessorState state = LV.get(context);
+        final TextImportProcessorState state = LV.get(context);
         final HttpChunkedResponse response = context.getChunkedResponse();
 
         // Copy written state to state, text loader, parser can be closed before re-attempt to send the response
         state.snapshotStateAndCloseWriter();
-        if (state.state == ImportProcessorState.STATE_OK) {
+        if (state.state == TextImportProcessorState.STATE_OK) {
             response.status(200, state.json ? CONTENT_TYPE_JSON : CONTENT_TYPE_TEXT);
             response.sendHeader();
             doResumeSend(state, response);
@@ -618,45 +486,7 @@ public class ImportProcessor implements HttpMultipartContentProcessor, HttpReque
         }
     }
 
-    private void validateParquetFile() throws CairoException {
-        if (transientState.parquetBytesWritten != transientState.parquetFileSize) {
-            throw CairoException.nonCritical()
-                    .put("parquet file transfer incomplete [expected=")
-                    .put(transientState.parquetFileSize)
-                    .put(" bytes, received=").put(transientState.parquetBytesWritten)
-                    .put(" bytes, file=").put(transientState.parquetFilename).put(']');
-        }
-        try (PartitionDecoder decoder = new PartitionDecoder()) {
-            decoder.of(transientState.parquetMappedAddress, transientState.parquetFileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            if (decoder.metadata().columnCount() <= 0) {
-                throw CairoException.nonCritical()
-                        .put("parquet file contains no supported columns");
-            }
-        }
-    }
-
-    private void writeParquetChunk(long lo, long hi) throws CairoException {
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final long chunkSize = hi - lo;
-
-        if (transientState.parquetFileDescriptor == -1) {
-            initParquetFile(ff);
-        }
-        final long newSize = transientState.parquetBytesWritten + chunkSize;
-        if (newSize > transientState.parquetFileSize) {
-            throw CairoException.critical(0)
-                    .put("parquet chunk exceeds expected file size [written=")
-                    .put(transientState.parquetBytesWritten)
-                    .put(", chunk=").put(chunkSize)
-                    .put(", total=").put(newSize)
-                    .put(", expected=").put(transientState.parquetFileSize).put(']');
-        }
-
-        Vect.memcpy(transientState.parquetMappedAddress + transientState.parquetBytesWritten, lo, chunkSize);
-        transientState.parquetBytesWritten += chunkSize;
-    }
-
-    static void sendErrorAndThrowDisconnect(CharSequence message, HttpConnectionContext transientContext, ImportProcessorState transientState)
+    static void sendErrorAndThrowDisconnect(CharSequence message, HttpConnectionContext transientContext, TextImportProcessorState transientState)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         LOG.error().$("import error [message=").$(message).$(", fd=").$(transientContext.getFd()).$(']').$();
         transientState.snapshotStateAndCloseWriter();

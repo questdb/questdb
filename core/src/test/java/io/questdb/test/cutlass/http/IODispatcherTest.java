@@ -61,9 +61,9 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
-import io.questdb.cutlass.http.processors.ImportProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCodeGenerator;
@@ -2572,7 +2572,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     @Override
                     public HttpRequestHandler newInstance() {
-                        return new ImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
                 workerPool.start(LOG);
