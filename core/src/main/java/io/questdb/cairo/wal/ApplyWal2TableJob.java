@@ -364,8 +364,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Something messed up in sequencer.
                                     // There is a transaction in WAL but no structure change record.
                                     throw CairoException.critical(0)
-                                            .put("could not apply structure change from WAL to table. WAL metadata change does not exist [seqTxn=").put(seqTxn)
-                                            .put("structureVersion=")
+                                            .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
                                             .put(newStructureVersion)
                                             .put(']');
                                 }
