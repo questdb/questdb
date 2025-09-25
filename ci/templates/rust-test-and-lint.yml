@@ -1,7 +1,13 @@
+parameters:
+  - name: rustSourceCodeChanged
+    type: string
+    default: 'true'
+
 steps:
   - script: |
       python3 .github/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy --match core/rust/qdbr/rust-toolchain.toml
     displayName: "Ensure Rust is installed"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
     # Note, the `prepare_rust_env.py` script exports a number of variables.
   - task: Cache@2
     continueOnError: true
@@ -9,10 +15,12 @@ steps:
       key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"'
       path: $(CARGO_HOME)/registry
     displayName: "Cache ~/.cargo/registry"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
   - script: |
       cd core/rust/qdb-core
       cargo test --all-targets --all-features --no-fail-fast --verbose
     displayName: "qdb-core: cargo test"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
     # We run these as part of the other CI runs anyway through the rust-maven-plugin,
     # but if the Rust tests fail it's easier to see the output here
     # since it doesn't get buried thousands of lines deep in the Java test logs.
@@ -20,14 +28,17 @@ steps:
       cd core/rust/qdb-core
       cargo clippy --all-targets --all-features -- -D warnings
     displayName: "qdb-core: cargo clippy"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
   - script: |
       cd core/rust/qdb-core
       cargo fmt --check
     displayName: "qdb-core: cargo fmt"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
   - script: |
       cd core/rust/qdbr
       cargo test --all-targets --all-features --no-fail-fast --verbose
     displayName: "qdbr: cargo test"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
     # We run these as part of the other CI runs anyway through the rust-maven-plugin,
     # but if the Rust tests fail it's easier to see the output here
     # since it doesn't get buried thousands of lines deep in the Java test logs.
@@ -35,7 +46,9 @@ steps:
       cd core/rust/qdbr
       cargo clippy --all-targets --all-features -- -D warnings
     displayName: "qdbr: cargo clippy"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
   - script: |
       cd core/rust/qdbr
       cargo fmt --check
     displayName: "qdbr: cargo fmt"
+    condition: eq('${{ parameters.rustSourceCodeChanged }}', 'true')
