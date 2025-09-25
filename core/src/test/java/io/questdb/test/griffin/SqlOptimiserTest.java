@@ -3060,6 +3060,51 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteTrivialExpressions2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id0 long,\n" +
+                            "    id1 long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, 1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, 2, '2021-01-01T12:35:00');");
+
+            final String query = "SELECT id0, id1, 2 - id0 + 1 id0_1, 2 / (id1 * 2) id1_1, count(*) AS c " +
+                    "FROM x " +
+                    "GROUP BY id0, id1, id0 / 42, 1 / (id1 * 42) " +
+                    "ORDER BY c DESC";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Radix sort light\n" +
+                            "  keys: [c desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [id0,id1,2-id0+1,2/id1*2,c]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [id0,id1,column,column1]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id0\tid1\tid0_1\tid1_1\tc\n" +
+                            "2\t2\t1\t0\t1\n" +
+                            "1\t1\t2\t1\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testRewriteTrivialExpressionsInOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute(
