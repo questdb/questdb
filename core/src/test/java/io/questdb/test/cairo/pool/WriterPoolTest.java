@@ -39,6 +39,7 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -58,6 +59,8 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
 
 public class WriterPoolTest extends AbstractCairoTest {
     private TableToken zTableToken;
@@ -240,6 +243,58 @@ public class WriterPoolTest extends AbstractCairoTest {
             }
             Assert.assertEquals(PoolListener.EV_POOL_CLOSED, x.ev);
         });
+    }
+
+    @Test
+    public void testDistressedWriterRaceCondition() throws Exception {
+        ObjList<Thread> threads = new ObjList<>();
+        int iterations = 100;
+        int threadCount = 5;
+        AtomicReference<Throwable> error = new AtomicReference<>();
+
+        assertWithPool(pool -> {
+
+            // Run iterations with concurrent access to trigger failures and distressed writers
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final CountDownLatch latch = new CountDownLatch(threadCount);
+
+            for (int i = 0; i < threadCount; i++) {
+                // Thread 1: Perform operations that may trigger distressed writers due to simulated failures
+                Thread worker1 = new Thread(() -> {
+                    try {
+                        barrier.await();
+
+                        for (int j = 0; j < iterations; j++) {
+                            try (TableWriter w = pool.get(zTableToken, "worker")) {
+                                // Perform operations that trigger file I/O and can fail
+                                w.markDistressed();
+                            } catch (EntryUnavailableException e) {
+                                // Expected when writer becomes distressed or I/O fails
+                                LOG.debug().$("Worker1 caught exception: ").$(e.getMessage()).$();
+                                j--;
+                            }
+                        }
+                    } catch (Throwable e) {
+                        // Handle exceptions
+                        error.set(e);
+                        LOG.error().$(e).$();
+                    } finally {
+                        latch.countDown();
+                        Path.clearThreadLocals();
+                    }
+                });
+                threads.add(worker1);
+                worker1.start();
+            }
+
+            for (int i = 0; i < threads.size(); i++) {
+                threads.get(i).join();
+            }
+        });
+
+        if (error.get() != null) {
+            Assert.fail("Test failed with exception: " + error.get().getMessage());
+        }
     }
 
     @Test
