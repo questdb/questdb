@@ -522,6 +522,16 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
         if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
             return (int) value;
@@ -580,6 +590,36 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastIntAsDouble(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Double.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastIntAsFloat(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Float.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastIntAsLong(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Long.MIN_VALUE;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static short implicitCastIntAsShort(int value) {
         if (value != Numbers.INT_NULL) {
             return implicitCastAsShort(value, ColumnType.INT);
@@ -603,6 +643,27 @@ public class SqlUtil {
         }
         return 0;
     }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static double implicitCastLongAsDouble(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Double.NaN;
+        } else {
+            return (double) value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
