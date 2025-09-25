@@ -66,7 +66,6 @@ import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
 
-@SuppressWarnings("unused")
 public class SqlUtil {
 
     static final LowerCaseCharSequenceHashSet disallowedAliases = new LowerCaseCharSequenceHashSet();
@@ -535,6 +534,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static double implicitCastFloatAsDouble(float value) {
         if (Numbers.isNull(value)) {
             return Double.NaN;
@@ -601,6 +602,8 @@ public class SqlUtil {
         return 0;
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static double implicitCastIntAsDouble(int value) {
         if (value == Numbers.INT_NULL) {
             return Double.NaN;
@@ -609,6 +612,8 @@ public class SqlUtil {
         }
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static float implicitCastIntAsFloat(int value) {
         if (value == Numbers.INT_NULL) {
             return Float.NaN;
@@ -617,6 +622,8 @@ public class SqlUtil {
         }
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static long implicitCastIntAsLong(int value) {
         if (value == Numbers.INT_NULL) {
             return Long.MIN_VALUE;
@@ -651,6 +658,8 @@ public class SqlUtil {
         return 0;
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static double implicitCastLongAsDouble(long value) {
         if (value == Numbers.LONG_NULL) {
             return Double.NaN;
@@ -659,6 +668,8 @@ public class SqlUtil {
         }
     }
 
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static float implicitCastLongAsFloat(long value) {
         if (value == Numbers.LONG_NULL) {
             return Float.NaN;
