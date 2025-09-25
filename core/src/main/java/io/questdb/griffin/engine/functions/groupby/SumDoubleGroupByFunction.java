@@ -46,21 +46,19 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
-            mapValue.putDouble(valueIndex, value);
-            mapValue.putLong(valueIndex + 1, 1);
-        } else {
-            mapValue.putDouble(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
+        mapValue.putDouble(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            mapValue.addDouble(valueIndex, value);
-            mapValue.addLong(valueIndex + 1, 1);
+            final double sum = mapValue.getDouble(valueIndex);
+            if (Numbers.isFinite(sum)) {
+                mapValue.putDouble(valueIndex, sum + value);
+            } else {
+                mapValue.putDouble(valueIndex, value);
+            }
         }
     }
 
@@ -71,11 +69,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public double getDouble(Record rec) {
-        long valueCount = rec.getLong(valueIndex + 1);
-        if (valueCount > 0) {
-            return rec.getDouble(valueIndex);
-        }
-        return Double.NaN;
+        return rec.getDouble(valueIndex);
     }
 
     @Override
@@ -102,7 +96,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -118,16 +111,12 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final double srcSum = srcValue.getDouble(valueIndex);
-        final long srcCount = srcValue.getLong(valueIndex + 1);
-        if (srcCount > 0) {
+        if (Numbers.isFinite(srcSum)) {
             final double destSum = destValue.getDouble(valueIndex);
-            final long destCount = destValue.getLong(valueIndex + 1);
-            if (destCount > 0) {
+            if (Numbers.isFinite(destSum)) {
                 destValue.putDouble(valueIndex, destSum + srcSum);
-                destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
                 destValue.putDouble(valueIndex, srcSum);
-                destValue.putLong(valueIndex + 1, srcCount);
             }
         }
     }
@@ -135,13 +124,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
-        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override

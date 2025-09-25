@@ -49,8 +49,6 @@ public final class Vect {
 
     public static native double avgLongAcc(long pInt, long count, long pCount);
 
-    public static native double avgShortAcc(long pInt, long count, long pCount);
-
     // Note: high is inclusive!
     public static native long binarySearch64Bit(long pData, long value, long low, long high, int scanDirection);
 
