@@ -32,11 +32,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class AvgDoubleGroupByFunctionFactory implements FunctionFactory {
+public class AvgShortGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "avg(D)";
+        return "avg(E)";
     }
 
     @Override
@@ -52,6 +52,6 @@ public class AvgDoubleGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new AvgDoubleGroupByFunction(args.getQuick(0));
+        return new AvgShortGroupByFunction(args.getQuick(0));
     }
 }

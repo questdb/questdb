@@ -37,7 +37,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
 
             assertSql(
                     "x\ty\n" +
-                            "25.1492699999998\t25.1492699999998\n",
+                            "25.1492699999998\t25.14927\n",
                     "select avg(x) x, avg(y) y from abc"
             );
         });
@@ -46,13 +46,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntAvg() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
-                            "aaa\t30.732091890705146\t30.732091890705146\n" +
-                            "bbb\t-67.00160330280377\t-67.00160330280377\n",
+                            "\t-42.416851774028935\t-42.416851774028935\n" +
+                            "aaa\t69.63866351306847\t69.63866351306847\n" +
+                            "bbb\t-81.60838215412348\t-81.60838215412348\n",
                     "select s, avg(x) x, avg(y) y from abc order by 1"
             );
         });
@@ -61,11 +62,12 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntMax() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
+                            "\t32765\t32765\n" +
                             "aaa\t32767\t32767\n" +
                             "bbb\t32765\t32765\n",
                     "select s, max(x) x, max(y) y from abc order by 1"
@@ -76,13 +78,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntMin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
+                            "\t-32768\t-32768\n" +
                             "aaa\t-32768\t-32768\n" +
-                            "bbb\t-32768\t-32768\n",
+                            "bbb\t-32767\t-32767\n",
                     "select s, min(x) x, min(y) y from abc order by 1"
             );
         });
@@ -91,13 +94,14 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntSum() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb', null) s from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
-                            "aaa\t1539770\t1539770\n" +
-                            "bbb\t-3343179\t-3343179\n",
+                            "\t-1413075\t-1413075\n" +
+                            "aaa\t2326001\t2326001\n" +
+                            "bbb\t-2716335\t-2716335\n",
                     "select s, sum(x) x, sum(y) y from abc order by 1"
             );
         });
@@ -451,6 +455,23 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
                     "x\ty\n" +
                             "-32768\t-32768\n",
                     "select min(x) x, min(y) y from abc"
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (x short, y long)");
+
+            assertSql(
+                    "avg_x\tavg_y\tsum_x\tsum_y\tmin_x\tmin_y\tmax_x\tmax_y\n" +
+                            "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
+                    "select avg(x) avg_x, avg(y) avg_y, " +
+                            "sum(x) sum_x, sum(y) sum_y, " +
+                            "min(x) min_x, min(y) min_y, " +
+                            "max(x) max_x, max(y) max_y " +
+                            "from x"
             );
         });
     }
