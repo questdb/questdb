@@ -2761,7 +2761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             masterMetadata.getColumnCount(),
                                                             masterSymbolColumnIndex,
                                                             slaveSymbolColumnIndex,
-                                                            slaveModel.getContext(),
+                                                            slaveModel.getJoinContext(),
                                                             asOfToleranceInterval
                                                     );
                                                 } else {
@@ -4614,7 +4614,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // check the column type via aliasToColumnMap
                     QueryColumn tableColumn = nested.getAliasToColumnMap().get(columnExpr.rhs.token);
                     timestampType = tableColumn.getColumnType();
-                    if (tableColumn != null && ColumnType.isTimestamp(timestampType)) {
+                    if (ColumnType.isTimestamp(timestampType)) {
                         hourIndex = i;
                     }
                 }
