@@ -27,9 +27,8 @@ jobs:
       - template: java-lint.yml
 
       # Rust lint and test
-      - template: rust-test-and-lint.yml
-        parameters:
-          rustSourceCodeChanged: $(RUST_SOURCE_CODE_CHANGED)
+      - ${{ if eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true') }}:
+        - template: rust-test-and-lint.yml
 
       # Compat tests
       - template: compat-steps.yml
