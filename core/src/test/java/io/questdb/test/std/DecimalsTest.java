@@ -36,6 +36,17 @@ import org.junit.Test;
  */
 public class DecimalsTest extends AbstractTest {
     @Test
+    public void testAssertNullMinimalValues() {
+        // This test asserts that null values in small decimals (8-64) are the minimum values of their
+        // respective integers.
+        // Some functions (like abs) rely on that to work properly with null values.
+        Assert.assertEquals(Byte.MIN_VALUE, Decimals.DECIMAL8_NULL);
+        Assert.assertEquals(Short.MIN_VALUE, Decimals.DECIMAL16_NULL);
+        Assert.assertEquals(Integer.MIN_VALUE, Decimals.DECIMAL32_NULL);
+        Assert.assertEquals(Long.MIN_VALUE, Decimals.DECIMAL64_NULL);
+    }
+
+    @Test
     public void testGetStorageSizeCombinatorics() {
         // Combinations of precision -> storage size needed (in bytes)
         int[][] combinations = {
