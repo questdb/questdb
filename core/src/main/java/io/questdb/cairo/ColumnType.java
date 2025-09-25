@@ -655,10 +655,10 @@ public final class ColumnType {
 
     private static boolean isNarrowingCast(int fromType, int toType) {
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || toType == TIMESTAMP))
+                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
                 || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (fromType == TIMESTAMP && ((toType >= BYTE && toType <= INT) || toType == DATE))
+                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
