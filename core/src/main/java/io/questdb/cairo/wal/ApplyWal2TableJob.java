@@ -331,6 +331,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Re-read the sequencer files to get the metadata change cursor.
                                     structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
                                     hasNext = structuralChangeCursor.hasNext();
+                                    if (!hasNext) {
+                                        // In very rare cases, when sequencer files are changed externally, we need to reload them here
+                                        // to re-read max structure version.
+                                        // We cannot do it in the previous call because we need to have sequencer writer lock to reload it.
+                                        Misc.free(structuralChangeCursor);
+                                        tableSequencerAPI.reload(tableToken);
+                                        structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
+                                        hasNext = structuralChangeCursor.hasNext();
+                                    }
                                 }
 
                                 if (hasNext) {
@@ -355,7 +364,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Something messed up in sequencer.
                                     // There is a transaction in WAL but no structure change record.
                                     throw CairoException.critical(0)
-                                            .put("could not apply structure change from WAL to table. WAL metadata change does not exist [structureVersion=")
+                                            .put("could not apply structure change from WAL to table. WAL metadata change does not exist [seqTxn=").put(seqTxn)
+                                            .put("structureVersion=")
                                             .put(newStructureVersion)
                                             .put(']');
                                 }
