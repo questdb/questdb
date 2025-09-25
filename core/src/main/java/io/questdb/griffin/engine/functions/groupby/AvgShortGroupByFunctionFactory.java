@@ -22,35 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.columns;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class StrColumn extends StrFunction implements ColumnFunction {
-    private final int columnIndex;
+public class AvgShortGroupByFunctionFactory implements FunctionFactory {
 
-    public StrColumn(int columnIndex) {
-        this.columnIndex = columnIndex;
+    @Override
+    public String getSignature() {
+        return "avg(E)";
     }
 
     @Override
-    public int getColumnIndex() {
-        return columnIndex;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return rec.getStrA(columnIndex);
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return rec.getStrB(columnIndex);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return rec.getStrLen(columnIndex);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new AvgShortGroupByFunction(args.getQuick(0));
     }
 }
