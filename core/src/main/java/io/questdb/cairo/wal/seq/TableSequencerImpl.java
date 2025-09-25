@@ -400,15 +400,9 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public TableToken reload() {
-        long lastTxn = tableTransactionLog.lastTxn();
         tableTransactionLog.reload(path);
         if (tableTransactionLog.isDropped()) {
             return null;
-        }
-
-        if (lastTxn == tableTransactionLog.lastTxn()) {
-            // Nothing to do.
-            return tableToken;
         }
 
         try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
@@ -424,7 +418,7 @@ public class TableSequencerImpl implements TableSequencer {
                 metadata.syncToMetaFile();
             }
         }
-        lastTxn = tableTransactionLog.lastTxn();
+        long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
                 .$(", lastTxn=").$(lastTxn)
