@@ -62,10 +62,10 @@ public class WriterRowUtils {
     /**
      * Puts decimal value into a row column. The Decimal should already have the right scale and precision.
      *
-     * @param index      column index
-     * @param value      decimal value to be copied to the row column
+     * @param index     column index
+     * @param value     decimal value to be copied to the row column
      * @param columnTag column tag ({@code tagOf(type)})
-     * @param row        row to be updated
+     * @param row       row to be updated
      */
     public static void putDecimalQuick(int index, Decimal256 value, short columnTag, TableWriter.Row row) {
         if (value.isNull()) {
