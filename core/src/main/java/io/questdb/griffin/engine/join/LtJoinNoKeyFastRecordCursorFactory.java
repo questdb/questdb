@@ -119,7 +119,7 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
                 int slaveTimestampType,
                 int lookahead,
                 long toleranceInterval) {
-            super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, masterTimestampType, slaveTimestampType, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
             this.toleranceInterval = toleranceInterval;
         }
 
