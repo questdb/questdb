@@ -209,6 +209,17 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Compares 2 Decimal128, ignoring scaling.
+     */
+    public static int compare(long aHi, long aLo, long bHi, long bLo) {
+        int s = Long.compare(aHi, bHi);
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(aLo, bLo);
+    }
+
+    /**
      * Divide two Decimal128 numbers and store the result in sink (a / b -> sink)
      * Uses optimal precision calculation up to MAX_SCALE
      *
@@ -221,17 +232,6 @@ public class Decimal128 implements Sinkable {
     public static void divide(Decimal128 a, Decimal128 b, Decimal128 sink, int scale, RoundingMode roundingMode) {
         sink.copyFrom(a);
         sink.divide(b, scale, roundingMode);
-    }
-
-    /**
-     * Compares 2 Decimal128, ignoring scaling.
-     */
-    public static int compare(long aHi, long aLo, long bHi, long bLo) {
-        int s = Long.compare(aHi, bHi);
-        if (s != 0) {
-            return s;
-        }
-        return Long.compareUnsigned(aLo, bLo);
     }
 
     /**
@@ -627,6 +627,9 @@ public class Decimal128 implements Sinkable {
      * Negate this number in-place
      */
     public void negate() {
+        if (isNull()) {
+            return;
+        }
         // Two's complement: invert all bits and add 1
         this.low = ~this.low + 1;
         this.high = ~this.high + (this.low == 0 ? 1 : 0);

@@ -1508,9 +1508,14 @@ public class RecordToRowCopierUtils {
         int toScale = ColumnType.getDecimalScale(toType);
         int toPrecision = ColumnType.getDecimalPrecision(toType);
         if (fromScale != toScale) {
+            long hh = decimal256.getHh();
+            long hl = decimal256.getHl();
+            long lh = decimal256.getLh();
+            long ll = decimal256.getLl();
             try {
                 decimal256.rescale(toScale);
             } catch (NumericException ignored) {
+                decimal256.of(hh, hl, lh, ll, fromScale);
                 throw ImplicitCastException.inconvertibleValue(decimal256.toString(), fromType, toType);
             }
         }
