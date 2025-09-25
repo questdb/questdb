@@ -442,16 +442,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
         drainWalQueue();
 
         TableToken tt = engine.verifyTableName(tableName);
-        int timestampType;
-        int partitionBy;
-        try (TableMetadata m = engine.getTableMetadata(tt)) {
-            timestampType = m.getTimestampType();
-            partitionBy = m.getPartitionBy();
-        }
-
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), timestampType, partitionBy);
+            tw.ofRW(p.$());
             tw.setLagTxnCount(1);
             tw.setLagRowCount(1000);
             tw.setLagMinTimestamp(1_000_000L);
@@ -465,7 +458,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), timestampType, partitionBy);
+            tw.ofRW(p.$());
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
             Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
@@ -485,7 +478,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
             Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
-            tw.ofRW(p.$(), timestampType, partitionBy);
+            tw.ofRW(p.$());
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
             Assert.assertEquals(Long.MAX_VALUE, tw.getLagMinTimestamp());
