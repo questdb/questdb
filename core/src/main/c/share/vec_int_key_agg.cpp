@@ -1951,24 +1951,6 @@ Java_io_questdb_std_Rosti_keyedIntSumLongLong(JNIEnv *env, jclass cl, jlong pRos
 }
 
 JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_Rosti_keyedIntSumShortLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
-                                               jlong count, jint valueOffset) {
-    return kIntSumShort<accumulator_t>(to_int, pRosti, pKeys, pLong, count, valueOffset);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_Rosti_keyedMicroHourSumShortLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
-                                                     jlong count, jint valueOffset) {
-    return kIntSumShort<accumulator_t>(micro_to_hour, pRosti, pKeys, pLong, count, valueOffset);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_Rosti_keyedNanoHourSumShortLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
-                                                    jlong count, jint valueOffset) {
-    return kIntSumShort<accumulator_t>(nano_to_hour, pRosti, pKeys, pLong, count, valueOffset);
-}
-
-JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_Rosti_keyedMicroHourSumLongLong(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
                                                     jlong count, jint valueOffset) {
     return kIntSumLong<accumulator_t>(micro_to_hour, pRosti, pKeys, pLong, count, valueOffset);
