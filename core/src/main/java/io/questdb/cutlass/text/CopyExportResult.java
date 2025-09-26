@@ -25,6 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.SerialParquetExporter;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
@@ -34,16 +36,24 @@ import java.io.IOException;
 import static io.questdb.cutlass.text.CopyExportContext.INACTIVE_COPY_ID;
 
 public class CopyExportResult implements Closeable {
+    private final Path path = new Path();
+    private int cleanUpFileLength;
     private long copyID = INACTIVE_COPY_ID;
     private volatile CharSequence message;
     private volatile boolean needCleanUp;
-    private volatile Path path = new Path();
     private volatile CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
     private volatile CopyExportRequestTask.Status status = CopyExportRequestTask.Status.NONE;
 
-    public void addFilePath(Path path, boolean needCleanUp) {
+    public void addFilePath(Path path, boolean needCleanUp, int cleanUpFileLength) {
         this.path.of(path);
         this.needCleanUp = needCleanUp;
+        this.cleanUpFileLength = cleanUpFileLength;
+    }
+
+    public void cleanUpTempPath(FilesFacade ff) {
+        if (needCleanUp) {
+            SerialParquetExporter.cleanupDir(ff, path, cleanUpFileLength);
+        }
     }
 
     public void clear() {
@@ -82,10 +92,6 @@ public class CopyExportResult implements Closeable {
         return this.phase == CopyExportRequestTask.Phase.SUCCESS ||
                 status == CopyExportRequestTask.Status.FAILED ||
                 status == CopyExportRequestTask.Status.CANCELLED;
-    }
-
-    public boolean needCleanUp() {
-        return needCleanUp;
     }
 
     public void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, CharSequence message) {

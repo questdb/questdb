@@ -336,9 +336,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         if (state.parquetFileFd != -1) {
             ff.close(state.parquetFileFd);
-            if (state.getExportResult().needCleanUp()) {
-                ff.removeQuiet(state.getExportResult().getPath().$());
-            }
+            state.getExportResult().cleanUpTempPath(ff);
             state.parquetFileFd = -1;
         }
         if (state.suspendEvent != null) {

@@ -544,7 +544,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("path\tsize\n" +
                                         "test_table" + File.separator + "2023-01.parquet\t605\n" +
                                         "test_table" + File.separator + "2023-02.parquet\t605\n",
-                                "SELECT path, size from export_files() order by modified_time");
+                                "SELECT path, size from export_files() order by path");
                     });
             testCopyExport(stmt, test);
         });
@@ -1390,6 +1390,85 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
 
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithSameDirs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string, z double)");
+            execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet ", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "output13" + File.separator + "default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t818\n",
+                                "select path, size from export_files() order by path");
+                    });
+
+            CopyExportRunnable stmt1 = () -> runAndFetchCopyExportID("copy test_table to 'output14' with format parquet ", sqlExecutionContext);
+
+            CopyExportRunnable test1 = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "output14" + File.separator + "default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t818\n" +
+                                        "output14" + File.separator + "default.parquet\t818\n",
+                                "select path, size from export_files() order by path");
+                    });
+
+            testCopyExport(stmt, test);
+            testCopyExport(stmt1, test1);
+
+            CopyExportRunnable stmt2 = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet ", sqlExecutionContext);
+            CopyExportRunnable test2 = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "output13" + File.separator + "default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t865\n" +
+                                        "output14" + File.separator + "default.parquet\t818\n",
+                                "select path, size from export_files() order by path");
+                    });
+            execute("insert into test_table values (4, 'hello1', 3.5), (5, 'world1', 4.5)");
+            testCopyExport(stmt2, test2);
+
+            CopyExportRunnable stmt3 = () -> runAndFetchCopyExportID("copy test_table to 'output13" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
+            CopyExportRunnable test3 = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t865\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\t865\n" +
+                                        "output14" + File.separator + "default.parquet\t818\n",
+                                "select path, size from export_files() order by path");
+                    });
+            testCopyExport(stmt3, test3);
+
+            CopyExportRunnable stmt4 = () -> runAndFetchCopyExportID("copy test_table to 'output15" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
+            CopyExportRunnable test4 = () ->
+                    assertEventually(() -> {
+                        assertSql("files\tstatus\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\tfinished\n",
+                                "SELECT files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t865\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\t865\n" +
+                                        "output14" + File.separator + "default.parquet\t818\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\t865\n",
+                                "select path, size from export_files() order by path");
+                    });
+            testCopyExport(stmt4, test4);
         });
     }
 
