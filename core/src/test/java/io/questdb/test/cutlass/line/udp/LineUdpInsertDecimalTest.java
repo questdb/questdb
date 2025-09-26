@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Decimal256;
 import org.junit.Test;
 
+import java.time.temporal.ChronoUnit;
+
 public class LineUdpInsertDecimalTest extends LineUdpInsertTest {
     static final String tableName = "decimal_test";
     static final String targetColumnName = "value";
@@ -107,7 +109,7 @@ public class LineUdpInsertDecimalTest extends LineUdpInsertTest {
                 targetColumnName,
                 type,
                 expected,
-                sender -> sender.metric(tableName).field(targetColumnName, value).$(1_000_000_000)
+                sender -> sender.metric(tableName).decimalColumn(targetColumnName, value).at(1_000_000_000, ChronoUnit.NANOS)
         );
     }
 }
