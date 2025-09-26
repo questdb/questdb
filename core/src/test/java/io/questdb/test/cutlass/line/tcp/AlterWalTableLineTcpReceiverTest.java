@@ -856,9 +856,9 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long waitForTxn
     ) {
         sqlException = null;
-        int countDownCount = 3;
-        SOCountDownLatch releaseAllLatch = new SOCountDownLatch(countDownCount);
-        AtomicBoolean stopThreads = new AtomicBoolean();
+        assert alterAttempts > 0;
+        SOCountDownLatch releaseAllLatch = new SOCountDownLatch(3);
+        AtomicBoolean stopThreads = new AtomicBoolean(false);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (Chars.equalsNc("plug", name.getTableName())) {
@@ -878,7 +878,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     LOG.info().$("Busy waiting for txn notification event").$();
                     // Wait for the next txn notification which would mean an INSERT.
                     int status = engine.getTableStatus("plug");
-                    while (status != TABLE_EXISTS) {
+                    while (status != TABLE_EXISTS && !stopThreads.get()) {
                         Os.pause();
                         status = engine.getTableStatus("plug");
                     }
@@ -887,14 +887,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                         Os.pause();
                     }
 
-                    execute(alterTableCommand);
+                    if (!stopThreads.get()) {
+                        execute(alterTableCommand);
+                    }
                 } catch (Throwable e) {
-                    LOG.error().$(e).$();
                     if (alterAttempts == 1) {
                         if (e instanceof SqlException) {
                             sqlException = (SqlException) e;
                         }
                     }
+                    LOG.error().$(e).$();
                 } finally {
                     LOG.info().$("Stopped waiting for txn notification event").$();
                     Path.clearThreadLocals();
@@ -912,7 +914,6 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
-                Net.configureNoLinger(fd);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -931,27 +932,15 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 } finally {
                     Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 }
+                releaseAllLatch.await();
             } finally {
                 Net.close(fd);
                 Net.freeSockAddr(sockaddr);
             }
-            releaseAllLatch.await();
-            stopThreads.set(true);
-
-            waitThreadsJoin(threads);
-
             return sqlException;
-        } catch (Throwable th) {
-            stopThreads.set(true);
-
-            LOG.error().$("Test error: ").$(th).$();
-            // Wait for all threads to exit on exception
-            waitThreadsJoin(threads);
-
-            waitThreadsJoin(threads);
-
-            throw th;
         } finally {
+            stopThreads.set(true);
+            waitThreadsJoin(threads);
             engine.setPoolListener(null);
         }
     }
@@ -985,7 +974,6 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
-                Net.configureNoLinger(fd);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
