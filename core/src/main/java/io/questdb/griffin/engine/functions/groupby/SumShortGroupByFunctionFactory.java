@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
@@ -30,27 +30,28 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-public class IPv4MinusIPv4StrFunctionFactory implements FunctionFactory {
+public class SumShortGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "-(Xs)";
+        return "sum(E)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IPv4MinusIPv4FunctionFactory.Func(args.getQuick(0), args.getQuick(1));
-    }
-
-    @Override
-    public boolean supportImplicitCastCharToStr() {
-        return false;
+        return new SumShortGroupByFunction(args.getQuick(0));
     }
 }

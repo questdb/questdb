@@ -14,6 +14,7 @@ jobs:
     timeoutInMinutes: 15
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
       COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
@@ -26,7 +27,8 @@ jobs:
       - template: java-lint.yml
 
       # Rust lint and test
-      - template: rust-test-and-lint.yml
+      - ${{ if eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true') }}:
+        - template: rust-test-and-lint.yml
 
       # Compat tests
       - template: compat-steps.yml

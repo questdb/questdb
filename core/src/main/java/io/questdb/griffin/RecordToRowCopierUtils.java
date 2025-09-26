@@ -140,6 +140,15 @@ public class RecordToRowCopierUtils {
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
 
+
+        int implicitCastIntAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastIntAsDouble", "(I)D");
+        int implicitCastIntAsLong = asm.poolMethod(SqlUtil.class, "implicitCastIntAsLong", "(I)J");
+        int implicitCastIntAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastIntAsFloat", "(I)F");
+        int implicitCastLongAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastLongAsFloat", "(J)F");
+        int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
+        int implicitCastFloatAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsDouble", "(F)D");
+
+
         int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
         int implicitCastVarcharAsInt = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsInt", "(Lio/questdb/std/str/Utf8Sequence;)I");
@@ -344,23 +353,23 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutInt, 2);
                             break;
                         case ColumnType.LONG:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.DATE:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutDate, 3);
                             break;
                         case ColumnType.TIMESTAMP:
-                            asm.i2l();
+                            asm.invokeStatic(implicitCastIntAsLong);
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.i2f();
+                            asm.invokeStatic(implicitCastIntAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.i2d();
+                            asm.invokeStatic(implicitCastIntAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -398,11 +407,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -436,11 +445,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
@@ -467,11 +476,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutLong, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         case ColumnType.DATE:
@@ -603,7 +612,7 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.f2d();
+                            asm.invokeStatic(implicitCastFloatAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:
