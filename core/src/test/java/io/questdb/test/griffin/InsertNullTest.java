@@ -57,7 +57,13 @@ public class InsertNullTest extends AbstractCairoTest {
             {"geohash(5b)", ""},
             {"geohash(15b)", ""},
             {"geohash(31b)", ""},
-            {"geohash(60b)", ""}
+            {"geohash(60b)", ""},
+            {"decimal(2,0)", ""},
+            {"decimal(4,0)", ""},
+            {"decimal(8,0)", ""},
+            {"decimal(16,0)", ""},
+            {"decimal(32,0)", ""},
+            {"decimal(64,0)", ""}
     };
 
     @Test
