@@ -616,10 +616,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("path\tsize\n" +
                                         "test_table" + File.separator + "2020-01-01.parquet\t1080\n" +
                                         "test_table" + File.separator + "2020-01-02.parquet\t581\n",
-                                "SELECT path, size from export_files()  order by modified_time");
+                                "SELECT path, size from export_files()  order by path");
                     });
-
-
             testCopyExport(stmt, test);
         });
     }
@@ -654,7 +652,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "select * from read_parquet('" + exportRoot + File.separator + "output_large" + File.separator + "default.parquet') where id = 999");
                         assertSql("path\tsize\n" +
                                         "output_large" + File.separator + "default.parquet\t125945\n",
-                                "SELECT path, size from export_files()  order by modified_time");
+                                "SELECT path, size from export_files()  order by path");
                     });
 
             testCopyExport(stmt, test);
@@ -703,8 +701,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertSql("path\tsize\n" +
                                         "price_1h" + File.separator + "2023-09.parquet\t915\n" +
                                         "price_1h" + File.separator + "2023-11.parquet\t920\n",
-                                "SELECT path, size from export_files()  order by modified_time");
-
+                                "SELECT path, size from export_files()  order by path");
                     });
 
             testCopyExport(stmt, test);
@@ -1034,7 +1031,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "select * from read_parquet('" + exportRoot + File.separator + "❤️🍺" + File.separator + "default.parquet') order by x");
                         assertSql("path\tsize\n" +
                                         "❤️🍺" + File.separator + "default.parquet\t639\n",
-                                "SELECT path, size from export_files()  order by modified_time");
+                                "SELECT path, size from export_files()  order by path");
                     });
 
             testCopyExport(stmt, test);
@@ -1291,7 +1288,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "select * from read_parquet('" + exportRoot + File.separator + "💗❤️" + File.separator + "default.parquet')");
                         assertSql("path\tsize\n" +
                                         "💗❤️" + File.separator + "default.parquet\t543\n",
-                                "SELECT path, size from export_files()  order by modified_time");
+                                "SELECT path, size from export_files()  order by path");
                     });
 
             testCopyExport(stmt, test);

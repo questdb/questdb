@@ -34,6 +34,8 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.io.File;
+
 public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
     private static String exportRoot;
 
@@ -57,16 +59,16 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertSql(
                     "path\tsize\n" +
-                            "analytics/metrics.parquet\t0\n" +
-                            "analytics/models/prediction_model.parquet\t0\n" +
-                            "analytics/results/output.parquet\t0\n" +
-                            "exports/data/nested_table.parquet\t0\n" +
-                            "exports/table1.parquet\t0\n" +
-                            "reports/2023/q1_report.parquet\t0\n" +
-                            "reports/2024/q2_summary.parquet\t0\n" +
-                            "reports/monthly_report.csv\t0\n" +
-                            "temp/archived/old_backup.parquet\t0\n" +
-                            "temp/backup.sql\t0\n" +
+                            "analytics" + File.separator + "metrics.parquet\t0\n" +
+                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t0\n" +
+                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t0\n" +
+                            "exports" + File.separator + "data" + File.separator + "nested_table.parquet\t0\n" +
+                            "exports" + File.separator + "table1.parquet\t0\n" +
+                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t0\n" +
+                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t0\n" +
+                            "reports" + File.separator + "monthly_report.csv\t0\n" +
+                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t0\n" +
+                            "temp" + File.separator + "backup.sql\t0\n" +
                             "users_export.parquet\t0\n" +
                             "users_export2.parquet\t0\n",
                     "select path, size from export_files() order by path"
@@ -125,24 +127,24 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
             createTestFile("users_export2.parquet");
             ff.mkdir(path.of(exportRoot).concat("exports").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("exports").concat("data").$(), 493);
-            createTestFile("exports/table1.parquet");
-            createTestFile("exports/data/nested_table.parquet");
+            createTestFile("exports" + File.separator + "table1.parquet");
+            createTestFile("exports" + File.separator + "data" + File.separator + "nested_table.parquet");
             ff.mkdir(path.of(exportRoot).concat("reports").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("reports").concat("2023").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("reports").concat("2024").$(), 493);
-            createTestFile("reports/monthly_report.csv");
-            createTestFile("reports/2023/q1_report.parquet");
-            createTestFile("reports/2024/q2_summary.parquet");
+            createTestFile("reports" + File.separator + "monthly_report.csv");
+            createTestFile("reports" + File.separator + "2023" + File.separator + "q1_report.parquet");
+            createTestFile("reports" + File.separator + "2024" + File.separator + "q2_summary.parquet");
             ff.mkdir(path.of(exportRoot).concat("temp").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("temp").concat("archived").$(), 493);
-            createTestFile("temp/backup.sql");
-            createTestFile("temp/archived/old_backup.parquet");
+            createTestFile("temp" + File.separator + "backup.sql");
+            createTestFile("temp" + File.separator + "archived" + File.separator + "old_backup.parquet");
             ff.mkdir(path.of(exportRoot).concat("analytics").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("analytics").concat("models").$(), 493);
             ff.mkdir(path.of(exportRoot).concat("analytics").concat("results").$(), 493);
-            createTestFile("analytics/metrics.parquet");
-            createTestFile("analytics/models/prediction_model.parquet");
-            createTestFile("analytics/results/output.parquet");
+            createTestFile("analytics" + File.separator + "metrics.parquet");
+            createTestFile("analytics" + File.separator + "models" + File.separator + "prediction_model.parquet");
+            createTestFile("analytics" + File.separator + "results" + File.separator + "output.parquet");
         }
     }
 }
