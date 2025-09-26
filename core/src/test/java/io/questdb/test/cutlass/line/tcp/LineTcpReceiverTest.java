@@ -222,11 +222,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         final SOCountDownLatch dataConsumed = new SOCountDownLatch(1);
         final AtomicInteger sendFailureCounter = new AtomicInteger();
 
+        final byte awaitedFactoryType = walEnabled ? PoolListener.SRC_WAL_WRITER : PoolListener.SRC_WRITER;
         runInContext(receiver -> {
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
-                    if (Chars.equalsNc(name.getTableName(), tableName)
-                            && name.equals(engine.verifyTableName(tableName))) {
+                if (factoryType == awaitedFactoryType && event == PoolListener.EV_RETURN) {
+                    if (Chars.equalsNc(name.getTableName(), tableName) && name.equals(engine.verifyTableName(tableName))) {
                         dataConsumed.countDown();
                     }
                 }
@@ -246,10 +246,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }).start();
 
-            // this will wait until the writer is returned into the pool
             dataSent.await();
             Assert.assertEquals(0, sendFailureCounter.get());
 
+            // this will wait until the writer is returned into the pool
             dataConsumed.await();
             mayDrainWalQueue();
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
@@ -257,14 +257,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             try (TableReader reader = getReader(tableName)) {
                 final int expectedNumOfRows = numOfRows / 2;
-                // usually the data will be in the table by the time we get here but
-                // if it is not we will wait for it in a loop
-                long maxWaitIters = 60 * Micros.SECOND_MILLIS / 100;
-                for (int i = 0; i < maxWaitIters && reader.getTransientRowCount() < expectedNumOfRows; i++) {
-                    Os.sleep(100);
-                    mayDrainWalQueue();
-                    reader.reload();
-                }
                 Assert.assertEquals(reader.getMetadata().isWalEnabled(), walEnabled);
                 Assert.assertEquals(expectedNumOfRows, reader.getTransientRowCount());
             } catch (Exception e) {
