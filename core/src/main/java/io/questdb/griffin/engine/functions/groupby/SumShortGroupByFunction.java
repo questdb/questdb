@@ -35,31 +35,24 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class SumLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+public class SumShortGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public SumLongGroupByFunction(@NotNull Function arg) {
+    public SumShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
+        final short value = arg.getShort(record);
         mapValue.putLong(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            final long sum = mapValue.getLong(valueIndex);
-            if (sum != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, sum + value);
-            } else {
-                mapValue.putLong(valueIndex, value);
-            }
-        }
+        final short value = arg.getShort(record);
+        mapValue.addLong(valueIndex, value);
     }
 
     @Override

@@ -22,18 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
-/**
- * When joining on a single symbol column, detects when the slave column doesn't have
- * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
- * in that case.
- */
-public interface SymbolShortCircuit {
-    boolean isShortCircuit(Record masterRecord);
+public class AvgShortGroupByFunctionFactory implements FunctionFactory {
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    @Override
+    public String getSignature() {
+        return "avg(E)";
+    }
+
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new AvgShortGroupByFunction(args.getQuick(0));
+    }
 }
