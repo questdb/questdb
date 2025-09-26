@@ -177,19 +177,10 @@ public final class ColumnType {
                 : STRING;
     }
 
-    /**
-     * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
-     * e.g. array type of bind variable.
-     */
     public static int decodeArrayDimensionality(int encodedType) {
-        if (ColumnType.isNull(encodedType)) {
-            return 0;
-        }
-        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
-        if ((encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
-            return -1;
-        }
-        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+        final int dims = ColumnType.decodeWeakArrayDimensionality(encodedType);
+        assert dims > 0;
+        return dims;
     }
 
     /**
@@ -201,6 +192,21 @@ public final class ColumnType {
         }
         assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
         return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
+    }
+
+    /**
+     * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
+     * e.g. array type of bind variable.
+     */
+    public static int decodeWeakArrayDimensionality(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return 0;
+        }
+        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        if ((encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
+            return -1;
+        }
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
     }
 
     public static boolean defaultStringImplementationIsUtf8() {
@@ -654,7 +660,7 @@ public final class ColumnType {
         return isArray(fromType) && isArray(toType)
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
                 && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
-                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
+                && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {

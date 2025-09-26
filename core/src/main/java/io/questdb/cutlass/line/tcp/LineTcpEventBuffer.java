@@ -372,9 +372,9 @@ public class LineTcpEventBuffer {
         address += Integer.BYTES;
         int type = readInt(address);
         address += Integer.BYTES;
-        int dims = ColumnType.decodeArrayDimensionality(type);
+        int dims = ColumnType.decodeWeakArrayDimensionality(type);
         if (dims < 1 || dims > ColumnType.ARRAY_NDIMS_LIMIT) {
-            throw CairoException.critical(0).put("unsupported array dimensionality").put(dims);
+            throw CairoException.critical(0).put("unsupported array dimensionality [dims=").put(dims).put(']');
         }
         borrowedDirectArrayView.of(
                 type,

@@ -97,7 +97,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             argPositionsCopy = new IntList(argPositions);
         }
 
-        final int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        final int nDims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
         if (nDims == -1) {
             throw SqlException.position(argPositions.get(0)).put("array bind variable access is not supported");
         }

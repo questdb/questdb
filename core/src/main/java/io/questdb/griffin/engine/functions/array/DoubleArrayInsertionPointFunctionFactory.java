@@ -56,7 +56,7 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function arrayArg = args.getQuick(0);
-        final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        final int dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
         if (dims > 0 && dims != 1) {
             throw SqlException.position(argPositions.getQuick(0)).put("array is not one-dimensional");
         }
@@ -110,7 +110,7 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(arrayArg.getType()) != 1) {
                 throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
             }
         }

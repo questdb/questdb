@@ -488,8 +488,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (elementTypeA != decodeArrayElementType(typeB)) {
                 return VARCHAR;
             }
-            int dimsA = ColumnType.decodeArrayDimensionality(typeA);
-            int dimsB = ColumnType.decodeArrayDimensionality(typeB);
+            int dimsA = ColumnType.decodeWeakArrayDimensionality(typeA);
+            int dimsB = ColumnType.decodeWeakArrayDimensionality(typeB);
             if (dimsA == -1 || dimsB == -1) {
                 throw SqlException.$(0, "array bind variables are not supported in UNION queries");
             }
@@ -2266,8 +2266,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ARRAY:
                                 assert ColumnType.decodeArrayElementType(fromType) == DOUBLE;
                                 assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
-                                final int fromDims = ColumnType.decodeArrayDimensionality(fromType);
-                                final int toDims = ColumnType.decodeArrayDimensionality(toType);
+                                final int fromDims = ColumnType.decodeWeakArrayDimensionality(fromType);
+                                final int toDims = ColumnType.decodeWeakArrayDimensionality(toType);
                                 if (toDims == -1) {
                                     throw SqlException.$(modelPosition, "cast to array bind variable type is not supported [column=")
                                             .put(castFromMetadata.getColumnName(i)).put(']');
@@ -2289,10 +2289,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case DOUBLE:
                                 assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
-                                final int dims = ColumnType.decodeArrayDimensionality(toType);
+                                final int dims = ColumnType.decodeWeakArrayDimensionality(toType);
                                 if (dims == -1) {
-                                    throw SqlException.$(modelPosition, "cast to array bind variable type is not supported [column=")
-                                            .put(castFromMetadata.getColumnName(i)).put(']');
+                                    throw SqlException
+                                            .$(modelPosition, "cast to array bind variable type is not supported [column=").put(castFromMetadata.getColumnName(i))
+                                            .put(']');
                                 }
                                 castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
                                 break;

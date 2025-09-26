@@ -60,7 +60,7 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
     ) throws SqlException {
         final Function typeFunc = args.getQuick(1);
         final int type = typeFunc.getType();
-        if (ColumnType.decodeArrayDimensionality(type) == -1) {
+        if (ColumnType.decodeWeakArrayDimensionality(type) == -1) {
             throw SqlException.$(argPositions.getQuick(1), "cannot cast double to array with unknown number of dimensions");
         }
         return new Func(args.getQuick(0), type);
@@ -73,7 +73,7 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
         public Func(Function arg, int arrType) {
             super.type = arrType;
             this.arg = arg;
-            this.array = new SingleElementDoubleArray(ColumnType.decodeArrayDimensionality(arrType));
+            this.array = new SingleElementDoubleArray(ColumnType.decodeWeakArrayDimensionality(arrType));
         }
 
         @Override

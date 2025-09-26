@@ -71,7 +71,7 @@ public final class Constants {
                 }
                 return nullConstants.getQuick(typeTag);
             case ColumnType.ARRAY: {
-                int dims = ColumnType.decodeArrayDimensionality(columnType);
+                int dims = ColumnType.decodeWeakArrayDimensionality(columnType);
                 assert dims > 0;
                 if (dims <= nullDoubleArrayConstants.size()) {
                     return nullDoubleArrayConstants.getQuick(dims - 1);
@@ -93,7 +93,7 @@ public final class Constants {
         if (ColumnType.isArray(columnType)) {
             if (ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE) {
                 // dimension is 1-based, list offset is 0-based
-                int dims = ColumnType.decodeArrayDimensionality(columnType);
+                int dims = ColumnType.decodeWeakArrayDimensionality(columnType);
                 assert dims > 0;
                 if (dims <= doubleArrayTypeConstants.size()) {
                     return doubleArrayTypeConstants.get(dims - 1);

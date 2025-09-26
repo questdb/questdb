@@ -58,8 +58,8 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
-        final int leftDims = ColumnType.decodeArrayDimensionality(left.getType());
-        final int rightDims = ColumnType.decodeArrayDimensionality(right.getType());
+        final int leftDims = ColumnType.decodeWeakArrayDimensionality(left.getType());
+        final int rightDims = ColumnType.decodeWeakArrayDimensionality(right.getType());
         if (leftDims > 0 && rightDims > 0 && leftDims != rightDims) {
             left.close();
             right.close();

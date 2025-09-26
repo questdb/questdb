@@ -30,6 +30,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,7 +64,8 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0)
+                argPositions.getQuick(0),
+                position
         );
     }
 
@@ -74,19 +76,22 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
         private final DerivedArrayView leftArgView = new DerivedArrayView();
         private final Function rightArg;
         private final DerivedArrayView rightArgView = new DerivedArrayView();
+        private final int position;
 
         public Func(
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos
+                int leftArgPos,
+                int position
         ) {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
             this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            this.position = position;
+            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
             if (dimsLeft > 0 && dimsRight > 0) {
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
             } else {
@@ -157,9 +162,22 @@ public class DoubleArrayAddFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+        }
+
+        @Override
+        public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+            if (
+                    ColumnType.isArray(type)
+                            && ColumnType.decodeArrayElementType(type) == ColumnType.decodeArrayElementType(this.type)
+                            && !ColumnType.isArrayWithWeakDims(type)
+            ) {
+                this.type = type;
+            } else {
+                throw SqlException.$(position, "invalid array type: ").put(ColumnType.nameOf(type));
+            }
         }
 
         @Override

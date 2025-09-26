@@ -56,8 +56,6 @@ public class BorrowedArray extends MutableArray implements Mutable {
         short elemType = ColumnType.decodeArrayElementType(columnType);
         final int elemSize = ColumnType.sizeOf(elemType);
         final int dims = ColumnType.decodeArrayDimensionality(columnType);
-        assert dims > 0 && dims <= ColumnType.ARRAY_NDIMS_LIMIT;
-
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
         final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
@@ -72,7 +70,7 @@ public class BorrowedArray extends MutableArray implements Mutable {
         final long dataEntryPtr = dataAddr + offset;
 
         loadShape(dataEntryPtr, dims);
-        assert (dataEntryPtr + dims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
+        assert (dataEntryPtr + (long) dims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
         // Get the values ptr / len from the data.
@@ -89,9 +87,7 @@ public class BorrowedArray extends MutableArray implements Mutable {
         assert ColumnType.isArray(columnType) : "columnType is not Array";
         short elemType = ColumnType.decodeArrayElementType(columnType);
         setType(columnType);
-        int dims = ColumnType.decodeArrayDimensionality(columnType);
-        assert dims > 0;
-        loadShape(shapeAddr, dims);
+        loadShape(shapeAddr, ColumnType.decodeArrayDimensionality(columnType));
         resetToDefaultStrides();
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
         if (!isEmpty()) {

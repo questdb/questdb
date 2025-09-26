@@ -105,7 +105,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // non-array arguments aren't allowed, because they must all come together to form
         // a new array with one more dimension.
         commonElemType = ColumnType.decodeArrayElementType(type0);
-        final int nestedDims = ColumnType.decodeArrayDimensionality(arg0.getType());
+        final int nestedDims = ColumnType.decodeWeakArrayDimensionality(arg0.getType());
         if (nestedDims == -1) {
             throw SqlException.$(arg0Pos, "array bind variable argument is not supported");
         }
@@ -116,7 +116,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             if (!ColumnType.isArray(typeI)) {
                 throw SqlException.$(argPosI, "mixed array and non-array elements");
             }
-            int dims = ColumnType.decodeArrayDimensionality(typeI);
+            int dims = ColumnType.decodeWeakArrayDimensionality(typeI);
             if (dims == -1) {
                 throw SqlException.$(argPosI, "array bind variable argument is not supported");
             }

@@ -64,8 +64,8 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         assert ColumnType.isArray(toType);
         assert ColumnType.decodeArrayElementType(fromType) == ColumnType.decodeArrayElementType(toType);
 
-        final int dimsTo = ColumnType.decodeArrayDimensionality(toType);
-        final int dimsFrom = ColumnType.decodeArrayDimensionality(fromType);
+        final int dimsTo = ColumnType.decodeWeakArrayDimensionality(toType);
+        final int dimsFrom = ColumnType.decodeWeakArrayDimensionality(fromType);
         if (dimsTo == -1) {
             throw SqlException.$(position, "cannot cast array to array with unknown number of dimensions");
         }
@@ -75,9 +75,9 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         final int dimsToAdd = dimsTo - dimsFrom;
         if (dimsToAdd < 0) {
             throw SqlException.$(position, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(fromType))
-                    .put(" (").put(ColumnType.decodeArrayDimensionality(fromType)).put("D)")
+                    .put(" (").put(ColumnType.decodeWeakArrayDimensionality(fromType)).put("D)")
                     .put(", to=").put(ColumnType.nameOf(toType))
-                    .put(" (").put(ColumnType.decodeArrayDimensionality(toType)).put("D)")
+                    .put(" (").put(ColumnType.decodeWeakArrayDimensionality(toType)).put("D)")
                     .put("]. Use array flattening operation (e.g. 'flatten(arr)') instead");
         }
         if (dimsToAdd == 0) {
@@ -163,9 +163,9 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             dimsToAdd = dimsTo - dimsFrom;
             if (dimsToAdd < 0) {
                 throw SqlException.$(argPos, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(arg.getType()))
-                        .put(" (").put(ColumnType.decodeArrayDimensionality(arg.getType())).put("D)")
+                        .put(" (").put(ColumnType.decodeWeakArrayDimensionality(arg.getType())).put("D)")
                         .put(", to=").put(ColumnType.nameOf(type))
-                        .put(" (").put(ColumnType.decodeArrayDimensionality(type)).put("D)")
+                        .put(" (").put(ColumnType.decodeWeakArrayDimensionality(type)).put("D)")
                         .put("]. Use array flattening operation (e.g. 'flatten(arr)') instead");
             }
         }

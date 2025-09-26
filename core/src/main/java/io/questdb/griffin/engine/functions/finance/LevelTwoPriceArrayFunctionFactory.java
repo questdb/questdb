@@ -59,7 +59,7 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         try {
             for (int i = 1; i < 3; i++) {
-                final int dims = ColumnType.decodeArrayDimensionality(args.getQuick(i).getType());
+                final int dims = ColumnType.decodeWeakArrayDimensionality(args.getQuick(i).getType());
                 if (dims > 0 && dims != 1) {
                     throw SqlException.$(argPositions.getQuick(i), "not a one-dimensional array");
                 }
@@ -154,10 +154,10 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(sizesArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(sizesArg.getType()) != 1) {
                 throw SqlException.$(sizesArgPos, "not a one-dimensional array");
             }
-            if (ColumnType.decodeArrayDimensionality(pricesArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(pricesArg.getType()) != 1) {
                 throw SqlException.$(pricesArgPos, "not a one-dimensional array");
             }
         }

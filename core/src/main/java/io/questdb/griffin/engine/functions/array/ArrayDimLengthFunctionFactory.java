@@ -98,7 +98,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
 
-            final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            final int dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
             if (dim > dims) {
                 throw SqlException.position(dimArgPos)
                         .put("array dimension out of bounds [dim=")
@@ -156,7 +156,7 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            this.dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            this.dims = ColumnType.decodeWeakArrayDimensionality(arrayArg.getType());
         }
 
         @Override
