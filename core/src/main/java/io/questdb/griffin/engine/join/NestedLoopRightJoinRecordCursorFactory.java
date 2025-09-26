@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -114,6 +115,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
     private static class NestedLoopRightRecordCursor extends AbstractJoinCursor {
         private final Function filter;
         private final RightOuterJoinRecord record;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMatch;
         private boolean isSlaveHasNextPending;
         private boolean slaveHasNext;
@@ -133,6 +135,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
         @Override
         public boolean hasNext() {
             while (true) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (isSlaveHasNextPending) {
                     slaveHasNext = slaveCursor.hasNext();
                     isSlaveHasNextPending = false;
@@ -143,6 +146,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
                 }
 
                 while (masterCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     if (filter.getBool(record)) {
                         isMatch = true;
                         return true;
@@ -188,6 +192,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isSlaveHasNextPending = true;
+            circuitBreaker = executionContext.getCircuitBreaker();
         }
     }
 }

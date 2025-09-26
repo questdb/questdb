@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -69,6 +70,8 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.cursor = new NestedLoopFullRecordCursor(columnSplit, filter, matchIdsMap, masterNullRecord, slaveNullRecord);
         } catch (Throwable e) {
             Misc.free(matchIdsMap);
+            close();
+            throw e;
         }
     }
 
@@ -123,12 +126,14 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(filter);
+        Misc.free(cursor);
     }
 
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
         private final Function filter;
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMasterHasNextPending;
         private boolean isMatch;
         private boolean isOpen;
@@ -161,6 +166,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public boolean hasNext() {
             while (true) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();
                     isMasterHasNextPending = false;
@@ -168,6 +174,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
                 if (!masterHasNext) {
                     while (slaveCursor.hasNext()) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
                         MapKey keys = matchIdsMap.withKey();
                         keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
                         if (keys.findValue() == null) {
@@ -179,6 +186,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 }
 
                 while (slaveCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     if (filter.getBool(record)) {
                         MapKey keys = matchIdsMap.withKey();
                         keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
@@ -233,6 +241,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                 isOpen = true;
                 matchIdsMap.reopen();
             }
+            circuitBreaker = executionContext.getCircuitBreaker();
         }
     }
 }

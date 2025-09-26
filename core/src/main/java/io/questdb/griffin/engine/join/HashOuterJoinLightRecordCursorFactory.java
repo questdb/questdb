@@ -119,7 +119,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             slaveChain
                     );
                     break;
-
+                default:
+                    assert false : "invalid join type " + joinType;
             }
             this.joinKeyMap = null;
             this.slaveChain = null;
@@ -235,6 +236,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 mapCursor = joinKeyMap.getCursor();
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -260,6 +262,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             hasMaster(false);
             hasSlave(true);
             while (mapCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(1)) { // if not matched
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));
@@ -353,11 +356,11 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 isMapBuilt = true;
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
-
             if (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
@@ -419,12 +422,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 mapCursor = joinKeyMap.getCursor();
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
             while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();

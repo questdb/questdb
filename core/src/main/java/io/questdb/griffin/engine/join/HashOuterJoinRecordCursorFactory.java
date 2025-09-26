@@ -122,6 +122,8 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                             slaveChain
                     );
                     break;
+                default:
+                    assert false : "invalid join type " + joinType;
             }
             this.joinKeyMap = null;
             this.slaveChain = null;
@@ -206,6 +208,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 mapCursor = joinKeyMap.getCursor();
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
             }
@@ -231,6 +234,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             record.hasMaster(false);
             record.hasSlave(true);
             while (mapCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) {
                     slaveChain.of(value.getInt(0));
@@ -286,6 +290,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 isMapBuilt = true;
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
             }
@@ -357,11 +362,13 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 mapCursor = joinKeyMap.getCursor();
             }
 
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
             }
 
             while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
@@ -376,6 +383,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(3)) {
                     slaveChain.of(value.getInt(0));

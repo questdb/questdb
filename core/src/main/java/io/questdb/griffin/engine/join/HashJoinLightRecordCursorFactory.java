@@ -244,6 +244,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             }
 
             while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();

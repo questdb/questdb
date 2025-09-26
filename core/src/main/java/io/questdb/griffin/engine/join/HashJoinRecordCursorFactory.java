@@ -197,6 +197,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
 
             while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
