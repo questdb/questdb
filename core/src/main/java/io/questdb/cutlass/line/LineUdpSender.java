@@ -94,9 +94,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        writeFieldName(name).put(value);
-        putAsciiInternal('d');
-        return this;
+        return field(name, value);
     }
 
     @Override

@@ -507,7 +507,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         }
     }
 
-
     protected AbstractLineSender writeFieldName(CharSequence name) {
         validateNotClosed();
         validateColumnName(name);
