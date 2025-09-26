@@ -7480,7 +7480,6 @@ public class SqlOptimiser implements Mutable {
         joinBarriers = new IntHashSet();
         joinBarriers.add(QueryModel.JOIN_LEFT_OUTER);
         joinBarriers.add(QueryModel.JOIN_RIGHT_OUTER);
-        // todo full outer join do not support reorder for now
         joinBarriers.add(QueryModel.JOIN_FULL_OUTER);
         joinBarriers.add(QueryModel.JOIN_CROSS_LEFT);
         joinBarriers.add(QueryModel.JOIN_CROSS_RIGHT);
