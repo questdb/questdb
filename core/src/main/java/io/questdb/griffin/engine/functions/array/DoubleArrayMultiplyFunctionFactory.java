@@ -63,7 +63,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0)
+                argPositions.getQuick(0),
+                position
         );
     }
 
@@ -79,7 +80,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos
+                int leftArgPos,
+                int position
         ) {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
@@ -89,9 +91,11 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
             if (dimsLeft > 0 && dimsRight > 0) {
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+                arrayOut.setType(type);
             } else {
                 this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
             }
+            this.position = position;
         }
 
         @Override
@@ -108,7 +112,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            arrayOut.setType(type);
+
             if (left.shapeDiffers(right)) {
                 DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
                 if (left.shapeDiffers(arrayOut)) {
@@ -159,7 +163,14 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             // so that the number of dimensions is only available at init() time
             final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
             final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+
+            if (ColumnType.isArrayWithWeakDims(this.type)) {
+                this.type = type;
+            } else if (type != this.type) {
+                throw SqlException.inconvertibleTypes(position, type, this.type);
+            }
+            arrayOut.setType(type);
         }
 
         @Override

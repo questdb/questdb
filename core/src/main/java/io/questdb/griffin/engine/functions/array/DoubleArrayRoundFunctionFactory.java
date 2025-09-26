@@ -65,24 +65,25 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             int scaleValue = scale.getInt(null);
             if (scaleValue > -1) {
                 if (scaleValue + 2 < pow10max) {
-                    return new DoubleArrayRoundPositiveScaleFunction(arg, scaleValue, configuration);
+                    return new PositiveScaleFunc(configuration, arg, scaleValue, position);
                 }
-                return new DoubleArrayRoundDegenerateScaleFunction(arg, configuration);
+                return new DegenerateScaleFunc(configuration, arg, position);
             }
         }
-        return new DoubleArrayRoundVarScaleFunction(arg, scale, configuration);
+        return new VarScaleFunc(configuration, arg, scale, position);
     }
 
-    private static class DoubleArrayRoundDegenerateScaleFunction extends ArrayFunction implements UnaryFunction {
-        private final Function arrayArg;
+    private static class DegenerateScaleFunc extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
+        private final Function arrayArg;
         private final String name;
 
-        public DoubleArrayRoundDegenerateScaleFunction(Function arrayArg, CairoConfiguration configuration) {
+        public DegenerateScaleFunc(CairoConfiguration configuration, Function arrayArg, int position) {
             this.name = "round";
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -127,18 +128,19 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundPositiveScaleFunction extends ArrayFunction implements UnaryFunction {
-        private final Function arrayArg;
-        private final int scale;
+    private static class PositiveScaleFunc extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
+        private final Function arrayArg;
         private final String name;
+        private final int scale;
 
-        public DoubleArrayRoundPositiveScaleFunction(Function arrayArg, int scale, CairoConfiguration configuration) {
+        public PositiveScaleFunc(CairoConfiguration configuration, Function arrayArg, int scale, int position) {
             this.name = "round";
             this.arrayArg = arrayArg;
             this.scale = scale;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -212,18 +214,19 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundVarScaleFunction extends ArrayFunction implements BinaryFunction {
+    private static class VarScaleFunc extends ArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final String name;
         private final Function scalarArg;
 
-        public DoubleArrayRoundVarScaleFunction(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+        public VarScaleFunc(CairoConfiguration configuration, Function arrayArg, Function scalarArg, int position) {
             this.name = "round";
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override

@@ -34,10 +34,11 @@ public final class ArrayCaseFunction extends ArrayFunction implements CaseFuncti
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public ArrayCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args) {
+    public ArrayCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args, int position) {
         super.type = type;
         this.picker = picker;
         this.args = args;
+        this.position = position;
     }
 
     @Override

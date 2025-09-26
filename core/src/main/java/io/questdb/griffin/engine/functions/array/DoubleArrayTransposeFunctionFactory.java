@@ -54,16 +54,17 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), position);
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arrayArg;
         private final DerivedArrayView borrowedView = new DerivedArrayView();
 
-        public Func(Function arrayArg) {
+        public Func(Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
+            this.position = position;
         }
 
         @Override

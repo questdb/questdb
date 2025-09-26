@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -34,7 +35,21 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class ArrayFunction implements Function {
+    protected int position;
     protected int type = ColumnType.UNDEFINED;
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        if (
+                ColumnType.isArray(type)
+                        && ColumnType.decodeArrayElementType(type) == ColumnType.decodeArrayElementType(this.type)
+                        && !ColumnType.isArrayWithWeakDims(type)
+        ) {
+            this.type = type;
+        } else {
+            throw SqlException.$(position, "invalid array type: ").put(ColumnType.nameOf(type));
+        }
+    }
 
     @Override
     public BinarySequence getBin(Record rec) {

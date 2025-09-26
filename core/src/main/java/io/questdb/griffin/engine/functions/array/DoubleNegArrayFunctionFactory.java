@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleNegArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
@@ -48,18 +49,25 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), position);
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
 
-        public Func(Function arrayArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.array = new DirectArray(configuration);
             this.type = arrayArg.getType();
+            this.position = position;
         }
 
         @Override

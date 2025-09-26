@@ -133,7 +133,7 @@ public class CaseCommon {
             }
         }
         if (ColumnType.isArray(returnType)) {
-            return new ArrayCaseFunction(returnType, picker, args);
+            return new ArrayCaseFunction(returnType, picker, args, position);
         }
 
         return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args, returnType);

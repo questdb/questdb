@@ -70,7 +70,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             throw SqlException.$(position, "cannot cast array to array with unknown number of dimensions");
         }
         if (dimsFrom == -1) {
-            return new WeakDimsFunc(fromFunc, argPositions.getQuick(0), toType);
+            return new WeakDimsFunc(fromFunc, toType, argPositions.getQuick(0));
         }
         final int dimsToAdd = dimsTo - dimsFrom;
         if (dimsToAdd < 0) {
@@ -84,7 +84,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             // nothing to do
             return fromFunc;
         }
-        return new Func(fromFunc, toType, dimsToAdd);
+        return new Func(fromFunc, toType, dimsToAdd, position);
     }
 
     public static final class Func extends ArrayFunction implements UnaryFunction {
@@ -92,11 +92,12 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         private final DerivedArrayView derivedArray = new DerivedArrayView();
         private final int dimsToAdd;
 
-        public Func(Function arg, int toType, int dimsToAdd) {
+        public Func(Function arg, int toType, int dimsToAdd, int position) {
             assert dimsToAdd > 0;
             this.type = toType;
             this.arg = arg;
             this.dimsToAdd = dimsToAdd;
+            this.position = position;
         }
 
         @Override
@@ -126,14 +127,13 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
 
     public static final class WeakDimsFunc extends ArrayFunction implements UnaryFunction {
         private final Function arg;
-        private final int argPos;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
         private int dimsToAdd;
 
-        public WeakDimsFunc(Function arg, int argPos, int toType) {
+        public WeakDimsFunc(Function arg, int toType, int position) {
             this.type = toType;
             this.arg = arg;
-            this.argPos = argPos;
+            this.position = position;
         }
 
         @Override
@@ -162,7 +162,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             final int dimsTo = ColumnType.decodeArrayElementType(type);
             dimsToAdd = dimsTo - dimsFrom;
             if (dimsToAdd < 0) {
-                throw SqlException.$(argPos, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(arg.getType()))
+                throw SqlException.$(position, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(arg.getType()))
                         .put(" (").put(ColumnType.decodeWeakArrayDimensionality(arg.getType())).put("D)")
                         .put(", to=").put(ColumnType.nameOf(type))
                         .put(" (").put(ColumnType.decodeWeakArrayDimensionality(type)).put("D)")

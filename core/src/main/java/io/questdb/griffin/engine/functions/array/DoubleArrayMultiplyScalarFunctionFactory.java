@@ -56,7 +56,7 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 
     @Override
@@ -69,11 +69,12 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         private final Function arrayArg;
         private final Function scalarArg;
 
-        public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, Function scalarArg, int position) {
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override

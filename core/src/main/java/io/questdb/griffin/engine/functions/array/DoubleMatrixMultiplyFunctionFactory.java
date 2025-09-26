@@ -65,7 +65,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 args.getQuick(0),
                 args.getQuick(1),
                 argPositions.getQuick(0),
-                argPositions.getQuick(1)
+                argPositions.getQuick(1),
+                position
         );
     }
 
@@ -83,7 +84,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 Function leftArg,
                 Function rightArg,
                 int leftArgPos,
-                int rightArgPos
+                int rightArgPos,
+                int position
         ) {
             try {
                 this.leftArg = leftArg;
@@ -92,6 +94,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
                 this.leftArgPos = leftArgPos;
                 this.rightArgPos = rightArgPos;
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+                arrayOut.setType(type);
+                this.position = position;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -136,7 +140,7 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
             int leftStride1 = left.getStride(1);
             int rightStride0 = right.getStride(0);
             int rightStride1 = right.getStride(1);
-            arrayOut.setType(type);
+
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
             arrayOut.applyShape(leftArgPos);

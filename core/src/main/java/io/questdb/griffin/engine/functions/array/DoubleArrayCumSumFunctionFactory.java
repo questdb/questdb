@@ -41,6 +41,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_cum_sum";
@@ -51,8 +52,14 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), position);
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
@@ -62,10 +69,12 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         private double currentSum;
         private MemoryA memory;
 
-        public Func(Function arrayArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
             this.array = new DirectArray(configuration);
+            array.setType(type);
+            this.position = position;
         }
 
         @Override
@@ -89,7 +98,6 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
 
             currentSum = Double.NaN;
             compensation = 0d;
-            array.setType(getType());
             array.setDimLen(0, arr.getCardinality());
             array.applyShape();
             memory = array.startMemoryA();

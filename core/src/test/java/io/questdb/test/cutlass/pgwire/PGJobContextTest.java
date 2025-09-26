@@ -1350,6 +1350,131 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        // TODO(puzpuzpuz): support for simple mode
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    Array arr1 = connection.createArrayOf("float8", new Double[][]{{2d, 4d, 6d}, {8d, 10d, 12d}});
+                    stmt.setArray(1, arr1);
+                    Array arr2 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{3.0,6.0,9.0},{12.0,15.0,18.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{2.0,8.0,18.0},{32.0,50.0,72.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    Array arr1 = connection.createArrayOf("float8", new Double[][]{{2d, 4d, 6d}, {8d, 10d, 12d}});
+                    stmt.setArray(1, arr1);
+                    Array arr2 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindingVarsWrongDimensions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    Array arr1 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+                    stmt.setArray(1, arr1);
+                    Array arr2 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    Array arr1 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+                    stmt.setArray(1, arr1);
+                    Array arr2 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     /*
 import asyncio
 import asyncpg
@@ -2012,6 +2137,28 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
     }
 
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
+
     @Test
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2040,6 +2187,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableInFilter() throws Exception {
@@ -2070,28 +2239,6 @@ if __name__ == "__main__":
             }
         });
     }
-
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
 
     @Test
     public void testBindVariableInVarArg() throws Exception {
@@ -2169,28 +2316,6 @@ if __name__ == "__main__":
             }
         });
     }
-
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
 
     @Test
     public void testBindVariableIsNotNull() throws Exception {
@@ -5961,36 +6086,6 @@ nodejs code:
                     assertResultSet(
                             "al[ARRAY]\n" +
                                     "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testDotProductBindingVars() throws Exception {
-        skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (? + ?)")) {
-                Array arr1 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
-                stmt.setArray(1, arr1);
-                Array arr2 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
-                stmt.setArray(2, arr2);
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            "al[ARRAY]\n" +
-                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}}\n",
                             sink,
                             rs
                     );

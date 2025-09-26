@@ -57,8 +57,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        return new Func(arrayArg);
+        return new Func(args.getQuick(0), position);
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
@@ -66,10 +65,11 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         private final DerivedArrayView derivedView = new DerivedArrayView();
         private DirectArray outArray = new DirectArray();
 
-        public Func(Function arrayArg) {
+        public Func(Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
             outArray.setType(type);
+            this.position = position;
         }
 
         @Override

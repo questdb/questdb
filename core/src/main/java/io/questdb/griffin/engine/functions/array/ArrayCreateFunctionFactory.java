@@ -98,7 +98,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 Function argI = args.getQuick(i);
                 array.putFunction(i, argI);
             }
-            return new FunctionArrayFunction(array);
+            return new FunctionArrayFunction(array, position);
         }
 
         // First argument is an array, validate that all of them arrays. Mixed array and
@@ -155,7 +155,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
                 }
             }
-            return new FunctionArrayFunction(array);
+            return new FunctionArrayFunction(array, position);
         }
 
         // Arguments aren't all FunctionArrayFunctions, treat them generically as some kind of array functions.
@@ -164,7 +164,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 commonElemType,
-                nestedDims
+                nestedDims,
+                position
         );
     }
 
@@ -183,10 +184,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
                 int commonElemType,
-                int nestedNDims
+                int nestedNDims,
+                int position
         ) {
             try {
                 this.type = ColumnType.encodeArrayType(ColumnType.tagOf(commonElemType), nestedNDims + 1);
+                this.position = position;
                 this.args = args;
                 this.argPositions = argPositions;
                 this.arrayOut = new DirectArray(configuration);
@@ -268,9 +271,10 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     private static class FunctionArrayFunction extends ArrayFunction implements MultiArgFunction {
         private final FunctionArray array;
 
-        public FunctionArrayFunction(FunctionArray array) {
+        public FunctionArrayFunction(FunctionArray array, int position) {
             this.array = array;
             this.type = array.getType();
+            this.position = position;
         }
 
         @Override

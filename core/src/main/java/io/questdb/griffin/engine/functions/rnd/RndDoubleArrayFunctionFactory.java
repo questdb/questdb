@@ -130,7 +130,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
     public static class RndDoubleArrayFixDimLenFunction extends ArrayFunction {
         private final IntList dimLens;
-        private final int functionPosition;
         private final int nDims;
         private final int nanRate;
         private DirectArray array;
@@ -141,7 +140,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 int nDims,
                 int nanRate,
                 IntList dimLens,
-                int functionPosition
+                int position
         ) {
             try {
                 this.nanRate = nanRate;
@@ -150,7 +149,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
                 this.array.setType(type);
                 this.dimLens = dimLens;
-                this.functionPosition = functionPosition;
+                this.position = position;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -164,7 +163,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            rnd.nextDoubleArray(nDims, array, nanRate, dimLens, functionPosition);
+            rnd.nextDoubleArray(nDims, array, nanRate, dimLens, position);
             return array;
         }
 
@@ -201,14 +200,13 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     }
 
     public static class RndDoubleArrayRndDimLenFunction extends ArrayFunction {
-        private final int functionPosition;
         private final int maxDimLen;
         private final int nDims;
         private final int nanRate;
         private DirectArray array;
         private Rnd rnd;
 
-        public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
+        public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int position) {
             try {
                 this.nanRate = nanRate;
                 this.nDims = nDims;
@@ -216,7 +214,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
                 this.array.setType(type);
                 this.maxDimLen = maxDimLen;
-                this.functionPosition = functionPosition;
+                this.position = position;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -230,7 +228,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public ArrayView getArray(Record rec) {
-            rnd.nextDoubleArray(nDims, array, nanRate, maxDimLen, functionPosition);
+            rnd.nextDoubleArray(nDims, array, nanRate, maxDimLen, position);
             return array;
         }
 

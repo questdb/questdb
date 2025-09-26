@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
@@ -51,12 +52,12 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 
     private static class Func extends ArrayFunction implements BinaryFunction {
@@ -65,12 +66,13 @@ public class DoubleScalarSubtractArrayFunctionFactory implements FunctionFactory
         private final String name;
         private final Function scalarArg;
 
-        public Func(Function scalarArg, Function arrayArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function scalarArg, Function arrayArg, int position) {
             this.name = OPERATOR_NAME;
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override

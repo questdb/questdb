@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "shift";
@@ -48,8 +49,14 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), args.getQuick(2), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), args.getQuick(2), position);
     }
 
     static void applyRecursive(ArrayView view, int dim, int flatIndex, int offset, MemoryA memory, double defaultValue) {
@@ -114,12 +121,13 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
         private final Function defaultValueFunction;
         private final Function shiftFunction;
 
-        public Func(Function arrayArg, Function shiftFunction, Function defaultValueFunction, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, Function shiftFunction, Function defaultValueFunction, int position) {
             this.arrayArg = arrayArg;
             this.shiftFunction = shiftFunction;
             this.defaultValueFunction = defaultValueFunction;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override

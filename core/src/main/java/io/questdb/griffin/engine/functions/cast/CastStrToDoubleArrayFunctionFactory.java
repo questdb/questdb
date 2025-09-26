@@ -61,7 +61,7 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         if (ColumnType.decodeWeakArrayDimensionality(type) == -1) {
             throw SqlException.$(argPositions.getQuick(1), "cannot cast string to array with unknown number of dimensions");
         }
-        return new Func(args.getQuick(0), type);
+        return new Func(args.getQuick(0), type, position);
     }
 
     public static class Func extends ArrayFunction implements UnaryFunction {
@@ -69,11 +69,12 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         private final int dims;
         private final DoubleArrayParser parser = new DoubleArrayParser();
 
-        public Func(Function arg, int type) {
+        public Func(Function arg, int type, int position) {
             this.type = type;
             this.dims = ColumnType.decodeWeakArrayDimensionality(type);
             assert dims > 0;
             this.arg = arg;
+            this.position = position;
         }
 
         @Override

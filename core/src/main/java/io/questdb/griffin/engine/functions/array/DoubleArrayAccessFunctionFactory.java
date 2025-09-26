@@ -139,7 +139,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
         }
-        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy, position);
     }
 
     private static int flatIndexDelta(ArrayView array, int dim, int pgIndexAtDim) {
@@ -322,11 +322,12 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
 
-        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
+        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions, int position) {
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+            this.position = position;
         }
 
         @Override
