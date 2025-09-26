@@ -183,7 +183,7 @@ public class ImportsRouter implements HttpRequestHandler {
 
             if (!_overwrite && state.ff.exists(state.path.$())) {
                 // error 409 conflict
-                state.errorMsg.put("file already exists and overwriting is disabled [file=").put(state.path).put(", overwrite=").put(false).put(']');
+                state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.path).put(", overwrite=").put(false).put(']');
                 state.errorCode = 409;
                 sendError(context);
                 assert false;
@@ -269,7 +269,16 @@ public class ImportsRouter implements HttpRequestHandler {
             response.put("{\"errors\":[{")
                     .put("\"status\":\"").put(state.errorCode)
                     .put("\",\"detail\":\"").put(state.errorMsg)
-                    .put("\"}]}");
+                    .put("\"");
+
+            if (state.errorCode == 409) {
+                response.put(",\"meta\":{\"filename\":\"")
+                        .put(Utf8s.stringFromUtf8Bytes(state.path.lo() + importRoot.length() + 1, state.path.hi()))
+                        .put("\"}");
+            }
+
+            response.put("}]}");
+
         }
 
         private void encodeSuccessJson(HttpChunkedResponse response, State state) {
