@@ -183,6 +183,10 @@ public final class ColumnType {
                 : ((typeA == LONG) && (isTimestamp(typeB))) ? typeB
                 : (isTimestamp(typeA) && (isTimestamp(typeB))) ? getHigherPrecisionTimestampType(typeA, typeB)
 
+                // cast long and date to date in unions instead of longs.
+                : ((typeA == LONG) && (typeB == DATE)) ? DATE
+                : ((typeA == DATE) && (typeB == LONG)) ? DATE
+
                 // Varchars take priority over strings, but strings over most types.
                 : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
                 : ((typeA == STRING) || (typeB == STRING)) ? STRING
@@ -386,6 +390,7 @@ public final class ColumnType {
                 // Same with bytes and booleans
                 || (fromType == BYTE && toType == BOOLEAN)
                 || (fromType == TIMESTAMP && toType == LONG)
+                || (fromType == DATE && toType == LONG)
                 || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
     }
 
@@ -709,8 +714,10 @@ public final class ColumnType {
     private static boolean isNarrowingCast(int fromType, int toType) {
         final boolean isTargetDecimal = isDecimal(toType);
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
-                || (fromType == LONG && ((toType >= BYTE && toType <= INT)))
+                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
+                || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == DATE && toType >= BYTE && toType <= INT)
+                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
