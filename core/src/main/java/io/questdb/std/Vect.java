@@ -386,6 +386,10 @@ public final class Vect {
 
     public static native void setMemoryLong(long pData, long value, long count);
 
+    public static native void setMemoryLong128(long pData, long long0, long long1, long count);
+
+    public static native void setMemoryLong256(long pData, long long0, long long1, long long2, long long3, long count);
+
     public static native void setMemoryShort(long pData, short value, long count);
 
     public static native void setStringColumnNullRefs(long address, long initialOffset, long count);

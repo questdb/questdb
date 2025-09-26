@@ -27,6 +27,7 @@ package io.questdb.cutlass.line;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.std.Decimal256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -170,6 +171,12 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     public AbstractLineSender field(CharSequence name, boolean value) {
         writeFieldName(name).putAsciiInternal(value ? 't' : 'f');
+        return this;
+    }
+
+    public AbstractLineSender field(CharSequence name, Decimal256 value) {
+        writeFieldName(name).put(value);
+        putAsciiInternal('d');
         return this;
     }
 

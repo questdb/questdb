@@ -49,6 +49,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -64,6 +65,9 @@ import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
@@ -122,6 +126,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
+    private static short NUMERIC_NEG = 0x4000;
+    private static short NUMERIC_POS = 0x0000;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -201,11 +207,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean stateParse;
     private boolean stateParseExecuted = false;
     private int stateSync = 0;
-    private TypesAndInsert tai = null;
-    private TypesAndSelect tas = null;
     // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
     // PGPipelineEntry instances are pooled and reused, so we need to make sure
     // that all state is cleared before returning the instance to the pool
+    private TypesAndInsert tai = null;
+    private TypesAndSelect tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
@@ -1772,6 +1778,82 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
+        final int precision = ColumnType.getDecimalPrecision(type);
+        final int scale = ColumnType.getDecimalScale(type);
+
+        short sign = NUMERIC_POS;
+        if (decimal256.isNegative()) {
+            sign = NUMERIC_NEG;
+            decimal256.negate();
+        }
+
+        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
+        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
+        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
+        // be encoded as an array of 2 shorts: [12, 3400].
+
+        long startAddress = utf8Sink.getSendBufferPtr();
+        utf8Sink.putNetworkInt(4 * Short.BYTES); // type size, defaults to a zero value, we will came back later to rewrite it
+
+        utf8Sink.putNetworkShort((short) 0); // ndigits, same
+        utf8Sink.putNetworkShort((short) 0); // weight, same
+        utf8Sink.putNetworkShort(sign); // sign
+        utf8Sink.putNetworkShort((short) scale); // dscale
+
+        if (decimal256.isZero()) {
+            return;
+        }
+
+        boolean writing = false;
+        int digit = 0;
+        int weight = 0;
+        int pow = precision;
+
+        // We start with the whole part of the decimal
+        final int wholePartPrecision = precision - scale;
+        for (int i = wholePartPrecision - 1; i >= 0; i--) {
+            final int mul = decimal256.getDigitAtPowerOfTen(--pow);
+            digit = digit * 10 + mul;
+            decimal256.subtractPowerOfTenMultiple(pow, mul);
+            if (i % 4 == 0 && (writing || digit != 0)) {
+                if (!writing) {
+                    writing = true;
+                    weight = (i + 3) / 4;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+                digit = 0;
+            }
+        }
+
+        // And then the decimal part
+        for (int i = 0, n = (scale + 3) / 4; i < n; i++) {
+            digit = 0;
+            for (int j = 0; j < 4; j++) {
+                final int mul = pow > 0 ? decimal256.getDigitAtPowerOfTen(--pow) : 0;
+                digit = digit * 10 + mul;
+                decimal256.subtractPowerOfTenMultiple(pow, mul);
+            }
+            if (writing || digit != 0) {
+                if (!writing) {
+                    writing = true;
+                    weight = -i - 1;
+                }
+                utf8Sink.putNetworkShort((short) digit);
+            }
+        }
+
+        // We now need to fix previous values
+        long endAddress = utf8Sink.getSendBufferPtr();
+        final int typeLen = (int) (endAddress - startAddress - Integer.BYTES);
+        // Patching the whole type len
+        utf8Sink.putNetworkInt(startAddress, typeLen);
+        // Patching the number of digits (remove the static attributes first)
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES, (short) ((typeLen - 4 * Short.BYTES) / Short.BYTES));
+        // Patching the weight
+        utf8Sink.putNetworkShort(startAddress + Integer.BYTES + Short.BYTES, (short) weight);
+    }
+
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
         if (Numbers.isNull(value)) {
@@ -1939,6 +2021,75 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             utf8Sink.setNullValue();
         }
+    }
+
+    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long hi = rec.getDecimal128Hi(col);
+        long lo = rec.getDecimal128Lo(col);
+        if (Decimal128.isNull(hi, lo)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtDecimal16(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        short value = rec.getDecimal16(col);
+        if (value == Decimals.DECIMAL16_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long hh = rec.getDecimal256HH(col);
+        long hl = rec.getDecimal256HL(col);
+        long lh = rec.getDecimal256LH(col);
+        long ll = rec.getDecimal256LL(col);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type),
+                    ColumnType.getDecimalScale(type), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtDecimal32(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        int value = rec.getDecimal32(col);
+        if (value == Decimals.DECIMAL32_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal64(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        long value = rec.getDecimal64(col);
+        if (value == Decimals.DECIMAL64_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimal8(PGResponseSink utf8Sink, Record rec, int col, int type) {
+        byte value = rec.getDecimal8(col);
+        if (value == Decimals.DECIMAL8_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            outColTxtDecimalLong(utf8Sink, value, type);
+        }
+    }
+
+    private void outColTxtDecimalLong(PGResponseSink utf8Sink, long value, int type) {
+        final long a = utf8Sink.skipInt();
+        Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
+        utf8Sink.putLenEx(a);
     }
 
     private void outColTxtDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2129,14 +2280,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             final Record record = cursor.getRecord();
             if (outResendCursorRecord) {
-                outRecord(utf8Sink, record, columnCount);
+                outRecord(sqlExecutionContext, utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
             }
 
             while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
                 outResendCursorRecord = true;
                 outResendRecordHeader = true;
-                outRecord(utf8Sink, record, columnCount);
+                outRecord(sqlExecutionContext, utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
             }
         } catch (DataUnavailableException e) {
@@ -2243,7 +2394,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLen(offset);
     }
 
-    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws PGMessageProcessingException {
+    private void outRecord(
+            SqlExecutionContext sqlExecutionContext,
+            PGResponseSink utf8Sink,
+            Record record,
+            int columnCount
+    ) throws PGMessageProcessingException {
         long messageLengthAddress = 0;
         // message header can be sent alone if we run out of space on the first column
         if (outResendColumnIndex == 0 && outResendRecordHeader) {
@@ -2378,6 +2534,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case BINARY_TYPE_ARRAY:
                         outColBinArr(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL8:
+                        outColTxtDecimal8(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL16:
+                        outColTxtDecimal16(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL32:
+                        outColTxtDecimal32(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL64:
+                        outColTxtDecimal64(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL128:
+                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case ColumnType.DECIMAL256:
+                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType);
+                        break;
+                    case BINARY_TYPE_DECIMAL8:
+                    case BINARY_TYPE_DECIMAL16:
+                    case BINARY_TYPE_DECIMAL32:
+                    case BINARY_TYPE_DECIMAL64:
+                    case BINARY_TYPE_DECIMAL128:
+                    case BINARY_TYPE_DECIMAL256:
+                        Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
+                        DecimalUtil.load(decimal256, record, colIndex, columnType);
+                        outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;
                     default:
                         assert false;

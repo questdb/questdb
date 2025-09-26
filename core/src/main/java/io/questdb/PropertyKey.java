@@ -318,6 +318,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_TEXT_ANALYSIS_MAX_LINES("http.text.analysis.max.lines"),
     HTTP_TEXT_LEXER_STRING_POOL_CAPACITY("http.text.lexer.string.pool.capacity"),
     HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY("http.text.timestamp.adapter.pool.capacity"),
+    HTTP_TEXT_DECIMAL_ADAPTER_POOL_CAPACITY("http.text.decimal.adapter.pool.capacity"),
     HTTP_JSON_QUERY_CONNECTION_LIMIT("http.json.query.connection.limit"),
     HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY("http.json.query.connection.check.frequency"),
     HTTP_JSON_QUERY_FLOAT_SCALE("http.json.query.float.scale"),

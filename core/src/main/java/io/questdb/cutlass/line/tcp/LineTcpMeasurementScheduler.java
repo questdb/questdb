@@ -84,6 +84,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final StringSink stringSink = new StringSink(16);
     private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
@@ -182,6 +183,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     configuration.isStringToCharCastAllowed(),
                     configuration.getTimestampUnit(),
                     sink,
+                    stringSink,
                     cairoConfiguration.getMaxFileNameLength()
             );
         } catch (Throwable t) {

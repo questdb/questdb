@@ -90,6 +90,86 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        if (useA) {
+            return recordA.getDecimal128Hi(col);
+        }
+        return recordB.getDecimal128Hi(col);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        if (useA) {
+            return recordA.getDecimal128Lo(col);
+        }
+        return recordB.getDecimal128Lo(col);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (useA) {
+            return recordA.getDecimal16(col);
+        }
+        return recordB.getDecimal16(col);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        if (useA) {
+            return recordA.getDecimal256HH(col);
+        }
+        return recordB.getDecimal256HH(col);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        if (useA) {
+            return recordA.getDecimal256HL(col);
+        }
+        return recordB.getDecimal256HL(col);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        if (useA) {
+            return recordA.getDecimal256LH(col);
+        }
+        return recordB.getDecimal256LH(col);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        if (useA) {
+            return recordA.getDecimal256LL(col);
+        }
+        return recordB.getDecimal256LL(col);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (useA) {
+            return recordA.getDecimal32(col);
+        }
+        return recordB.getDecimal32(col);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (useA) {
+            return recordA.getDecimal64(col);
+        }
+        return recordB.getDecimal64(col);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (useA) {
+            return recordA.getDecimal8(col);
+        }
+        return recordB.getDecimal8(col);
+    }
+
+    @Override
     public double getDouble(int col) {
         if (useA) {
             return recordA.getDouble(col);

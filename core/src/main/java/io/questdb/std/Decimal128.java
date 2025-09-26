@@ -9,7 +9,8 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 
 /**
- * Decimal128 - A mutable decimal number implementation.
+ * Decimal128 - a mutable decimal number implementation. The value is a signed number with
+ * two's complement representation.
  * <p>
  * This class represents decimal numbers with a fixed scale (number of decimal places)
  * using 128-bit integer arithmetic for precise calculations. All operations are
@@ -26,8 +27,8 @@ public class Decimal128 implements Sinkable {
      * Maximum allowed scale (number of decimal places)
      */
     public static final int MAX_SCALE = 38;
-    public static final Decimal128 MAX_VALUE = new Decimal128(Long.MAX_VALUE, Long.MIN_VALUE, 0);
-    public static final Decimal128 MIN_VALUE = new Decimal128(Long.MIN_VALUE, Long.MIN_VALUE, 0);
+    public static final Decimal128 MAX_VALUE = new Decimal128(5421010862427522170L, 687399551400673279L);
+    public static final Decimal128 MIN_VALUE = new Decimal128(-5421010862427522171L, -687399551400673279L);
     static final long LONG_MASK = 0xffffffffL;
     private static final long[] TEN_POWERS_TABLE_HIGH = { // High 64-bit part of the ten powers table from 10^20 to 10^38
             5L, // 10^20
@@ -171,6 +172,12 @@ public class Decimal128 implements Sinkable {
         this.scale = 0;
     }
 
+    public Decimal128(long high, long low) {
+        this.high = high;
+        this.low = low;
+        this.scale = 0;
+    }
+
     /**
      * Constructor with initial values.
      *
@@ -184,6 +191,9 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: result exceeds maximum precision");
+        }
     }
 
     /**
@@ -196,6 +206,17 @@ public class Decimal128 implements Sinkable {
     public static void add(Decimal128 a, Decimal128 b, Decimal128 sink) {
         sink.copyFrom(a);
         sink.add(b);
+    }
+
+    /**
+     * Compares 2 Decimal128, ignoring scaling.
+     */
+    public static int compare(long aHi, long aLo, long bHi, long bLo) {
+        int s = Long.compare(aHi, bHi);
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(aLo, bLo);
     }
 
     /**
@@ -273,6 +294,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Check whether the given decimal128 is null or not.
+     *
+     * @return true if the value is null.
+     */
+    public static boolean isNull(long hi, long lo) {
+        return hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL;
+    }
+
+    /**
      * Calculate modulo of two Decimal128 numbers and store the result in sink (a % b -> sink)
      *
      * @param a    First operand (dividend)
@@ -322,10 +352,17 @@ public class Decimal128 implements Sinkable {
     /**
      * Add another Decimal128 to this one (in-place)
      *
-     * @param other The Decimal128 to add
+     * @param other the Decimal128 to add
      */
     public void add(Decimal128 other) {
         add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
+    }
+
+    /**
+     * Add another Decimal128 to this one (in-place)
+     */
+    public void add(long otherHigh, long otherLow, int otherScale) {
+        add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
     /**
@@ -335,29 +372,36 @@ public class Decimal128 implements Sinkable {
      * @return -1 if this decimal is less than other, 0 if equal, 1 if greater than other
      */
     public int compareTo(Decimal128 other) {
+        return compareTo(other.high, other.low, other.scale);
+    }
+
+    public int compareTo(long otherHigh, long otherLow, int otherScale) {
+        if (isNull()) {
+            if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
+                return 0;
+            }
+            return -1;
+        }
+        if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
+            return 1;
+        }
+
         boolean aNeg = isNegative();
-        boolean bNeg = other.isNegative();
+        boolean bNeg = otherHigh < 0;
         if (aNeg != bNeg) {
             return aNeg ? -1 : 1;
         }
 
-        // Stores the coefficient to apply to the response, if both numbers are negative, then
-        // we have to reverse the result
-        int diffQ = aNeg ? -1 : 1;
-
-        if (this.scale == other.scale) {
+        if (this.scale == otherScale) {
             // Same scale - direct comparison
-            if (this.high != other.high) {
-                return Long.compare(this.high, other.high);
-            }
-            return Long.compareUnsigned(this.low, other.low) * diffQ;
+            return compare(high, low, otherHigh, otherLow);
         }
 
         // We need to make both operands positive to detect overflows when scaling them
         long aH = this.high;
         long aL = this.low;
-        long bH = other.high;
-        long bL = other.low;
+        long bH = otherHigh;
+        long bL = otherLow;
         if (aNeg) {
             aL = ~aL + 1;
             aH = ~aH + (aL == 0 ? 1L : 0L);
@@ -370,23 +414,19 @@ public class Decimal128 implements Sinkable {
         // Different scales - need to align for comparison
         // We'll scale up the one with smaller scale
         Decimal128 holder = tl.get();
-        if (this.scale < other.scale) {
+        if (this.scale < otherScale) {
             holder.of(aH, aL, this.scale);
-            holder.multiplyByPowerOf10InPlace(other.scale - this.scale);
+            holder.multiplyByPowerOf10InPlace(otherScale - this.scale);
             aH = holder.high;
             aL = holder.low;
         } else {
-            holder.of(bH, bL, other.scale);
-            holder.multiplyByPowerOf10InPlace(this.scale - other.scale);
+            holder.of(bH, bL, otherScale);
+            holder.multiplyByPowerOf10InPlace(this.scale - otherScale);
             bH = holder.high;
             bL = holder.low;
         }
 
-        // Compare this with scaled other
-        if (aH != bH) {
-            return Long.compare(aH, bH) * diffQ;
-        }
-        return Long.compareUnsigned(aL, bL) * diffQ;
+        return compare(aH, aL, bH, bL) * (aNeg ? -1 : 1);
     }
 
     /**
@@ -464,7 +504,6 @@ public class Decimal128 implements Sinkable {
         if (negResult) {
             negate();
         }
-
     }
 
     @Override
@@ -521,6 +560,15 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Returns whether this is null or not.
+     *
+     * @return true if null, false otherwise
+     */
+    public boolean isNull() {
+        return high == Decimals.DECIMAL128_HI_NULL && low == Decimals.DECIMAL128_LO_NULL;
+    }
+
+    /**
      * Check if this number is zero
      */
     public boolean isZero() {
@@ -534,12 +582,21 @@ public class Decimal128 implements Sinkable {
      * @throws NumericException if divisor is zero
      */
     public void modulo(Decimal128 divisor) {
-        if (divisor.isZero()) {
+        modulo(divisor.high, divisor.low, divisor.scale);
+    }
+
+    /**
+     * Calculate modulo in-place.
+     *
+     * @throws NumericException if divisor is zero
+     */
+    public void modulo(long divisorHigh, long divisorLow, int divisorScale) {
+        if (divisorHigh == 0 && divisorLow == 0) {
             throw NumericException.instance().put("Division by zero");
         }
 
         // Result scale should be the larger of the two scales
-        int resultScale = Math.max(this.scale, divisor.scale);
+        int resultScale = Math.max(this.scale, divisorScale);
 
         // Use simple repeated subtraction for modulo: a % b = a - (a / b) * b
         // First compute integer division (a / b)
@@ -548,10 +605,10 @@ public class Decimal128 implements Sinkable {
         long thisL = this.low;
         int thisScale = this.scale;
 
-        this.divide(divisor, 0, RoundingMode.DOWN);
+        this.divide(divisorHigh, divisorLow, divisorScale, 0, RoundingMode.DOWN);
 
         // Now compute this * divisor
-        this.multiply(divisor);
+        this.multiply(divisorHigh, divisorLow, divisorScale);
 
         long qH = this.high;
         long qL = this.low;
@@ -580,6 +637,9 @@ public class Decimal128 implements Sinkable {
      * Negate this number in-place
      */
     public void negate() {
+        if (isNull()) {
+            return;
+        }
         // Two's complement: invert all bits and add 1
         this.low = ~this.low + 1;
         this.high = ~this.high + (this.low == 0 ? 1 : 0);
@@ -596,6 +656,29 @@ public class Decimal128 implements Sinkable {
         this.high = high;
         this.low = low;
         this.scale = scale;
+    }
+
+    /**
+     * Set this Decimal128 from a long value with the specified scale.
+     *
+     * @param value the long value
+     * @param scale the desired scale
+     */
+    public void ofLong(long value, int scale) {
+        validateScale(scale);
+
+        this.scale = scale;
+        this.low = value;
+        this.high = value < 0 ? -1L : 0L;
+    }
+
+    /**
+     * Set this Decimal128 to the null value.
+     */
+    public void ofNull() {
+        high = Decimals.DECIMAL128_HI_NULL;
+        low = Decimals.DECIMAL128_LO_NULL;
+        scale = 0;
     }
 
     /**
@@ -638,7 +721,6 @@ public class Decimal128 implements Sinkable {
             this.scale = targetScale;
             return;
         }
-
 
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();
@@ -683,6 +765,13 @@ public class Decimal128 implements Sinkable {
         validateScale(scale);
         this.high = value < 0 ? -1L : 0L;
         this.low = value;
+        this.scale = scale;
+    }
+
+    /**
+     * Set the scale forcefully without doing any rescaling operations
+     */
+    public void setScale(int scale) {
         this.scale = scale;
     }
 
@@ -777,14 +866,14 @@ public class Decimal128 implements Sinkable {
     private static void add(Decimal128 result, long aH, long aL, int aScale, long bH, long bL, int bScale) {
         result.scale = aScale;
         if (aScale < bScale) {
-            // We need to rescale a to the same scale as b
+            // We need to rescale A to the same scale as B
             result.high = aH;
             result.low = aL;
             result.rescale0(bScale);
             aH = result.high;
             aL = result.low;
         } else if (aScale > bScale) {
-            // We need to rescale b to the same scale as a
+            // We need to rescale B to the same scale as A
             result.high = bH;
             result.low = bL;
             result.scale = bScale;
@@ -805,6 +894,9 @@ public class Decimal128 implements Sinkable {
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");
         }
+        if (result.hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
+        }
     }
 
     /**
@@ -823,6 +915,19 @@ public class Decimal128 implements Sinkable {
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw NumericException.instance().put("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
+    }
+
+    private int compareTo0(long otherHi, long otherLo) {
+        return compare(high, low, otherHi, otherLo);
+    }
+
+    private boolean hasOverflowed() {
+        return compareTo0(MAX_VALUE.high, MAX_VALUE.low) > 0
+                || compareTo0(MIN_VALUE.high, MIN_VALUE.low) < 0;
+    }
+
+    private boolean hasUnsignOverflowed() {
+        return compareTo0(MAX_VALUE.high, MAX_VALUE.low) > 0;
     }
 
     /**
@@ -860,6 +965,10 @@ public class Decimal128 implements Sinkable {
             }
         } else {
             multiplyBy128Bit(bH, bL);
+        }
+
+        if (hasUnsignOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: result exceeds maximum precision");
         }
 
         // Handle sign - use the saved original signs

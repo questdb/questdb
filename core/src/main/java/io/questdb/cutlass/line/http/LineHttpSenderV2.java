@@ -35,6 +35,7 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -141,6 +142,25 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 .putAscii('=')
                 .put(LineTcpParser.ENTITY_TYPE_DOUBLE)
                 .putDouble(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        var request = writeFieldName(name)
+                .putAscii('=')
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale());
+        if (value.isNull()) {
+            request.put((byte) 0); // Length (0 -> null)
+            return this;
+        }
+
+        request.put((byte) 32); // Length
+        request.putLong(Long.reverseBytes(value.getHh()));
+        request.putLong(Long.reverseBytes(value.getHl()));
+        request.putLong(Long.reverseBytes(value.getLh()));
+        request.putLong(Long.reverseBytes(value.getLl()));
         return this;
     }
 

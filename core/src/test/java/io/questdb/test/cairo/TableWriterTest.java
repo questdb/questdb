@@ -1747,6 +1747,94 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalAsStringDecimal16() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("99.99m", 4, 2, 9999L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal32() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("12345.678m", 8, 3, 12345678L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal64() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("123456789.1234m", 13, 4, 1234567891234L));
+    }
+
+    @Test
+    public void testDecimalAsStringDecimal8() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("9.5m", 2, 1, 95L));
+    }
+
+    @Test
+    public void testDecimalAsStringInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertDecimalStr("invalid", 10, 2, 0L);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `invalid` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> DECIMAL(10,2)]");
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalAsStringMissingSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            assertDecimalStr("123.45", 10, 2, 12345L);
+        });
+    }
+
+    @Test
+    public void testDecimalAsStringNegative() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("-99.99m", 6, 2, -9999L));
+    }
+
+    @Test
+    public void testDecimalAsStringNull() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr(null, 10, 2, Long.MIN_VALUE));
+    }
+
+    @Test
+    public void testDecimalAsStringPrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                assertDecimalStr("12345678901m", 10, 2, 0L); // Too many digits for precision 10
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `12345678901m` [");
+                TestUtils.assertContains(e.getFlyweightMessage(), " -> DECIMAL(10,2)]");
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalAsStringScaleOne() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100.0m", 5, 1, 1000L));
+    }
+
+    @Test
+    public void testDecimalAsStringScaleTwo() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100.25m", 6, 2, 10025L));
+    }
+
+    @Test
+    public void testDecimalAsStringScaleZero() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("100m", 5, 0, 100L));
+    }
+
+    @Test
+    public void testDecimalAsStringValid() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("123.45m", 10, 2, 12345L));
+    }
+
+    @Test
+    public void testDecimalAsStringZero() throws Exception {
+        assertMemoryLeak(() -> assertDecimalStr("0.00m", 4, 2, 0L));
+    }
+
+    @Test
     public void testDefaultPartition() {
         populateTable();
     }
@@ -3276,6 +3364,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
     }
 
+
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {
         TableWriter.Row r = w.newRow(timestamp - increment * 4);
         r.putSym(0, rnd.nextString(5));
@@ -3411,6 +3500,52 @@ public class TableWriterTest extends AbstractCairoTest {
             populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
             writer.commit();
             Assert.assertEquals(30000, writer.size());
+        }
+    }
+
+    private void assertDecimalStr(String value, int precision, int scale, long expected) {
+        final String tableName = "decimal1";
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+        model.col("d", ColumnType.getDecimalType(precision, scale));
+        AbstractCairoTest.create(model);
+
+        try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+            TableWriter.Row r = writer.newRow();
+            r.putDecimalStr(0, value, Misc.getThreadLocalDecimal256());
+            r.append();
+            writer.commit();
+        }
+
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            final Record record = cursor.getRecord();
+            final int type = reader.getMetadata().getColumnType(0);
+            Assert.assertTrue(cursor.hasNext());
+            final long actual;
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.DECIMAL8:
+                    actual = record.getByte(0);
+                    break;
+                case ColumnType.DECIMAL16:
+                    actual = record.getShort(0);
+                    break;
+                case ColumnType.DECIMAL32:
+                    actual = record.getInt(0);
+                    break;
+                case ColumnType.DECIMAL64:
+                    actual = record.getLong(0);
+                    break;
+                case ColumnType.DECIMAL128:
+                    actual = record.getLong128Lo(0);
+                    break;
+                default: // DECIMAL256
+                    actual = record.getLong256A(0).getLong0();
+                    break;
+            }
+            Assert.assertEquals(expected, actual);
         }
     }
 

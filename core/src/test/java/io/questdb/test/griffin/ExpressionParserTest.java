@@ -1437,6 +1437,135 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("a-^b", 1, "too few arguments for '-' [found=1,expected=2]");
     }
 
+    @Test
+    public void testDecimalPrecisionOnly() throws SqlException {
+        x("DECIMAL_10", "DECIMAL(10)");
+    }
+
+    @Test
+    public void testDecimalPrecisionAndScale() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL(10,2)");
+    }
+
+    @Test
+    public void testDecimalPrecisionAndScaleWithSpaces() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL(10, 2)");
+    }
+
+    @Test
+    public void testDecimalWithExtraSpaces() throws SqlException {
+        x("DECIMAL_10_2", "DECIMAL ( 10 , 2 )");
+    }
+
+    @Test
+    public void testDecimalWithNewlines() throws SqlException {
+        x("DECIMAL_10_2", " DECIMAL\r\n  (\n 10\n,\n 2\n" +
+                "       )  ");
+    }
+
+    @Test
+    public void testDecimalDifferentPrecision() throws SqlException {
+        x("DECIMAL_15", "DECIMAL(15)");
+    }
+
+    @Test
+    public void testDecimalMaxPrecision() throws SqlException {
+        x("DECIMAL_76", "DECIMAL(76)");
+    }
+
+    @Test
+    public void testDecimalMaxPrecisionAndScale() throws SqlException {
+        x("DECIMAL_76_76", "DECIMAL(76,76)");
+    }
+
+    @Test
+    public void testDecimalZeroScale() throws SqlException {
+        x("DECIMAL_10_0", "DECIMAL(10,0)");
+    }
+
+    @Test
+    public void testDecimalMissingPrecision() {
+        assertFail("DECIMAL(",
+                7,
+                "invalid DECIMAL type, missing precision");
+    }
+
+    @Test
+    public void testDecimalEmptyParentheses() {
+        assertFail("DECIMAL()",
+                8,
+                "invalid DECIMAL type, missing precision");
+    }
+
+    @Test
+    public void testDecimalUnbalancedParentheses() {
+        assertFail("DECIMAL(10",
+                8,
+                "invalid DECIMAL type, missing ')'");
+    }
+
+    @Test
+    public void testDecimalMissingScale() {
+        assertFail("DECIMAL(10,",
+                10,
+                "invalid DECIMAL type, missing scale value");
+    }
+
+    @Test
+    public void testDecimalEmptyScale() {
+        assertFail("DECIMAL(10,)",
+                11,
+                "invalid DECIMAL type, scale must be a number");
+    }
+
+    @Test
+    public void testDecimalFailInvalidPrecision() {
+        assertFail("DECIMAL(abc)",
+                8,
+                "invalid DECIMAL type, precision must be a number");
+    }
+
+    @Test
+    public void testDecimalFailInvalidScale() {
+        assertFail("DECIMAL(10,xyz)",
+                11,
+                "invalid DECIMAL type, scale must be a number");
+    }
+
+    @Test
+    public void testCastDecimalWithPrecision() throws SqlException {
+        x("'123.45' DECIMAL_10 cast", "cast('123.45' as DECIMAL(10))");
+    }
+
+    @Test
+    public void testCastDecimalWithPrecisionAndScale() throws SqlException {
+        x("'123.45' DECIMAL_10_2 cast", "cast('123.45' as DECIMAL(10,2))");
+    }
+
+    @Test
+    public void testCastDecimalWithSpaces() throws SqlException {
+        x("'123.45' DECIMAL_10_2 cast", "cast('123.45' as DECIMAL ( 10 , 2 ))");
+    }
+
+    @Test
+    public void testCastDecimalMissingPrecision() {
+        assertFail("cast('123.45' as DECIMAL())",
+                25,
+                "invalid DECIMAL type, missing precision");
+    }
+
+    @Test
+    public void testCastDecimalInvalidPrecision() {
+        assertFail("cast('123.45' as DECIMAL(abc))",
+                25,
+                "invalid DECIMAL type, precision must be a number");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testDecimalKeyword() throws SqlException {
+        x("DECIMAL", "DECIMAL");
+    }
+
     private void assertFail(String content, int pos, String contains) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testParseExpression(content, rpnBuilder);

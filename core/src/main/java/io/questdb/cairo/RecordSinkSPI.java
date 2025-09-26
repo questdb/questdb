@@ -89,6 +89,10 @@ public interface RecordSinkSPI {
 
     void putVarchar(Utf8Sequence value);
 
+    void putDecimal128(long hi, long lo);
+
+    void putDecimal256(long hh, long hl, long lh, long ll);
+
     default void putVarchar(CharSequence value) {
         if (value == null) {
             putVarchar((Utf8Sequence) null);

@@ -1677,6 +1677,49 @@ public class SqlParser {
         return null;
     }
 
+    /**
+     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
+     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
+     * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
+     *
+     * @return the concrete DECIMAL type with proper precision/scale set.
+     */
+    public static int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
+        previousToken = GenericLexer.immutableOf(previousToken);
+        int previousTokenPosition = lexer.lastTokenPosition();
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            lexer.backTo(previousTokenPosition, previousToken);
+            return ColumnType.DECIMAL_DEFAULT_TYPE;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) == ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
+        }
+        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
+        int scale = precision < 8 ? 0 : 3;
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // The user may provide a scale value
+        if (tok != null && tok.charAt(0) == ',') {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) == ')') {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
+            }
+            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok == null || tok.charAt(0) != ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+        }
+
+        return ColumnType.getDecimalType(precision, scale);
+    }
+
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         int contentLength = lexer.getContent().length();
         while (lexer.getPosition() < contentLength) {
@@ -3696,13 +3739,13 @@ public class SqlParser {
      * select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
      * <p>
      * Notes:
-     * - varchar cast it rewritten in a special way, e.g. removed
+     * - varchar cast is rewritten in a special way, e.g. removed
      * - subset of types is handled more efficiently in the 3-arg function
      * - the remaining type casts are not rewritten, e.g. left as is
      */
     private void rewriteJsonExtractCast(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && isCastKeyword(node.token)) {
-            if (node.lhs != null && isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
+            if (node.lhs != null && node.lhs.paramCount == 2 && isJsonExtract(node.lhs.token)) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
@@ -3942,11 +3985,14 @@ public class SqlParser {
             return ColumnType.encodeArrayType(columnType, nDims);
         }
 
-        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
+        final short typeTag = ColumnType.tagOf(columnType);
+        if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
+        } else if (typeTag == ColumnType.DECIMAL) {
+            return parseDecimalColumnType(lexer, tok);
         }
         return columnType;
     }

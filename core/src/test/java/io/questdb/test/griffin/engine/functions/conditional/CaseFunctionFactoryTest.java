@@ -671,6 +671,360 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal128() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t123456789012345678.123456789012345678\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t987654321098765432.987654321098765432\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(123456789012345678.123456789012345678 as DECIMAL(36,18)) a," +
+                        " cast(987654321098765432.987654321098765432 as DECIMAL(36,18)) b," +
+                        " cast(111111111111111111.111111111111111111 as DECIMAL(36,18)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal128OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t123456789012345678.123456789012345678\n" +
+                        "0\t111111111111111111.111111111111111111\n" +
+                        "50\t111111111111111111.111111111111111111\n" +
+                        "150\t987654321098765432.987654321098765432\n" +
+                        "250\t111111111111111111.111111111111111111\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(123456789012345678.123456789012345678 as DECIMAL(36,18)) a," +
+                        " cast(987654321098765432.987654321098765432 as DECIMAL(36,18)) b," +
+                        " cast(111111111111111111.111111111111111111 as DECIMAL(36,18)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal16() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t12.34\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t56.78\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(12.34 as DECIMAL(4,2)) a," +
+                        " cast(56.78 as DECIMAL(4,2)) b," +
+                        " cast(99.99 as DECIMAL(4,2)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal16OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t12.34\n" +
+                        "0\t99.99\n" +
+                        "50\t99.99\n" +
+                        "150\t56.78\n" +
+                        "250\t99.99\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(12.34 as DECIMAL(4,2)) a," +
+                        " cast(56.78 as DECIMAL(4,2)) b," +
+                        " cast(99.99 as DECIMAL(4,2)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal256() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1234567890123456789012345678901234567890.12345678901234567890123456789012345\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t9876543210987654321098765432109876543210.98765432109876543210987654321098765\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1234567890123456789012345678901234567890.12345678901234567890123456789012345 as DECIMAL(76,35)) a," +
+                        " cast(9876543210987654321098765432109876543210.98765432109876543210987654321098765 as DECIMAL(76,35)) b," +
+                        " cast(1111111111111111111111111111111111111111.11111111111111111111111111111111111 as DECIMAL(76,35)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal256OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1234567890123456789012345678901234567890.12345678901234567890123456789012345\n" +
+                        "0\t1111111111111111111111111111111111111111.11111111111111111111111111111111111\n" +
+                        "50\t1111111111111111111111111111111111111111.11111111111111111111111111111111111\n" +
+                        "150\t9876543210987654321098765432109876543210.98765432109876543210987654321098765\n" +
+                        "250\t1111111111111111111111111111111111111111.11111111111111111111111111111111111\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1234567890123456789012345678901234567890.12345678901234567890123456789012345 as DECIMAL(76,35)) a," +
+                        " cast(9876543210987654321098765432109876543210.98765432109876543210987654321098765 as DECIMAL(76,35)) b," +
+                        " cast(1111111111111111111111111111111111111111.11111111111111111111111111111111111 as DECIMAL(76,35)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal32() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t12345.6789\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t98765.4321\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(12345.6789 as DECIMAL(9,4)) a," +
+                        " cast(98765.4321 as DECIMAL(9,4)) b," +
+                        " cast(11111.1111 as DECIMAL(9,4)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal32OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t12345.6789\n" +
+                        "0\t11111.1111\n" +
+                        "50\t11111.1111\n" +
+                        "150\t98765.4321\n" +
+                        "250\t11111.1111\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(12345.6789 as DECIMAL(9,4)) a," +
+                        " cast(98765.4321 as DECIMAL(9,4)) b," +
+                        " cast(11111.1111 as DECIMAL(9,4)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal64() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1234567890.12345678\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t9876543210.98765432\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1234567890.12345678 as DECIMAL(18,8)) a," +
+                        " cast(9876543210.98765432 as DECIMAL(18,8)) b," +
+                        " cast(1111111111.11111111 as DECIMAL(18,8)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal64OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1234567890.12345678\n" +
+                        "0\t1111111111.11111111\n" +
+                        "50\t1111111111.11111111\n" +
+                        "150\t9876543210.98765432\n" +
+                        "250\t1111111111.11111111\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1234567890.12345678 as DECIMAL(18,8)) a," +
+                        " cast(9876543210.98765432 as DECIMAL(18,8)) b," +
+                        " cast(1111111111.11111111 as DECIMAL(18,8)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal8() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1.2\n" +
+                        "0\t\n" +
+                        "50\t\n" +
+                        "150\t5.6\n" +
+                        "250\t\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1.2 as DECIMAL(2,1)) a," +
+                        " cast(5.6 as DECIMAL(2,1)) b," +
+                        " cast(9.9 as DECIMAL(2,1)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDecimal8OrElse() throws Exception {
+        assertQuery(
+                "x\tcase\n" +
+                        "-10\t1.2\n" +
+                        "0\t9.9\n" +
+                        "50\t9.9\n" +
+                        "150\t5.6\n" +
+                        "250\t9.9\n",
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else c\n" +
+                        "    end \n" +
+                        "from tanc",
+                "create table tanc as (" +
+                        "select x," +
+                        " cast(1.2 as DECIMAL(2,1)) a," +
+                        " cast(5.6 as DECIMAL(2,1)) b," +
+                        " cast(9.9 as DECIMAL(2,1)) c" +
+                        " from (select -10 x union all select 0 union all select 50 union all select 150 union all select 250)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDouble() throws Exception {
         assertQuery(
                 "x\tcase\n" +

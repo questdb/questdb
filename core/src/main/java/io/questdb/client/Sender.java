@@ -40,6 +40,7 @@ import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.bytes.DirectByteSlice;
@@ -255,6 +256,15 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      */
     @Override
     void close();
+
+    /**
+     * Add a column with a Decimal value.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    Sender decimalColumn(CharSequence name, Decimal256 value);
 
     /**
      * Add a column with a floating point value.

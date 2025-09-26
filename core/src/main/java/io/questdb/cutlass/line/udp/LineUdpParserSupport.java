@@ -29,9 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -91,6 +94,8 @@ public class LineUdpParserSupport {
                         return ColumnType.UNDEFINED;
                     }
                     return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
+                case 'd':
+                    return ColumnType.DECIMAL_DEFAULT_TYPE;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;
@@ -233,6 +238,43 @@ public class LineUdpParserSupport {
                                 )
                         );
                         break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        int lo = 0;
+                        int hi = value.length();
+                        // Remove quotes if casting from a string
+                        if (value.charAt(0) == '"') {
+                            lo++;
+                            hi--;
+                        }
+
+                        boolean strict = false;
+                        if (lo < hi) {
+                            char last = value.charAt(hi - 1);
+                            switch (last) {
+                                case 'd': // Similar to 'm' in typical decimal, for ilp it's 'd' instead (m is already used by millis).
+                                    strict = true;
+                                    // fall through
+                                case 'i': // Casting from integers
+                                    hi--;
+                                    break;
+                            }
+                        }
+
+                        Decimal256 decimal256 = Misc.getThreadLocalDecimal256();
+                        try {
+                            final int precision = ColumnType.getDecimalPrecision(columnType);
+                            final int scale = ColumnType.getDecimalScale(columnType);
+                            decimal256.ofString(value, lo, hi, precision, scale, strict);
+                        } catch (NumericException e) {
+                            decimal256.ofNull();
+                        }
+                        DecimalUtil.store(decimal256, row, columnIndex, columnType);
+                        break;
                     case ColumnType.NULL:
                     default:
                         // unsupported types and null are ignored
@@ -312,6 +354,30 @@ public class LineUdpParserSupport {
                 break;
             case ColumnType.GEOLONG:
                 row.putLong(columnIndex, GeoHashes.NULL);
+                break;
+            case ColumnType.DECIMAL8:
+                row.putByte(columnIndex, Decimals.DECIMAL8_NULL);
+                break;
+            case ColumnType.DECIMAL16:
+                row.putShort(columnIndex, Decimals.DECIMAL16_NULL);
+                break;
+            case ColumnType.DECIMAL32:
+                row.putInt(columnIndex, Decimals.DECIMAL32_NULL);
+                break;
+            case ColumnType.DECIMAL64:
+                row.putLong(columnIndex, Decimals.DECIMAL64_NULL);
+                break;
+            case ColumnType.DECIMAL128:
+                row.putDecimal128(columnIndex, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                break;
+            case ColumnType.DECIMAL256:
+                row.putDecimal256(
+                        columnIndex,
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL
+                );
                 break;
             default:
                 // unsupported types are ignored

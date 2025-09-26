@@ -61,6 +61,11 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
@@ -541,6 +546,82 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Function function = parseFunction("COUNT()", metadata, functionParser);
         assertEquals(ColumnType.LONG, function.getType());
         assertEquals(CountLongConstGroupByFunction.class, function.getClass());
+    }
+
+    @Test
+    public void testDecimalConstantLargePrecision() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("12345678901234567890m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal128Constant);
+    }
+
+    @Test
+    public void testDecimalConstantLeadingDecimalPoint() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction(".123m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal16Constant);
+        assertEquals(123, result.getDecimal16(null));
+    }
+
+    @Test
+    public void testDecimalConstantSmallPrecision() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("12m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal8Constant);
+        assertEquals(12, result.getDecimal8(null));
+    }
+
+    @Test
+    public void testDecimalConstantTrailingDecimalPoint() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("123.m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal16Constant);
+        assertEquals(123, result.getDecimal16(null));
+    }
+
+    @Test
+    public void testDecimalConstantVeryLargePrecision() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        String largeNumber = "1234567890123456789012345678901234567890m";
+        Function result = parseFunction(largeNumber, new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal256Constant);
+    }
+
+    @Test
+    public void testDecimalConstantWithCapitalMSuffix() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("123.45M", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal32Constant);
+        assertEquals(12345, result.getDecimal32(null));
+    }
+
+    @Test
+    public void testDecimalConstantWithMSuffix() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("123.45m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal32Constant);
+        assertEquals(12345, result.getDecimal32(null));
+    }
+
+    @Test
+    public void testDecimalConstantWithoutSuffix() {
+        FunctionParser functionParser = createFunctionParser();
+        try {
+            // Without 'm' suffix, this should be parsed as a double
+            Function result = parseFunction("123.45", new GenericRecordMetadata(), functionParser);
+            assertTrue(result instanceof DoubleConstant);
+            assertEquals(123.45, result.getDouble(null), 0.001);
+        } catch (SqlException e) {
+            fail("Unexpected exception: " + e.getMessage());
+        }
+    }
+
+    @Test
+    public void testDecimalConstantZeroValue() throws SqlException {
+        FunctionParser functionParser = createFunctionParser();
+        Function result = parseFunction("0.0m", new GenericRecordMetadata(), functionParser);
+        assertTrue(result instanceof Decimal8Constant);
+        assertEquals(0, result.getDecimal8(null));
     }
 
     @Test

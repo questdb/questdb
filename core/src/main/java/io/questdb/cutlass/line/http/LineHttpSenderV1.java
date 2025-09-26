@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
@@ -92,6 +93,17 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name)
                 .put(value);
+        return this;
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        var request = writeFieldName(name);
+        if (value.isNull()) {
+            request.put("NaNd");
+        } else {
+            request.put(value).putAscii('d');
+        }
         return this;
     }
 

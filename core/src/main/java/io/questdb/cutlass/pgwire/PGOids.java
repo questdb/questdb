@@ -50,6 +50,12 @@ public class PGOids {
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
     public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
+    public static final int BINARY_TYPE_DECIMAL8 = (1 << 31) | ColumnType.DECIMAL8;
+    public static final int BINARY_TYPE_DECIMAL16 = (1 << 31) | ColumnType.DECIMAL16;
+    public static final int BINARY_TYPE_DECIMAL32 = (1 << 31) | ColumnType.DECIMAL32;
+    public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
+    public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
+    public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
     public static final int PG_ARR_FLOAT8 = 1022;
     public static final int PG_ARR_INT8 = 1016;
     public static final int PG_BOOL = 16;
@@ -71,16 +77,17 @@ public class PGOids {
     public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
-    public static final char[] PG_TYPE_TO_CATEGORY = new char[15];
-    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[15];
-    public static final short[] PG_TYPE_TO_LENGTH = new short[15];
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[15];
-    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[15];
-    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[15];
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[16];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[16];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[16];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[16];
+    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[16];
+    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[16];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
+    public static final int PG_NUMERIC = 1700;
     public static final int PG_VOID = 2278;
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_ARR_FLOAT8 = ((PG_ARR_FLOAT8 >> 24) & 0xff) | ((PG_ARR_FLOAT8 << 8) & 0xff0000) | ((PG_ARR_FLOAT8 >> 8) & 0xff00) | ((PG_ARR_FLOAT8 << 24) & 0xff000000);
@@ -239,6 +246,12 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.ARRAY_STRING, PG_VARCHAR); // ARRAY_STRING is a hack, we send results as VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL8, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL16, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL32, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL64, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL128, PG_NUMERIC); // NUMERIC
+        TYPE_OIDS.extendAndSet(ColumnType.DECIMAL256, PG_NUMERIC); // NUMERIC
 
         TYPE_ARR_OIDS.extendAndSet(ColumnType.DOUBLE, PG_ARR_FLOAT8); // FLOAT8[]
         TYPE_ARR_OIDS.extendAndSet(ColumnType.LONG, PG_ARR_INT8); // INT8[]
@@ -258,6 +271,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_INTERNAL);
         PG_TYPE_OIDS.add(PG_OID);
         PG_TYPE_OIDS.add(PG_ARR_FLOAT8);
+        PG_TYPE_OIDS.add(PG_NUMERIC);
 
         // these values are taken from PostgreSQL pg_proc view
         PG_TYPE_PROC_OIDS.add(2432);
@@ -274,7 +288,8 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(2961);
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
-        PG_TYPE_PROC_OIDS.add(2400); // // ARRAY
+        PG_TYPE_PROC_OIDS.add(2400); // ARRAY
+        PG_TYPE_PROC_OIDS.add(3823); // NUMERIC
 
         // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
         // to be a marker for 'no value' in this map.
@@ -322,6 +337,7 @@ public class PGOids {
         PG_TYPE_TO_NAME[12] = "internal";
         PG_TYPE_TO_NAME[13] = "oid";
         PG_TYPE_TO_NAME[14] = "_float8";
+        PG_TYPE_TO_NAME[15] = "numeric";
 
         // array are excluded since all arrays are handled by the same function
         for (int i = 0, n = PG_TYPE_TO_NAME.length; i < n; i++) {
@@ -352,6 +368,7 @@ public class PGOids {
         PG_TYPE_TO_CATEGORY[12] = 'P';
         PG_TYPE_TO_CATEGORY[13] = 'N';
         PG_TYPE_TO_CATEGORY[14] = 'A';
+        PG_TYPE_TO_CATEGORY[15] = 'N';
 
         PG_TYPE_TO_LENGTH[0] = -1;
         PG_TYPE_TO_LENGTH[1] = 8;
@@ -368,6 +385,7 @@ public class PGOids {
         PG_TYPE_TO_LENGTH[12] = 8;
         PG_TYPE_TO_LENGTH[13] = 4;
         PG_TYPE_TO_LENGTH[14] = -1;
+        PG_TYPE_TO_LENGTH[15] = -1;
 
         PG_TYPE_TO_DEFAULT[0] = null;
         PG_TYPE_TO_DEFAULT[1] = null;
@@ -384,5 +402,6 @@ public class PGOids {
         PG_TYPE_TO_DEFAULT[12] = null;
         PG_TYPE_TO_DEFAULT[13] = null;
         PG_TYPE_TO_DEFAULT[14] = null;
+        PG_TYPE_TO_DEFAULT[15] = null;
     }
 }
