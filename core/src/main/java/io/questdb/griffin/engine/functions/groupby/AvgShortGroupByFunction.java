@@ -29,37 +29,32 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class SumLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
 
-    public SumLongGroupByFunction(@NotNull Function arg) {
+    public AvgShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
+        final short value = arg.getShort(record);
         mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            final long sum = mapValue.getLong(valueIndex);
-            if (sum != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, sum + value);
-            } else {
-                mapValue.putLong(valueIndex, value);
-            }
-        }
+        final short value = arg.getShort(record);
+        mapValue.addLong(valueIndex, value);
+        mapValue.addLong(valueIndex + 1, 1);
     }
 
     @Override
@@ -68,13 +63,18 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+    public double getDouble(Record rec) {
+        final long sum = rec.getLong(valueIndex);
+        final long count = rec.getLong(valueIndex + 1);
+        if (sum != Numbers.LONG_NULL && count > 0) {
+            return (double) rec.getLong(valueIndex) / rec.getLong(valueIndex + 1);
+        }
+        return Double.NaN;
     }
 
     @Override
     public String getName() {
-        return "sum";
+        return "avg";
     }
 
     @Override
@@ -96,6 +96,7 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -111,24 +112,30 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcSum = srcValue.getLong(valueIndex);
-        if (srcSum != Numbers.LONG_NULL) {
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
             final long destSum = destValue.getLong(valueIndex);
-            if (destSum != Numbers.LONG_NULL) {
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
                 destValue.putLong(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
                 destValue.putLong(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
             }
         }
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+    public void setDouble(MapValue mapValue, double value) {
+        mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
