@@ -392,7 +392,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 continue;
             }
 
-            try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;protocol_version=1;auto_flush=off;")) {
+            try (Sender sender = Sender.fromConfig("http::addr=localhost:" + serverMain.getHttpServerPort() + ";protocol_version=1;auto_flush=off;")) {
                 sender.table("m1")
                         .symbol("tag1", "value1")
                         .doubleColumn("f1", 1)
