@@ -43,6 +43,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
+
 public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
@@ -93,6 +95,24 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.operation = null;
         this.isExecutedAtParseTime = false;
         this.done = false;
+    }
+
+    @Override
+    public void close() throws IOException {
+        switch (getType()) {
+            case CompiledQuery.INSERT:
+            case CompiledQuery.INSERT_AS_SELECT:
+                Misc.free(popInsertOperation());
+                break;
+            case CompiledQuery.UPDATE:
+                Misc.free(getUpdateOperation());
+                break;
+            case CompiledQuery.ALTER:
+                Misc.free(getAlterOperation());
+                break;
+            default:
+                break;
+        }
     }
 
     public void done() {

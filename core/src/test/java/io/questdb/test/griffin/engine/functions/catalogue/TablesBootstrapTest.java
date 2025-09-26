@@ -70,7 +70,7 @@ public class TablesBootstrapTest extends AbstractBootstrapTest {
         serverMain.assertSql(
                 "tables()",
                 "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
-                        "4\ttab\tts\tDAY\t500000\t600000000\ttrue\ttab~4\tfalse\t0\tHOUR\tfalse\n"
+                        "5\ttab\tts\tDAY\t500000\t600000000\ttrue\ttab~5\tfalse\t0\tHOUR\tfalse\n"
         );
     }
 }

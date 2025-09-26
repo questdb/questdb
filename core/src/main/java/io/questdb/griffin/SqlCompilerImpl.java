@@ -88,7 +88,8 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
-import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.CopyExportFactory;
+import io.questdb.griffin.engine.ops.CopyImportFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -146,6 +147,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.model.CopyModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
@@ -1571,6 +1573,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
+    private void authorizeSelectForCopy(SecurityContext securityContext, CopyModel model) {
+        final CharSequence tableName = unquote(model.getTableName());
+        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        if (tt != null) {
+            securityContext.authorizeSelectOnAnyColumn(tt);
+        }
+    }
+
     private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -2225,9 +2235,64 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCommit();
     }
 
-    private RecordCursorFactory compileCopy(SecurityContext securityContext, CopyModel model) throws SqlException {
-        assert !model.isCancel();
+    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+        assert model.isCancel();
 
+        long cancelCopyID;
+        String cancelCopyIDStr = Chars.toString(unquote(model.getTableName()));
+        try {
+            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
+        } catch (NumericException e) {
+            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+        }
+
+        RecordCursorFactory _import = null, _export = null;
+
+        if (configuration.getSqlCopyInputRoot() != null) {
+            try {
+                _import = query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("text_import_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+        }
+
+        if (configuration.getSqlCopyExportRoot() != null) {
+            try {
+                _export = query()
+                        .$("select * from '")
+                        .$(engine.getConfiguration().getSystemTableNamePrefix())
+                        .$("copy_export_log' where id = '")
+                        .$(cancelCopyIDStr)
+                        .$("' limit -1")
+                        .compile(executionContext).getRecordCursorFactory();
+            } catch (SqlException e) {
+                if (!e.isTableDoesNotExist()) {
+                    throw e;
+                }
+            }
+
+        }
+
+        return new CopyCancelFactory(
+                engine.getCopyImportContext(),
+                engine.getCopyExportContext(),
+                cancelCopyID,
+                cancelCopyIDStr,
+                _import,
+                _export
+        );
+    }
+
+    private RecordCursorFactory compileCopyFrom(SecurityContext securityContext, CopyModel model) throws SqlException {
+        assert !model.isCancel();
         final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
 
         if (model.getTimestampColumnName() == null
@@ -2242,36 +2307,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(unquote(fileNameNode.token), fileNameNode.position) : null;
         assert fileName != null;
 
-        return new CopyFactory(
+        return new CopyImportFactory(
                 messageBus,
-                engine.getCopyContext(),
+                engine.getCopyImportContext(),
                 Chars.toString(tableName),
                 Chars.toString(fileName),
                 model
         );
     }
 
-    private RecordCursorFactory compileCopyCancel(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
-        assert model.isCancel();
 
-        long cancelCopyID;
-        String cancelCopyIDStr = Chars.toString(unquote(model.getTableName()));
-        try {
-            cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
-        } catch (NumericException e) {
-            throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
+    private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model, CharSequence sqlText) throws SqlException {
+        assert !model.isCancel();
+
+        if (model.getTableName() != null) {
+            authorizeSelectForCopy(securityContext, model);
         }
-        return new CopyCancelFactory(
-                engine.getCopyContext(),
-                cancelCopyID,
-                cancelCopyIDStr,
-                query()
-                        .$("select * from '")
-                        .$(engine.getConfiguration().getSystemTableNamePrefix())
-                        .$("text_import_log' where id = '")
-                        .$(cancelCopyIDStr)
-                        .$("' limit -1")
-                        .compile(executionContext).getRecordCursorFactory()
+
+        if (!model.isParquetFormat()) {
+            throw SqlException.$(0, "export format must be specified, supported formats:, 'parquet'");
+        }
+        model.validCompressOptions();
+        return new CopyExportFactory(
+                messageBus,
+                engine.getCopyExportContext(),
+                model,
+                securityContext,
+                sqlText
         );
     }
 
@@ -3128,7 +3190,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkMatViewModification(executionModel);
+                    if (executionModel.getTableName() != null) {
+                        assert executionModel.getModelType() == ExecutionModel.COPY;
+                        if (((CopyModel) executionModel).getType() == COPY_TYPE_FROM) {
+                            checkMatViewModification(executionModel);
+                        }
+                    }
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
@@ -3251,7 +3318,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (copyModel.isCancel()) {
                 copyFactory = compileCopyCancel(executionContext, copyModel);
             } else {
-                copyFactory = compileCopy(executionContext.getSecurityContext(), copyModel);
+                if (copyModel.getType() == COPY_TYPE_FROM) {
+                    copyFactory = compileCopyFrom(executionContext.getSecurityContext(), copyModel);
+                } else {
+                    copyFactory = compileCopyTo(executionContext.getSecurityContext(), copyModel, sqlText);
+                }
             }
             compiledQuery.ofPseudoSelect(copyFactory);
         }
@@ -3450,12 +3521,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
-        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
-        long beginNanos = configuration.getMicrosecondClock().getTicks();
-        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
-        try {
+        boolean needRegister = createTableOp.needRegister();
+        long sqlId = 0;
+        long beginNanos = 0;
+        if (needRegister) {
+            sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+            beginNanos = configuration.getMicrosecondClock().getTicks();
+            QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
             executionContext.setUseSimpleCircuitBreaker(true);
+        }
 
+        try {
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -3612,16 +3688,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            if (needRegister) {
+                QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            if (needRegister) {
+                QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos);
+            }
             throw e;
         } finally {
-            executionContext.setUseSimpleCircuitBreaker(false);
-            queryRegistry.unregister(sqlId, executionContext);
+            if (needRegister) {
+                executionContext.setUseSimpleCircuitBreaker(false);
+                queryRegistry.unregister(sqlId, executionContext);
+            }
         }
     }
 

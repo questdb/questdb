@@ -49,7 +49,7 @@ public class PGFunctionsTest extends BasePGTest {
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
                             "id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
-                                    "2,a,null,NONE,1000,300000000\n",
+                                    "3,a,null,NONE,1000,300000000\n",
                             sink,
                             rs
                     );

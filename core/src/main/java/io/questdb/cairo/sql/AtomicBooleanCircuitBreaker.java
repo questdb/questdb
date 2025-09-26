@@ -72,6 +72,12 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
+    public int finish() {
+        setCancelledFlag(null);
+        return -1;
+    }
+
+    @Override
     public AtomicBoolean getCancelledFlag() {
         return cancelledFlag;
     }

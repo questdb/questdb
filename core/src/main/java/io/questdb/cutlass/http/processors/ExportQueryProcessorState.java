@@ -30,19 +30,28 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
+import io.questdb.cutlass.text.CopyExportResult;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class TextQueryProcessorState implements Mutable, Closeable {
+public class ExportQueryProcessorState implements Mutable, Closeable {
+    private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
+    private final CopyExportResult copyExportResult = new CopyExportResult();
+    private final CopyModel copyModel = new CopyModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
+    CharSequence copyID;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
@@ -51,6 +60,11 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
+    long parquetFileAddress = 0;
+    long parquetFileBuffer = 0;
+    long parquetFileFd = -1;
+    long parquetFileOffset = 0;
+    long parquetFileSize = 0;
     boolean pausedQuery = false;
     int queryState;
     Record record;
@@ -58,9 +72,11 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
+    SuspendEvent suspendEvent;
+    boolean waitingForCopy;
     private boolean queryCacheable = false;
 
-    public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
+    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
         clear();
     }
@@ -93,12 +109,38 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
+        copyID = null;
+        waitingForCopy = false;
+        suspendEvent = null;
+        parquetFileFd = -1;
+        parquetFileSize = 0;
+        parquetFileOffset = 0;
+        if (parquetFileBuffer != 0) {
+            Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            parquetFileBuffer = 0;
+        }
+        copyModel.clear();
+        copyExportResult.clear();
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
+        Misc.free(suspendEvent);
+        if (parquetFileBuffer != 0) {
+            Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            parquetFileBuffer = 0;
+        }
+        Misc.free(copyExportResult);
+    }
+
+    public CopyModel getCopyModel() {
+        return copyModel;
+    }
+
+    public CopyExportResult getExportResult() {
+        return copyExportResult;
     }
 
     public long getFd() {

@@ -46,11 +46,12 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
-import io.questdb.cutlass.text.CopyJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -358,15 +359,23 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
+                            CopyImportJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
+                            final CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPoolWrite.assign(copyRequestJob);
-                            sharedPoolWrite.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyImportRequestJob);
+                            sharedPoolWrite.freeOnExit(copyImportRequestJob);
+                        }
+
+                        if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
+                            final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
+                                    engine
+                            );
+                            sharedPoolQuery.assign(copyExportRequestJob);
+                            sharedPoolQuery.freeOnExit(copyExportRequestJob);
                         }
                     }
 
