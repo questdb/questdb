@@ -24,13 +24,17 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sink;
 
 import java.io.Closeable;
 
 class SettingsProcessorState implements Mutable, Closeable {
-    final DirectUtf8Sink utf8Sink;
+    private final DirectUtf8Sink utf8Sink;
+    private int statusCode = -1;
 
     SettingsProcessorState(int size) {
         utf8Sink = new DirectUtf8Sink(size);
@@ -38,11 +42,29 @@ class SettingsProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
+        statusCode = -1;
         utf8Sink.clear();
     }
 
     @Override
     public void close() {
         utf8Sink.close();
+    }
+
+    DirectUtf8Sink getUtf8Sink() {
+        return utf8Sink;
+    }
+
+    void send(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        assert statusCode > 0;
+        if (utf8Sink.size() > 0) {
+            context.simpleResponse().sendStatusJsonContent(statusCode, utf8Sink);
+        } else {
+            context.simpleResponse().sendStatusJsonContent(statusCode);
+        }
+    }
+
+    void setStatusCode(int statusCode) {
+        this.statusCode = statusCode;
     }
 }

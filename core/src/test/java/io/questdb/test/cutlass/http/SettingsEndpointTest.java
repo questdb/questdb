@@ -748,7 +748,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     }
 
     private static void savePreferences(HttpClient httpClient, String preferences, SettingsStore.Mode mode, long version) {
-        assertPreferencesRequest(httpClient, preferences, mode, version, HTTP_OK, "");
+        assertPreferencesRequest(httpClient, preferences, mode, version, HTTP_OK, "{\"status\":\"OK\"}\r\n");
     }
 
     private void assertPreferencesStore(SettingsStore settingsStore, int expectedVersion, String expectedPreferences) {
