@@ -37,11 +37,13 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntStack;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -56,6 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -251,6 +254,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public ObjList<ViewDefinition> getReferencedViews() {
+        return referencedViews;
+    }
+
+    @Override
     public long getRequestFd() {
         return requestFd;
     }
@@ -336,13 +344,19 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
+        referencedViews.addAll(viewDefinitions);
+    }
+
+    @Override
+    public void reset() {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
         this.columnPreTouchEnabledOverride = true;
         this.allowNonDeterministicFunction = true;
+        this.referencedViews.clear();
     }
 
     @Override
@@ -439,13 +453,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        resetFlags();
+        reset();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        resetFlags();
+        reset();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -476,7 +490,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        resetFlags();
+        reset();
         return this;
     }
 

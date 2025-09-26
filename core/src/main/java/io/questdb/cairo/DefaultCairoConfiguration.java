@@ -216,6 +216,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCompileViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull CharSequence getConfRoot() {
         return confRoot;
     }
@@ -1122,6 +1127,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getViewLexerPoolCapacity() {
+        return 8;
+    }
+
+    @Override
     public @NotNull VolumeDefinitions getVolumeDefinitions() {
         return volumeDefinitions;
     }
@@ -1367,6 +1377,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isTableTypeConversionEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isViewEnabled() {
         return true;
     }
 

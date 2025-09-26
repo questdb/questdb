@@ -50,6 +50,7 @@ public final class PartitionBy {
      * Data is not partitioned at all, all data is stored in a single directory
      */
     public static final int NONE = 3;
+    public static final int NOT_APPLICABLE = 6;
     public static final int WEEK = 5;
     public static final int YEAR = 2;
     private static final LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -96,7 +97,7 @@ public final class PartitionBy {
     }
 
     public static void setSinkForPartition(CharSink<?> path, int timestampType, int partitionBy, long timestamp) {
-        if (partitionBy != PartitionBy.NONE) {
+        if (isPartitioned(partitionBy)) {
             getPartitionDirFormatMethod(timestampType, partitionBy).format(timestamp, EN_LOCALE, null, path);
             return;
         }
@@ -117,6 +118,8 @@ public final class PartitionBy {
                 return "WEEK";
             case NONE:
                 return "NONE";
+            case NOT_APPLICABLE:
+                return "N/A";
             default:
                 return "UNKNOWN";
         }
@@ -129,6 +132,7 @@ public final class PartitionBy {
     public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
         switch (partitionBy) {
             case NONE:
+            case NOT_APPLICABLE:
                 throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
             case DAY:
                 if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
@@ -165,6 +169,7 @@ public final class PartitionBy {
         nameToIndexMap.put("hour", HOUR);
         nameToIndexMap.put("week", WEEK);
         nameToIndexMap.put("none", NONE);
+        nameToIndexMap.put("n/a", NOT_APPLICABLE);
 
         nameToIndexMapUtf8.put(new Utf8String("day"), DAY);
         nameToIndexMapUtf8.put(new Utf8String("month"), MONTH);
@@ -172,6 +177,7 @@ public final class PartitionBy {
         nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
         nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
         nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
+        nameToIndexMapUtf8.put(new Utf8String("n/a"), NOT_APPLICABLE);
 
         ttlUnitToIndexMap.put("h", HOUR);
         ttlUnitToIndexMap.put("hour", HOUR);

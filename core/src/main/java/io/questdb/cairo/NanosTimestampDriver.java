@@ -596,6 +596,7 @@ public class NanosTimestampDriver implements TimestampDriver {
             case WEEK:
                 return PARTITION_WEEK_FORMAT;
             case NONE:
+            case NOT_APPLICABLE:
                 return DEFAULT_FORMAT;
             default:
                 throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
@@ -1303,6 +1304,7 @@ public class NanosTimestampDriver implements TimestampDriver {
                     fmtStr = CommonUtils.WEEK_PATTERN;
                     break;
                 case NONE:
+                case NOT_APPLICABLE:
                     fmtMethod = DEFAULT_FORMAT;
                     fmtStr = partitionName;
                     break;

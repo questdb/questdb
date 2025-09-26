@@ -52,7 +52,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
-    public static final int MAT_VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int MAT_VIEW_DOES_NOT_EXIST = VIEW_DOES_NOT_EXIST - 1;
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
@@ -186,6 +187,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
+    public static CairoException viewDoesNotExist(CharSequence viewName) {
+        return critical(VIEW_DOES_NOT_EXIST).put("view does not exist [view=").put(viewName).put(']');
+    }
+
     public int getErrno() {
         return errno;
     }
@@ -245,6 +250,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 && errno != METADATA_VALIDATION_RECOVERABLE
                 && errno != TABLE_DROPPED
                 && errno != MAT_VIEW_DOES_NOT_EXIST
+                && errno != VIEW_DOES_NOT_EXIST
                 && errno != TABLE_DOES_NOT_EXIST;
     }
 

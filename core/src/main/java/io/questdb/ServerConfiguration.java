@@ -95,6 +95,8 @@ public interface ServerConfiguration {
         return 0;
     }
 
+    WorkerPoolConfiguration getViewCompilerPoolConfiguration();
+
     WorkerPoolConfiguration getWalApplyPoolConfiguration();
 
     default void init(CairoEngine engine, FreeOnExit freeOnExit) {

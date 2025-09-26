@@ -103,8 +103,9 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
+                                boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
                                 boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
+                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -170,6 +171,7 @@ public class TableConverter {
             switch (walType) {
                 case TABLE_TYPE_WAL:
                     // fall through
+                case TABLE_TYPE_VIEW:
                 case TABLE_TYPE_MAT:
                     return true;
                 case TABLE_TYPE_NON_WAL:

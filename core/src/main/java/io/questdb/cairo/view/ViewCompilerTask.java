@@ -22,38 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.mv;
+package io.questdb.cairo.view;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.ObjList;
-import io.questdb.std.ReadOnlyObjList;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.mp.ValueHolder;
+import io.questdb.std.Numbers;
 
-import java.util.concurrent.locks.ReadWriteLock;
+public class ViewCompilerTask implements ValueHolder<ViewCompilerTask> {
+    public TableToken tableToken;
+    public long updateTimestamp = Numbers.LONG_NULL;
 
-/**
- * Holds the list of mat view tokens for the given base table (or base mat view).
- * The list is protected with a R/W mutex, so it can be read concurrently.
- */
-public class MatViewDependencyList {
-    private final ReadWriteLock lock = new SimpleReadWriteLock();
-    private final ObjList<TableToken> matViews = new ObjList<>();
-
-    ReadOnlyObjList<TableToken> lockForRead() {
-        lock.readLock().lock();
-        return matViews;
+    @Override
+    public void clear() {
+        tableToken = null;
+        updateTimestamp = Numbers.LONG_NULL;
     }
 
-    ObjList<TableToken> lockForWrite() {
-        lock.writeLock().lock();
-        return matViews;
-    }
-
-    void unlockAfterRead() {
-        lock.readLock().unlock();
-    }
-
-    void unlockAfterWrite() {
-        lock.writeLock().unlock();
+    @Override
+    public void copyTo(ViewCompilerTask target) {
+        target.tableToken = tableToken;
+        target.updateTimestamp = updateTimestamp;
     }
 }

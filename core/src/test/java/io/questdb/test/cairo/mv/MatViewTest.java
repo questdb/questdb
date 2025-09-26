@@ -2145,10 +2145,11 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("reindex table price_1h");
             // truncate
             assertCannotModifyMatView("truncate table price_1h");
-            // drop
-            assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
+
+            // drop
+            assertSqlError("drop table price_1h", "table name expected, got view or materialized view name");
         });
     }
 
@@ -6239,6 +6240,14 @@ public class MatViewTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSqlError(String badSql, String expectedErrorMessage) {
+        try {
+            execute(badSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(e.getMessage().contains(expectedErrorMessage));
+        }
+    }
+
     private static void assertViewMatchesSqlOverBaseTable(String viewSql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertEquals(
@@ -6525,6 +6534,47 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    private void testBaseTableNoInvalidateOnOperation(String operationSql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            execute(operationSql);
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1h\tbase_price\tvalid\t\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
     private void testEnableDedupWithSubsetKeys(String enableDedupSql) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -6559,7 +6609,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\t" + ("valid") + "\n",
+                            "price_1h\tbase_price\tvalid\n",
                     "select view_name, base_table_name, view_status from materialized_views",
                     null,
                     false
