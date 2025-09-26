@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -60,6 +59,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<ByteBindVariable> byteVarPool;
     private final ObjectPool<CharBindVariable> charVarPool;
     private final ObjectPool<DateBindVariable> dateVarPool;
+    private final ObjectPool<DecimalBindVariable> decimalVarPool;
     private final ObjectPool<DoubleBindVariable> doubleVarPool;
     private final ObjectPool<FloatBindVariable> floatVarPool;
     private final ObjectPool<GeoHashBindVariable> geoHashVarPool;
@@ -73,7 +73,6 @@ public class BindVariableServiceImpl implements BindVariableService {
     private final ObjectPool<TimestampBindVariable> timestampVarPool;
     private final ObjectPool<UuidBindVariable> uuidVarPool;
     private final ObjectPool<VarcharBindVariable> varcharVarPool;
-    private final ObjectPool<DecimalBindVariable> decimalVarPool;
 
     public BindVariableServiceImpl(CairoConfiguration configuration) {
         final int poolSize = configuration.getBindVariablePoolSize();
@@ -399,6 +398,36 @@ public class BindVariableServiceImpl implements BindVariableService {
             indexedVariables.setQuick(index, function = dateVarPool.next());
             ((DateBindVariable) function).value = value;
         }
+    }
+
+    @Override
+    public void setDecimal(CharSequence name, long hh, long hl, long lh, long ll, int type) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            final DecimalBindVariable function;
+            namedVariables.putAt(index, name, function = decimalVarPool.next());
+            function.value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
+            function.setType(type);
+        } else {
+            setDecimal(namedVariables.valueAtQuick(index), hh, hl, lh, ll, type, -1, name);
+        }
+    }
+
+    @Override
+    public void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException {
+        indexedVariables.extendPos(index + 1);
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            setDecimal(function, hh, hl, lh, ll, type, index, null);
+        } else {
+            indexedVariables.setQuick(index, function = decimalVarPool.next());
+            ((DecimalBindVariable) function).value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
+            ((DecimalBindVariable) function).setType(type);
+        }
+    }
+
+    public void setDecimal(int index, int type) throws SqlException {
+        setDecimal(index, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, type);
     }
 
     @Override
@@ -778,36 +807,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    @Override
-    public void setDecimal(CharSequence name, long hh, long hl, long lh, long ll, int type) throws SqlException {
-        int index = namedVariables.keyIndex(name);
-        if (index > -1) {
-            final DecimalBindVariable function;
-            namedVariables.putAt(index, name, function = decimalVarPool.next());
-            function.value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
-            function.setType(type);
-        } else {
-            setDecimal(namedVariables.valueAtQuick(index), hh, hl, lh, ll, type, -1, name);
-        }
-    }
-
-    @Override
-    public void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException {
-        indexedVariables.extendPos(index + 1);
-        Function function = indexedVariables.getQuick(index);
-        if (function != null) {
-            setDecimal(function, hh, hl, lh, ll, type, index, null);
-        } else {
-            indexedVariables.setQuick(index, function = decimalVarPool.next());
-            ((DecimalBindVariable) function).value.of(hh, hl, lh, ll, ColumnType.getDecimalScale(type));
-            ((DecimalBindVariable) function).setType(type);
-        }
-    }
-
-    public void setDecimal(int index, int type) throws SqlException {
-        setDecimal(index, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, type);
-    }
-
     public void setUuid(int index) throws SqlException {
         setUuid(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
@@ -1009,6 +1008,33 @@ public class BindVariableServiceImpl implements BindVariableService {
             default:
                 reportError(function, ColumnType.DATE, index, name);
                 break;
+        }
+    }
+
+    private static void setDecimal(Function function, long hh, long hl, long lh, long ll, int type, int index, @Nullable CharSequence name) throws SqlException {
+        final int functionType = function.getType();
+        final int functionTag = ColumnType.tagOf(function.getType());
+        if (functionTag < ColumnType.DECIMAL8 || functionTag > ColumnType.DECIMAL256) {
+            reportError(function, type, index, name);
+        }
+
+        final DecimalBindVariable binder = (DecimalBindVariable) function;
+
+        // We may need to rescale the bind variable to match the function scale
+        int fromScale = ColumnType.getDecimalScale(type);
+        int fromPrecision = ColumnType.getDecimalPrecision(type);
+        int toScale = ColumnType.getDecimalScale(functionType);
+        int toPrecision = ColumnType.getDecimalPrecision(functionType);
+        binder.value.of(hh, hl, lh, ll, fromScale);
+        if (fromScale != toScale) {
+            try {
+                binder.value.rescale(toScale);
+            } catch (NumericException ignored) {
+                throwDecimalOverflow(index, type, functionType, name);
+            }
+        }
+        if (fromPrecision + (toScale - fromScale) > toPrecision && !binder.value.comparePrecision(toPrecision)) {
+            throwDecimalOverflow(index, type, functionType, name);
         }
     }
 
@@ -1358,44 +1384,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setDecimal(Function function, long hh, long hl, long lh, long ll, int type, int index, @Nullable CharSequence name) throws SqlException {
-        final int functionType = function.getType();
-        final int functionTag = ColumnType.tagOf(function.getType());
-        if (functionTag < ColumnType.DECIMAL8 || functionTag > ColumnType.DECIMAL256) {
-            reportError(function, type, index, name);
-        }
-
-        final DecimalBindVariable binder = (DecimalBindVariable) function;
-
-        // We may need to rescale the bind variable to match the function scale
-        int fromScale = ColumnType.getDecimalScale(type);
-        int fromPrecision = ColumnType.getDecimalPrecision(type);
-        int toScale = ColumnType.getDecimalScale(functionType);
-        int toPrecision = ColumnType.getDecimalPrecision(functionType);
-        binder.value.of(hh, hl, lh, ll, fromScale);
-        if (fromScale != toScale) {
-            try {
-                binder.value.rescale(toScale);
-            } catch (NumericException ignored) {
-                throwDecimalOverflow(index, type, functionType, name);
-            }
-        }
-        if (fromPrecision + (toScale - fromScale) > toPrecision && !binder.value.comparePrecision(toPrecision)) {
-            throwDecimalOverflow(index, type, functionType, name);
-        }
-    }
-
-    private static void throwDecimalOverflow(int index, int fromType, int toType, @Nullable CharSequence name) throws SqlException {
-        SqlException ex = SqlException.$(0, "inconvertible types: ")
-                .put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
-        if (name != null) {
-            ex = ex.put(" [varName=").put(name).put(']');
-        } else {
-            ex = ex.put(" [varIndex=").put(index).put(']');
-        }
-        throw ex;
-    }
-
     private static void setVarchar0(
             Function function,
             @Transient Utf8Sequence value,
@@ -1468,6 +1456,17 @@ public class BindVariableServiceImpl implements BindVariableService {
             charSeq = sink;
         }
         return charSeq;
+    }
+
+    private static void throwDecimalOverflow(int index, int fromType, int toType, @Nullable CharSequence name) throws SqlException {
+        SqlException ex = SqlException.$(0, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+        if (name != null) {
+            ex = ex.put(" [varName=").put(name).put(']');
+        } else {
+            ex = ex.put(" [varIndex=").put(index).put(']');
+        }
+        throw ex;
     }
 
     private void setArray(int index) throws SqlException {
