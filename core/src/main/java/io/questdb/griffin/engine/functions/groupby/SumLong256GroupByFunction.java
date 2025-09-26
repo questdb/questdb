@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -50,21 +51,20 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
-        if (!value.equals(Long256Impl.NULL_LONG256)) {
-            mapValue.putLong256(valueIndex, value);
-            mapValue.putLong(valueIndex + 1, 1);
-        } else {
-            mapValue.putLong256(valueIndex, Long256Impl.ZERO_LONG256);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
+        mapValue.putLong256(valueIndex, value);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 value = arg.getLong256A(record);
         if (!value.equals(Long256Impl.NULL_LONG256)) {
-            mapValue.addLong256(valueIndex, value);
-            mapValue.addLong(valueIndex + 1, 1);
+            final Long256 sum = mapValue.getLong256A(valueIndex);
+            if (!sum.equals(Long256Impl.NULL_LONG256)) {
+                Long256Util.add(sum, value);
+                mapValue.putLong256(valueIndex, sum);
+            } else {
+                mapValue.putLong256(valueIndex, value);
+            }
         }
     }
 
@@ -108,7 +108,6 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG256);
-        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -124,7 +123,6 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
-        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
@@ -133,10 +131,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     private Long256 getLong256(Record rec, Long256Impl long256) {
-        if (rec.getLong(valueIndex + 1) > 0) {
-            long256.copyFrom(rec.getLong256A(valueIndex));
-            return long256;
-        }
-        return Long256Impl.NULL_LONG256;
+        long256.copyFrom(rec.getLong256A(valueIndex));
+        return long256;
     }
 }
