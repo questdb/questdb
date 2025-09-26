@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -55,17 +56,19 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorImpl.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
-    private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final HttpFullFatServerConfiguration httpConfiguration;
+    private final LineHttpProcessorConfiguration lineConfiguration;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
     private LineHttpProcessorState state;
 
-    public LineHttpProcessorImpl(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessorImpl(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
-        this.recvBufferSize = recvBufferSize;
-        this.maxResponseContentLength = maxResponseContentLength;
-        this.configuration = configuration;
+        this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
+        this.lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.httpConfiguration = httpConfiguration;
     }
 
     @Override
@@ -105,7 +108,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
-            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
+            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, lineConfiguration);
             LV.set(context, state);
         } else {
             state.clear();
@@ -113,7 +116,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
 
-        if (!engine.getConfiguration().isAcceptingWrites()) {
+        if (!httpConfiguration.isAcceptingWrites()) {
             state.reject(NOT_ACCEPTING_WRITES, "this instance cannot receive writes", context.getFd());
             return;
         }

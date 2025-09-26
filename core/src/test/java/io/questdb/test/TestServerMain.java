@@ -89,13 +89,7 @@ public class TestServerMain extends ServerMain {
             throw new AssertionError(e);
         }
     }
-
-    public String printSql(String sql) throws SqlException {
-        ensureContext();
-        getEngine().print(sql, sink);
-        return sink.toString();
-    }
-
+    
     public void reset() {
         // Drop all tables
         CairoEngine engine = this.getEngine();

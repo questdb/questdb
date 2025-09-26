@@ -1305,12 +1305,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
     }
-
-    @Override
-    public boolean isAcceptingWrites() {
-        return getDelegate().isAcceptingWrites();
-    }
-
+    
     @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();

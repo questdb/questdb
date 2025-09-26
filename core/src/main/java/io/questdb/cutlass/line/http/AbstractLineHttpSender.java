@@ -42,7 +42,6 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -1105,6 +1104,10 @@ public abstract class AbstractLineHttpSender implements Sender {
                         nextJsonValueFlag = MAX_NAME_LEN;
                     } else if (tag.equals("accepting.writes")) {
                         nextJsonValueFlag = ACCEPTING_WRITES;
+                        // server supports sending accepting.writes arrays,
+                        // thus it has to explicitly allow HTTP otherwise
+                        // the server is considered read-only
+                        acceptingWrites = false;
                     } else {
                         nextJsonValueFlag = 0;
                     }
@@ -1116,9 +1119,6 @@ public abstract class AbstractLineHttpSender implements Sender {
                         } catch (NumericException ignored) {
                         }
                     }
-                    if (nextJsonValueFlag == ACCEPTING_WRITES) {
-                        acceptingWrites = SqlKeywords.isTrueKeyword(tag);
-                    }
                     break;
                 case JsonLexer.EVT_ARRAY_VALUE:
                     if (nextJsonValueFlag == LINE_PROTO_SUPPORT_VERSIONS) {
@@ -1126,6 +1126,10 @@ public abstract class AbstractLineHttpSender implements Sender {
                             supportVersions.add(Numbers.parseInt(tag));
                         } catch (NumericException e) {
                             // ignore it
+                        }
+                    } else if (nextJsonValueFlag == ACCEPTING_WRITES) {
+                        if (Chars.equals("http", tag)) {
+                            acceptingWrites = true;
                         }
                     }
                     break;

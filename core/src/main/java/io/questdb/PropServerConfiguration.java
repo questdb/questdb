@@ -127,7 +127,6 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
-    public static final String ACCEPTING_READS = "accepting.reads";
     public static final String ACCEPTING_WRITES = "accepting.writes";
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
@@ -144,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
@@ -1762,6 +1762,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
         this.ilpProtoTransports = initIlpTransport();
+        this.acceptingWrites = initAcceptingWrites();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -2126,6 +2127,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    protected String getAcceptingWrites() {
+        return acceptingWrites;
+    }
+
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
         return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
     }
@@ -2321,6 +2326,39 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
             allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
         }
+    }
+
+    protected String initAcceptingWrites() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        if (instanceAcceptingWrites()) {
+            boolean addComma = false;
+            if (!httpContextConfiguration.readOnlySecurityContext()) {
+                sink.put("\"http\"");
+                addComma = true;
+            }
+            if (lineTcpReceiverConfiguration.isEnabled()) {
+                // tcp does not have read-only mode
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"tcp\"");
+                addComma = true;
+            }
+            if (pgConfiguration.isEnabled() && !pgConfiguration.readOnlySecurityContext()) {
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"pgwire\"");
+            }
+        }
+        sink.put(']');
+        return sink.toString();
+    }
+
+    protected boolean instanceAcceptingWrites() {
+        // overwritten in Enterprise
+        return true;
     }
 
     protected PropertyValidator newValidator() {
@@ -2804,6 +2842,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
+            arrayStr(ACCEPTING_WRITES, getAcceptingWrites(), sink);
             arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
             arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
             return true;
@@ -3963,11 +4002,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isAcceptingWrites() {
-            return !httpContextConfiguration.readOnlySecurityContext();
-        }
-
-        @Override
         public boolean isCheckpointRecoveryEnabled() {
             return checkpointRecoveryEnabled;
         }
@@ -4588,6 +4622,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isAcceptingWrites() {
+            return !isReadOnlyInstance
+                    && httpServerEnabled
+                    && lineHttpEnabled
+                    && !httpContextConfiguration.readOnlySecurityContext();
         }
 
         @Override
