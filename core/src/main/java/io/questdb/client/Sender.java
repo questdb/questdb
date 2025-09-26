@@ -554,7 +554,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (portIndex != -1) {
                 try {
                     parsedPort = Numbers.parseInt(address, portIndex + 1, address.length());
-                    port(parsedPort);
+                    if (parsedPort < 1 || parsedPort > 65535) {
+                        throw new LineSenderException("invalid port [port=").put(parsedPort).put("]");
+                    }
                 } catch (NumericException e) {
                     throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
                             .put(" [address=").put(address).put("]");
@@ -585,6 +587,10 @@ public interface Sender extends Closeable, ArraySender<Sender> {
 
             }
             this.hosts.add(hostSansPort);
+            if (parsedPort != -1) {
+                // port was specified in the address, so we use it
+                this.ports.add(parsedPort);
+            }
             return this;
         }
 

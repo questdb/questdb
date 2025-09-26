@@ -608,11 +608,33 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testDuplicatedAddresses() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost:9000").build();
+                Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost:9000");
                 Assert.fail("should not allow multiple addresses");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "duplicated addresses are not allowed [address=localhost:9000]");
             }
+
+            try {
+                Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost:9001").address("localhost:9000");
+                Assert.fail("should not allow multiple addresses");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "duplicated addresses are not allowed [address=localhost:9000]");
+            }
+        });
+    }
+
+    @Test
+    public void testDuplicatedAddressesWitNoPortsAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost");
+            Sender.builder(Sender.Transport.TCP).address("localhost").address("localhost:9000");
+        });
+    }
+
+    @Test
+    public void testDuplicatedAddressesWithDifferentPortsAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost:9001");
         });
     }
 
