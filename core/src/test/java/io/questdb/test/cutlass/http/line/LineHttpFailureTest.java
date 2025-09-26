@@ -377,8 +377,9 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     }
 
                     serverMain.awaitTxn("line", 1);
-                    serverMain.assertSql("select * from line", "sym1\tfield1\ttimestamp\n" +
-                            "123\t123\t2009-02-13T23:31:30.000000Z\n");
+                    serverMain.assertSql("select * from line",
+                            "sym1\tfield1\ttimestamp\n" +
+                                    "123\t123\t2009-02-13T23:31:30.000000Z\n");
                 }
             }
         });
@@ -386,53 +387,55 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testGzipEncoding() throws Exception {
-        try (final TestServerMain serverMain = startWithEnvVariables()) {
-            serverMain.start();
-            while (!serverMain.hasStarted()) {
-                continue;
-            }
-
-            try (Sender sender = Sender.fromConfig("http::addr=localhost:" + serverMain.getHttpServerPort() + ";protocol_version=1;auto_flush=off;")) {
-                sender.table("m1")
-                        .symbol("tag1", "value1")
-                        .doubleColumn("f1", 1)
-                        .longColumn("x", 12)
-                        .at(Instant.ofEpochSecond(123456));
-                DirectByteSlice rawBuffer = sender.bufferView();
-                byte[] b = new byte[rawBuffer.size()];
-                for (int i = 0; i < rawBuffer.size(); i++) {
-                    b[i] = rawBuffer.byteAt(i);
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+                while (!serverMain.hasStarted()) {
+                    continue;
                 }
-
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                GZIPOutputStream strm = new GZIPOutputStream(out);
-                strm.write(b);
-                strm.finish();
-                byte[] outBytes = out.toByteArray();
-
-                try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
-                    HttpClient.Request request = client
-                            .newRequest("localhost", serverMain.getHttpServerPort()).POST()
-                            .url("/write ")
-                            .header("User-Agent", "QuestDB/java/gzip_test")
-                            .header("Content-Encoding", "gzip");
-                    request.withContent();
-
-                    for (int i = 0; i < outBytes.length; i++) {
-                        request.put(outBytes[i]);
+                try (Sender sender = Sender.fromConfig("http::addr=127.0.0.1:" + serverMain.getHttpServerPort() + ";protocol_version=1;auto_flush=off;")) {
+                    sender.table("m1")
+                            .symbol("tag1", "value1")
+                            .doubleColumn("f1", 1)
+                            .longColumn("x", 12)
+                            .at(Instant.ofEpochSecond(123456));
+                    DirectByteSlice rawBuffer = sender.bufferView();
+                    byte[] b = new byte[rawBuffer.size()];
+                    for (int i = 0; i < rawBuffer.size(); i++) {
+                        b[i] = rawBuffer.byteAt(i);
                     }
-                    HttpClient.ResponseHeaders response = request.send(30_000);
-                    response.await();
-                    Assert.assertEquals("204", response.getStatusCode().asAsciiCharSequence().toString());
-                    response.close();
-                }
 
-                serverMain.awaitTable("m1");
-                serverMain.assertSql("m1",
-                        "tag1\tf1\tx\ttimestamp\n" +
-                                "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n");
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    GZIPOutputStream strm = new GZIPOutputStream(out);
+                    strm.write(b);
+                    strm.finish();
+                    byte[] outBytes = out.toByteArray();
+
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request request = client
+                                .newRequest("127.0.0.1", serverMain.getHttpServerPort()).POST()
+                                .url("/write")
+                                .header("User-Agent", "QuestDB/java/gzip_test")
+                                .header("Content-Encoding", "gzip");
+                        request.withContent();
+
+                        for (int i = 0; i < outBytes.length; i++) {
+                            request.put(outBytes[i]);
+                        }
+
+                        try (HttpClient.ResponseHeaders response = request.send()) {
+                            response.await();
+                            Assert.assertEquals("204", response.getStatusCode().asAsciiCharSequence().toString());
+                        }
+                    }
+
+                    serverMain.awaitTable("m1");
+                    serverMain.assertSql("m1",
+                            "tag1\tf1\tx\ttimestamp\n" +
+                                    "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n");
+                }
             }
-        }
+        });
     }
 
     @Test
