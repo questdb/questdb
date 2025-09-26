@@ -26,13 +26,17 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -50,6 +54,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         AbstractTest.setUpStatic();
         testHttpClient = new TestHttpClient();
         exportRoot = TestUtils.unchecked(() -> temp.newFolder("export").getAbsolutePath());
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractTest.tearDownStatic();
+        Misc.free(testHttpClient);
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
     }
 
     @Before

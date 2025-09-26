@@ -193,7 +193,7 @@ public class SerialParquetExporter implements Closeable {
 
                             // copy file directly
                             int copyResult = ff.copy(fromParquet.$(), toParquet.$());
-                            if (copyResult != 0) {
+                            if (copyResult < 0) {
                                 throw CopyExportException.instance(phase, copyResult)
                                         .put("failed to copy parquet file [from=").put(fromParquet)
                                         .put(", to=").put(toParquet).put(']');
@@ -250,9 +250,6 @@ public class SerialParquetExporter implements Closeable {
                             exportResult.addFilePath(toParquet, true);
                         }
                     }
-                } catch (CairoException e) {
-                    LOG.errorW().$("could not populate table reader [msg=").$(e.getFlyweightMessage()).$(']').$();
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
                 }
             }
             LOG.info().$("finished parquet conversion [table=").$(tableToken).$(']').$();
