@@ -43,9 +43,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -772,6 +773,119 @@ public class ImportIODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportTsFromSchema() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine, sqlExecutionContext) -> {
+                    setupSql(engine);
+                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("syms", name.getTableName())) {
+                            waitForData.countDown();
+                        }
+                    });
+                    new SendAndReceiveRequestBuilder().execute(
+                            "POST /upload?name=syms&timestamp=ts1 HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "User-Agent: curl/7.64.0\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Content-Length: 437760673\r\n" +
+                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                                    "Expect: 100-continue\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "[\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"col1\",\r\n" +
+                                    "    \"type\": \"SYMBOL\",\r\n" +
+                                    "    \"index\": \"false\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"col2\",\r\n" +
+                                    "    \"type\": \"SYMBOL\",\r\n" +
+                                    "    \"index\": \"true\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts1\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss.SSSUUUNNNz\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts2\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP_NS\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"ts3\",\r\n" +
+                                    "    \"type\": \"TIMESTAMP_NS\",\r\n" +
+                                    "    \"pattern\": \"yyyy-MM-dd HH:mm:ss\"\r\n" +
+                                    "  }\r\n" +
+                                    "]\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "col1,col2,ts1,ts2,ts3\r\n" +
+                                    "sym1,sym2,2017-02-01 00:29:00.123456789z,2017-02-01 00:30:00,2017-02-01 00:30:01\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d--",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "0666\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                                              syms  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                               ts1  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|              0  |                                              col1  |                   SYMBOL  |           0  |\r\n" +
+                                    "|              1  |                                              col2  |         (idx/256) SYMBOL  |           0  |\r\n" +
+                                    "|              2  |                                               ts1  |                TIMESTAMP  |           0  |\r\n" +
+                                    "|              3  |                                               ts2  |             TIMESTAMP_NS  |           0  |\r\n" +
+                                    "|              4  |                                               ts3  |             TIMESTAMP_NS  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                        Assert.fail();
+                    }
+
+                    try (TableReader reader = newOffPoolReader(engine.getConfiguration(), "syms", engine)) {
+                        TableReaderMetadata meta = reader.getMetadata();
+                        Assert.assertEquals(5, meta.getColumnCount());
+                        Assert.assertEquals(2, meta.getTimestampIndex());
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
+                        Assert.assertFalse(meta.isColumnIndexed(0));
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col2"));
+                        Assert.assertTrue(meta.isColumnIndexed(1));
+                        Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("ts1"));
+                        Assert.assertFalse(meta.isColumnIndexed(2));
+                        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, meta.getColumnType("ts2"));
+                        Assert.assertFalse(meta.isColumnIndexed(3));
+                        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, meta.getColumnType("ts3"));
+                        Assert.assertFalse(meta.isColumnIndexed(4));
+                        TestUtils.assertReader("col1\tcol2\tts1\tts2\tts3\n" +
+                                "sym1\tsym2\t2017-02-01T00:29:00.123456Z\t2017-02-01T00:30:00.000000000Z\t2017-02-01T00:30:01.000000000Z\n", reader, new StringSink());
+                    }
+                });
+    }
+
+    @Test
     public void testImportWitNocacheSymbolsLoop() throws Exception {
         for (int i = 0; i < 2; i++) {
             System.out.println("*************************************************************************************");
@@ -996,7 +1110,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withFilesFacade(ff)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
+                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Micros.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -1008,7 +1122,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     );
 
                     // Add new commit
-                    engine.execute("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
+                    engine.execute("insert into xyz select x, timestamp_sequence(" + Micros.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
 
                     // Here fail expected
                     new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders(

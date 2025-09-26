@@ -471,22 +471,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 "a\n" +
                         "1.426297242379E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.446081058169E12\n" +
                         "1.434834113022E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.439739868373E12\n" +
                         "1.443957889668E12\n" +
                         "1.440280260964E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.44318380966E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.435298544851E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.447181628184E12\n" +
                         "1.4423615004E12\n" +
                         "1.428165287226E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.434999533562E12\n" +
                         "1.423736755529E12\n" +
                         "1.426566352765E12\n",
@@ -499,22 +499,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 "a\n" +
                         "1.42629719E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44608107E12\n" +
                         "1.43483417E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43973981E12\n" +
                         "1.44395783E12\n" +
                         "1.44028022E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44318385E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43529856E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44718168E12\n" +
                         "1.44236151E12\n" +
                         "1.42816523E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43499959E12\n" +
                         "1.4237367E12\n" +
                         "1.42656641E12\n",
@@ -1074,22 +1074,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1970-01-01T00:00:00.001Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.022Z\n" +
                         "1970-01-01T00:00:00.022Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.007Z\n" +
                         "1970-01-01T00:00:00.026Z\n" +
                         "1970-01-01T00:00:00.026Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.013Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.025Z\n" +
                         "1970-01-01T00:00:00.021Z\n" +
                         "1970-01-01T00:00:00.023Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.006Z\n" +
                         "1970-01-01T00:00:00.019Z\n" +
                         "1970-01-01T00:00:00.007Z\n",
@@ -1102,22 +1102,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "22.0\n" +
                         "22.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "7.0\n" +
                         "26.0\n" +
                         "26.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "13.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "0.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "25.0\n" +
                         "21.0\n" +
                         "23.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "6.0\n" +
                         "19.0\n" +
                         "7.0\n",
@@ -1130,22 +1130,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "22.0\n" +
                         "22.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "7.0\n" +
                         "26.0\n" +
                         "26.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "13.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "0.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "25.0\n" +
                         "21.0\n" +
                         "23.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "6.0\n" +
                         "19.0\n" +
                         "7.0\n",
@@ -1158,22 +1158,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "22\n" +
                         "22\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "7\n" +
                         "26\n" +
                         "26\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "13\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "0\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "25\n" +
                         "21\n" +
                         "23\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "6\n" +
                         "19\n" +
                         "7\n",
@@ -1214,22 +1214,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastIntTimestamp() throws Exception {
         String expectedData = "a\n" +
                 "1970-01-01T00:00:00.000001Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000022Z\n" +
                 "1970-01-01T00:00:00.000022Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000007Z\n" +
                 "1970-01-01T00:00:00.000026Z\n" +
                 "1970-01-01T00:00:00.000026Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000013Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000000Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000025Z\n" +
                 "1970-01-01T00:00:00.000021Z\n" +
                 "1970-01-01T00:00:00.000023Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000006Z\n" +
                 "1970-01-01T00:00:00.000019Z\n" +
                 "1970-01-01T00:00:00.000007Z\n";
@@ -1298,22 +1298,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastLong(
                 "a\n" +
                         "22.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "17.0\n" +
                         "2.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "21.0\n" +
                         "1.0\n" +
                         "20.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "14.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "26.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "23.0\n" +
                         "2.0\n" +
                         "24.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "16.0\n" +
                         "10.0\n" +
                         "6.0\n",
@@ -1326,22 +1326,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastLong(
                 "a\n" +
                         "22.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "17.0\n" +
                         "2.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "21.0\n" +
                         "1.0\n" +
                         "20.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "14.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "26.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "23.0\n" +
                         "2.0\n" +
                         "24.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "16.0\n" +
                         "10.0\n" +
                         "6.0\n",
@@ -1770,26 +1770,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastTimestampDate() throws Exception {
         assertCastTimestamp(
                 "a\n" +
-                        "47956-10-13T01:43:12.217Z\n" +
+                        "2015-12-27T07:50:58.992Z\n" +
                         "\n" +
-                        "47830-07-03T01:52:05.101Z\n" +
-                        "47946-01-25T16:00:41.629Z\n" +
+                        "2015-11-11T04:53:52.325Z\n" +
+                        "2015-12-23T09:55:40.841Z\n" +
                         "\n" +
-                        "47133-10-04T06:29:09.402Z\n" +
-                        "47578-08-06T19:13:17.654Z\n" +
-                        "47813-04-30T15:45:24.307Z\n" +
+                        "2015-03-01T17:21:30.549Z\n" +
+                        "2015-08-11T04:44:49.997Z\n" +
+                        "2015-11-04T22:21:35.124Z\n" +
                         "\n" +
-                        "47370-09-18T01:29:39.870Z\n" +
+                        "2015-05-27T06:28:53.379Z\n" +
                         "\n" +
-                        "47817-03-02T05:38:00.192Z\n" +
+                        "2015-11-06T07:59:51.480Z\n" +
                         "\n" +
-                        "47502-10-03T01:46:21.965Z\n" +
-                        "47627-07-07T11:02:25.686Z\n" +
-                        "47630-01-25T00:47:44.820Z\n" +
+                        "2015-07-14T11:54:20.781Z\n" +
+                        "2015-08-29T01:32:49.345Z\n" +
+                        "2015-08-29T23:55:43.664Z\n" +
                         "\n" +
-                        "47620-04-14T19:43:29.561Z\n" +
-                        "47725-11-11T00:22:36.062Z\n" +
-                        "47867-11-08T16:30:43.643Z\n",
+                        "2015-08-26T10:11:44.609Z\n" +
+                        "2015-10-03T23:38:25.356Z\n" +
+                        "2015-11-24T20:19:13.843Z\n",
                 ColumnType.DATE
         );
     }
@@ -1799,22 +1799,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 "a\n" +
                         "1.451202658992217E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.447217632325101E15\n" +
                         "1.450864540841629E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.425230490549402E15\n" +
                         "1.439268289997654E15\n" +
                         "1.446675695124307E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.43270813337987E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.446796791480192E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.436874860781965E15\n" +
                         "1.440811969345686E15\n" +
                         "1.44089254366482E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.440583904609561E15\n" +
                         "1.443915505356062E15\n" +
                         "1.448396353843643E15\n",
@@ -1827,22 +1827,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 "a\n" +
                         "1.45120261E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44721768E15\n" +
                         "1.45086451E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.42523054E15\n" +
                         "1.43926824E15\n" +
                         "1.44667571E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43270808E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44679678E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43687487E15\n" +
                         "1.44081201E15\n" +
                         "1.44089254E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44058384E15\n" +
                         "1.44391553E15\n" +
                         "1.44839638E15\n",
@@ -3646,6 +3646,21 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctDependencyColumnsThrowError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (" +
+                            "  x1 int," +
+                            "  ts TIMESTAMP" +
+                            ") timestamp(ts);"
+            );
+
+            assertExceptionNoLeakCheck("select distinct x1 as a, a from tab", 25, "Invalid column: a");
+            assertExceptionNoLeakCheck("select distinct x1 - 1 as a, a + 1 from tab", 29, "Invalid column: a");
+        });
+    }
+
+    @Test
     public void testDuplicateTableName() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -4563,8 +4578,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)",
-                32,
-                "inconvertible types"
+                "inconvertible value"
         ));
     }
 
@@ -4590,8 +4604,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)",
-                17,
-                "inconvertible types"
+                0,
+                "inconvertible value"
         ));
     }
 

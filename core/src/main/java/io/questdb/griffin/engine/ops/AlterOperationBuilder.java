@@ -245,7 +245,7 @@ public class AlterOperationBuilder implements Mutable {
             int refreshType,
             int timerInterval,
             char timerUnit,
-            long timerStart,
+            long timerStartUs,
             @Nullable CharSequence timerTimeZone,
             int periodLength,
             char periodLengthUnit,
@@ -258,7 +258,7 @@ public class AlterOperationBuilder implements Mutable {
         this.extraInfo.add(refreshType);
         this.extraInfo.add(timerInterval);
         this.extraInfo.add(timerUnit);
-        this.extraInfo.add(timerStart);
+        this.extraInfo.add(timerStartUs);
         this.extraInfo.add(periodLength);
         this.extraInfo.add(periodLengthUnit);
         this.extraInfo.add(periodDelay);

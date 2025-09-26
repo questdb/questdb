@@ -51,14 +51,14 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new IPv4MinusIPv4FunctionFactory.IPv4MinusIPv4Function(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    public static final class IPv4MinusIPv4Function extends LongFunction implements BinaryFunction {
+    static class Func extends LongFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public IPv4MinusIPv4Function(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
@@ -83,7 +83,7 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(left).val('+').val(right);
+            sink.val(left).val('-').val(right);
         }
     }
 }

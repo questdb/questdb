@@ -36,7 +36,7 @@ import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-// paged mapped appendable readable 
+// paged mapped appendable readable
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final CairoConfiguration configuration;
@@ -159,11 +159,6 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void wholeFile(FilesFacade ff, LPSZ name, int memoryTag) {
-        of(ff, name, ff.getMapPageSize(), 0, memoryTag, CairoConfiguration.O_NONE, -1);
-    }
-
-    @Override
     protected long mapWritePage(int page, long offset) {
         releaseCurrentPage();
         return pageAddress = mapPage(page);
@@ -171,11 +166,13 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
 
     @Override
     protected void release(long address) {
-        int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
-        if (commitMode != CommitMode.NOSYNC) {
-            ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+        if (address != 0) {
+            int commitMode = configuration != null ? configuration.getCommitMode() : CommitMode.NOSYNC;
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.msync(address, getPageSize(), commitMode == CommitMode.ASYNC);
+            }
+            ff.munmap(address, getPageSize(), memoryTag);
         }
-        ff.munmap(address, getPageSize(), memoryTag);
     }
 
     void releaseCurrentPage() {

@@ -30,9 +30,9 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public final class IPv4Adapter extends AbstractTypeAdapter {
-
     public static final IPv4Adapter INSTANCE = new IPv4Adapter();
 
     private IPv4Adapter() {
@@ -45,16 +45,16 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(DirectUtf8Sequence text) {
-        if (text.size() < 7)
-            return false;
-        if (Numbers.notDigit(text.byteAt(0))) {
-            if (text.byteAt(0) != '.') {
-                return false;
-            }
-        }
-
         try {
-            Numbers.parseIPv4(text);
+            final boolean hasDots = Utf8s.hasDots(text);
+            if (hasDots) {
+                Numbers.parseIPv4(text);
+            } else {
+                final boolean isNull = SqlKeywords.isNullKeyword(text);
+                if (!isNull) {
+                    Numbers.parseInt(text);
+                }
+            }
             return true;
         } catch (NumericException e) {
             return false;
@@ -67,6 +67,15 @@ public final class IPv4Adapter extends AbstractTypeAdapter {
     }
 
     private int parseIPv4(DirectUtf8Sequence value) throws NumericException {
-        return Numbers.parseIPv4(value);
+        final boolean hasDots = Utf8s.hasDots(value);
+        if (hasDots) {
+            return Numbers.parseIPv4(value);
+        } else {
+            final boolean isNull = SqlKeywords.isNullKeyword(value);
+            if (isNull) {
+                return Numbers.IPv4_NULL;
+            }
+            return Numbers.parseInt(value);
+        }
     }
 }

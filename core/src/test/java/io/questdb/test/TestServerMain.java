@@ -69,15 +69,6 @@ public class TestServerMain extends ServerMain {
         }
     }
 
-    public void ddl(String sql) {
-        try {
-            ensureContext();
-            getEngine().execute(sql, sqlExecutionContext);
-        } catch (SqlException e) {
-            throw new AssertionError(e);
-        }
-    }
-
     public void compile(String sql) {
         try {
             if (sqlExecutionContext == null) {
@@ -85,6 +76,15 @@ public class TestServerMain extends ServerMain {
             } else {
                 getEngine().execute(sql, sqlExecutionContext);
             }
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    public void execute(String sql) {
+        try {
+            ensureContext();
+            getEngine().execute(sql, sqlExecutionContext);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }

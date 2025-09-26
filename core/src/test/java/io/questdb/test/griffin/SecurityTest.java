@@ -39,8 +39,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -267,7 +267,7 @@ public class SecurityTest extends AbstractCairoTest {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
 
             final File backupDir = temp.newFolder();
-            final DateFormat backupSubDirFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
+            final DateFormat backupSubDirFormat = new MicrosFormatCompiler().compile("ddMMMyyyy");
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
                         @Override

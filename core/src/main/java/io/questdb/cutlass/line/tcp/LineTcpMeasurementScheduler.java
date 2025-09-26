@@ -55,6 +55,7 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
@@ -83,6 +84,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
+    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
@@ -94,9 +96,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
     public LineTcpMeasurementScheduler(
             LineTcpReceiverConfiguration lineConfiguration,
             CairoEngine engine,
-            WorkerPool networkSharedPool,
+            WorkerPool sharedPoolNetwork,
             IODispatcher<LineTcpConnectionContext> dispatcher,
-            WorkerPool writerWorkerPool
+            WorkerPool sharedPoolWrite
     ) {
         try {
             this.engine = engine;
@@ -106,28 +108,28 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.clock = cairoConfiguration.getMillisecondClock();
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-            final int networkSharedPoolSize = networkSharedPool.getWorkerCount();
+            final int networkSharedPoolSize = sharedPoolNetwork.getWorkerCount();
             this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
             this.tableNameSinks = new StringSink[networkSharedPoolSize];
             for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
                 netIoJobs[i] = netIoJob;
-                networkSharedPool.assign(i, netIoJob);
-                networkSharedPool.freeOnExit(netIoJob);
+                sharedPoolNetwork.assign(i, netIoJob);
+                sharedPoolNetwork.freeOnExit(netIoJob);
             }
 
             // Worker count is set to 1 because we do not use this execution context
             // in worker threads.
             tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
             idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-            loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+            loadByWriterThread = new long[sharedPoolWrite.getWorkerCount()];
             autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
             autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
             int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
             int queueSize = lineConfiguration.getWriterQueueCapacity();
             long commitInterval = configuration.getCommitInterval();
-            int nWriterThreads = writerWorkerPool.getWorkerCount();
+            int nWriterThreads = sharedPoolWrite.getWorkerCount();
             pubSeq = new MPSequence[nWriterThreads];
             //noinspection unchecked
             queue = new RingQueue[nWriterThreads];
@@ -141,8 +143,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         (address, addressSize) -> new LineTcpMeasurementEvent(
                                 address,
                                 addressSize,
-                                lineConfiguration.getMicrosecondClock(),
-                                lineConfiguration.getTimestampAdapter(),
+                                lineConfiguration.getTimestampUnit(),
                                 defaultColumnTypes,
                                 lineConfiguration.isStringToCharCastAllowed(),
                                 lineConfiguration.getMaxFileNameLength(),
@@ -166,8 +167,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         clock,
                         commitInterval, this, engine.getMetrics(), assignedTables[i]
                 );
-                writerWorkerPool.assign(i, lineTcpLegacyWriterJob);
-                writerWorkerPool.freeOnExit(lineTcpLegacyWriterJob);
+                sharedPoolWrite.assign(i, lineTcpLegacyWriterJob);
+                sharedPoolWrite.freeOnExit(lineTcpLegacyWriterJob);
             }
             this.tableStructureAdapter = new TableStructureAdapter(
                     cairoConfiguration,
@@ -179,9 +180,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
             lineWalAppender = new LineWalAppender(
                     autoCreateNewColumns,
                     configuration.isStringToCharCastAllowed(),
-                    configuration.getTimestampAdapter(),
-                    cairoConfiguration.getMaxFileNameLength(),
-                    configuration.getMicrosecondClock()
+                    configuration.getTimestampUnit(),
+                    sink,
+                    cairoConfiguration.getMaxFileNameLength()
             );
         } catch (Throwable t) {
             close();
@@ -212,6 +213,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
+        Misc.free(sink);
     }
 
     public boolean doMaintenance(
@@ -337,9 +339,13 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     // continue to next line
                     return false;
                 }
-                handleAppendException(measurementName, tud, ex);
+                handleWriterException(measurementName, tud, ex);
+            } catch (LineProtocolException ex) {
+                throw CairoException.nonCritical().put("could not write ILP message [tableName=").put(measurementName)
+                        .put(", error=").put(ex.getFlyweightMessage())
+                        .put(']');
             } catch (Throwable ex) {
-                handleAppendException(measurementName, tud, ex);
+                handleWriterException(measurementName, tud, ex);
             }
             return false;
         }
@@ -350,7 +356,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
         return Numbers.ceilPow2((long) (maxMeasurementSize / 4) * (Integer.BYTES + Double.BYTES + 1));
     }
 
-    private static void handleAppendException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
+    private static void handleWriterException(DirectUtf8Sequence measurementName, TableUpdateDetails tud, Throwable ex) {
         tud.setWriterInError();
         LogRecord logRecord;
         if (ex instanceof CairoException && !((CairoException) ex).isCritical()) {
@@ -361,7 +367,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         logRecord.$("closing writer because of error [table=").$(tud.getTableNameUtf16())
                 .$(", ex=").$(ex)
                 .I$();
-        throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName).put(", error=").put(ex.getMessage()).put(']');
+        throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName)
+                .put(", error=").put(ex.getMessage())
+                .put(']');
     }
 
     private void closeLocals(LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tudUtf16) {

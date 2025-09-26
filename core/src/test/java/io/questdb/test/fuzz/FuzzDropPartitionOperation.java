@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
@@ -59,9 +59,9 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s > '%s' AND %s < '%s'",
                     TestUtils.randomiseCase(tempRnd, wApi.getTableToken().getTableName()),
                     tsColumnName,
-                    Timestamps.toUSecString(cutoffTimestamp - 86400000000L),
+                    Micros.toUSecString(cutoffTimestamp - 86400000000L),
                     tsColumnName,
-                    Timestamps.toUSecString(cutoffTimestamp)
+                    Micros.toUSecString(cutoffTimestamp)
             );
 
             try {

@@ -56,8 +56,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -110,9 +110,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor = new OperationExecutor(engine, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
-        walEventReader = new WalEventReader(configuration.getFilesFacade());
+        walEventReader = new WalEventReader(configuration);
         metrics = engine.getMetrics().walMetrics();
-        tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
+        tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
         mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
@@ -331,6 +331,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Re-read the sequencer files to get the metadata change cursor.
                                     structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
                                     hasNext = structuralChangeCursor.hasNext();
+                                    if (!hasNext) {
+                                        // In very rare cases, when sequencer files are changed externally, we need to reload them here
+                                        // to re-read max structure version.
+                                        // We cannot do it in the previous call because we need to have sequencer writer lock to reload it.
+                                        Misc.free(structuralChangeCursor);
+                                        tableSequencerAPI.reload(tableToken);
+                                        structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
+                                        hasNext = structuralChangeCursor.hasNext();
+                                    }
                                 }
 
                                 if (hasNext) {
@@ -373,7 +382,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                             default:
                                 // Always set full path when using thread static path
-                                operationExecutor.setNowAndFixClock(commitTimestamp);
+                                operationExecutor.setNowAndFixClock(commitTimestamp, writer.getTimestampType());
                                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                                 final long start = microClock.getTicks();
 
@@ -452,7 +461,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
                 // on the state of the writer and revert any dirty txns that might have advanced. We do that
                 // by equalizing writerTxn and dirtyWriterTxn.
-                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getTxn(), writer.getTxn());
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getSeqTxn(), writer.getSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -514,7 +523,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             logRecord.$(", error=").$(throwable).I$();
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
-            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName())
+            LOG.critical().$("could not suspend table [table=").$(tableToken)
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
         }
@@ -622,7 +631,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
-                            info.getLastRefreshTimestamp(),
+                            info.getLastRefreshTimestampUs(),
                             info.isInvalid(),
                             info.getInvalidationReason(),
                             info.getLastPeriodHi(),

@@ -40,6 +40,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -49,7 +50,6 @@ import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.HttpRequestValidator.*;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
 import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
-import static io.questdb.cutlass.line.tcp.LineTcpParser.*;
 
 public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
@@ -127,18 +127,18 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
             int len = precision.size();
             if ((len == 1 && precision.byteAt(0) == 'n') || (len == 2 && precision.byteAt(0) == 'n' && precision.byteAt(1) == 's')) {
                 // V2 influx client sends "n" and V3 sends "ns"
-                timestampPrecision = ENTITY_UNIT_NANO;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_NANOS;
             } else if ((len == 1 && precision.byteAt(0) == 'u') || (len == 2 && precision.byteAt(0) == 'u' && precision.byteAt(1) == 's')) {
                 // V2 influx client sends "u" and V3 sends "us"
-                timestampPrecision = ENTITY_UNIT_MICRO;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MICROS;
             } else if (len == 2 && precision.byteAt(0) == 'm' && precision.byteAt(1) == 's') {
-                timestampPrecision = ENTITY_UNIT_MILLI;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MILLIS;
             } else if (len == 1 && precision.byteAt(0) == 's') {
-                timestampPrecision = ENTITY_UNIT_SECOND;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_SECONDS;
             } else if (len == 1 && precision.byteAt(0) == 'm') {
-                timestampPrecision = ENTITY_UNIT_MINUTE;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_MINUTES;
             } else if (len == 1 && precision.byteAt(0) == 'h') {
-                timestampPrecision = ENTITY_UNIT_HOUR;
+                timestampPrecision = CommonUtils.TIMESTAMP_UNIT_HOURS;
             } else {
                 LOG.info().$("unsupported precision [url=")
                         .$(requestHeader.getUrl())
@@ -148,7 +148,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
                 return;
             }
         } else {
-            timestampPrecision = ENTITY_UNIT_NANO;
+            timestampPrecision = CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
 
         state.of(context.getFd(), timestampPrecision, context.getSecurityContext());
