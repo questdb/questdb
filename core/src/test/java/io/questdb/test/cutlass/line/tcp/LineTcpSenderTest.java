@@ -580,10 +580,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 model.timestampNs();
             }
             AbstractCairoTest.create(model);
-            CountDownLatch released = createTableCommitNotifier(tableName);
 
             var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
             for (int protocol : protocols) {
+                CountDownLatch released = createTableCommitNotifier(tableName);
                 try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("127.0.0.1")
                         .port(bindPort)
@@ -632,9 +632,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                             .at(100000000006L + protocol * 100, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                waitTableWriterFinish(released);
             }
 
-            waitTableWriterFinish(released);
+            assertTableSizeEventually(engine, "decimal_test", 14);
             try (TableReader reader = getReader(tableName)) {
                 CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
                 TestUtils.assertReader("a\tb\ttimestamp\n" +
@@ -669,10 +670,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 model.timestampNs();
             }
             AbstractCairoTest.create(model);
-            CountDownLatch released = createTableCommitNotifier(tableName);
 
             var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
             for (int protocol : protocols) {
+                CountDownLatch released = createTableCommitNotifier(tableName);
                 try (Sender sender = Sender.builder(Sender.Transport.TCP)
                         .address("127.0.0.1")
                         .port(bindPort)
@@ -720,9 +721,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                             .at(100000000007L, ChronoUnit.MICROS);
                     sender.flush();
                 }
+                waitTableWriterFinish(released);
             }
 
-            waitTableWriterFinish(released);
             try (TableReader reader = getReader(tableName)) {
                 TestUtils.assertReader("x\ty\ttimestamp\n", reader, new StringSink());
             }
