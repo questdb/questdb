@@ -97,7 +97,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     private long pendingRows;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
-    private String url;
 
     protected AbstractLineHttpSender(
             String host,
@@ -195,7 +194,6 @@ public abstract class AbstractLineHttpSender implements Sender {
                     HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig)
                     : HttpClientFactory.newPlainTextInstance(clientConfiguration);
         }
-        this.url = buildUrl();
         this.questDBVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
         this.maxNameLength = maxNameLength;
@@ -742,8 +740,14 @@ public abstract class AbstractLineHttpSender implements Sender {
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up, but do not reset the sender
                     // a caller can try to flush later
-                    throw new LineSenderException("Could not flush buffer: ", true).put(url)
-                            .put(" Connection Failed").put(": ").put(e.getMessage());
+                    LineSenderException ex = new LineSenderException("Could not flush buffer: http", true);
+                    if (isTls) {
+                        ex.put('s');
+                    }
+                    ex.put("://");
+                    ex.put(currentHost()).put(':').put(currentPort()).put(this.path);
+                    ex.put(" Connection Failed").put(": ").put(e.getMessage());
+                    throw ex;
                 }
                 rotateAddress();
                 retryBackoff = backoff(rnd, retryBackoff);
@@ -775,7 +779,6 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     private void rotateAddress() {
         currentAddressIndex = (currentAddressIndex + 1) % hosts.size();
-        this.url = buildUrl();
     }
 
     /**
