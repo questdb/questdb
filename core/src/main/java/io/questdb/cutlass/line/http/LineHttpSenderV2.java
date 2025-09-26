@@ -38,7 +38,10 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LineHttpSenderV2 extends AbstractLineHttpSender {
 
@@ -69,6 +72,41 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
+    public LineHttpSenderV2(ObjList<String> hosts,
+                            IntList ports,
+                            String path,
+                            HttpClientConfiguration clientConfiguration,
+                            ClientTlsConfiguration tlsConfig,
+                            @Nullable HttpClient client,
+                            int autoFlushRows,
+                            String authToken,
+                            String username,
+                            String password,
+                            int maxNameLength,
+                            long maxRetriesNanos,
+                            long minRequestThroughput,
+                            long flushIntervalNanos,
+                            int currentAddressIndex,
+                            Rnd rnd) {
+        super(hosts,
+                ports,
+                path,
+                clientConfiguration,
+                tlsConfig,
+                client,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                minRequestThroughput,
+                flushIntervalNanos,
+                currentAddressIndex,
+                rnd);
+    }
+
+    @SuppressWarnings("unused")
     protected LineHttpSenderV2(String host,
                                int port,
                                String path,

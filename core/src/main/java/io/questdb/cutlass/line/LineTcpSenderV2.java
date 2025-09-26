@@ -148,7 +148,6 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         return this;
     }
 
-
     @Override
     public void putBlockOfBytes(long from, long len) {
         while (len > 0) {

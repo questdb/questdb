@@ -321,6 +321,11 @@ public class HttpServerConfigurationWrapper implements HttpFullFatServerConfigur
     }
 
     @Override
+    public boolean isAcceptingWrites() {
+        return getDelegate().isAcceptingWrites();
+    }
+
+    @Override
     public boolean isDaemonPool() {
         return getDelegate().isDaemonPool();
     }

@@ -192,6 +192,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"acl.enabled\":true," +
+                            "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
                             "\"line.proto.support.versions\":[1,2]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +

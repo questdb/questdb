@@ -96,6 +96,36 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAddressWithNoPort() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:9000"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                Assert.assertEquals(9000, httpPort); // sanity check
+
+                int totalCount = 100;
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost").build()) {
+                    for (int i = 0; i < totalCount; i++) {
+                        sender.table("tab")
+                                .symbol("tag1", "value" + i % 10)
+                                .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+                serverMain.awaitTable("tab");
+                serverMain.assertSql("select count() from tab", "count\n" +
+                        totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testAppendErrors() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -118,6 +148,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: u; cast error from protocol type: STRING to column type: UUID"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
@@ -128,6 +159,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .longColumn("b", 1024)
@@ -138,6 +170,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("i", 1024.2)
@@ -148,6 +181,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl")
                             .doubleColumn("str", 1024.2)
@@ -1048,6 +1082,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     } catch (Throwable e) {
                         TestUtils.assertContains(e.getMessage(), " cast error from protocol type: FLOAT to column type: VARCHAR");
                     }
+                    sender.reset();
 
                     // insert string column to double
                     try {
@@ -1061,6 +1096,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     } catch (Throwable e) {
                         TestUtils.assertContains(e.getMessage(), " cast error from protocol type: STRING to column type: DOUBLE");
                     }
+                    sender.reset();
 
                     // insert array column to double
                     try {
@@ -1559,6 +1595,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
@@ -1599,6 +1636,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: a3 does not exist, creating new columns is disabled"
                     );
+                    sender.reset();
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)

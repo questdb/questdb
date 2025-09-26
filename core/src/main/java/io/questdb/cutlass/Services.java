@@ -114,9 +114,7 @@ public class Services {
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
-                httpServerConfiguration.getRecvBufferSize(),
-                httpServerConfiguration.getSendBufferSize(),
-                httpServerConfiguration.getLineHttpProcessorConfiguration()
+                httpServerConfiguration
         );
 
         HttpServer.addDefaultEndpoints(
