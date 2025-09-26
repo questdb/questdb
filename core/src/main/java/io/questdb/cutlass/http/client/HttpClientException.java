@@ -41,10 +41,6 @@ public class HttpClientException extends RuntimeException {
         return this;
     }
 
-    public int getErrno() {
-        return errno;
-    }
-
     @Override
     public String getMessage() {
         if (errno == Integer.MIN_VALUE) {

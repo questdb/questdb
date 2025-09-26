@@ -743,7 +743,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     // we did our best, give up, but do not reset the sender
                     // a caller can try to flush later
                     throw new LineSenderException("Could not flush buffer: ", true).put(url)
-                            .put(" Connection Failed").put(": ").put(e.getMessage()).errno(e.getErrno());
+                            .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
                 rotateAddress();
                 retryBackoff = backoff(rnd, retryBackoff);
