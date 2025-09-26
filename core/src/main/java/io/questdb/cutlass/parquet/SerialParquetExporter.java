@@ -307,7 +307,6 @@ public class SerialParquetExporter implements Closeable {
             if (exportResult == null) {
                 cleanupDir(ff, tempPath, tempBaseDirLen);
             }
-
         }
         return phase;
     }
