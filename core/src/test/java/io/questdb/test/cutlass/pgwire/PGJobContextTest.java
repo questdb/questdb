@@ -9357,9 +9357,6 @@ create table tab as (
 
     @Test
     public void testSelectArrayBindingVars() throws Exception {
-        // all bind vars need to fit the buffer
-        recvBufferSize = 4096;
-
         skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             final Array array1d = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d});
@@ -9400,7 +9397,7 @@ create table tab as (
                     );
                 }
             }
-        });
+        }, () -> recvBufferSize = 4096); // all bind vars need to fit the buffer
     }
 
     /* asyncqp.py - bind variable in where clause.
