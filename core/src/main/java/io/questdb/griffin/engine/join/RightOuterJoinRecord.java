@@ -22,41 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
+import io.questdb.cairo.sql.Record;
 
-public class ArrayColumnTypes implements ColumnTypes, Mutable {
-    public static final ArrayColumnTypes EMPTY = new ArrayColumnTypes();
-    private final IntList types = new IntList();
+public class RightOuterJoinRecord extends JoinRecord {
+    protected final Record nullRecord;
+    private Record flappingMaster;
 
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
+    public RightOuterJoinRecord(int split, Record nullRecord) {
+        super(split);
+        this.nullRecord = nullRecord;
     }
 
-    public ArrayColumnTypes add(int index, int type) {
-        types.extendAndSet(index, type);
-        return this;
+    public void of(Record master, Record slave) {
+        super.of(master, slave);
+        this.flappingMaster = master;
     }
 
-    public ArrayColumnTypes addAll(ArrayColumnTypes that) {
-        types.addAll(that.types);
-        return this;
+    void hasMaster(boolean value) {
+        if (value) {
+            master = flappingMaster;
+        } else {
+            master = nullRecord;
+        }
     }
 
-    public void clear() {
-        types.clear();
-    }
-
-    @Override
-    public int getColumnCount() {
-        return types.size();
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
+    boolean hasMaster() {
+        return master != nullRecord;
     }
 }
