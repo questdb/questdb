@@ -272,6 +272,156 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullConversionsFromDate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::date as colA, " +
+                    "null::date as colB, " +
+                    "null::date as colC, " +
+                    "null::date as colD, " +
+                    "null::date as colE, " +
+                    "null::date as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB TIMESTAMP, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "cast(null as float) as colA, " +
+                    "cast(null as float) as colB, " +
+                    "cast(null as float) as colC, " +
+                    "cast(null as float) as colD, " +
+                    "cast(null as float) as colE, " +
+                    "cast(null as float) as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\t\t\tnull\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::int as colA, " +
+                    "null::int as colB, " +
+                    "null::int as colC, " +
+                    "null::int as colD, " +
+                    "null::int as colE, " +
+                    "null::int as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::long as colA, " +
+                    "null::long as colB, " +
+                    "null::long as colC, " +
+                    "null::long as colD, " +
+                    "null::long as colE, " +
+                    "null::long as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::timestamp as colA, " +
+                    "null::timestamp as colB, " +
+                    "null::timestamp as colC, " +
+                    "null::timestamp as colD, " +
+                    "null::timestamp as colE, " +
+                    "null::timestamp as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromTimestampNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::timestamp_ns as colA, " +
+                    "null::timestamp_ns as colB, " +
+                    "null::timestamp_ns as colC, " +
+                    "null::timestamp_ns as colD, " +
+                    "null::timestamp_ns as colE, " +
+                    "null::timestamp_ns as colF;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testOrderByIsNotIgnoredInExceptsSecondSubquery() throws Exception {
         assertQuery("sym\tmax\n" +
                         "GWFFYUDEYY\t99\n" +

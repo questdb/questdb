@@ -188,11 +188,11 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
      * Histogram contains counts for every probe that validates field. It is possible for multiple probes to validate same field.
      * It can happen because of two reasons.
      * <p>
-     * probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
-     * validate every INT. If this the case we will use order of probes as priority. First probe wins
+     * Probes are compatible, for example INT is compatible with DOUBLE in a sense that DOUBLE probe will positively
+     * validate every INT. If this the case we will use order of probes as priority. First probe wins.
      * <p>
-     * it is possible to have mixed types in same column, in which case column has to become string.
-     * to establish if we have mixed column we check if probe count + blank values add up to total number of rows.
+     * It is possible to have mixed types in same column, in which case column has to become string.
+     * To establish if we have mixed column we check if probe count + blank values add up to total number of rows.
      */
     private boolean calcTypes(long count, boolean setDefault) {
         boolean allStrings = true;

@@ -24,14 +24,17 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -42,42 +45,46 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
-public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsOfJoinKeyedFastRecordCursor cursor;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
-    private final SymbolShortCircuit symbolShortCircuit;
+/**
+ * AsOf Join factory that leverages symbol bitmap indexes for efficient row lookup.
+ * This implementation uses the bitmap index to quickly find matching symbol values
+ * instead of linear scanning through time-ordered records.
+ */
+public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final AsOfJoinIndexedRecordCursor cursor;
+    private final int masterSymbolColumnIndex;
+    private final int slaveSymbolColumnIndex;
     private final long toleranceInterval;
 
-    public AsOfJoinFastRecordCursorFactory(
+    public AsOfJoinIndexedRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveKeySink,
             int columnSplit,
-            SymbolShortCircuit symbolShortCircuit,
+            int masterSymbolColumnIndex,
+            int slaveSymbolColumnIndex,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
+        this.masterSymbolColumnIndex = masterSymbolColumnIndex;
+        this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.cursor = new AsOfJoinKeyedFastRecordCursor(
+        RecordMetadata masterMeta = masterFactory.getMetadata();
+        RecordMetadata slaveMeta = slaveFactory.getMetadata();
+        this.cursor = new AsOfJoinIndexedRecordCursor(
                 columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
+                NullRecordFactory.getInstance(slaveMeta),
+                masterMeta.getTimestampIndex(),
+                masterMeta.getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType(),
+                slaveMeta.getTimestampIndex(),
+                slaveMeta.getTimestampType(),
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
     }
 
@@ -113,7 +120,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
+        sink.type("AsOf Join Indexed Scan");
         sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -126,9 +133,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(slaveFactory);
     }
 
-    private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
+    private class AsOfJoinIndexedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
-        public AsOfJoinKeyedFastRecordCursor(
+        private StaticSymbolTable slaveSymbolTable;
+
+        public AsOfJoinIndexedRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
@@ -139,66 +148,64 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget,
+                    slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            slaveSymbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
-                // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
-                // and report no match.
+            // determine the integer key of the symbol to find in the slave table
+            CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
+            int symbolKey = TableUtils.toIndexKey(slaveSymbolTable.keyOf(masterSymbolValue));
+            if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;
             }
 
-            // ok, the non-keyed matcher found a record with a matching timestamp.
-            // we have to make sure the JOIN keys match as well.
-            masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
-
-            long rowLo = slaveTimeFrame.getRowLo();
-            int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
-
+            // go backwards through per-frame symbol indexes, until we find a match or exhaust the search space
+            long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
+            int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
-                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (toleranceInterval != Numbers.LONG_NULL && slaveTimestamp < masterTimestamp - toleranceInterval) {
-                    // we are past the tolerance interval, no need to traverse the slave cursor any further
-                    record.hasSlave(false);
-                    break;
-                }
+                BitmapIndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
+                        slaveSymbolColumnIndex,
+                        BitmapIndexReader.DIR_BACKWARD
+                );
+                // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
+                // the first row within the BETWEEN ... AND ... range selected by the query.
+                // Use Record.getUpdateRowId() to get the absolute row ID.
+                slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
+                final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
+                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowMax + rowLo);
 
-                slaveSinkTarget.clear();
-                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
-                if (masterSinkTarget.memeq(slaveSinkTarget)) {
-                    record.hasSlave(true);
-                    break;
-                }
-
-                // let's try to move backwards in the slave cursor until we have a match
-                keyedRowId--;
-                if (keyedRowId < rowLo) {
-                    // ops, we exhausted this frame, let's try the previous one
-                    if (!slaveTimeFrameCursor.prev()) {
-                        // there is no previous frame, we are done, no match :(
-                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
-                        // until we either exhaust the cursor or find a matching key.
-                        record.hasSlave(false);
-                        break;
+                // Check the first entry only. They are sorted descending by timestamp,
+                // so there aren't any entries more recent than the first one.
+                if (rowCursor.hasNext()) {
+                    long rowId = rowCursor.next();
+                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
+                    long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                    if (slaveTimestamp <= masterTimestamp) {
+                        // Enforce tolerance limit if specified
+                        boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                slaveTimestamp >= masterTimestamp - toleranceInterval;
+                        record.hasSlave(hasSlave);
+                        return;
                     }
-                    slaveTimeFrameCursor.open();
-
-                    keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-                    keyedRowId = slaveTimeFrame.getRowHi() - 1;
-                    rowLo = slaveTimeFrame.getRowLo();
                 }
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+
+                // no match in this frame, try the previous frame
+                if (!slaveTimeFrameCursor.prev()) {
+                    record.hasSlave(false);
+                    return;
+                }
+                slaveTimeFrameCursor.open();
+                frameIndex = slaveTimeFrame.getFrameIndex();
+                rowMax = slaveTimeFrame.getRowHi() - 1;
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
