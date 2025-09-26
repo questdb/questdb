@@ -4878,10 +4878,11 @@ public class O3Test extends AbstractO3Test {
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TimestampDriver driver = ColumnType.getTimestampDriver(w.getTimestampType());
 
+            long factor = w.getTimestampType() == ColumnType.TIMESTAMP_MICRO ? 1 : 1000;
             // Insert ordered data first
             long baseTs = driver.parseFloorLiteral("2022-01-01T00:00:00.000Z");
             for (int i = 0; i < 100; i++) {
-                TableWriter.Row r = w.newRow(baseTs + i * 1000000L);
+                TableWriter.Row r = w.newRow(baseTs + i * 1000000L * factor);
                 r.putInt(0, i);
                 WriterRowUtils.putDecimal(1, Decimal256.fromLong(i, 1), ColumnType.getDecimalType(2, 1), r);
                 WriterRowUtils.putDecimal(2, Decimal256.fromLong(i * 100 + i, 2), ColumnType.getDecimalType(4, 2), r);
@@ -4896,7 +4897,7 @@ public class O3Test extends AbstractO3Test {
             // Now insert O3 data in the middle and beginning
             for (int i = 0; i < 50; i++) {
                 // Insert in the middle (O3)
-                TableWriter.Row r = w.newRow(baseTs + (25 + i) * 500000L);
+                TableWriter.Row r = w.newRow(baseTs + (25 + i) * 500000L * factor);
                 r.putInt(0, 10000 + i);
                 WriterRowUtils.putDecimal(1, Decimal256.fromLong(i, 1), ColumnType.getDecimalType(2, 1), r);
                 WriterRowUtils.putDecimal(2, Decimal256.fromLong(i * 100 + i + 100, 2), ColumnType.getDecimalType(4, 2), r);
@@ -4909,7 +4910,7 @@ public class O3Test extends AbstractO3Test {
 
             // Insert at the beginning (O3)
             for (int i = 0; i < 25; i++) {
-                TableWriter.Row r = w.newRow(baseTs - (25 - i) * 1000000L);
+                TableWriter.Row r = w.newRow(baseTs - (25 - i) * 1000000L * factor);
                 r.putInt(0, 20000 + i);
                 WriterRowUtils.putDecimal(1, Decimal256.fromLong(i, 1), ColumnType.getDecimalType(2, 1), r);
                 WriterRowUtils.putDecimal(2, Decimal256.fromLong(i * 100 + i + 200, 2), ColumnType.getDecimalType(4, 2), r);
@@ -4923,7 +4924,7 @@ public class O3Test extends AbstractO3Test {
             w.commit();
         }
 
-        String suffix = timestampTypeName.endsWith("_ns") ? "000Z\n" : "Z\n";
+        String suffix = timestampTypeName.endsWith("_NS") ? "000Z\n" : "Z\n";
         TestUtils.assertSql(
                 compiler, sqlExecutionContext,
                 "select * from x",
