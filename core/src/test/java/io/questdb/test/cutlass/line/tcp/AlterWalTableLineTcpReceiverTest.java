@@ -938,13 +938,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             releaseAllLatch.await();
             stopThreads.set(true);
 
-            for (int i = 0; i < threads.size(); i++) {
-                try {
-                    threads.get(i).join();
-                } catch (InterruptedException e) {
-                    LOG.error().$("interrupted thread finish").$(e).$();
-                }
-            }
+            waitThreadsJoin(threads);
 
             return sqlException;
         } catch (Throwable th) {
@@ -952,17 +946,23 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
 
             LOG.error().$("Test error: ").$(th).$();
             // Wait for all threads to exit on exception
-            for (int i = 0; i < threads.size(); i++) {
-                try {
-                    threads.get(i).join();
-                } catch (InterruptedException e) {
-                    LOG.error().$("interrupted thread finish").$(e).$();
-                }
-            }
+            waitThreadsJoin(threads);
+
+            waitThreadsJoin(threads);
 
             throw th;
         } finally {
             engine.setPoolListener(null);
+        }
+    }
+
+    private void waitThreadsJoin(ObjList<Thread> threads) {
+        for (int i = 0; i < threads.size(); i++) {
+            try {
+                threads.get(i).join();
+            } catch (InterruptedException e) {
+                LOG.error().$("interrupted on thread finish: ").$(e).$();
+            }
         }
     }
 
