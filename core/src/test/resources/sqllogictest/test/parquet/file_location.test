@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/file_location.test
+# name: test/parquet/file_location.test
 # description: Test allowed path to read parquet file
 # group: [parquet]
 

@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/map_duckdb.test
+# name: test/parquet/map_duckdb.test
 # description: Unsupported column types like DuckDB's map are skipped
 # group: [parquet]
 

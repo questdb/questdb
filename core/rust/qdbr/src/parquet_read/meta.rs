@@ -53,6 +53,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         assert_eq!(accumulated_size, metadata.num_rows);
 
+        let mut timestamp_index = -1_i32;
+
         for (index, column) in metadata.schema_descr.columns().iter().enumerate() {
             // Arrays have column name and id stored in the base group type.
             // Primitive type fields have the same primitive type as the base type.
@@ -63,9 +65,14 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
             name.extend(name_str.encode_utf16())?;
 
-            if let Some(column_type) =
+            if let Some(mut column_type) =
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
+                if column_type.is_designated() {
+                    timestamp_index = index as i32;
+                    // Clear the bit as designated timestamp is reported in timestamp_index.
+                    column_type = column_type.into_non_designated()?;
+                }
                 columns.push(ColumnMeta {
                     column_type,
                     id: base_field.id.unwrap_or(-1_i32),
@@ -74,7 +81,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     name_vec: name,
                 })?;
             } else {
-                // The type is not supported, Java code will have to skip it.
+                // The column is not supported, Java code will have to skip it.
                 columns.push(ColumnMeta {
                     column_type: ColumnType::new(ColumnTypeTag::Undefined, 0),
                     id: -1,
@@ -82,6 +89,44 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     name_ptr: name.as_ptr(),
                     name_vec: name,
                 })?;
+            }
+        }
+
+        if timestamp_index == -1 {
+            // There was no designated timestamp flag in the metadata, so let's detect it.
+            // First, find the first ASC order column, if it's the same across all row groups.
+            let mut asc_column_index = -1_i32;
+            for row_group in &metadata.row_groups {
+                if let Some(sorting_columns) = row_group.sorting_columns() {
+                    if let Some(sorting_column) = sorting_columns.first() {
+                        if !sorting_column.descending
+                            && (asc_column_index == -1
+                                || asc_column_index == sorting_column.column_idx)
+                        {
+                            asc_column_index = sorting_column.column_idx;
+                            continue;
+                        }
+                    }
+                }
+                asc_column_index = -1;
+                break;
+            }
+            if asc_column_index > -1 {
+                // We have a candidate, let's check its type and nullability.
+                if let Some(column) = columns.get(asc_column_index as usize) {
+                    if let Some(column_descr) = metadata
+                        .schema_descr
+                        .columns()
+                        .get(asc_column_index as usize)
+                    {
+                        if column.column_type.tag() == ColumnTypeTag::Timestamp
+                            && column_descr.descriptor.primitive_type.field_info.repetition
+                                == Repetition::Required
+                        {
+                            timestamp_index = asc_column_index
+                        }
+                    }
+                }
             }
         }
 
@@ -93,6 +138,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             row_group_count: metadata.row_groups.len() as u32,
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
+            timestamp_index,
             reader,
             metadata,
             qdb_meta,

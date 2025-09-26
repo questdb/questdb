@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/test_parquet_scan.test
+# name: test/parquet/test_parquet_scan.test
 # description: Test basic parquet reading
 # group: [parquet]
 

@@ -94,8 +94,8 @@ mod tests {
         let iter = BitmapIter::new(&[0b10011101u8, 0b10011101], 0, 14);
 
         let mut vec = vec![];
-
         let len = iter.size_hint().1.unwrap();
+
         encode_bool(&mut vec, iter, len)?;
 
         assert_eq!(vec, vec![(2 << 1 | 1), 0b10011101u8, 0b00011101]);
@@ -108,11 +108,12 @@ mod tests {
         let mut vec = vec![];
 
         let values = vec![true, true, true, true, true, true, true, true];
+        let len = values.len();
         let iter = values.into_iter();
         encode_bool(
             &mut vec,
             iter,
-            values.len(),
+            len,
         )?;
 
         assert_eq!(vec, vec![(1 << 1 | 1), 0b11111111]);
@@ -124,7 +125,8 @@ mod tests {
         let mut vec = vec![];
 
         let values = vec![0, 1, 2, 1, 2, 1, 1, 0, 3];
-        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
+        let len = values.len();
+        encode_u32(&mut vec, values.into_iter(), len, 2)?;
 
         assert_eq!(
             vec,
@@ -138,8 +140,9 @@ mod tests {
         let mut vec = vec![];
 
         let values: Vec<_> = (0..128).map(|x| x % 4).collect();
+        let len = values.len();
 
-        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
+        encode_u32(&mut vec, values.into_iter(), len, 2)?;
 
         let length = 128;
         let expected = 0b11_10_01_00u8;
@@ -154,9 +157,10 @@ mod tests {
     #[test]
     fn test_u32_other() -> std::io::Result<()> {
         let values = vec![3, 3, 0, 3, 2, 3, 3, 3, 3, 1, 3, 3, 3, 0, 3];
+        let len = values.len();
 
         let mut vec = vec![];
-        encode_u32(&mut vec, values.into_iter(), values.len(), 2)?;
+        encode_u32(&mut vec, values.into_iter(), len, 2)?;
 
         let expected = vec![5, 207, 254, 247, 51];
         assert_eq!(expected, vec);

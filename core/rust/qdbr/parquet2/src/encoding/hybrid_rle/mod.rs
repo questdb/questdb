@@ -125,8 +125,9 @@ mod tests {
         let num_bits = 10u32;
 
         let data = (0..1000).collect::<Vec<_>>();
+        let len = data.len();
 
-        encode_u32(&mut buffer, data.iter().cloned(), num_bits).unwrap();
+        encode_u32(&mut buffer, data.iter().cloned(), len, num_bits).unwrap();
 
         let decoder = HybridRleDecoder::try_new(&buffer, num_bits, data.len())?;
 
