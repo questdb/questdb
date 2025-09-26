@@ -317,10 +317,6 @@ public class Rnd {
         return nextPositiveInt() % boundary;
     }
 
-    public synchronized int nextIntSync(int boundary) {
-        return nextPositiveInt() % boundary;
-    }
-
     public long nextLong(long boundary) {
         return nextPositiveLong() % boundary;
     }

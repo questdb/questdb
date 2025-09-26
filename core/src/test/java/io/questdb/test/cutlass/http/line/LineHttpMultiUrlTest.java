@@ -312,14 +312,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 long startMillis = System.currentTimeMillis();
                 serverMain.close();
                 assert serverMain.hasBeenClosed();
-                int jitter = rnd.nextIntSync(jitterMillis) - jitterMillis / 2;
+                int jitter = rnd.nextInt(jitterMillis) - jitterMillis / 2;
                 Os.sleep(1_500 + jitter); // enough time to give the client a chance to reconnect to a different server
 
                 serverMain = startInstance(rootName, host, port, readOnly);
                 serverMain.start();
                 assert serverMain.hasStarted();
 
-                jitter = rnd.nextIntSync(jitterMillis) - jitterMillis / 2;
+                jitter = rnd.nextInt(jitterMillis) - jitterMillis / 2;
 
                 Os.sleep(delayMillis + jitter);
                 long endMillis = System.currentTimeMillis();
