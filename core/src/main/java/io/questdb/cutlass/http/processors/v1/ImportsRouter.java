@@ -144,6 +144,7 @@ public class ImportsRouter implements HttpRequestHandler {
                             state.size,
                             MemoryTag.MMAP_IMPORT, CairoConfiguration.O_NONE
                     );
+                    state.written = 0;
                 }
 
                 final long chunkSize = hi - lo;
