@@ -47,6 +47,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -587,6 +588,63 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 settingsStore.registerListener(listener);
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     savePreferences(httpClient, "{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}", OVERWRITE, 0L);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReadOnlyHttp() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true")
+            ) {
+                serverMain.start();
+
+                String expected = "{" +
+                        "\"config\":{" +
+                        "\"release.type\":\"OSS\"," +
+                        "\"release.version\":\"[DEVELOPMENT]\"," +
+                        "\"http.settings.readonly\":false," +
+                        "\"accepting.writes\":[\"tcp\", \"pgwire\"]," +
+                        "\"line.proto.support.versions\":[1,2]," +
+                        "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                        "\"posthog.enabled\":false," +
+                        "\"posthog.api.key\":null," +
+                        "\"cairo.max.file.name.length\":127" +
+                        "}," +
+                        "\"preferences.version\":0," +
+                        "\"preferences\":{" +
+                        "}" +
+                        "}";
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, expected);
+                }
+            }
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true")
+            ) {
+                serverMain.start();
+
+                String expected = "{" +
+                        "\"config\":{" +
+                        "\"release.type\":\"OSS\"," +
+                        "\"release.version\":\"[DEVELOPMENT]\"," +
+                        "\"http.settings.readonly\":false," +
+                        "\"accepting.writes\":[]," +
+                        "\"line.proto.support.versions\":[1,2]," +
+                        "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
+                        "\"posthog.enabled\":false," +
+                        "\"posthog.api.key\":null," +
+                        "\"cairo.max.file.name.length\":127" +
+                        "}," +
+                        "\"preferences.version\":0," +
+                        "\"preferences\":{" +
+                        "}" +
+                        "}";
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertSettingsRequest(httpClient, expected);
                 }
             }
         });

@@ -2358,7 +2358,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     protected boolean instanceAcceptingWrites() {
         // overwritten in Enterprise
-        return true;
+        return !isReadOnlyInstance;
     }
 
     protected PropertyValidator newValidator() {
