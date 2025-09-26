@@ -97,13 +97,12 @@ steps:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
-      mavenOptions: "-Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
       options:
         "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
-        -DargLine=-Xlog:gc
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
@@ -122,13 +121,12 @@ steps:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
-      mavenOptions: "$(MAVEN_OPTS)"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
       options:
         "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
-        -DargLine=-Xlog:gc
         -P qdbr-coverage
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
