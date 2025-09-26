@@ -549,6 +549,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(address).put("]");
             }
+            String hostAndPort;
             if (portIndex != -1) {
                 try {
                     port(Numbers.parseInt(address, portIndex + 1, address.length()));
@@ -556,10 +557,15 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
                             .put(" [address=").put(address).put("]");
                 }
-                this.hosts.add(address.subSequence(0, portIndex).toString());
+                hostAndPort = address.subSequence(0, portIndex).toString();
             } else {
-                this.hosts.add(address.toString());
+                hostAndPort = address.toString();
             }
+            if (this.hosts.contains(hostAndPort)) {
+                throw new LineSenderException("duplicated addresses are not allowed ")
+                        .put("[address=").put(address).put("]");
+            }
+            this.hosts.add(hostAndPort);
             return this;
         }
 

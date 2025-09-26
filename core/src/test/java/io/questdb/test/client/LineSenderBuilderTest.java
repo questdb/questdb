@@ -605,6 +605,18 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDuplicatedAddresses() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder(Sender.Transport.TCP).address("localhost:9000").address("localhost:9000").build();
+                Assert.fail("should not allow multiple addresses");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "duplicated addresses are not allowed [address=localhost:9000]");
+            }
+        });
+    }
+
+    @Test
     public void testFailFastWhenSetCustomTrustStoreTwice() {
         Sender.LineSenderBuilder builder = Sender.builder(Sender.Transport.TCP).advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
         try {
