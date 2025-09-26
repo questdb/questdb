@@ -237,6 +237,13 @@ public class Decimal64 implements Sinkable {
      * Compare this to another Decimal64
      */
     public int compareTo(long otherValue, int otherScale) {
+        if (this.isNull()) {
+            return otherValue == Decimals.DECIMAL64_NULL ? 0 : -1;
+        }
+        if (otherValue == Decimals.DECIMAL64_NULL) {
+            return 1;
+        }
+
         if (this.scale == otherScale) {
             return Long.compare(this.value, otherValue);
         }

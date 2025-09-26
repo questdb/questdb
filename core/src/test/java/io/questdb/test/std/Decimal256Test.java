@@ -294,6 +294,69 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testCompareToWithNull() {
+        // Create null decimal using NULL_VALUE constant
+        Decimal256 nullDecimal = new Decimal256();
+        nullDecimal.copyFrom(Decimal256.NULL_VALUE);
+        Assert.assertTrue(nullDecimal.isNull());
+
+        // Create another null decimal
+        Decimal256 anotherNullDecimal = new Decimal256();
+        anotherNullDecimal.ofNull();
+        Assert.assertTrue(anotherNullDecimal.isNull());
+
+        // Create non-null decimal
+        Decimal256 nonNullDecimal = Decimal256.fromLong(123, 2);
+        Assert.assertFalse(nonNullDecimal.isNull());
+
+        // Test null comparing with null (should return 0)
+        Assert.assertEquals("null compareTo null should return 0",
+                0, nullDecimal.compareTo(anotherNullDecimal));
+
+        // Test null comparing with non-null (should return -1)
+        Assert.assertEquals("null compareTo non-null should return -1",
+                -1, nullDecimal.compareTo(nonNullDecimal));
+
+        // Test non-null comparing with null (should return 1)
+        Assert.assertEquals("non-null compareTo null should return 1",
+                1, nonNullDecimal.compareTo(nullDecimal));
+
+        // Test using the direct compareTo(hh, hl, lh, ll, scale) method
+        Assert.assertEquals("null compareTo(NULL values) should return 0",
+                0, nullDecimal.compareTo(
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL,
+                        0));
+
+        Assert.assertEquals("non-null compareTo(NULL values) should return 1",
+                1, nonNullDecimal.compareTo(
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL,
+                        0));
+
+        // Test that null decimal with compareTo on another null returns 0 regardless of scale
+        Assert.assertEquals("null compareTo null with different scale should return 0",
+                0, nullDecimal.compareTo(
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL,
+                        5));
+
+        // Test static isNull method
+        Assert.assertTrue("isNull(NULL values) should return true",
+                Decimal256.isNull(
+                        Decimals.DECIMAL256_HH_NULL,
+                        Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL,
+                        Decimals.DECIMAL256_LL_NULL));
+    }
+
+    @Test
     public void testConstructorAndGetters() {
         Decimal256 decimal = new Decimal256(0x123456789ABCDEFL, 0xFEDCBA9876543210L, 0x123456789ABCDEFL, 0xFEDCBA9876543210L, 3);
 

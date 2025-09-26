@@ -25,6 +25,7 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -185,6 +186,45 @@ public class Decimal128Test {
 
         Assert.assertEquals(0, zero1.compareTo(zero2)); // 0.0 == 0.000
         Assert.assertEquals(0, zero2.compareTo(zero1)); // 0.000 == 0.0
+    }
+
+    @Test
+    public void testCompareToWithNull() {
+        // Create null decimal
+        Decimal128 nullDecimal = new Decimal128();
+        nullDecimal.ofNull();
+        Assert.assertTrue(nullDecimal.isNull());
+
+        // Create another null decimal
+        Decimal128 anotherNullDecimal = new Decimal128();
+        anotherNullDecimal.ofNull();
+
+        // Create non-null decimal
+        Decimal128 nonNullDecimal = Decimal128.fromLong(123, 2);
+        Assert.assertFalse(nonNullDecimal.isNull());
+
+        // Test null comparing with null (should return 0)
+        Assert.assertEquals("null compareTo null should return 0",
+                0, nullDecimal.compareTo(anotherNullDecimal));
+
+        // Test null comparing with non-null (should return -1)
+        Assert.assertEquals("null compareTo non-null should return -1",
+                -1, nullDecimal.compareTo(nonNullDecimal));
+
+        // Test non-null comparing with null (should return 1)
+        Assert.assertEquals("non-null compareTo null should return 1",
+                1, nonNullDecimal.compareTo(nullDecimal));
+
+        // Test using the direct compareTo(high, low, scale) method
+        Assert.assertEquals("null compareTo(DECIMAL128_HI_NULL, DECIMAL128_LO_NULL, 0) should return 0",
+                0, nullDecimal.compareTo(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0));
+
+        Assert.assertEquals("non-null compareTo(DECIMAL128_HI_NULL, DECIMAL128_LO_NULL, 0) should return 1",
+                1, nonNullDecimal.compareTo(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0));
+
+        // Test that null decimal with compareTo on another null returns 0 regardless of scale
+        Assert.assertEquals("null compareTo null with different scale should return 0",
+                0, nullDecimal.compareTo(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 5));
     }
 
     @Test

@@ -376,6 +376,16 @@ public class Decimal128 implements Sinkable {
     }
 
     public int compareTo(long otherHigh, long otherLow, int otherScale) {
+        if (isNull()) {
+            if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
+                return 0;
+            }
+            return -1;
+        }
+        if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
+            return 1;
+        }
+
         boolean aNeg = isNegative();
         boolean bNeg = otherHigh < 0;
         if (aNeg != bNeg) {
@@ -880,34 +890,6 @@ public class Decimal128 implements Sinkable {
         if (result.hasOverflowed()) {
             throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
-    }
-
-    /**
-     * Returns the max high 64-bits part that can fit in the given precision.
-     */
-    private static long getMaxHi(int precision) {
-        return 0;
-    }
-
-    /**
-     * Returns the max low 64-bits part that can fit in the given precision.
-     */
-    private static long getMaxLo(int precision) {
-        return 0;
-    }
-
-    /**
-     * Returns the min high 64-bits part that can fit in the given precision.
-     */
-    private static long getMinHi(int precision) {
-        return 0;
-    }
-
-    /**
-     * Returns the min low 64-bits part that can fit in the given precision.
-     */
-    private static long getMinLo(int precision) {
-        return 0;
     }
 
     /**

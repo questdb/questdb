@@ -760,6 +760,16 @@ public class Decimal256 implements Sinkable {
      * @return -1, 0, or 1 as this is less than, equal to, or greater than other
      */
     public int compareTo(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
+        if (isNull()) {
+            if (isNull(otherHH, otherHL, otherLH, otherLL)) {
+                return 0;
+            }
+            return -1;
+        }
+        if (isNull(otherHH, otherHL, otherLH, otherLL)) {
+            return 1;
+        }
+
         boolean aNeg = isNegative();
         boolean bNeg = otherHH < 0;
         if (aNeg != bNeg) {
