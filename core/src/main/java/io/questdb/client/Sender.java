@@ -536,7 +536,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          * Optionally, you can also include a port. In this can you separate a port from the address by using a colon.
          * Example: my.example.org:54321.
          * <p>
-         * If you can include a port then you must not call {@link LineSenderBuilder#port(int)}.
+         * If you include a port then you must not call {@link LineSenderBuilder#port(int)}.
          *
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
@@ -549,23 +549,42 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(address).put("]");
             }
-            String hostAndPort;
+            String hostSansPort;
+            int parsedPort = -1;
             if (portIndex != -1) {
                 try {
-                    port(Numbers.parseInt(address, portIndex + 1, address.length()));
+                    parsedPort = Numbers.parseInt(address, portIndex + 1, address.length());
+                    port(parsedPort);
                 } catch (NumericException e) {
                     throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
                             .put(" [address=").put(address).put("]");
                 }
-                hostAndPort = address.subSequence(0, portIndex).toString();
+                hostSansPort = address.subSequence(0, portIndex).toString();
             } else {
-                hostAndPort = address.toString();
+                hostSansPort = address.toString();
             }
-            if (this.hosts.contains(hostAndPort)) {
-                throw new LineSenderException("duplicated addresses are not allowed ")
-                        .put("[address=").put(address).put("]");
+
+            // best effort dup detection, we might have incomplete information at this point,
+            // for example port or protocol might not be configured yet. so we are conservative
+            // and only detect dups when we have full information about the address
+            if (parsedPort != -1) {
+                // we have a port, so we can do a full dup check
+                for (int i = 0, n = hosts.size(); i < n; i++) {
+                    String storedHost = hosts.get(i);
+                    if (Chars.equals(storedHost, hostSansPort)) {
+                        // given host is already configured, let's see if the port is the same
+                        if (ports.size() > i) {
+                            // ok, the previous address had a port explicitly configured, let's see if it's the same
+                            if (ports.getQuick(i) == parsedPort) {
+                                throw new LineSenderException("duplicated addresses are not allowed ")
+                                        .put("[address=").put(address).put("]");
+                            }
+                        }
+                    }
+                }
+
             }
-            this.hosts.add(hostAndPort);
+            this.hosts.add(hostSansPort);
             return this;
         }
 

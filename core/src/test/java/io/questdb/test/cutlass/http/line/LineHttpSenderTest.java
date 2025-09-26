@@ -96,6 +96,36 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAddressWithNoPort() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:9000"
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+                Assert.assertEquals(9000, httpPort); // sanity check
+
+                int totalCount = 100;
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost").build()) {
+                    for (int i = 0; i < totalCount; i++) {
+                        sender.table("tab")
+                                .symbol("tag1", "value" + i % 10)
+                                .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
+                                .atNow();
+                    }
+                    sender.flush();
+                }
+                serverMain.awaitTable("tab");
+                serverMain.assertSql("select count() from tab", "count\n" +
+                        totalCount + "\n");
+            }
+        });
+    }
+
+    @Test
     public void testAppendErrors() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
