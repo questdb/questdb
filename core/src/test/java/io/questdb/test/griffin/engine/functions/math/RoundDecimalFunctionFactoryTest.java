@@ -175,6 +175,16 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundDecimal128DynamicGreaterScale() {
+        createDynamicFunctionAndAssert(
+                new Decimal128Constant(0, 123456L, ColumnType.getDecimalType(20, 3)),
+                5,
+                0, 0, 0, 123456L,
+                ColumnType.getDecimalType(21, 3) // Dynamic keeps original scale
+        );
+    }
+
+    @Test
     public void testRoundDecimal128DynamicNegativeScale() {
         // Test 128-bit with dynamic scale
         createDynamicFunctionAndAssert(
@@ -315,6 +325,16 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
                 3,
                 0, 0, 0, 123457L,
                 ColumnType.getDecimalType(43, 3)
+        );
+    }
+
+    @Test
+    public void testRoundDecimal256DynamicGreaterScale() {
+        createDynamicFunctionAndAssert(
+                new Decimal256Constant(0, 0, 0, 123456L, ColumnType.getDecimalType(40, 3)),
+                5,
+                0, 0, 0, 123456L,
+                ColumnType.getDecimalType(41, 3) // Dynamic keeps original scale
         );
     }
 
@@ -475,6 +495,16 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
                 1,
                 1234568L,
                 ColumnType.getDecimalType(9, 1)
+        );
+    }
+
+    @Test
+    public void testRoundDecimal64DynamicGreaterScale() {
+        createDynamicFunctionAndAssert(
+                new Decimal64Constant(123456L, ColumnType.getDecimalType(10, 3)),
+                5,
+                0, 0, 0, 123456L,
+                ColumnType.getDecimalType(11, 3) // Dynamic keeps original scale
         );
     }
 

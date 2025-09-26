@@ -59,7 +59,6 @@ public final class DecimalTransformerFactory {
                     case ColumnType.DECIMAL256:
                         return new Decimal8To256Func(targetType, value, transformer);
                 }
-                break;
 
             case ColumnType.DECIMAL16:
                 switch (targetTag) {
@@ -76,7 +75,6 @@ public final class DecimalTransformerFactory {
                     case ColumnType.DECIMAL256:
                         return new Decimal16To256Func(targetType, value, transformer);
                 }
-                break;
 
             case ColumnType.DECIMAL32:
                 switch (targetTag) {
@@ -93,7 +91,6 @@ public final class DecimalTransformerFactory {
                     case ColumnType.DECIMAL256:
                         return new Decimal32To256Func(targetType, value, transformer);
                 }
-                break;
 
             case ColumnType.DECIMAL64:
                 switch (targetTag) {
@@ -110,7 +107,6 @@ public final class DecimalTransformerFactory {
                     case ColumnType.DECIMAL256:
                         return new Decimal64To256Func(targetType, value, transformer);
                 }
-                break;
 
             case ColumnType.DECIMAL128:
                 switch (targetTag) {
@@ -127,7 +123,6 @@ public final class DecimalTransformerFactory {
                     case ColumnType.DECIMAL256:
                         return new Decimal128To256Func(targetType, value, transformer);
                 }
-                break;
 
             case ColumnType.DECIMAL256:
                 switch (targetTag) {
