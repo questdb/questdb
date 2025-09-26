@@ -4,15 +4,18 @@
       "format": "dd/MM/y"
     },
     {
+      "format": "MM/dd/y"
+    },
+    {
+      "format": "yyyy-MM-dd"
+    },
+    {
       "format": "yyyy-MM-dd HH:mm:ss"
     },
     {
       "format": "yyyy-MM-ddTHH:mm:ss.SSSz",
       "locale": "en-US",
       "utf8": false
-    },
-    {
-      "format": "MM/dd/y"
     }
   ],
   "timestamp": [

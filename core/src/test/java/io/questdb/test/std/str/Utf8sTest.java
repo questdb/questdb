@@ -474,6 +474,55 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testHasDots() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            Assert.assertFalse(Utf8s.hasDots(sink));
+            sink.put(' ');
+            Assert.assertFalse(Utf8s.hasDots(sink));
+            sink.clear();
+            sink.put('.');
+            Assert.assertTrue(Utf8s.hasDots(sink));
+
+            sink.clear();
+            sink.put("12345678");
+            Assert.assertFalse(Utf8s.hasDots(sink));
+            sink.clear();
+            sink.put("123456.8");
+            Assert.assertTrue(Utf8s.hasDots(sink));
+
+            sink.clear();
+            sink.put("foobarfoobar");
+            Assert.assertFalse(Utf8s.hasDots(sink));
+            sink.clear();
+            sink.put("foobarfoobar.2");
+            Assert.assertTrue(Utf8s.hasDots(sink));
+
+            sink.clear();
+            sink.put("фубар");
+            Assert.assertFalse(Utf8s.hasDots(sink));
+            sink.clear();
+            sink.put("фуба.р");
+            Assert.assertTrue(Utf8s.hasDots(sink));
+
+            for (int i = 1; i < 50; i++) {
+                sink.clear();
+                for (int j = 0; j < i; j++) {
+                    sink.put('a');
+                }
+                Assert.assertFalse(Utf8s.hasDots(sink));
+
+                sink.put('.');
+                Assert.assertTrue(Utf8s.hasDots(sink));
+
+                for (int j = 0; j < i; j++) {
+                    sink.put('a');
+                }
+                Assert.assertTrue(Utf8s.hasDots(sink));
+            }
+        }
+    }
+
+    @Test
     public void testHashCode() {
         final int size = 64;
         StringSink charSink = new StringSink();

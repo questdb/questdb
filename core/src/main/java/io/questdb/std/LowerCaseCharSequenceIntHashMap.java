@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.util.Arrays;
 
 public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashMap {
@@ -91,6 +93,15 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
             }
         }
         return hashCode;
+    }
+
+    public void increment(@NotNull CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            values[-index - 1] = values[-index - 1] + 1;
+        } else {
+            putAt0(index, Chars.toString(key), 0);
+        }
     }
 
     public boolean put(CharSequence key, int value) {
