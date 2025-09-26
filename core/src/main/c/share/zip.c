@@ -106,6 +106,25 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInit
     }
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInitGzip
+        (JNIEnv *e, jclass cl) {
+
+    z_streamp strm = calloc(1, sizeof(z_stream));
+
+    if (strm == 0) {
+        return -1;
+    }
+
+    int ret;
+    switch (ret = inflateInit2(strm, MAX_WBITS+32)) {
+        case Z_OK:
+            return (jlong) strm;
+        default:
+            free(strm);
+            return ret;
+    }
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflate
         (JNIEnv *e, jclass cl, jlong ptr, jlong address, jint available, jboolean flush) {
     z_streamp strm = (z_streamp) ptr;

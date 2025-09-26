@@ -32,7 +32,12 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
@@ -262,7 +267,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     }
 
     @Test
-    public void testGzipNotSupported() {
+    public void testGzipSupported() {
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
 
@@ -270,9 +275,29 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
-                        "\"message\":\"gzip encoding is not supported\","
-                );
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+
+                // Retry is ok
+                influxDB.disableGzip();
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
+            }
+        }
+    }
+
+    @Test
+    public void testGzipSupportedLotsOfData() {
+        try (final ServerMain serverMain = ServerMain.create(root)) {
+            serverMain.start();
+
+            final List<String> points = new ArrayList<>();
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
+                influxDB.enableGzip();
+
+                for (int i = 0; i < 100_000_00; i++) {
+                    points.add("m1,tag1=value1 f1=1i,x=12i");
+                }
+                InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
 
                 // Retry is ok
                 influxDB.disableGzip();

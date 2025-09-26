@@ -44,23 +44,23 @@ public final class Zip {
 
     public static native int crc32(int crc, long address, int available);
 
+    // Deflate
     public static native int deflate(long z_streamp, long out, int available, boolean flush);
 
     public static native void deflateEnd(long z_streamp);
-
-    // Deflate
 
     public static native long deflateInit();
 
     public static native void deflateReset(long z_stream);
 
+    // Inflate
     public static native int inflate(long z_streamp, long address, int available, boolean flush);
 
     public static native void inflateEnd(long z_streamp);
 
-    // Inflate
-
     public static native long inflateInit(boolean nowrap);
+
+    public static native long inflateInitGzip();
 
     public static native int inflateReset(long z_streamp);
 
@@ -71,6 +71,7 @@ public final class Zip {
 
     public static native void setInput(long z_streamp, long address, int available);
 
+    @SuppressWarnings("unused")
     public static native int totalOut(long z_streamp);
 
     static {
