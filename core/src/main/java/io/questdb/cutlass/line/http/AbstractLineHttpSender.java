@@ -711,8 +711,8 @@ public abstract class AbstractLineHttpSender implements Sender {
                 }
                 assert response.isChunked();
                 lastFlushFailed = true;
-                if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode)) {
-                    if (isMisdirectedRequest(statusCode)) {
+                if (isRetryableHttpStatus(statusCode) || isMisdirectedRequest(statusCode) || isNotFound(statusCode)) {
+                    if (isMisdirectedRequest(statusCode) || isNotFound(statusCode)) {
                         rotateAddress();
                     }
 
