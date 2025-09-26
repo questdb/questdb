@@ -43,8 +43,11 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
     public CompareDecimal64Function(Function left, Function right) {
         this.left = left;
         this.right = right;
-        this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(right.getType()));
+        final int rightType = right.getType();
+        this.rightScale = ColumnType.getDecimalScale(rightType);
+        // We may receive a NullConstant, not only a valid Decimal
+        final int precision = ColumnType.isDecimal(rightType) ? ColumnType.getDecimalPrecision(rightType) : 1;
+        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(precision);
     }
 
     @Override
@@ -52,15 +55,21 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
         DecimalUtil.load(decimal, left, rec);
         final long rightValue;
         switch (rightStorageSizePow2) {
-            case 0:
-                rightValue = right.getDecimal8(rec);
+            case 0: {
+                byte value = right.getDecimal8(rec);
+                rightValue = value == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : value;
                 break;
-            case 1:
-                rightValue = right.getDecimal16(rec);
+            }
+            case 1: {
+                short value = right.getDecimal16(rec);
+                rightValue = value == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : value;
                 break;
-            case 2:
-                rightValue = right.getDecimal32(rec);
+            }
+            case 2: {
+                int value = right.getDecimal32(rec);
+                rightValue = value == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : value;
                 break;
+            }
             default:
                 rightValue = right.getDecimal64(rec);
                 break;

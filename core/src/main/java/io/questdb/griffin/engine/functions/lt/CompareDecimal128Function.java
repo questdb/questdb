@@ -43,8 +43,11 @@ public abstract class CompareDecimal128Function extends NegatableBooleanFunction
     public CompareDecimal128Function(Function left, Function right) {
         this.left = left;
         this.right = right;
-        this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(right.getType()));
+        final int rightType = right.getType();
+        this.rightScale = ColumnType.getDecimalScale(rightType);
+        // We may receive a NullConstant, not only a valid Decimal
+        final int precision = ColumnType.isDecimal(rightType) ? ColumnType.getDecimalPrecision(rightType) : 1;
+        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(precision);
     }
 
     @Override
@@ -52,22 +55,50 @@ public abstract class CompareDecimal128Function extends NegatableBooleanFunction
         DecimalUtil.load(decimal, left, rec);
         final long rightHigh, rightLow;
         switch (rightStorageSizePow2) {
-            case 0:
-                rightLow = right.getDecimal8(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
+            case 0: {
+                byte value = right.getDecimal8(rec);
+                if (value == Decimals.DECIMAL8_NULL) {
+                    rightHigh = Decimals.DECIMAL128_HI_NULL;
+                    rightLow = Decimals.DECIMAL128_LO_NULL;
+                } else {
+                    rightLow = value;
+                    rightHigh = rightLow < 0 ? -1L : 0L;
+                }
                 break;
-            case 1:
-                rightLow = right.getDecimal16(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
+            }
+            case 1: {
+                short value = right.getDecimal16(rec);
+                if (value == Decimals.DECIMAL16_NULL) {
+                    rightHigh = Decimals.DECIMAL128_HI_NULL;
+                    rightLow = Decimals.DECIMAL128_LO_NULL;
+                } else {
+                    rightLow = value;
+                    rightHigh = rightLow < 0 ? -1L : 0L;
+                }
                 break;
-            case 2:
-                rightLow = right.getDecimal32(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
+            }
+            case 2: {
+                int value = right.getDecimal32(rec);
+                if (value == Decimals.DECIMAL32_NULL) {
+                    rightHigh = Decimals.DECIMAL128_HI_NULL;
+                    rightLow = Decimals.DECIMAL128_LO_NULL;
+                } else {
+                    rightLow = value;
+                    rightHigh = rightLow < 0 ? -1L : 0L;
+                }
                 break;
-            case 3:
-                rightLow = right.getDecimal64(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
+            }
+            case 3: {
+                long value = right.getDecimal64(rec);
+                if (value == Decimals.DECIMAL64_NULL) {
+                    rightHigh = Decimals.DECIMAL128_HI_NULL;
+                    rightLow = Decimals.DECIMAL128_LO_NULL;
+                } else {
+                    rightLow = value;
+                    rightHigh = rightLow < 0 ? -1L : 0L;
+                }
                 break;
+            }
             default:
                 rightHigh = right.getDecimal128Hi(rec);
                 rightLow = right.getDecimal128Lo(rec);
