@@ -89,7 +89,7 @@ public class TestServerMain extends ServerMain {
             throw new AssertionError(e);
         }
     }
-    
+
     public void reset() {
         // Drop all tables
         CairoEngine engine = this.getEngine();
