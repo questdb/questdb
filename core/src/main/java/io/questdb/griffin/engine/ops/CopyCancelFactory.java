@@ -46,7 +46,7 @@ import io.questdb.std.Misc;
  */
 public class CopyCancelFactory extends AbstractRecordCursorFactory {
 
-    private static final int EXPORT_STATUS_INDEX = 5;
+    private static final int EXPORT_STATUS_INDEX = 6;
     private static final int IMPORT_STATUS_INDEX = 5;
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final long cancelCopyID;

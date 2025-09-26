@@ -182,7 +182,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         userSpecifiedExportOptions
                 );
                 if (copyContext.getReporter() != null) {
-                    copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, "queued", 0);
+                    copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
                 }
                 cursor.toTop();
                 copyRequestPubSeq.done(processingCursor);

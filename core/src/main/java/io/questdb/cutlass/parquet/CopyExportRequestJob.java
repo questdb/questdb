@@ -42,7 +42,6 @@ import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -82,11 +81,12 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                                 "ts TIMESTAMP, " + // 0
                                 "id VARCHAR, " + // 1
                                 "table_name SYMBOL, " + // 2
-                                "files VARCHAR, " + // 3
-                                "phase SYMBOL, " + // 4
-                                "status SYMBOL, " + // 5
-                                "message VARCHAR, " + // 6
-                                "errors LONG" + // 7
+                                "export_dir SYMBOL, " + // 3
+                                "num_exported_files INT, " + // 4
+                                "phase SYMBOL, " + // 5
+                                "status SYMBOL, " + // 6
+                                "message VARCHAR, " + // 7
+                                "errors LONG" + // 8
                                 ") timestamp(ts) PARTITION BY DAY\n" +
                                 "TTL " + logRetentionDays + " DAYS BYPASS WAL;"
                         )
@@ -113,7 +113,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
             CopyExportRequestTask.Phase phase,
             CopyExportRequestTask.Status status,
             CopyExportRequestTask task,
-            Utf8Sequence files,
+            CharSequence exportDir,
+            int numOfFiles,
             @Nullable final CharSequence msg,
             long errors
     ) {
@@ -124,13 +125,14 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                 Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
                 row.putVarchar(1, utf8StringSink);
                 row.putSym(2, task.getTableName());
-                row.putVarchar(3, files);
-                row.putSym(4, phase.getName());
-                row.putSym(5, status.getName());
+                row.putSym(3, exportDir);
+                row.putInt(4, numOfFiles);
+                row.putSym(5, phase.getName());
+                row.putSym(6, status.getName());
                 utf8StringSink.clear();
                 utf8StringSink.put(msg);
-                row.putVarchar(6, utf8StringSink);
-                row.putLong(7, errors);
+                row.putVarchar(7, utf8StringSink);
+                row.putLong(8, errors);
                 row.append();
                 writer.commit();
             } catch (Throwable th) {
@@ -139,7 +141,8 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
                         .$(", statusTableName=").$(statusTableToken)
                         .$(", tableName=").$(task.getTableName())
-                        .$(", fileName=").$(files)
+                        .$(", exportDir=").$(exportDir)
+                        .$(", numOfFiles=").$(numOfFiles)
                         .$(", phase=").$(phase.getName())
                         .$(", status=").$(status.getName())
                         .$(", msg=").$(msg)
@@ -177,7 +180,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
                     throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
-                this.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, task, null, "", 0);
+                this.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, "", 0);
                 sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, copyContext.getCircuitBreaker());
                 serialExporter.of(
                         task,
@@ -193,19 +196,19 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                     utf8StringSink.put("sending signal to waiting thread [fd=").put(task.getSuspendEvent().getFd()).put(']');
                     triggered = true;
                     updateStatus(phase, CopyExportRequestTask.Status.STARTED, task,
-                            null, utf8StringSink.asAsciiCharSequence(), 0);
+                            null, Numbers.INT_NULL, utf8StringSink.asAsciiCharSequence(), 0);
                     task.getSuspendEvent().trigger();
                     updateStatus(phase, CopyExportRequestTask.Status.FINISHED, task,
-                            null, "signal sent", 0);
+                            null, Numbers.INT_NULL, "signal sent", 0);
                 }
-                Utf8StringSink files = serialExporter.getFiles();
-                updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, files, files.size() == 0 ? "Empty Table" : "", 0);
+                updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, serialExporter.getExportPath(), serialExporter.getNumOfFiles(), null, 0);
             } catch (CopyExportException e) {
                 updateStatus(
                         e.getPhase(),
                         copyContext.getCircuitBreaker().checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                         task,
                         null,
+                        Numbers.INT_NULL,
                         e.getFlyweightMessage(),
                         e.getErrno()
                 );
@@ -215,6 +218,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         copyContext.getCircuitBreaker().checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                         task,
                         null,
+                        Numbers.INT_NULL,
                         e.getFlyweightMessage(),
                         e.getErrno()
                 );
@@ -224,6 +228,7 @@ public class CopyExportRequestJob extends SynchronizedJob implements Closeable {
                         copyContext.getCircuitBreaker().checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
                         task,
                         null,
+                        Numbers.INT_NULL,
                         e.getMessage(),
                         -1
                 );
