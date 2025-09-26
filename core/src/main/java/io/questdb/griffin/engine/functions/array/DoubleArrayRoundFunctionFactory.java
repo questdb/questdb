@@ -31,8 +31,10 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -76,10 +78,8 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
     private static class DegenerateScaleFunc extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
-        private final String name;
 
         public DegenerateScaleFunc(CairoConfiguration configuration, Function arrayArg, int position) {
-            this.name = "round";
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
@@ -114,7 +114,14 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -131,11 +138,9 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
     private static class PositiveScaleFunc extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
-        private final String name;
         private final int scale;
 
         public PositiveScaleFunc(CairoConfiguration configuration, Function arrayArg, int scale, int position) {
-            this.name = "round";
             this.arrayArg = arrayArg;
             this.scale = scale;
             this.type = arrayArg.getType();
@@ -176,7 +181,14 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -217,11 +229,9 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
     private static class VarScaleFunc extends ArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
-        private final String name;
         private final Function scalarArg;
 
         public VarScaleFunc(CairoConfiguration configuration, Function arrayArg, Function scalarArg, int position) {
-            this.name = "round";
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
@@ -263,12 +273,19 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
         }
 
         @Override
         public Function getRight() {
             return scalarArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override

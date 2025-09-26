@@ -163,14 +163,10 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             // so that the number of dimensions is only available at init() time
             final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
             final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
-            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
-
-            if (ColumnType.isArrayWithWeakDims(this.type)) {
-                this.type = type;
-            } else if (type != this.type) {
-                throw SqlException.inconvertibleTypes(position, type, this.type);
-            }
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
             arrayOut.setType(type);
+
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override

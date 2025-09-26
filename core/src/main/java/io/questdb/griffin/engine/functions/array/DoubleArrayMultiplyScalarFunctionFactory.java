@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -117,6 +118,13 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         @Override
         public Function getRight() {
             return scalarArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override

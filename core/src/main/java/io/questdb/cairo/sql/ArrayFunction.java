@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -35,6 +36,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class ArrayFunction implements Function {
+    // May be set in case of bind var args + INSERT/UPDATE.
+    protected int assignedType = ColumnType.UNDEFINED;
     protected int position;
     protected int type = ColumnType.UNDEFINED;
 
@@ -45,7 +48,7 @@ public abstract class ArrayFunction implements Function {
                         && ColumnType.decodeArrayElementType(type) == ColumnType.decodeArrayElementType(this.type)
                         && !ColumnType.isArrayWithWeakDims(type)
         ) {
-            this.type = type;
+            this.assignedType = type;
         } else {
             throw SqlException.$(position, "invalid array type: ").put(ColumnType.nameOf(type));
         }
@@ -198,7 +201,7 @@ public abstract class ArrayFunction implements Function {
 
     @Override
     public int getType() {
-        return type;
+        return assignedType != ColumnType.UNDEFINED ? assignedType : type;
     }
 
     @Override
@@ -214,5 +217,16 @@ public abstract class ArrayFunction implements Function {
     @Override
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // If a type was assigned to the function, it means that it has a bind variable argument
+        // and, thus, a weak dimensional type, and it's used in an INSERT or UPDATE. In this case,
+        // we have to double-check that the assigned (wanted) type matches the type derived from
+        // the bind variable values.
+        if (assignedType != ColumnType.UNDEFINED && assignedType != type) {
+            throw SqlException.inconvertibleTypes(position, type, assignedType);
+        }
     }
 }

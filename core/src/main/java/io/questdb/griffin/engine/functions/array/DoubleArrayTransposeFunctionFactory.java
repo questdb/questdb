@@ -30,6 +30,7 @@ import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -78,6 +79,13 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             borrowedView.of(array);
             borrowedView.transpose();
             return borrowedView;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override
