@@ -68,7 +68,7 @@ public class ImportFilesFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
-            throw SqlException.$(argPositions.get(0), "import_files() is disabled ['cairo.sql.copy.root' is not set?]");
+            throw SqlException.$(position, "import_files() is disabled ['cairo.sql.copy.root' is not set?]");
         }
         return new CursorFunction(new ImportFilesCursorFactory(configuration)) {
             @Override

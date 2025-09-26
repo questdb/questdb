@@ -68,7 +68,7 @@ public class ExportFilesFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (Chars.isBlank(configuration.getSqlCopyExportRoot())) {
-            throw SqlException.$(argPositions.get(0), "export_files() is disabled ['cairo.sql.copy.export.root' is not set?]");
+            throw SqlException.$(position, "export_files() is disabled ['cairo.sql.copy.export.root' is not set?]");
         }
         return new CursorFunction(new ExportFilesCursorFactory(configuration)) {
             @Override
