@@ -404,5 +404,4 @@ public class SerialParquetExporter implements Closeable {
     public interface PhaseStatusReporter {
         void report(CopyExportRequestTask.Phase phase, CopyExportRequestTask.Status status, CopyExportRequestTask task, Utf8Sequence files, @Nullable final CharSequence msg, long errors);
     }
-
 }
