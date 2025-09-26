@@ -1562,6 +1562,13 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Set the scale forcefully without doing any rescaling operations
+     */
+    public void setScale(int scale) {
+        this.scale = scale;
+    }
+
+    /**
      * In-place subtraction.
      *
      * @param other the Decimal256 to subtract

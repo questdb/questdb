@@ -461,6 +461,21 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Rescale this Decimal64 in place
+     *
+     * @param newScale The new scale (must be >= current scale)
+     */
+    public void rescale(int newScale) {
+        validateScale(newScale);
+        if (newScale < this.scale) {
+            throw NumericException.instance().put("New scale must be >= current scale");
+        }
+        int scaleUp = newScale - this.scale;
+        this.value = scaleUp(this.value, scaleUp);
+        this.scale = newScale;
+    }
+
+    /**
      * Round this Decimal128 to the specified scale using the given rounding mode.
      * This method performs in-place rounding without requiring a divisor.
      *
@@ -506,6 +521,13 @@ public class Decimal64 implements Sinkable {
         }
 
         divide(1, 0, targetScale, roundingMode);
+    }
+
+    /**
+     * Set the scale forcefully without doing any rescaling operations
+     */
+    public void setScale(int scale) {
+        this.scale = scale;
     }
 
     /**

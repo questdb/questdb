@@ -2175,6 +2175,13 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testSetScale() {
+        Decimal256 a = new Decimal256(0, 0, 0, 12345, 2);
+        a.setScale(1);
+        Assert.assertEquals("1234.5", a.toString());
+    }
+
+    @Test
     public void testStaticAdd() {
         Decimal256 a = Decimal256.fromDouble(123.45, 2);
         Decimal256 b = Decimal256.fromDouble(67.89, 2);

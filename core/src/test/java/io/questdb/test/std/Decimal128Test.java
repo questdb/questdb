@@ -1101,6 +1101,13 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testSetScale() {
+        Decimal128 a = new Decimal128(0, 12345, 2);
+        a.setScale(1);
+        Assert.assertEquals("1234.5", a.toString());
+    }
+
+    @Test
     public void testSinkableInterface() {
         // Test that Decimal128 can be used as a Sinkable
         Decimal128 decimal = Decimal128.fromDouble(42.99, 2);

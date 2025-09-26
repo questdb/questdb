@@ -769,6 +769,13 @@ public class Decimal128 implements Sinkable {
     }
 
     /**
+     * Set the scale forcefully without doing any rescaling operations
+     */
+    public void setScale(int scale) {
+        this.scale = scale;
+    }
+
+    /**
      * Subtract another Decimal128 from this one (in-place)
      *
      * @param other The Decimal128 to subtract
