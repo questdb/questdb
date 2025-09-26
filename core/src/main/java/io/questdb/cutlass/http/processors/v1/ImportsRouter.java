@@ -272,7 +272,7 @@ public class ImportsRouter implements HttpRequestHandler {
                     .put("\"");
 
             if (state.errorCode == 409) {
-                response.put(",\"meta\":{\"filename\":\"")
+                response.put(",\"meta\":{\"name\":\"")
                         .put(Utf8s.stringFromUtf8Bytes(state.path.lo() + importRoot.length() + 1, state.path.hi()))
                         .put("\"}");
             }
