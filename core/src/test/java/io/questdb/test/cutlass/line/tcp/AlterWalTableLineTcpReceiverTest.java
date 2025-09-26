@@ -914,6 +914,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
+                Net.setTcpNoDelay(fd, true);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
