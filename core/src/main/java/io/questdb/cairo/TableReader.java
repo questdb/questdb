@@ -265,7 +265,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
-            if (!indexReader.isOpen() || indexReader.getColumnTxn() != columnNameTxn) {
+            if (
+                    !indexReader.isOpen()
+                            || indexReader.getColumnTxn() != columnNameTxn
+                            || indexReader.getPartitionTxn() != partitionTxn
+            ) {
                 int plen = path.size();
                 try {
                     indexReader.of(
@@ -280,7 +284,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     path.trimTo(plen);
                 }
             } else {
-                assert indexReader.getPartitionTxn() == partitionTxn;
                 indexReader.reloadConditionally();
             }
             return indexReader;
