@@ -106,7 +106,7 @@ public class DedupWalWriterTest extends AbstractCairoTest {
         );
 
         TableToken tt = engine.verifyTableName("test");
-        String partitionsTxnFile = readTxnToString(tt, false, true, true);
+        String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
 
         // Insert same values
         execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
@@ -119,9 +119,9 @@ public class DedupWalWriterTest extends AbstractCairoTest {
                         "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
                 "test"
         );
-        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true));
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
-        // Insert same values reodered
+        // Insert same values reordered
         execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
         drainWalQueue();
 
@@ -132,7 +132,7 @@ public class DedupWalWriterTest extends AbstractCairoTest {
                         "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
                 "test"
         );
-        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true));
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
         // Change one varchar
         execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");

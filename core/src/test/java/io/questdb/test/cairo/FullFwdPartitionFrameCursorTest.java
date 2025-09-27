@@ -231,17 +231,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIndexFailAtRuntimeByYear1v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear2v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testIndexFailAtRuntimeByYear3v() throws Exception {
-        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
@@ -541,17 +541,17 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "a.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear2v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "b.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
     public void testParallelIndexFailAtRuntimeByYear3v() throws Exception {
-        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.0" + Files.SEPARATOR + "c.v", 2);
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972.3" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test

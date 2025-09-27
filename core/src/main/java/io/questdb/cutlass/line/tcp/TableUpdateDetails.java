@@ -28,12 +28,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
@@ -462,6 +464,7 @@ public class TableUpdateDetails implements Closeable {
         private GenericRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
         private TxReader txReader;
+        private ColumnVersionReader columnVersionReader;
 
         ThreadLocalDetails(
                 Pool<SymbolCache> symbolCachePool
@@ -496,6 +499,7 @@ public class TableUpdateDetails implements Closeable {
             Misc.freeObjList(symbolCacheByColumnIndex);
             Misc.free(path);
             txReader = Misc.free(txReader);
+            columnVersionReader = Misc.free(columnVersionReader);
         }
 
         private DirectUtf8SymbolLookup addSymbolCache(int colWriterIndex) {
@@ -514,24 +518,25 @@ public class TableUpdateDetails implements Closeable {
                 if (this.clean) {
                     if (this.txReader == null) {
                         this.txReader = new TxReader(cairoConfiguration.getFilesFacade());
+                        this.columnVersionReader = new ColumnVersionReader();
                     }
                     int pathLen = path.size();
                     this.txReader.ofRO(path.concat(TXN_FILE_NAME).$(), reader.getMetadata().getTimestampType(), reader.getPartitionedBy());
+                    this.columnVersionReader.ofRO(cairoConfiguration.getFilesFacade(), path.trimTo(pathLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
                     path.trimTo(pathLen);
                     this.clean = false;
                 }
 
-                long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(colWriterIndex);
                 assert symIndex <= colWriterIndex;
                 symCache.of(
                         cairoConfiguration,
-                        writerAPI,
-                        colWriterIndex,
-                        path,
                         symbolNameTemp,
+                        colWriterIndex,
                         symIndex,
+                        path,
+                        writerAPI,
                         txReader,
-                        columnNameTxn
+                        columnVersionReader
                 );
                 symbolCacheByColumnIndex.extendAndSet(colWriterIndex, symCache);
                 return symCache;
@@ -658,6 +663,7 @@ public class TableUpdateDetails implements Closeable {
             columnTypeMeta.add(0);
             if (txReader != null) {
                 txReader.clear();
+                columnVersionReader.clear();
             }
             clean = true;
         }

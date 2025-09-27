@@ -313,7 +313,7 @@ public class MetadataCache implements QuietCloseable {
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
                 columnVersionReader.readUnsafe();
-                columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+                columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
             }
 
             // initialize symbol map memory

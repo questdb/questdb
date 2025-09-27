@@ -1101,7 +1101,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 configuration,
                 path,
                 metadata.getColumnName(columnIndex),
-                columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(columnIndex)),
+                columnVersionReader.getSymbolTableNameTxn(metadata.getWriterIndex(columnIndex)),
                 txFile.getSymbolValueCount(symbolColumnIndex)
         );
     }
@@ -1464,7 +1464,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
                 if (symbolMapReader instanceof SymbolMapReaderImpl) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-                    final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+                    final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
                     ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);
                 }
@@ -1707,15 +1707,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void renewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+            final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
             String columnName = metadata.getColumnName(columnIndex);
-            if (!(reader instanceof SymbolMapReaderImpl)) {
+            if (!(reader instanceof SymbolMapReaderImpl symbolMapReader)) {
                 reader = new SymbolMapReaderImpl(configuration, path, columnName, columnNameTxn, 0);
             } else {
-                SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) reader;
                 // Fully reopen the symbol map reader only when necessary
                 if (symbolMapReader.needsReopen(columnNameTxn)) {
-                    ((SymbolMapReaderImpl) reader).of(configuration, path, columnName, columnNameTxn, 0);
+                    symbolMapReader.of(configuration, path, columnName, columnNameTxn, 0);
                 }
             }
         } else {

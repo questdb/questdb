@@ -25,14 +25,20 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.datetime.Clock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -47,9 +53,14 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private final StringSink tempSink = new StringSink();
     private final long waitIntervalBeforeReload;
     private int columnIndex;
+    private String columnName;
+    private long columnNameTxn;
+    private CairoConfiguration configuration;
+    private int denseSymbolIndex;
     private long lastSymbolReaderReloadTimestamp;
-    private int symbolIndexInTxFile;
+    private Utf8Sequence pathToTableDir;
     private TxReader txReader;
+    private ColumnVersionReader columnVersionReader;
     private TableWriterAPI writerAPI;
 
     public SymbolCache(LineTcpReceiverConfiguration configuration) {
@@ -65,6 +76,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     public void close() {
         txReader = null;
         writerAPI = null;
+        columnVersionReader = null;
         symbolMapReader.close();
         symbolValueToKeyMap.reset();
     }
@@ -89,9 +101,24 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
 
         if (
                 ticks - lastSymbolReaderReloadTimestamp > waitIntervalBeforeReload &&
-                        (symbolValueCount = readSymbolCount(symbolIndexInTxFile, true)) > symbolMapReader.getSymbolCount()
+                        (symbolValueCount = readSymbolCount(denseSymbolIndex, true)) > symbolMapReader.getSymbolCount()
         ) {
-            symbolMapReader.updateSymbolCount(symbolValueCount);
+            // when symbol capacity auto-scales, we also need to reload symbol map reader, as in
+            // make it open different set of files altogether
+            long nextColumnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+            if (nextColumnNameTxn != columnNameTxn) {
+                // reload
+                symbolMapReader.of(
+                        configuration,
+                        pathToTableDir,
+                        columnName,
+                        nextColumnNameTxn,
+                        symbolValueCount
+                );
+                this.columnNameTxn = nextColumnNameTxn;
+            } else {
+                symbolMapReader.updateSymbolCount(symbolValueCount);
+            }
             lastSymbolReaderReloadTimestamp = ticks;
         }
 
@@ -107,22 +134,31 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
 
     public void of(
             CairoConfiguration configuration,
-            TableWriterAPI writerAPI,
+            String columnName,
             int columnIndex,
-            Path path,
-            CharSequence columnName,
-            int symbolIndexInTxFile,
+            int denseSymbolIndex,
+            // This is a fragile relationship. The code is legacy, SymbolCache is only used
+            // from ILP TCP and TableUpdateDetails. So the latter owns this path and promises
+            // to never mutate it. So that the cache can use it to re-open symbol map.
+            Utf8Sequence pathToTableDir,
+            TableWriterAPI writerAPI,
             TxReader txReader,
-            long columnNameTxn
+            ColumnVersionReader columnVersionReader
     ) {
+        this.configuration = configuration;
         this.writerAPI = writerAPI;
         this.columnIndex = columnIndex;
-        this.symbolIndexInTxFile = symbolIndexInTxFile;
-        final int plen = path.size();
+        this.denseSymbolIndex = denseSymbolIndex;
         this.txReader = txReader;
-        int symCount = readSymbolCount(symbolIndexInTxFile, false);
-        path.trimTo(plen);
-        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
+        this.columnVersionReader = columnVersionReader;
+        int symCount = readSymbolCount(denseSymbolIndex, false);
+        // hold on to the column name txn so that we know when to reload
+        this.columnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+        this.columnName = columnName;
+        // yes, it is ok to store, ILP and this are friends
+        this.pathToTableDir = pathToTableDir;
+
+        symbolMapReader.of(configuration, pathToTableDir, columnName, columnNameTxn, symCount);
         symbolValueToKeyMap.clear();
     }
 
@@ -135,18 +171,27 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
-        // TODO: avoid reading dirty distinct counts from _txn file, add new file instead
         boolean offsetReloadOk = initialStateOk;
+        boolean cvReadOk = initialStateOk;
         while (true) {
             if (offsetReloadOk) {
                 int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
+                long txColumnVersion = txReader.unsafeReadColumnVersion();
                 Unsafe.getUnsafe().loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {
-                    return count;
+                    // Check if _cv file has to be reloaded
+                    if (!cvReadOk || columnVersionReader.getVersion() != txColumnVersion) {
+                        cvReadOk = columnVersionReader.readSafe();
+                        cvReadOk &= columnVersionReader.getVersion() == txColumnVersion;
+                    }
+                    if (cvReadOk) {
+                        return count;
+                    }
                 }
             }
             offsetReloadOk = txReader.unsafeLoadBaseOffset();
+            Os.pause();
         }
     }
 }

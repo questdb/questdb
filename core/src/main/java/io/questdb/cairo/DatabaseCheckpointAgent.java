@@ -410,7 +410,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         configuration,
                         tablePath,
                         columnName,
-                        columnVersionReader.getDefaultColumnNameTxn(writerIndex),
+                        columnVersionReader.getSymbolTableNameTxn(writerIndex),
                         cleanSymbolCount,
                         -1
                 );

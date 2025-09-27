@@ -97,6 +97,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return true;
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityFactor() {
+        return 0.8;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -262,7 +272,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDataIndexKeyAppendPageSize() {
-        return Files.PAGE_SIZE;
+        return 1024 * 1024;
     }
 
     @Override

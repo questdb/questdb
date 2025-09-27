@@ -32,6 +32,11 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
+    public int getColumnIndex() {
+        return -1;
+    }
+
+    @Override
     public boolean getNullFlag() {
         return false;
     }

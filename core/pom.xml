@@ -32,7 +32,7 @@
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>11</javac.target>
+        <javac.target>17</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->

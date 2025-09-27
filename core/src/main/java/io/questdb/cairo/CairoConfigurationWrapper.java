@@ -67,6 +67,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return getDelegate().autoScaleSymbolCapacity();
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityFactor() {
+        return getDelegate().autoScaleSymbolCapacityFactor();
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
     }
