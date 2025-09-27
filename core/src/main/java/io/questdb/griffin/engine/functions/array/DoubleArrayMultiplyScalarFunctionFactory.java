@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -65,7 +65,7 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         return true;
     }
 
-    private static class Func extends ArrayFunction implements BinaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final Function scalarArg;
@@ -124,7 +124,7 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             this.type = arrayArg.getType();
-            super.init(symbolTableSource, executionContext);
+            validateAssignedType();
         }
 
         @Override

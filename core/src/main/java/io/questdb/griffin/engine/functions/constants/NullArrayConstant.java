@@ -29,10 +29,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.NoopArrayWriteState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.str.StringSink;
 
 public final class NullArrayConstant extends ArrayFunction implements ConstantFunction {
@@ -44,11 +41,6 @@ public final class NullArrayConstant extends ArrayFunction implements ConstantFu
     @Override
     public ArrayView getArray(Record rec) {
         return ArrayConstant.NULL;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        // no-op
     }
 
     @Override

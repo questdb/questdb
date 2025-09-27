@@ -31,7 +31,6 @@ import io.questdb.cairo.arr.SingleElementDoubleArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -64,18 +63,17 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
         if (ColumnType.decodeWeakArrayDimensionality(type) == -1) {
             throw SqlException.$(argPositions.getQuick(1), "cannot cast double to array with unknown number of dimensions");
         }
-        return new Func(args.getQuick(0), type, position);
+        return new Func(args.getQuick(0), type);
     }
 
     public static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arg;
         private final SingleElementDoubleArray array;
 
-        public Func(Function arg, int arrType, int position) {
+        public Func(Function arg, int arrType) {
             super.type = arrType;
             this.arg = arg;
             this.array = new SingleElementDoubleArray(ColumnType.decodeWeakArrayDimensionality(arrType));
-            this.position = position;
         }
 
         @Override
@@ -97,11 +95,6 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
             }
             array.of(val);
             return array;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

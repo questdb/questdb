@@ -27,9 +27,6 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 
 public class ArrayColumn extends ArrayFunction implements ColumnFunction {
     private final int columnIndex;
@@ -51,11 +48,6 @@ public class ArrayColumn extends ArrayFunction implements ColumnFunction {
     @Override
     public int getColumnIndex() {
         return columnIndex;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        // no-op
     }
 
     @Override

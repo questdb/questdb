@@ -31,9 +31,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -98,7 +98,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 Function argI = args.getQuick(i);
                 array.putFunction(i, argI);
             }
-            return new FunctionArrayFunction(array, position);
+            return new FunctionArrayFunction(array);
         }
 
         // First argument is an array, validate that all of them arrays. Mixed array and
@@ -155,7 +155,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
                 }
             }
-            return new FunctionArrayFunction(array, position);
+            return new FunctionArrayFunction(array);
         }
 
         // Arguments aren't all FunctionArrayFunctions, treat them generically as some kind of array functions.
@@ -164,8 +164,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 new ObjList<>(args),
                 new IntList(argPositions),
                 commonElemType,
-                nestedDims,
-                position
+                nestedDims
         );
     }
 
@@ -184,12 +183,10 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 @NotNull ObjList<Function> args,
                 @NotNull IntList argPositions,
                 int commonElemType,
-                int nestedNDims,
-                int position
+                int nestedNDims
         ) {
             try {
                 this.type = ColumnType.encodeArrayType(ColumnType.tagOf(commonElemType), nestedNDims + 1);
-                this.position = position;
                 this.args = args;
                 this.argPositions = argPositions;
                 this.arrayOut = new DirectArray(configuration);
@@ -198,6 +195,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 close();
                 throw th;
             }
+        }
+
+        @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            this.type = type;
+            arrayOut.setType(type);
         }
 
         @Override
@@ -245,11 +248,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-        }
-
-        @Override
         public boolean isThreadSafe() {
             return false;
         }
@@ -270,14 +268,21 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     private static class FunctionArrayFunction extends ArrayFunction implements MultiArgFunction {
         private final FunctionArray array;
 
-        public FunctionArrayFunction(FunctionArray array, int position) {
+        public FunctionArrayFunction(FunctionArray array) {
             this.array = array;
             this.type = array.getType();
-            this.position = position;
+        }
+
+        @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            assert array.isEmpty() : "array is not empty";
+            this.type = type;
+            array.setType(type);
         }
 
         @Override
         public void close() {
+            MultiArgFunction.super.close();
             Misc.free(array);
         }
 
@@ -290,11 +295,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             array.setRecord(rec);
             return array;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

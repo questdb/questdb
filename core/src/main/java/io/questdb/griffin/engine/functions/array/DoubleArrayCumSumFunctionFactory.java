@@ -32,7 +32,6 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -60,7 +59,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(configuration, args.getQuick(0), position);
+        return new Func(configuration, args.getQuick(0));
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
@@ -70,12 +69,10 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         private double currentSum;
         private MemoryA memory;
 
-        public Func(CairoConfiguration configuration, Function arrayArg, int position) {
+        public Func(CairoConfiguration configuration, Function arrayArg) {
             this.arrayArg = arrayArg;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
             this.array = new DirectArray(configuration);
-            array.setType(type);
-            this.position = position;
         }
 
         @Override
@@ -99,6 +96,7 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
 
             currentSum = Double.NaN;
             compensation = 0d;
+            array.setType(type);
             array.setDimLen(0, arr.getCardinality());
             array.applyShape();
             memory = array.startMemoryA();
@@ -126,11 +124,6 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return FUNCTION_NAME;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

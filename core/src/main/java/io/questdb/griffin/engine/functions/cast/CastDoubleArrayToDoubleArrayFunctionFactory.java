@@ -84,7 +84,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             // nothing to do
             return fromFunc;
         }
-        return new Func(fromFunc, toType, dimsToAdd, position);
+        return new Func(fromFunc, toType, dimsToAdd);
     }
 
     public static final class Func extends ArrayFunction implements UnaryFunction {
@@ -92,12 +92,11 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         private final DerivedArrayView derivedArray = new DerivedArrayView();
         private final int dimsToAdd;
 
-        public Func(Function arg, int toType, int dimsToAdd, int position) {
+        public Func(Function arg, int toType, int dimsToAdd) {
             assert dimsToAdd > 0;
             this.type = toType;
             this.arg = arg;
             this.dimsToAdd = dimsToAdd;
-            this.position = position;
         }
 
         @Override
@@ -120,11 +119,6 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-        }
-
-        @Override
         public boolean isThreadSafe() {
             return false;
         }
@@ -133,6 +127,7 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
     public static final class WeakDimsFunc extends ArrayFunction implements UnaryFunction {
         private final Function arg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
+        private final int position;
         private int dimsToAdd;
 
         public WeakDimsFunc(Function arg, int toType, int position) {

@@ -27,10 +27,10 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -116,7 +116,7 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func extends ArrayFunction implements TernaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements TernaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final Function defaultValueFunction;
@@ -183,7 +183,7 @@ public class DoubleArrayShiftFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
             this.type = arrayArg.getType();
-            super.init(symbolTableSource, executionContext);
+            validateAssignedType();
         }
 
         @Override

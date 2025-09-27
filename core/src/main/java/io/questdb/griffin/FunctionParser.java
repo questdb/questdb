@@ -1110,7 +1110,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return new CastStrToTimestampFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isArray(toType)) {
                     assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
-                    return new CastStrToDoubleArrayFunctionFactory.Func(function, toType, position);
+                    return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
                 } else if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }

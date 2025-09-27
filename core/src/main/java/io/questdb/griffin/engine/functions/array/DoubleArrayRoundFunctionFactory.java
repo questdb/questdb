@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -75,7 +75,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         return new VarScaleFunc(configuration, arg, scale, position);
     }
 
-    private static class DegenerateScaleFunc extends ArrayFunction implements UnaryFunction {
+    private static class DegenerateScaleFunc extends WeakDimsArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
 
@@ -121,7 +121,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             this.type = arrayArg.getType();
-            super.init(symbolTableSource, executionContext);
+            validateAssignedType();
         }
 
         @Override
@@ -135,7 +135,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class PositiveScaleFunc extends ArrayFunction implements UnaryFunction {
+    private static class PositiveScaleFunc extends WeakDimsArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final int scale;
@@ -188,7 +188,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             this.type = arrayArg.getType();
-            super.init(symbolTableSource, executionContext);
+            validateAssignedType();
         }
 
         @Override
@@ -226,7 +226,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class VarScaleFunc extends ArrayFunction implements BinaryFunction {
+    private static class VarScaleFunc extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final Function scalarArg;
@@ -285,7 +285,7 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             this.type = arrayArg.getType();
-            super.init(symbolTableSource, executionContext);
+            validateAssignedType();
         }
 
         @Override

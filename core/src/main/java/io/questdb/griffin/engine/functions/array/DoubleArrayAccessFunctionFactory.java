@@ -32,7 +32,6 @@ import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -140,7 +139,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
         }
-        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy, position);
+        return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
     }
 
     private static int flatIndexDelta(ArrayView array, int dim, int pgIndexAtDim) {
@@ -323,12 +322,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
 
-        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions, int position) {
+        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
-            this.position = position;
         }
 
         @Override
@@ -393,11 +391,6 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
             }
             return derivedArray;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

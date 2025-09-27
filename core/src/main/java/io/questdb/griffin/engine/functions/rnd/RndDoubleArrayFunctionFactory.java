@@ -67,8 +67,8 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         final int nDims = validateAndGetArg(args, argPositions, 0, "nDims");
         if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
-            throw SqlException.$(argPositions.getQuick(0),
-                    "maximum for nDims is ").put(32).put(" [nDims=").put(nDims).put(']');
+            throw SqlException.$(argPositions.getQuick(0), "maximum for nDims is ").put(ColumnType.ARRAY_NDIMS_LIMIT)
+                    .put(" [nDims=").put(nDims).put(']');
         }
         if (nDims == 0) {
             return NullConstant.NULL;
@@ -85,20 +85,17 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         final int maxDimLen = validateAndGetArg(args, argPositions, 2, "maxDimLength");
         if (args.size() == 3) {
             if (maxDimLen <= 0) {
-                throw SqlException.$(argPositions.getQuick(2),
-                        "maxDimLength must be a positive integer [maxDimLength=").put(maxDimLen).put(']');
+                throw SqlException.$(argPositions.getQuick(2), "maxDimLength must be a positive integer [maxDimLength=").put(maxDimLen).put(']');
             }
             return new RndDimLenFunc(configuration, nDims, nanRate, maxDimLen, position);
         }
 
         if (args.size() < nDims + 3) {
-            throw SqlException.$(argPositions.getQuick(args.size() - 1),
-                            "not enough dim lengths [nDims=").put(nDims)
+            throw SqlException.$(argPositions.getQuick(args.size() - 1), "not enough dim lengths [nDims=").put(nDims)
                     .put(", nDimLengths=").put(args.size() - 3).put(']');
         }
         if (args.size() > nDims + 3) {
-            throw SqlException.$(argPositions.getQuick(nDims + 3),
-                            "too many dim lengths [nDims=").put(nDims)
+            throw SqlException.$(argPositions.getQuick(nDims + 3), "too many dim lengths [nDims=").put(nDims)
                     .put(", nDimLengths=").put(args.size() - 3).put(']');
         }
 
@@ -133,6 +130,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final IntList dimLens;
         private final int nDims;
         private final int nanRate;
+        private final int position;
         private DirectArray array;
         private Rnd rnd;
 
@@ -169,7 +167,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
 
@@ -203,6 +201,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final int maxDimLen;
         private final int nDims;
         private final int nanRate;
+        private final int position;
         private DirectArray array;
         private Rnd rnd;
 
@@ -233,7 +232,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
 

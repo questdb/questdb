@@ -32,7 +32,6 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -58,7 +57,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0), position);
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
@@ -66,11 +65,10 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         private final DerivedArrayView derivedView = new DerivedArrayView();
         private DirectArray outArray = new DirectArray();
 
-        public Func(Function arrayArg, int position) {
+        public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
             this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
             outArray.setType(type);
-            this.position = position;
         }
 
         @Override
@@ -97,11 +95,6 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
                 array.appendDataToMem(outArray.startMemoryA());
                 return outArray;
             }
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

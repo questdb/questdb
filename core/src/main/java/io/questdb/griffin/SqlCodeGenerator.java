@@ -2283,7 +2283,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // must be a bind variable, i.e. weak dimensionality case
                                         castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.WeakDimsFunc(ArrayColumn.newInstance(i, fromType), toType, modelPosition));
                                     } else {
-                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims, modelPosition));
+                                        castFunctions.add(new CastDoubleArrayToDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, fromType), toType, toDims - fromDims));
                                     }
                                 }
                                 break;
@@ -2295,7 +2295,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             .$(modelPosition, "cast to array bind variable type is not supported [column=").put(castFromMetadata.getColumnName(i))
                                             .put(']');
                                 }
-                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType, modelPosition));
+                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
                                 break;
                             default:
                                 assert false;
