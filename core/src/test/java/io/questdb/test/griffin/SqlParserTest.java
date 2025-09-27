@@ -536,10 +536,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         for (int i = 0; i < unitsAndValues.length; i++) {
             String expectedUnit = unitsAndValues[i].replaceAll("s$", "");
             assertQuery(
-                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and current row exclude no others) " +
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and current row exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range 10 preceding) from xyz",
+                    "select a,b, f(c) over (partition by b order by ts range 10 #unit preceding) from xyz"
+                            .replace("#unit", expectedUnit),
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
                             .col("b", ColumnType.INT)
@@ -548,10 +549,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
             );
 
             assertQuery(
-                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and 1 following exclude no others) " +
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and 1 #unit following exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range between 10 preceding and 1 following) from xyz",
+                    "select a,b, f(c) over (partition by b order by ts range between 10 #unit preceding and 1 #unit following) from xyz"
+                            .replace("#unit", expectedUnit),
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
                             .col("b", ColumnType.INT)
@@ -855,16 +857,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(
                 "select-virtual count from (select-group-by [count(event1) count, event1 + event column] event1 + event column, count(event1) count from (select-choose [a.event event1, b.event event] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a) a",
-                "select\n" +
-                        "    count(a.event)\n" +
-                        "    from\n" +
-                        "    telemetry as a\n" +
-                        "    inner join telemetry as b on a.created = b.created\n" +
-                        "            where\n" +
-                        "    a.event > 0\n" +
-                        "    and b.event < 1\n" +
-                        "    group by\n" +
-                        "    a.event + b.event",
+                """
+                        select
+                            count(a.event)
+                            from
+                            telemetry as a
+                            inner join telemetry as b on a.created = b.created
+                                    where
+                            a.event > 0
+                            and b.event < 1
+                            group by
+                            a.event + b.event""",
                 modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
         );
     }
@@ -874,15 +877,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // table alias in group-by formula should be replaced to align with "choose" model
         assertQuery(
                 "select-group-by event1 + event column, count(event1) count from (select-choose [b.event event, a.event event1] b.event event, a.event event1 from (select [event, created] from telemetry a timestamp (created) join (select [event, created] from telemetry b timestamp (created) where event < 1) b on b.created = a.created where event > 0) a) a",
-                "select \n" +
-                        "  a.event + b.event,\n" +
-                        "  count(a.event)\n" +
-                        "from\n" +
-                        "  telemetry as a\n" +
-                        "  inner join telemetry as b on a.created = b.created\n" +
-                        "where\n" +
-                        "  a.event > 0\n" +
-                        "  and b.event < 1\n",
+                """
+                        select\s
+                          a.event + b.event,
+                          count(a.event)
+                        from
+                          telemetry as a
+                          inner join telemetry as b on a.created = b.created
+                        where
+                          a.event > 0
+                          and b.event < 1
+                        """,
                 modelOf("telemetry").timestamp("created").col("event", ColumnType.SHORT)
         );
     }
@@ -1014,20 +1019,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testAsOfJoinOuterWhereClause() throws Exception {
         assertQuery(
                 "select-choose trade_time, quote_time, trade_price, trade_size, quote_price, quote_size from (select-choose [trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size] trade.ts trade_time, book.ts quote_time, trade.price trade_price, trade.size trade_size, book.price quote_price, book.size quote_size from (select [ts, price, size, sym] from trade asof join select [ts, price, size, sym] from book post-join-where trade.sym = book.sym and book.price != NaN))",
-                "select * from \n" +
-                        "(\n" +
-                        "select \n" +
-                        "trade.ts as trade_time,\n" +
-                        "book.ts as quote_time,\n" +
-                        "trade.price as trade_price,\n" +
-                        "trade.size as trade_size,\n" +
-                        "book.price as quote_price,\n" +
-                        "book.size as quote_size\n" +
-                        "from trade\n" +
-                        "asof join book\n" +
-                        "where trade.sym = book.sym\n" +
-                        ")\n" +
-                        "where quote_price != NaN;",
+                """
+                        select * from\s
+                        (
+                        select\s
+                        trade.ts as trade_time,
+                        book.ts as quote_time,
+                        trade.price as trade_price,
+                        trade.size as trade_size,
+                        book.price as quote_price,
+                        book.size as quote_size
+                        from trade
+                        asof join book
+                        where trade.sym = book.sym
+                        )
+                        where quote_price != NaN;""",
                 modelOf("trade")
                         .col("ts", ColumnType.TIMESTAMP)
                         .col("sym", ColumnType.SYMBOL)
@@ -2914,16 +2920,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "idDouble DOUBLE, " +
                         "idBytes STRING, " +
                         "msg STRING)",
-                "CREATE TABLE \"quickstart-events4\" (\n" +
-                        "\"flag\" BOOLEAN NOT NULL,\n" +
-                        "\"id8\" SMALLINT NOT NULL,\n" +
-                        "\"id16\" SMALLINT NOT NULL,\n" +
-                        "\"id32\" INT NOT NULL,\n" +
-                        "\"id64\" BIGINT NOT NULL,\n" +
-                        "\"idFloat\" REAL NOT NULL,\n" +
-                        "\"idDouble\" DOUBLE PRECISION NOT NULL,\n" +
-                        "\"idBytes\" BYTEA NOT NULL,\n" +
-                        "\"msg\" TEXT NULL)"
+                """
+                        CREATE TABLE "quickstart-events4" (
+                        "flag" BOOLEAN NOT NULL,
+                        "id8" SMALLINT NOT NULL,
+                        "id16" SMALLINT NOT NULL,
+                        "id32" INT NOT NULL,
+                        "id64" BIGINT NOT NULL,
+                        "idFloat" REAL NOT NULL,
+                        "idDouble" DOUBLE PRECISION NOT NULL,
+                        "idBytes" BYTEA NOT NULL,
+                        "msg" TEXT NULL)"""
         );
     }
 
@@ -4270,131 +4277,139 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDottedConstAlias() throws Exception {
         assertSql(
-                "column1\tdjnfkvbjke\n" +
-                        ".f.e.j.hve\tdjnfkvbjke\n", "select '.f.e.j.hve', 'djnfkvbjke'"
+                """
+                        column1\tdjnfkvbjke
+                        .f.e.j.hve\tdjnfkvbjke
+                        """, "select '.f.e.j.hve', 'djnfkvbjke'"
         );
     }
 
     @Test
     public void testDottedConstAlias2() throws Exception {
         assertSql(
-                "column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4\n" +
-                        ".f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4\n", "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4"
+                """
+                        column1\tdjnfkvbjke\tcolumn2\tcolumn3\tcolumn4
+                        .f.e.j.hve\tdjnfkvbjke\t2.2\ta.a\t6.4
+                        """, "select '.f.e.j.hve' column1, 'djnfkvbjke', 2.2, 'a.a', 6.4"
         );
     }
 
     @Test
     public void testDottedConstAlias3() throws Exception {
         assertSql(
-                "column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4\n" +
-                        ".f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4\n", "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4"
+                """
+                        column2\tdjnfkvbjke\tcolumn1\tcolumn3\tcolumn4
+                        .f.e.j.hve\tdjnfkvbjke\t2.2\taghtrtr.ahnyyn\t6.4
+                        """, "select '.f.e.j.hve', 'djnfkvbjke', 2.2 column1, 'aghtrtr.ahnyyn', 6.4"
         );
     }
 
     @Test
     public void testDottedConstAlias4() throws Exception {
         assertSql(
-                "x\tx1\n" +
-                        "1\t1\n" +
-                        "1\t2\n" +
-                        "1\t3\n" +
-                        "1\t4\n" +
-                        "1\t5\n" +
-                        "1\t6\n" +
-                        "1\t7\n" +
-                        "1\t8\n" +
-                        "1\t9\n" +
-                        "1\t10\n" +
-                        "2\t1\n" +
-                        "2\t2\n" +
-                        "2\t3\n" +
-                        "2\t4\n" +
-                        "2\t5\n" +
-                        "2\t6\n" +
-                        "2\t7\n" +
-                        "2\t8\n" +
-                        "2\t9\n" +
-                        "2\t10\n" +
-                        "3\t1\n" +
-                        "3\t2\n" +
-                        "3\t3\n" +
-                        "3\t4\n" +
-                        "3\t5\n" +
-                        "3\t6\n" +
-                        "3\t7\n" +
-                        "3\t8\n" +
-                        "3\t9\n" +
-                        "3\t10\n" +
-                        "4\t1\n" +
-                        "4\t2\n" +
-                        "4\t3\n" +
-                        "4\t4\n" +
-                        "4\t5\n" +
-                        "4\t6\n" +
-                        "4\t7\n" +
-                        "4\t8\n" +
-                        "4\t9\n" +
-                        "4\t10\n" +
-                        "5\t1\n" +
-                        "5\t2\n" +
-                        "5\t3\n" +
-                        "5\t4\n" +
-                        "5\t5\n" +
-                        "5\t6\n" +
-                        "5\t7\n" +
-                        "5\t8\n" +
-                        "5\t9\n" +
-                        "5\t10\n" +
-                        "6\t1\n" +
-                        "6\t2\n" +
-                        "6\t3\n" +
-                        "6\t4\n" +
-                        "6\t5\n" +
-                        "6\t6\n" +
-                        "6\t7\n" +
-                        "6\t8\n" +
-                        "6\t9\n" +
-                        "6\t10\n" +
-                        "7\t1\n" +
-                        "7\t2\n" +
-                        "7\t3\n" +
-                        "7\t4\n" +
-                        "7\t5\n" +
-                        "7\t6\n" +
-                        "7\t7\n" +
-                        "7\t8\n" +
-                        "7\t9\n" +
-                        "7\t10\n" +
-                        "8\t1\n" +
-                        "8\t2\n" +
-                        "8\t3\n" +
-                        "8\t4\n" +
-                        "8\t5\n" +
-                        "8\t6\n" +
-                        "8\t7\n" +
-                        "8\t8\n" +
-                        "8\t9\n" +
-                        "8\t10\n" +
-                        "9\t1\n" +
-                        "9\t2\n" +
-                        "9\t3\n" +
-                        "9\t4\n" +
-                        "9\t5\n" +
-                        "9\t6\n" +
-                        "9\t7\n" +
-                        "9\t8\n" +
-                        "9\t9\n" +
-                        "9\t10\n" +
-                        "10\t1\n" +
-                        "10\t2\n" +
-                        "10\t3\n" +
-                        "10\t4\n" +
-                        "10\t5\n" +
-                        "10\t6\n" +
-                        "10\t7\n" +
-                        "10\t8\n" +
-                        "10\t9\n" +
-                        "10\t10\n", "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b"
+                """
+                        x\tx1
+                        1\t1
+                        1\t2
+                        1\t3
+                        1\t4
+                        1\t5
+                        1\t6
+                        1\t7
+                        1\t8
+                        1\t9
+                        1\t10
+                        2\t1
+                        2\t2
+                        2\t3
+                        2\t4
+                        2\t5
+                        2\t6
+                        2\t7
+                        2\t8
+                        2\t9
+                        2\t10
+                        3\t1
+                        3\t2
+                        3\t3
+                        3\t4
+                        3\t5
+                        3\t6
+                        3\t7
+                        3\t8
+                        3\t9
+                        3\t10
+                        4\t1
+                        4\t2
+                        4\t3
+                        4\t4
+                        4\t5
+                        4\t6
+                        4\t7
+                        4\t8
+                        4\t9
+                        4\t10
+                        5\t1
+                        5\t2
+                        5\t3
+                        5\t4
+                        5\t5
+                        5\t6
+                        5\t7
+                        5\t8
+                        5\t9
+                        5\t10
+                        6\t1
+                        6\t2
+                        6\t3
+                        6\t4
+                        6\t5
+                        6\t6
+                        6\t7
+                        6\t8
+                        6\t9
+                        6\t10
+                        7\t1
+                        7\t2
+                        7\t3
+                        7\t4
+                        7\t5
+                        7\t6
+                        7\t7
+                        7\t8
+                        7\t9
+                        7\t10
+                        8\t1
+                        8\t2
+                        8\t3
+                        8\t4
+                        8\t5
+                        8\t6
+                        8\t7
+                        8\t8
+                        8\t9
+                        8\t10
+                        9\t1
+                        9\t2
+                        9\t3
+                        9\t4
+                        9\t5
+                        9\t6
+                        9\t7
+                        9\t8
+                        9\t9
+                        9\t10
+                        10\t1
+                        10\t2
+                        10\t3
+                        10\t4
+                        10\t5
+                        10\t6
+                        10\t7
+                        10\t8
+                        10\t9
+                        10\t10
+                        """, "select a.x, b.x from long_sequence(10) a cross join long_sequence(10) b"
         );
     }
 
@@ -4587,10 +4602,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testEmptyWhere() throws Exception {
         assertException(
                 "(select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag)) where",
-                "create table tab (\n" +
-                        "    tag string,\n" +
-                        "    seq long\n" +
-                        ")",
+                """
+                        create table tab (
+                            tag string,
+                            seq long
+                        )""",
                 71,
                 "empty where clause"
         );
@@ -4715,34 +4731,36 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " on ic.oid = i.indexrelid" +
                         " where not(attisdropped)) ta" +
                         " order by attnum",
-                "select\n" +
-                        "  ta.attname,\n" +
-                        "  ia.attnum,\n" +
-                        "  ic.relname,\n" +
-                        "  n.nspname,\n" +
-                        "  tc.relname\n" +
-                        "from\n" +
-                        "  pg_catalog.pg_attribute ta,\n" +
-                        "  pg_catalog.pg_attribute ia,\n" +
-                        "  pg_catalog.pg_class tc,\n" +
-                        "  pg_catalog.pg_index i,\n" +
-                        "  pg_catalog.pg_namespace n,\n" +
-                        "  pg_catalog.pg_class ic\n" +
-                        "where\n" +
-                        "  tc.relname = 'telemetry_config'\n" +
-                        "  AND n.nspname = 'public'\n" +
-                        "  AND tc.oid = i.indrelid\n" +
-                        "  AND n.oid = tc.relnamespace\n" +
-                        "  AND i.indisprimary = 't'\n" +
-                        "  AND ia.attrelid = i.indexrelid\n" +
-                        "  AND ta.attrelid = i.indrelid\n" +
-                        "  AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
-                        "  AND (NOT ta.attisdropped)\n" +
-                        "  AND (NOT ia.attisdropped)\n" +
-                        "  AND ic.oid = i.indexrelid\n" +
-                        "order by\n" +
-                        "  ia.attnum\n" +
-                        ";\n"
+                """
+                        select
+                          ta.attname,
+                          ia.attnum,
+                          ic.relname,
+                          n.nspname,
+                          tc.relname
+                        from
+                          pg_catalog.pg_attribute ta,
+                          pg_catalog.pg_attribute ia,
+                          pg_catalog.pg_class tc,
+                          pg_catalog.pg_index i,
+                          pg_catalog.pg_namespace n,
+                          pg_catalog.pg_class ic
+                        where
+                          tc.relname = 'telemetry_config'
+                          AND n.nspname = 'public'
+                          AND tc.oid = i.indrelid
+                          AND n.oid = tc.relnamespace
+                          AND i.indisprimary = 't'
+                          AND ia.attrelid = i.indexrelid
+                          AND ta.attrelid = i.indrelid
+                          AND ta.attnum = i.indkey [ ia.attnum -1 ]
+                          AND (NOT ta.attisdropped)
+                          AND (NOT ia.attisdropped)
+                          AND ic.oid = i.indexrelid
+                        order by
+                          ia.attnum
+                        ;
+                        """
         );
     }
 
@@ -4777,31 +4795,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " on n.oid = ic.relnamespace" +
                         " where not(attisdropped)) ta) ta" +
                         " order by attnum",
-                "select\n" +
-                        "  ta.attname,\n" +
-                        "  ia.attnum,\n" +
-                        "  ic.relname,\n" +
-                        "  n.nspname,\n" +
-                        "  NULL\n" +
-                        "from\n" +
-                        "  pg_catalog.pg_attribute ta,\n" +
-                        "  pg_catalog.pg_attribute ia,\n" +
-                        "  pg_catalog.pg_class ic,\n" +
-                        "  pg_catalog.pg_index i,\n" +
-                        "  pg_catalog.pg_namespace n\n" +
-                        "where\n" +
-                        "  ic.relname = 'telemetry_config_pkey'\n" +
-                        "  AND n.nspname = 'public'\n" +
-                        "  AND ic.oid = i.indexrelid\n" +
-                        "  AND n.oid = ic.relnamespace\n" +
-                        "  AND ia.attrelid = i.indexrelid\n" +
-                        "  AND ta.attrelid = i.indrelid\n" +
-                        "  AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
-                        "  AND (NOT ta.attisdropped)\n" +
-                        "  AND (NOT ia.attisdropped)\n" +
-                        "order by\n" +
-                        "  ia.attnum\n" +
-                        ";\n"
+                """
+                        select
+                          ta.attname,
+                          ia.attnum,
+                          ic.relname,
+                          n.nspname,
+                          NULL
+                        from
+                          pg_catalog.pg_attribute ta,
+                          pg_catalog.pg_attribute ia,
+                          pg_catalog.pg_class ic,
+                          pg_catalog.pg_index i,
+                          pg_catalog.pg_namespace n
+                        where
+                          ic.relname = 'telemetry_config_pkey'
+                          AND n.nspname = 'public'
+                          AND ic.oid = i.indexrelid
+                          AND n.oid = ic.relnamespace
+                          AND ia.attrelid = i.indexrelid
+                          AND ta.attrelid = i.indrelid
+                          AND ta.attnum = i.indkey [ ia.attnum -1 ]
+                          AND (NOT ta.attisdropped)
+                          AND (NOT ia.attisdropped)
+                        order by
+                          ia.attnum
+                        ;
+                        """
         );
     }
 
@@ -5009,10 +5029,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testFailureOrderByGroupByColPrefixed() throws Exception {
         assertException(
                 "select a, sum(b) b from tab order by tab.b, a",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")",
+                """
+                        create table tab (
+                            a int,
+                            b int
+                        )""",
                 37,
                 "Invalid column: tab.b"
         );
@@ -5022,10 +5043,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testFailureOrderByGroupByColPrefixed2() throws Exception {
         assertException(
                 "select a, sum(b) b from tab order by a, tab.b",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")",
+                """
+                        create table tab (
+                            a int,
+                            b int
+                        )""",
                 40,
                 "Invalid column: tab.b"
         );
@@ -5035,10 +5057,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testFailureOrderByGroupByColPrefixed3() throws Exception {
         assertException(
                 "select a, sum(b) b from tab order by tab.a, tab.b",
-                "create table tab (\n" +
-                        "    a int,\n" +
-                        "    b int\n" +
-                        ")",
+                """
+                        create table tab (
+                            a int,
+                            b int
+                        )""",
                 44,
                 "Invalid column: tab.b"
         );
@@ -5048,10 +5071,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testFailureOrderByOnOuterResultWhenOrderByColumnIsNotSelected() throws Exception {
         assertException(
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
-                "create table tab (\n" +
-                        "    x double,\n" +
-                        "    y int\n" +
-                        ")",
+                """
+                        create table tab (
+                            x double,
+                            y int
+                        )""",
                 59,
                 "Invalid column: tab.y"
         );
@@ -5244,26 +5268,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " [x] from long_sequence(101)))) offsets) orders) orders" +
                         " order by tsXYZ" +
                         ") points",
-                "WITH\n" +
-                        "  offsets AS (\n" +
-                        "    SELECT offs*100000 AS usec_offs, offs\n" +
-                        "    FROM (\n" +
-                        "      SELECT (x-51) AS offs\n" +
-                        "      FROM long_sequence(101)\n" +
-                        "    )\n" +
-                        "  ),\n" +
-                        "  orders AS (\n" +
-                        "    SELECT *  \n" +
-                        "    FROM trades\n" +
-                        "    WHERE timestamp IN '2025-05-21'\n" +
-                        "    LIMIT 10\n" +
-                        "  ),\n" +
-                        "  points AS (\n" +
-                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
-                        "    FROM orders CROSS JOIN offsets\n" +
-                        "    ORDER BY tsXYZ ASC\n" +
-                        "  )\n" +
-                        "select * from points;",
+                """
+                        WITH
+                          offsets AS (
+                            SELECT offs*100000 AS usec_offs, offs
+                            FROM (
+                              SELECT (x-51) AS offs
+                              FROM long_sequence(101)
+                            )
+                          ),
+                          orders AS (
+                            SELECT * \s
+                            FROM trades
+                            WHERE timestamp IN '2025-05-21'
+                            LIMIT 10
+                          ),
+                          points AS (
+                            SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ
+                            FROM orders CROSS JOIN offsets
+                            ORDER BY tsXYZ ASC
+                          )
+                        select * from points;""",
                 modelOf("trades")
                         .col("symbol", ColumnType.SYMBOL)
                         .col("side", ColumnType.SYMBOL)
@@ -5387,26 +5412,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " from long_sequence(101)))) offsets) orders)" +
                         " orders order by column)" +
                         ") points",
-                "WITH\n" +
-                        "  offsets AS (\n" +
-                        "    SELECT offs*100000 AS usec_offs, offs\n" +
-                        "    FROM (\n" +
-                        "      SELECT (x-51) AS offs\n" +
-                        "      FROM long_sequence(101)\n" +
-                        "    )\n" +
-                        "  ),\n" +
-                        "  orders AS (\n" +
-                        "    SELECT *  \n" +
-                        "    FROM trades\n" +
-                        "    WHERE timestamp IN '2025-05-21'\n" +
-                        "    LIMIT 10\n" +
-                        "  ),\n" +
-                        "  points AS (\n" +
-                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
-                        "    FROM orders CROSS JOIN offsets\n" +
-                        "    ORDER BY timestamp + offs ASC\n" +
-                        "  )\n" +
-                        "select * from points;",
+                """
+                        WITH
+                          offsets AS (
+                            SELECT offs*100000 AS usec_offs, offs
+                            FROM (
+                              SELECT (x-51) AS offs
+                              FROM long_sequence(101)
+                            )
+                          ),
+                          orders AS (
+                            SELECT * \s
+                            FROM trades
+                            WHERE timestamp IN '2025-05-21'
+                            LIMIT 10
+                          ),
+                          points AS (
+                            SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ
+                            FROM orders CROSS JOIN offsets
+                            ORDER BY timestamp + offs ASC
+                          )
+                        select * from points;""",
                 modelOf("trades")
                         .col("symbol", ColumnType.SYMBOL)
                         .col("side", ColumnType.SYMBOL)
@@ -5455,26 +5481,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " [x] from long_sequence(101)))) offsets) orders) orders" +
                         " order by tsXYZ" +
                         ") points",
-                "WITH\n" +
-                        "  offsets AS (\n" +
-                        "    SELECT offs*100000 AS usec_offs, offs\n" +
-                        "    FROM (\n" +
-                        "      SELECT (x-51) AS offs\n" +
-                        "      FROM long_sequence(101)\n" +
-                        "    )\n" +
-                        "  ),\n" +
-                        "  orders AS (\n" +
-                        "    SELECT *  \n" +
-                        "    FROM trades\n" +
-                        "    WHERE timestamp IN '2025-05-21'\n" +
-                        "    LIMIT 10\n" +
-                        "  ),\n" +
-                        "  points AS (\n" +
-                        "    SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ\n" +
-                        "    FROM orders CROSS JOIN offsets\n" +
-                        "    ORDER BY timestamp + usec_offs ASC\n" +
-                        "  )\n" +
-                        "select * from points;",
+                """
+                        WITH
+                          offsets AS (
+                            SELECT offs*100000 AS usec_offs, offs
+                            FROM (
+                              SELECT (x-51) AS offs
+                              FROM long_sequence(101)
+                            )
+                          ),
+                          orders AS (
+                            SELECT * \s
+                            FROM trades
+                            WHERE timestamp IN '2025-05-21'
+                            LIMIT 10
+                          ),
+                          points AS (
+                            SELECT orders.*, offsets.usec_offs*0.001 AS msec_offs, offs, timestamp + usec_offs AS tsXYZ
+                            FROM orders CROSS JOIN offsets
+                            ORDER BY timestamp + usec_offs ASC
+                          )
+                        select * from points;""",
                 modelOf("trades")
                         .col("symbol", ColumnType.SYMBOL)
                         .col("side", ColumnType.SYMBOL)
@@ -6394,71 +6421,72 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQuery(
                 "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' left join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 left join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' left join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
-                "SELECT \n" +
-                        "     NULL AS TABLE_CAT, \n" +
-                        "     n.nspname AS TABLE_SCHEM, \n" +
-                        "     \n" +
-                        "     c.relname AS TABLE_NAME,  \n" +
-                        "     CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema'  \n" +
-                        "        WHEN true THEN \n" +
-                        "           CASE  \n" +
-                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
-                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                ELSE \n" +
-                        "                    CASE c.relkind\n" +
-                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
-                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
-                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END  \n" +
-                        "            END  \n" +
-                        "        WHEN false THEN \n" +
-                        "            CASE c.relkind  \n" +
-                        "                WHEN 'r' THEN 'TABLE'  \n" +
-                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
-                        "                WHEN 'i' THEN 'INDEX'  \n" +
-                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
-                        "                WHEN 'v' THEN 'VIEW'  \n" +
-                        "                WHEN 'c' THEN 'TYPE'  \n" +
-                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
-                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
-                        "                ELSE NULL  \n" +
-                        "            END  \n" +
-                        "        ELSE NULL  \n" +
-                        "    END AS TABLE_TYPE, \n" +
-                        "    d.description AS REMARKS,\n" +
-                        "    '' as TYPE_CAT,\n" +
-                        "    '' as TYPE_SCHEM,\n" +
-                        "    '' as TYPE_NAME,\n" +
-                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
-                        "    '' AS REF_GENERATION\n" +
-                        "FROM \n" +
-                        "    pg_catalog.pg_namespace n, \n" +
-                        "    pg_catalog.pg_class c  \n" +
-                        "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
-                        "    LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
-                        "    LEFT JOIN pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')\n" +
-                        "WHERE \n" +
-                        "    c.relnamespace = n.oid  \n" +
-                        "    AND c.relname LIKE 'quickstart-events2' \n" +
-                        "    AND (\n" +
-                        "        false  \n" +
-                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
-                        "        ) \n" +
-                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
+                """
+                        SELECT\s
+                             NULL AS TABLE_CAT,\s
+                             n.nspname AS TABLE_SCHEM,\s
+                            \s
+                             c.relname AS TABLE_NAME, \s
+                             CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema' \s
+                                WHEN true THEN\s
+                                   CASE \s
+                                        WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN\s
+                                            CASE c.relkind  \s
+                                                WHEN 'r' THEN 'SYSTEM TABLE'\s
+                                                WHEN 'v' THEN 'SYSTEM VIEW'
+                                                WHEN 'i' THEN 'SYSTEM INDEX'
+                                                ELSE NULL  \s
+                                            END
+                                        WHEN n.nspname = 'pg_toast' THEN\s
+                                            CASE c.relkind  \s
+                                                WHEN 'r' THEN 'SYSTEM TOAST TABLE'
+                                                WHEN 'i' THEN 'SYSTEM TOAST INDEX'
+                                                ELSE NULL  \s
+                                            END
+                                        ELSE\s
+                                            CASE c.relkind
+                                                WHEN 'r' THEN 'TEMPORARY TABLE'
+                                                WHEN 'p' THEN 'TEMPORARY TABLE'
+                                                WHEN 'i' THEN 'TEMPORARY INDEX'
+                                                WHEN 'S' THEN 'TEMPORARY SEQUENCE'
+                                                WHEN 'v' THEN 'TEMPORARY VIEW'
+                                                ELSE NULL  \s
+                                            END \s
+                                    END \s
+                                WHEN false THEN\s
+                                    CASE c.relkind \s
+                                        WHEN 'r' THEN 'TABLE' \s
+                                        WHEN 'p' THEN 'PARTITIONED TABLE' \s
+                                        WHEN 'i' THEN 'INDEX' \s
+                                        WHEN 'S' THEN 'SEQUENCE' \s
+                                        WHEN 'v' THEN 'VIEW' \s
+                                        WHEN 'c' THEN 'TYPE' \s
+                                        WHEN 'f' THEN 'FOREIGN TABLE' \s
+                                        WHEN 'm' THEN 'MATERIALIZED VIEW' \s
+                                        ELSE NULL \s
+                                    END \s
+                                ELSE NULL \s
+                            END AS TABLE_TYPE,\s
+                            d.description AS REMARKS,
+                            '' as TYPE_CAT,
+                            '' as TYPE_SCHEM,
+                            '' as TYPE_NAME,
+                            '' AS SELF_REFERENCING_COL_NAME,
+                            '' AS REF_GENERATION
+                        FROM\s
+                            pg_catalog.pg_namespace n,\s
+                            pg_catalog.pg_class c \s
+                            LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0)\s
+                            LEFT JOIN pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')
+                            LEFT JOIN pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')
+                        WHERE\s
+                            c.relnamespace = n.oid \s
+                            AND c.relname LIKE 'quickstart-events2'\s
+                            AND (
+                                false \s
+                                OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' )\s
+                                )\s
+                        ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"""
         );
     }
 
@@ -6466,12 +6494,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinColumnPropagation() throws SqlException {
         assertQuery(
                 "select-group-by city, max(temp) max from (select-choose [city, readings.temp temp] city, readings.temp temp from (select [temp, sensorId] from readings timestamp (ts) join select [city, sensId] from (select-choose [city, ID sensId] ID sensId, city from (select [city, ID] from sensors)) _xQdbA1 on sensId = readings.sensorId))",
-                "SELECT city, max(temp)\n" +
-                        "FROM readings\n" +
-                        "JOIN(\n" +
-                        "    SELECT ID sensId, city\n" +
-                        "    FROM sensors)\n" +
-                        "ON readings.sensorId = sensId",
+                """
+                        SELECT city, max(temp)
+                        FROM readings
+                        JOIN(
+                            SELECT ID sensId, city
+                            FROM sensors)
+                        ON readings.sensorId = sensId""",
                 modelOf("sensors")
                         .col("ID", ColumnType.LONG)
                         .col("make", ColumnType.STRING)
@@ -6985,11 +7014,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinTimestampPropagation() throws SqlException {
         assertQuery(
                 "select-choose ts_stop, id, ts_start, id1 from (select-choose [a.created ts_stop, a.id id, b.created ts_start, b.id id1] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [created, id] from (select-choose [created, id] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [created, id] from (select-choose [created, id] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a)",
-                "with \n" +
-                        "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
-                        "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
-                        "\n" +
-                        "select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000\n",
+                """
+                        with\s
+                            starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
+                            stops as ((telemetry_users where event = 101 order by created) timestamp(created))
+                        
+                        select * from (select a.created ts_stop, a.id, b.created ts_start, b.id from stops a lt join starts b on (id)) where id <> '0x05ab1e873d165b00000005743f2c17' and ts_stop - ts_start > 10000000000
+                        """,
                 modelOf("telemetry_users")
                         .col("id", ColumnType.LONG256)
                         .col("created", ColumnType.TIMESTAMP)
@@ -7002,15 +7033,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
         assertQuery(
                 "select-choose id from (select-group-by [id] id, count() count from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a))",
-                "with \n" +
-                        "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
-                        "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
-                        "\n" +
-                        "select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id " +
-                        "from stops a " +
-                        "lt join starts b on (id)) " +
-                        "where id <> '0x05ab1e873d165b00000005743f2c17' " +
-                        "and ts_stop - ts_start > 10000000000\n",
+                """
+                        with\s
+                            starts as ((telemetry_users where event = 100 order by created) timestamp(created)),
+                            stops as ((telemetry_users where event = 101 order by created) timestamp(created))
+                        
+                        select distinct id from (select a.created ts_stop, a.id, b.created ts_start, b.id \
+                        from stops a \
+                        lt join starts b on (id)) \
+                        where id <> '0x05ab1e873d165b00000005743f2c17' \
+                        and ts_stop - ts_start > 10000000000
+                        """,
                 modelOf("telemetry_users")
                         .col("id", ColumnType.LONG256)
                         .col("created", ColumnType.TIMESTAMP)
@@ -7383,12 +7416,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
             for (int i = 0; i < 10; i++) {
                 try {
                     select(
-                            "select \n" +
-                                    "-- ltod(Date)\n" +
-                                    "count() \n" +
-                                    "-- from acc\n" +
-                                    "from acc(Date) sample by 1d\n" +
-                                    "-- where x = 10\n"
+                            """
+                                    select\s
+                                    -- ltod(Date)
+                                    count()\s
+                                    -- from acc
+                                    from acc(Date) sample by 1d
+                                    -- where x = 10
+                                    """
                     ).close();
                     Assert.fail();
                 } catch (SqlException e) {
@@ -7423,9 +7458,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testLineCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
-                "(x where a > 1) \n" +
-                        " -- this is a comment \n" +
-                        "'b a' where x > 1",
+                """
+                        (x where a > 1)\s
+                         -- this is a comment\s
+                        'b a' where x > 1""",
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT)
@@ -7533,11 +7569,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testMoveOrderByFlat() throws Exception {
         assertQuery(
                 "select-choose transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1)",
-                "select L.transactionid::varchar::bigint as transaction_id\n" +
-                        "from pg_catalog.pg_locks L\n" +
-                        "where L.transactionid is not null\n" +
-                        "order by pg_catalog.age(L.transactionid) desc\n" +
-                        "limit 1"
+                """
+                        select L.transactionid::varchar::bigint as transaction_id
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1"""
         );
     }
 
@@ -7547,13 +7584,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 // "age" column should not be included in the final selection list
                 // we also expect limit to be moved to the outer query
                 "select-choose locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select-virtual [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, pg_catalog.age(transactionid) age] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, pg_catalog.age(transactionid) age from (select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() l1) l1 union all select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L) order by age desc limit 1)",
-                "select * from pg_catalog.pg_locks l1 " +
-                        "union all " +
-                        "select *\n" +
-                        "from pg_catalog.pg_locks L\n" +
-                        "where L.transactionid is not null\n" +
-                        "order by pg_catalog.age(transactionid) desc\n" +
-                        "limit 1"
+                """
+                        select * from pg_catalog.pg_locks l1 \
+                        union all \
+                        select *
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(transactionid) desc
+                        limit 1"""
         );
     }
 
@@ -7617,11 +7655,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "from (select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1 from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L) L" +
                         " order by age desc limit 1" +
                         ")",
-                "select *\n" +
-                        "from pg_catalog.pg_locks L\n" +
-                        "where L.transactionid is not null\n" +
-                        "order by pg_catalog.age(L.transactionid) desc\n" +
-                        "limit 1"
+                """
+                        select *
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1"""
         );
     }
 
@@ -7629,11 +7668,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testMoveOrderBySubQuery() throws Exception {
         assertQuery(
                 "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1))",
-                "select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id\n" +
-                        "from pg_catalog.pg_locks L\n" +
-                        "where L.transactionid is not null\n" +
-                        "order by pg_catalog.age(L.transactionid) desc\n" +
-                        "limit 1)"
+                """
+                        select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1)"""
         );
     }
 
@@ -7781,11 +7821,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testNoopGroupByFailureWhenMissingColumn() throws Exception {
         assertException(
                 "select sym, avg(bid) avgBid from x where sym in ('AA', 'BB' ) group by ",
-                "create table x (\n" +
-                        "    sym symbol,\n" +
-                        "    bid int,\n" +
-                        "    ask int\n" +
-                        ")",
+                """
+                        create table x (
+                            sym symbol,
+                            bid int,
+                            ask int
+                        )""",
                 71,
                 "literal expected"
         );
@@ -7823,10 +7864,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testNullChecks() throws SqlException {
         assertQuery(
                 "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z', '2020-09-20T17:00:00.312334Z'))",
-                "SELECT \n" +
-                        "a\n" +
-                        "FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')\n" +
-                        "select * from long_sequence(1)",
+                """
+                        SELECT\s
+                        a
+                        FROM x WHERE b = 'H' AND time in('2020-08-01T17:00:00.305314Z' , '2020-09-20T17:00:00.312334Z')
+                        select * from long_sequence(1)""",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.SYMBOL)
@@ -8371,31 +8413,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
                 "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
-                "WITH \n" +
-                        "contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
-                        "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY contactId ORDER BY timestamp),\n" +
-                        "C AS (\n" +
-                        "    SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'\n" +
-                        "    EXCEPT\n" +
-                        "    SELECT _id as contactId FROM contactlist WHERE notRealType = 'bot'\n" +
-                        ")\n" +
-                        "  SELECT \n" +
-                        "    C.contactId as id, \n" +
-                        "    contactlist.customName,\n" +
-                        "    contactlist.name,\n" +
-                        "    contactlist.email,\n" +
-                        "    contactlist.country_name,\n" +
-                        "    contactlist.country_code,\n" +
-                        "    contactlist.city,\n" +
-                        "    contactlist.region,\n" +
-                        "    contactlist.emoji_flag,\n" +
-                        "    contactlist.latitude,\n" +
-                        "    contactlist.longitude,\n" +
-                        "    contactlist.isNotReal,\n" +
-                        "    contactlist.notRealType\n" +
-                        "  FROM C \n" +
-                        "  JOIN contactlist ON contactlist._id = C.contactId\n" +
-                        "  ORDER BY timestamp DESC\n",
+                """
+                        WITH\s
+                        contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),
+                        eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY contactId ORDER BY timestamp),
+                        C AS (
+                            SELECT DISTINCT contactId FROM eventlist WHERE groupId = 'qIqlX6qESMtTQXikQA46'
+                            EXCEPT
+                            SELECT _id as contactId FROM contactlist WHERE notRealType = 'bot'
+                        )
+                          SELECT\s
+                            C.contactId as id,\s
+                            contactlist.customName,
+                            contactlist.name,
+                            contactlist.email,
+                            contactlist.country_name,
+                            contactlist.country_code,
+                            contactlist.city,
+                            contactlist.region,
+                            contactlist.emoji_flag,
+                            contactlist.latitude,
+                            contactlist.longitude,
+                            contactlist.isNotReal,
+                            contactlist.notRealType
+                          FROM C\s
+                          JOIN contactlist ON contactlist._id = C.contactId
+                          ORDER BY timestamp DESC
+                        """,
                 modelOf("contacts")
                         .col("_id", ColumnType.SYMBOL)
                         .col("customName", ColumnType.STRING)
@@ -8444,10 +8488,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithLatestBy() throws Exception {
         assertQuery(
                 "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips where pickup_datetime < '2009-01-01T00:02:19.000000Z' latest on pickup_datetime partition by vendor_id) order by pickup_datetime",
-                "SELECT * FROM trips\n" +
-                        "WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'\n" +
-                        "latest on pickup_datetime partition by vendor_id\n" +
-                        "ORDER BY pickup_datetime",
+                """
+                        SELECT * FROM trips
+                        WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'
+                        latest on pickup_datetime partition by vendor_id
+                        ORDER BY pickup_datetime""",
                 modelOf("trips")
                         .col("id", ColumnType.INT)
                         .col("vendor", ColumnType.SYMBOL)
@@ -8459,10 +8504,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOrderByWithLatestByDeprecated() throws Exception {
         assertQuery(
                 "select-choose id, vendor, pickup_datetime from (select [id, vendor, pickup_datetime] from trips timestamp (pickup_datetime) latest by vendor_id where pickup_datetime < '2009-01-01T00:02:19.000000Z') order by pickup_datetime",
-                "SELECT * FROM trips\n" +
-                        "latest by vendor_id\n" +
-                        "WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'\n" +
-                        "ORDER BY pickup_datetime",
+                """
+                        SELECT * FROM trips
+                        latest by vendor_id
+                        WHERE pickup_datetime < '2009-01-01T00:02:19.000000Z'
+                        ORDER BY pickup_datetime""",
                 modelOf("trips")
                         .col("id", ColumnType.INT)
                         .col("vendor", ColumnType.SYMBOL)
@@ -8663,9 +8709,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOuterJoinRightPredicate() throws SqlException {
         assertQuery(
                 "select-choose x, y from (select [x] from l left join select [y] from r on r.y = l.x post-join-where y > 0)",
-                "select x, y\n" +
-                        "from l left join r on l.x = r.y\n" +
-                        "where y > 0",
+                """
+                        select x, y
+                        from l left join r on l.x = r.y
+                        where y > 0""",
                 modelOf("l").col("x", ColumnType.INT),
                 modelOf("r").col("y", ColumnType.INT)
         );
@@ -8675,9 +8722,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testOuterJoinRightPredicate1() throws SqlException {
         assertQuery(
                 "select-choose x, y from (select [x] from l left join select [y] from r on r.y = l.x post-join-where y > 0 or y > 10)",
-                "select x, y\n" +
-                        "from l left join r on l.x = r.y\n" +
-                        "where y > 0 or y > 10",
+                """
+                        select x, y
+                        from l left join r on l.x = r.y
+                        where y > 0 or y > 10""",
                 modelOf("l").col("x", ColumnType.INT),
                 modelOf("r").col("y", ColumnType.INT)
         );
@@ -8690,8 +8738,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 sqlExecutionContext,
                 "select '2021-01-26'::date",
                 sink,
-                "cast\n" +
-                        "2021-01-26T00:00:00.000Z\n"
+                """
+                        cast
+                        2021-01-26T00:00:00.000Z
+                        """
         );
     }
 
@@ -8716,14 +8766,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testPGColumnListQuery() throws SqlException {
         assertQuery(
                 "",
-                "SELECT c.oid,\n" +
-                        "  n.nspname,\n" +
-                        "  c.relname\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 2, 3;"
+                """
+                        SELECT c.oid,
+                          n.nspname,
+                          c.relname
+                        FROM pg_catalog.pg_class c
+                             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 2, 3;"""
         );
     }
 
@@ -8731,27 +8782,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
                 "select-virtual Schema, Name, switch(relkind, 'r', 'table', 'v', 'view', 'm', 'materialized view', 'i', 'index', 'S', 'sequence', 's', 'special', 'f', 'foreign table', 'p', 'table', 'I', 'index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r', 'p', 'v', 'm', 'S', 'f', '') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
-                "SELECT n.nspname                              as \"Schema\",\n" +
-                        "       c.relname                              as \"Name\",\n" +
-                        "       CASE c.relkind\n" +
-                        "           WHEN 'r' THEN 'table'\n" +
-                        "           WHEN 'v' THEN 'view'\n" +
-                        "           WHEN 'm' THEN 'materialized view'\n" +
-                        "           WHEN 'i' THEN 'index'\n" +
-                        "           WHEN 'S' THEN 'sequence'\n" +
-                        "           WHEN 's' THEN 'special'\n" +
-                        "           WHEN 'f' THEN 'foreign table'\n" +
-                        "           WHEN 'p' THEN 'table'\n" +
-                        "           WHEN 'I' THEN 'index' END          as \"Type\",\n" +
-                        "       pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname != 'pg_catalog'\n" +
-                        "  AND n.nspname != 'information_schema'\n" +
-                        "  AND n.nspname !~ '^pg_toast'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 1, 2"
+                """
+                        SELECT n.nspname                              as "Schema",
+                               c.relname                              as "Name",
+                               CASE c.relkind
+                                   WHEN 'r' THEN 'table'
+                                   WHEN 'v' THEN 'view'
+                                   WHEN 'm' THEN 'materialized view'
+                                   WHEN 'i' THEN 'index'
+                                   WHEN 'S' THEN 'sequence'
+                                   WHEN 's' THEN 'special'
+                                   WHEN 'f' THEN 'foreign table'
+                                   WHEN 'p' THEN 'table'
+                                   WHEN 'I' THEN 'index' END          as "Type",
+                               pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+                        FROM pg_catalog.pg_class c
+                                 LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')
+                          AND n.nspname != 'pg_catalog'
+                          AND n.nspname != 'information_schema'
+                          AND n.nspname !~ '^pg_toast'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 1, 2"""
         );
     }
 
@@ -10049,9 +10101,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByOfSubQuery() throws SqlException {
         assertQuery(
                 "select-group-by sum(x) sum, t from (select-virtual [timestamp_sequence(0, 2_000_000) t, x] x, timestamp_sequence(0, 2_000_000) t from (select [x] from long_sequence(10))) timestamp (t) sample by 1s fill(null) align to calendar with offset '00:00'",
-                "select sum(x), t from \n" +
-                        "(select *, timestamp_sequence(0, 2_000_000) t from long_sequence(10)) timestamp(t)\n" +
-                        "sample by 1s fill(null)"
+                """
+                        select sum(x), t from\s
+                        (select *, timestamp_sequence(0, 2_000_000) t from long_sequence(10)) timestamp(t)
+                        sample by 1s fill(null)"""
         );
     }
 
@@ -10081,29 +10134,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleBySelectStar() throws Exception {
-        execute("CREATE TABLE 'cpu' (\n" +
-                "  hostname SYMBOL capacity 256 CACHE,\n" +
-                "  region SYMBOL capacity 256 CACHE,\n" +
-                "  datacenter SYMBOL capacity 256 CACHE,\n" +
-                "  rack SYMBOL capacity 256 CACHE,\n" +
-                "  os SYMBOL capacity 256 CACHE,\n" +
-                "  arch SYMBOL capacity 256 CACHE,\n" +
-                "  team SYMBOL capacity 256 CACHE,\n" +
-                " 'service' SYMBOL capacity 256 CACHE,\n" +
-                "  service_version SYMBOL capacity 256 CACHE,\n" +
-                "  service_environment SYMBOL capacity 256 CACHE,\n" +
-                "  usage_user LONG,\n" +
-                "  usage_system LONG,\n" +
-                "  usage_idle LONG,\n" +
-                "  usage_nice LONG,\n" +
-                "  usage_iowait LONG,\n" +
-                "  usage_irq LONG,\n" +
-                "  usage_softirq LONG,\n" +
-                "  usage_steal LONG,\n" +
-                "  usage_guest LONG,\n" +
-                "  usage_guest_nice LONG,\n" +
-                "  timestamp TIMESTAMP\n" +
-                ") timestamp (timestamp) PARTITION BY DAY WAL;");
+        execute("""
+                CREATE TABLE 'cpu' (
+                  hostname SYMBOL capacity 256 CACHE,
+                  region SYMBOL capacity 256 CACHE,
+                  datacenter SYMBOL capacity 256 CACHE,
+                  rack SYMBOL capacity 256 CACHE,
+                  os SYMBOL capacity 256 CACHE,
+                  arch SYMBOL capacity 256 CACHE,
+                  team SYMBOL capacity 256 CACHE,
+                 'service' SYMBOL capacity 256 CACHE,
+                  service_version SYMBOL capacity 256 CACHE,
+                  service_environment SYMBOL capacity 256 CACHE,
+                  usage_user LONG,
+                  usage_system LONG,
+                  usage_idle LONG,
+                  usage_nice LONG,
+                  usage_iowait LONG,
+                  usage_irq LONG,
+                  usage_softirq LONG,
+                  usage_steal LONG,
+                  usage_guest LONG,
+                  usage_guest_nice LONG,
+                  timestamp TIMESTAMP
+                ) timestamp (timestamp) PARTITION BY DAY WAL;""");
 
         assertException("select * from cpu sample by 1d align to first observation", 28, "at least one aggregation function must be present in 'select' clause");
         assertException("select * from cpu sample by 1d align to calendar", 7, "wildcard column select is not allowed in sample-by queries");
@@ -10467,28 +10521,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectAfterOrderBy() throws SqlException {
         assertQuery(
                 "select-choose Schema from (select-group-by [Schema] Schema, count() count from (select-virtual [Schema, Name] Schema, Name, switch(relkind, 'r', 'table', 'v', 'view', 'm', 'materialized view', 'i', 'index', 'S', 'sequence', 's', 'special', 'f', 'foreign table', 'p', 'table', 'I', 'index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r', 'p', 'v', 'm', 'S', 'f', '') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
-                "select distinct Schema from \n" +
-                        "(SELECT n.nspname                              as \"Schema\",\n" +
-                        "       c.relname                              as \"Name\",\n" +
-                        "       CASE c.relkind\n" +
-                        "           WHEN 'r' THEN 'table'\n" +
-                        "           WHEN 'v' THEN 'view'\n" +
-                        "           WHEN 'm' THEN 'materialized view'\n" +
-                        "           WHEN 'i' THEN 'index'\n" +
-                        "           WHEN 'S' THEN 'sequence'\n" +
-                        "           WHEN 's' THEN 'special'\n" +
-                        "           WHEN 'f' THEN 'foreign table'\n" +
-                        "           WHEN 'p' THEN 'table'\n" +
-                        "           WHEN 'I' THEN 'index' END          as \"Type\",\n" +
-                        "       pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname != 'pg_catalog'\n" +
-                        "  AND n.nspname != 'information_schema'\n" +
-                        "  AND n.nspname !~ '^pg_toast'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 1, 2);\n"
+                """
+                        select distinct Schema from\s
+                        (SELECT n.nspname                              as "Schema",
+                               c.relname                              as "Name",
+                               CASE c.relkind
+                                   WHEN 'r' THEN 'table'
+                                   WHEN 'v' THEN 'view'
+                                   WHEN 'm' THEN 'materialized view'
+                                   WHEN 'i' THEN 'index'
+                                   WHEN 'S' THEN 'sequence'
+                                   WHEN 's' THEN 'special'
+                                   WHEN 'f' THEN 'foreign table'
+                                   WHEN 'p' THEN 'table'
+                                   WHEN 'I' THEN 'index' END          as "Type",
+                               pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+                        FROM pg_catalog.pg_class c
+                                 LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')
+                          AND n.nspname != 'pg_catalog'
+                          AND n.nspname != 'information_schema'
+                          AND n.nspname !~ '^pg_toast'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 1, 2);
+                        """
         );
     }
 
@@ -10539,10 +10595,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectColumnsFromJoinSubQueries() throws SqlException {
         assertQuery(
                 "select-virtual addr, sum_out - sum_in total from (select-choose [a.addr addr, b.sum_in sum_in, a.sum_out sum_out] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, sum_out] from (select-group-by [fromAddress addr, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [sum_in, toAddress] from (select-group-by [sum(value) sum_in, toAddress] toAddress, count() count, sum(value) sum_in from (select [value, toAddress] from transactions.csv)) b on b.toAddress = a.addr) a)",
-                "select addr, sum_out - sum_in total from (\n" +
-                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
-                        ")",
+                """
+                        select addr, sum_out - sum_in total from (
+                        (select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join
+                        (select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress
+                        )""",
                 modelOf("transactions.csv")
                         .col("fromAddress", ColumnType.LONG)
                         .col("toAddress", ColumnType.LONG)
@@ -10554,10 +10611,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectColumnsFromJoinSubQueries2() throws SqlException {
         assertQuery(
                 "select-choose addr, count, sum_out, toAddress, count1, sum_in from (select-choose [a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in] a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a)",
-                "(\n" +
-                        "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n" +
-                        ")",
+                """
+                        (
+                        (select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join
+                        (select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress
+                        )""",
                 modelOf("transactions.csv")
                         .col("fromAddress", ColumnType.LONG)
                         .col("toAddress", ColumnType.LONG)
@@ -10569,8 +10627,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectColumnsFromJoinSubQueries3() throws SqlException {
         assertQuery(
                 "select-choose a.addr addr, a.count count, a.sum_out sum_out, b.toAddress toAddress, b.count count1, b.sum_in sum_in from (select [addr, count, sum_out] from (select-group-by [fromAddress addr, count() count, sum(value) sum_out] fromAddress addr, count() count, sum(value) sum_out from (select [fromAddress, value] from transactions.csv)) a join select [toAddress, count, sum_in] from (select-group-by [toAddress, count() count, sum(value) sum_in] toAddress, count() count, sum(value) sum_in from (select [toAddress, value] from transactions.csv)) b on b.toAddress = a.addr) a",
-                "(select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join\n" +
-                        "(select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress\n",
+                """
+                        (select fromAddress addr, count(), sum(value) sum_out from 'transactions.csv') a join
+                        (select toAddress, count(), sum(value) sum_in from 'transactions.csv') b on a.addr = b.toAddress
+                        """,
                 modelOf("transactions.csv")
                         .col("fromAddress", ColumnType.LONG)
                         .col("toAddress", ColumnType.LONG)
@@ -10597,16 +10657,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
         engine.releaseInactive();
 
         assertSql(
-                "TS\tts1\tx\tts2\n" +
-                        "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+                """
+                        TS\tts1\tx\tts2
+                        1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                        """, "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
         );
         assertSql(
-                "ts\tx\tts1\tx1\tts2\n" +
-                        "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z\n", "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;"
+                """
+                        ts\tx\tts1\tx1\tts2
+                        1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000001Z
+                        """, "select *, t2.ts as \"TS1\" from t1 asof join (select * from t2) t2;"
         );
         assertSql(
-                "ts\tx\tts1\n" +
-                        "1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t1.*, t2.ts from t1 asof join (select * from t2) t2;"
+                """
+                        ts\tx\tts1
+                        1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z
+                        """, "select t1.*, t2.ts from t1 asof join (select * from t2) t2;"
         );
 
         assertSyntaxError(
@@ -10981,9 +11047,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectSumSquared() throws Exception {
         assertSql(
-                "x1\tx\n" +
-                        "1\t1\n" +
-                        "2\t4\n",
+                """
+                        x1\tx
+                        1\t1
+                        2\t4
+                        """,
                 "select x, sum(x)*sum(x) x from long_sequence(2) order by x"
         );
     }
@@ -11746,21 +11814,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testUnionColumnMisSelection() throws SqlException {
         assertQuery(
                 "select-virtual ts, futures_price, 0.0 spot_price from (select-group-by [ts, avg(bid_price) futures_price] ts, avg(bid_price) futures_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'futures') sample by 1m) union all select-virtual ts, 0.0 futures_price, spot_price from (select-group-by [ts, avg(bid_price) spot_price] ts, avg(bid_price) spot_price from (select [ts, bid_price, market_type] from market_updates timestamp (ts) where market_type = 'spot') sample by 1m)",
-                "select \n" +
-                        "    ts, \n" +
-                        "    avg(bid_price) AS futures_price, \n" +
-                        "    0.0 AS spot_price \n" +
-                        "FROM market_updates \n" +
-                        "WHERE market_type = 'futures' \n" +
-                        "SAMPLE BY 1m ALIGN TO FIRST OBSERVATION\n" +
-                        "UNION ALL\n" +
-                        "SELECT \n" +
-                        "    ts, \n" +
-                        "    0.0 AS futures_price, \n" +
-                        "    avg(bid_price) AS spot_price\n" +
-                        "FROM market_updates\n" +
-                        "WHERE market_type = 'spot' \n" +
-                        "SAMPLE BY 1m ALIGN TO FIRST OBSERVATION",
+                """
+                        select\s
+                            ts,\s
+                            avg(bid_price) AS futures_price,\s
+                            0.0 AS spot_price\s
+                        FROM market_updates\s
+                        WHERE market_type = 'futures'\s
+                        SAMPLE BY 1m ALIGN TO FIRST OBSERVATION
+                        UNION ALL
+                        SELECT\s
+                            ts,\s
+                            0.0 AS futures_price,\s
+                            avg(bid_price) AS spot_price
+                        FROM market_updates
+                        WHERE market_type = 'spot'\s
+                        SAMPLE BY 1m ALIGN TO FIRST OBSERVATION""",
                 modelOf("market_updates")
                         .col("bid_price", ColumnType.DOUBLE)
                         .col("market_type", ColumnType.SYMBOL)
