@@ -28,6 +28,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 public final class ArrayCaseFunction extends ArrayFunction implements CaseFunction {
@@ -49,5 +52,10 @@ public final class ArrayCaseFunction extends ArrayFunction implements CaseFuncti
     @Override
     public ArrayView getArray(Record rec) {
         return picker.pick(rec).getArray(rec);
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        CaseFunction.super.init(symbolTableSource, executionContext);
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -94,6 +95,11 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
                 parser.of(null);
             }
             return parser;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
         }
 
         @Override

@@ -120,6 +120,11 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+        }
+
+        @Override
         public boolean isThreadSafe() {
             return false;
         }

@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TypeConstant;
 
 public final class ArrayTypeConstant extends ArrayFunction implements TypeConstant {
@@ -37,5 +40,10 @@ public final class ArrayTypeConstant extends ArrayFunction implements TypeConsta
     @Override
     public ArrayView getArray(Record rec) {
         throw new AssertionError();
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // no-op
     }
 }

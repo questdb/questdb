@@ -64,6 +64,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         // - rnd_double_array(nDims, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. NaN frequency is using (rndInt() % nanRate == 0)
         // - rnd_double_array(nDims, nanRate, maxDimLength) - 3 args, same as the previous, except maxDimLen is not 16 but whatever is provided as the arg
         // - rnd_double_array(nDims, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, NaN rate is as the above
+
         final int nDims = validateAndGetArg(args, argPositions, 0, "nDims");
         if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
             throw SqlException.$(argPositions.getQuick(0),
@@ -73,12 +74,12 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             return NullConstant.NULL;
         }
         if (args.size() == 1) {
-            return new RndDoubleArrayRndDimLenFunction(configuration, nDims, 0, MAX_DIM_LEN, position);
+            return new RndDimLenFunc(configuration, nDims, 0, MAX_DIM_LEN, position);
         }
 
         final int nanRate = validateAndGetArg(args, argPositions, 1, "nanRate");
         if (args.size() == 2) {
-            return new RndDoubleArrayRndDimLenFunction(configuration, nDims, nanRate, MAX_DIM_LEN, position);
+            return new RndDimLenFunc(configuration, nDims, nanRate, MAX_DIM_LEN, position);
         }
 
         final int maxDimLen = validateAndGetArg(args, argPositions, 2, "maxDimLength");
@@ -87,7 +88,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(2),
                         "maxDimLength must be a positive integer [maxDimLength=").put(maxDimLen).put(']');
             }
-            return new RndDoubleArrayRndDimLenFunction(configuration, nDims, nanRate, maxDimLen, position);
+            return new RndDimLenFunc(configuration, nDims, nanRate, maxDimLen, position);
         }
 
         if (args.size() < nDims + 3) {
@@ -106,7 +107,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             dimLens.add(validateAndGetArg(args, argPositions, i, "dimLength"));
         }
 
-        return new RndDoubleArrayFixDimLenFunction(configuration, nDims, nanRate, dimLens, position);
+        return new FixDimLenFunc(configuration, nDims, nanRate, dimLens, position);
     }
 
     private static int validateAndGetArg(
@@ -128,14 +129,14 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         return (int) valueLong;
     }
 
-    public static class RndDoubleArrayFixDimLenFunction extends ArrayFunction {
+    private static class FixDimLenFunc extends ArrayFunction {
         private final IntList dimLens;
         private final int nDims;
         private final int nanRate;
         private DirectArray array;
         private Rnd rnd;
 
-        public RndDoubleArrayFixDimLenFunction(
+        public FixDimLenFunc(
                 CairoConfiguration configuration,
                 int nDims,
                 int nanRate,
@@ -169,7 +170,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
             this.rnd = executionContext.getRandom();
         }
 
@@ -199,14 +199,14 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class RndDoubleArrayRndDimLenFunction extends ArrayFunction {
+    private static class RndDimLenFunc extends ArrayFunction {
         private final int maxDimLen;
         private final int nDims;
         private final int nanRate;
         private DirectArray array;
         private Rnd rnd;
 
-        public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int position) {
+        public RndDimLenFunc(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int position) {
             try {
                 this.nanRate = nanRate;
                 this.nDims = nDims;
@@ -234,7 +234,6 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
             this.rnd = executionContext.getRandom();
         }
 

@@ -30,7 +30,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.Mutable;
@@ -67,6 +69,11 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
             return ArrayConstant.NULL;
         }
         return view;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        // no-op
     }
 
     public void parseArray(CharSequence value) {
