@@ -1201,11 +1201,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
                     // column name txn for partition columns would not change
-                // we updated only symbol table version
-                columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, transientRowCount, false);
-                path.trimTo(pathSize);
+                    // we updated only symbol table version
+                    columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                    setColumnAppendPosition(columnIndex, transientRowCount, false);
+                    path.trimTo(pathSize);
 
                     if (metadata.isIndexed(columnIndex)) {
                         ColumnIndexer indexer = indexers.get(columnIndex);
