@@ -724,7 +724,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
-            columnType = ColumnType.encodeArrayType(columnType, dim);
+            columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -3937,7 +3937,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (ColumnType.isUnderdefined(function.getType())) {
+        if (ColumnType.isUndefined(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 

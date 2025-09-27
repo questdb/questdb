@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "shift";
@@ -48,20 +50,27 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 
-    private static class Func extends ArrayFunction implements BinaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final Function shiftFunction;
 
-        public Func(Function arrayArg, Function shiftFunction, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, Function shiftFunction, int position) {
             this.arrayArg = arrayArg;
             this.shiftFunction = shiftFunction;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -104,6 +113,13 @@ public class DoubleArrayShiftDefaultNaNFunctionFactory implements FunctionFactor
         @Override
         public Function getRight() {
             return shiftFunction;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override

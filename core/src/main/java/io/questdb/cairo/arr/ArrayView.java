@@ -348,7 +348,7 @@ public abstract class ArrayView implements QuietCloseable {
      * Returns the number of dimensions in this array (i.e., its dimensionality).
      */
     public final int getDimCount() {
-        return ColumnType.decodeArrayDimensionality(type);
+        return ColumnType.decodeWeakArrayDimensionality(type);
     }
 
     /**

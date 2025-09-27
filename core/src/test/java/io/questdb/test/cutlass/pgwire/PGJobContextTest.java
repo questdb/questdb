@@ -98,6 +98,7 @@ import org.postgresql.util.ServerErrorMessage;
 
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.sql.Array;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -1342,6 +1343,175 @@ public class PGJobContextTest extends BasePGTest {
                 try (PreparedStatement statement = connection.prepareStatement("x where kk = " + (i + 1))) {
                     try (ResultSet rs = statement.executeQuery()) {
                         assertResultSet(header + (i < results.length ? results[i] : ""), sink, rs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        // TODO(puzpuzpuz): support for simple mode
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final Array arr1 = connection.createArrayOf("float8", new Double[][]{{2d, 4d, 6d}, {8d, 10d, 12d}});
+            final Array arr2 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 1);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{3.0,6.0,9.0},{12.0,15.0,18.0}}\n" +
+                                    "{{3.0,5.0,7.0},{9.0,11.0,13.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,3.0,5.0},{7.0,9.0,11.0}}\n" +
+                                    "{{2.0,8.0,18.0},{32.0,50.0,72.0}}\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 2);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindingVarsWrongDimensions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final Array arr1 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+            final Array arr2 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 42);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 42);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
                     }
                 }
             }
@@ -5941,6 +6111,34 @@ nodejs code:
     }
 
     @Test
+    public void testInsertTwoDimensionalArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+                stmt.setArray(1, arr);
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIntAndLongParametersWithoutExplicitParameterTypeButOneExplicitTextFormatHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -9155,6 +9353,51 @@ create table tab as (
                 script,
                 getStdPgWireConfigAltCreds()
         );
+    }
+
+    @Test
+    public void testSelectArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final Array array1d = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d});
+            final Array array2d = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+
+            final int nVars = 12;
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "select ? + ? sum, ? - ? sub, ? * ? mul, ? / ? div, " +
+                            "? + 42 sum_scalar, ? - 42 sub_scalar, ? * 42 mul_scalar, ? / 42 div_scalar " +
+                            "from long_sequence(1)"
+            )) {
+                for (int i = 0; i < nVars; i++) {
+                    stmt.setArray(i + 1, array1d);
+                }
+
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "sum[ARRAY],sub[ARRAY],mul[ARRAY],div[ARRAY],sum_scalar[ARRAY],sub_scalar[ARRAY],mul_scalar[ARRAY],div_scalar[ARRAY]\n" +
+                                    "{2.0,4.0,6.0},{0.0,0.0,0.0},{1.0,4.0,9.0},{1.0,1.0,1.0},{43.0,44.0,45.0},{-41.0,-40.0,-39.0},{42.0,84.0,126.0},{0.023809523809523808,0.047619047619047616,0.07142857142857142}\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // Now, let's change the bind var array dimensionality - the query should succeed
+                for (int i = 0; i < nVars; i++) {
+                    stmt.setArray(i + 1, array2d);
+                }
+
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "sum[ARRAY],sub[ARRAY],mul[ARRAY],div[ARRAY],sum_scalar[ARRAY],sub_scalar[ARRAY],mul_scalar[ARRAY],div_scalar[ARRAY]\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}},{{0.0,0.0,0.0},{0.0,0.0,0.0}},{{1.0,4.0,9.0},{16.0,25.0,36.0}},{{1.0,1.0,1.0},{1.0,1.0,1.0}},{{43.0,44.0,45.0},{46.0,47.0,48.0}},{{-41.0,-40.0,-39.0},{-38.0,-37.0,-36.0}},{{42.0,84.0,126.0},{168.0,210.0,252.0}},{{0.023809523809523808,0.047619047619047616,0.07142857142857142},{0.09523809523809523,0.11904761904761904,0.14285714285714285}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        }, () -> recvBufferSize = 4096); // all bind vars need to fit the buffer
     }
 
     /* asyncqp.py - bind variable in where clause.

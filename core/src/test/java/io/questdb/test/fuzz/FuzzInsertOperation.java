@@ -294,7 +294,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
                     array.ofNull();
                     row.putArray(columnIndex, array);
                 } else {
-                    rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
+                    rnd.nextDoubleArray(ColumnType.decodeWeakArrayDimensionality(type), array, 1, 8, 0);
                     row.putArray(columnIndex, array);
                 }
                 break;

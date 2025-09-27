@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_max";
@@ -48,19 +49,18 @@ public class DoubleArrayMaxFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends DoubleFunction implements UnaryFunction {
-
+    private static class Func extends DoubleFunction implements UnaryFunction {
         private final Function arrayArg;
 
-        Func(Function arrayArg) {
+        public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
         }
 
