@@ -271,7 +271,6 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (avoidBinarySearchHint) {
             switch (joinType) {
                 case ASOF:
-                    // intentional fallthrough
                 case ASOF_NONKEYED:
                     hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
                     break;
@@ -283,6 +282,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 default:
                     throw new IllegalArgumentException("Unexpected join type: " + joinType);
             }
+        } else if (symbolIndexCreated) {
+            hint = " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
         }
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
