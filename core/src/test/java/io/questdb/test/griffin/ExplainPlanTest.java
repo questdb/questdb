@@ -11903,6 +11903,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         try (RecordCursorFactory ignored = engine.select(sql, sqlExecutionContext)) {
             fail("Expected exception missing");
         } catch (SqlException e) {
+            assertEquals(8, e.getPosition());
             assertContains(e.getFlyweightMessage(), "'create', 'format', 'insert', 'update', 'select' or 'with' expected");
         }
     }

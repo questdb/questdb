@@ -2084,7 +2084,7 @@ public class SqlParser {
         }
 
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
-            throw SqlException.position(lexer.getPosition()).put(
+            throw SqlException.position(lexer.lastTokenPosition()).put(
                     "'create', 'format', 'insert', 'update', 'select' or 'with'"
             ).put(" expected");
         }
