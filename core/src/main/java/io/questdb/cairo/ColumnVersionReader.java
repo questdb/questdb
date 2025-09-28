@@ -224,7 +224,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * entry is used to store this version. Thus, decoupled from version of the columns.
      * <p>
      * Separate column version is optional however, when it is not present, this method will fall back to
-     * {@see #getDefaultColumnNameTxn}.
+     * {@link #getDefaultColumnNameTxn}.
      *
      * @param columnIndex symbol column index
      * @return version suffix

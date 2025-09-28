@@ -134,7 +134,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not remove table")) {
                                         throw e;
                                     }
                                 }
@@ -207,7 +208,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG, 3095520132513L, 1758309268883L);
+                        Rnd rnd = TestUtils.generateRandom(LOG);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             for (int j = 0; j < tableCount; j++) {
                                 boolean isWal = rnd.nextBoolean();

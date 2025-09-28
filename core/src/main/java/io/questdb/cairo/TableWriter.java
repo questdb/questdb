@@ -2272,7 +2272,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public ColumnVersionReader getColumnVersionReader() {
+    public ColumnVersionReader columnVersionReader() {
         return columnVersionWriter;
     }
 

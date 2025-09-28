@@ -300,7 +300,8 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void upsertSymbolTableTxnName(int columnIndex, long columnNameTxn) {
-        // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
+        // Store the column name txn for the symbol-table, this txn can increase independently of column name txn in
+        // partitions, when symbol capacity is changed; columnTop is unused here and set to 0.
         upsert(SYMBOL_TABLE_VERSION_PARTITION, columnIndex, columnNameTxn, 0);
     }
 

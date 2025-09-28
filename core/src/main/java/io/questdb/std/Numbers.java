@@ -668,21 +668,7 @@ public final class Numbers {
     }
 
     public static long floorPow2(long value) {
-        if (value <= 0) {
-            return 0;
-        }
-
-        // Find the highest set bit (floor power of 2)
-        // This works by setting all bits to the right of the highest bit,
-        // then subtracting half to isolate just the highest bit
-        long v = value;
-        v |= v >>> 1;
-        v |= v >>> 2;
-        v |= v >>> 4;
-        v |= v >>> 8;
-        v |= v >>> 16;
-        v |= v >>> 32;
-        return v - (v >>> 1);
+        return value <= 0 ? 0 : Long.highestOneBit(value);
     }
 
     // returns lo | hi network address in a single long
@@ -902,10 +888,6 @@ public final class Numbers {
 
     public static boolean notDigit(char c) {
         return c < '0' || c > '9';
-    }
-
-    public static boolean notDigit(byte b) {
-        return b < '0' || b > '9';
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {

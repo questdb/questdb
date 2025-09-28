@@ -1183,8 +1183,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     if (operation instanceof FuzzInsertOperation) {
                         long timestamp = ((FuzzInsertOperation) operation).getTimestamp();
 
-                        boolean isInItialRange = timestamp >= minTs && timestamp <= maxTs && (timestamp - minTs) % step == 0;
-                        if (!isInItialRange && uniqueTimestamps.add(timestamp)) {
+                        boolean isInitialRange = timestamp >= minTs && timestamp <= maxTs && (timestamp - minTs) % step == 0;
+                        if (!isInitialRange && uniqueTimestamps.add(timestamp)) {
                             unique.operationList.add(operation);
                         } else {
                             Misc.free(operation);

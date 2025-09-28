@@ -226,7 +226,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 TableUtils.getTimestampType(model),
-                                PartitionBy.DAY
+                                PartitionBy.HOUR
                         )
                 ) {
                     int symColIndex = writer.getColumnIndex("symCol");
@@ -533,7 +533,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex2,
                             symColIndex2,
                             path.of(configuration.getDbRoot()).concat(tableToken),
-                            new TestTableWriterAPI(writer.getColumnVersionReader()),
+                            new TestTableWriterAPI(writer.columnVersionReader()),
                             txReader,
                             columnVersionReader
                     );
@@ -621,7 +621,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             0,
                             0,
                             path,
-                            new TestTableWriterAPI(writer.getColumnVersionReader()),
+                            new TestTableWriterAPI(writer.columnVersionReader()),
                             txReader,
                             columnVersionReader
                     );
@@ -701,7 +701,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
-                            new TestTableWriterAPI(writer.getColumnVersionReader(), 1),
+                            new TestTableWriterAPI(writer.columnVersionReader(), 1),
                             txReader,
                             columnVersionReader
                     );
@@ -786,7 +786,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                             symColIndex,
                             symColIndex,
                             path.of(configuration.getDbRoot()).concat(tableToken),
-                            new TestTableWriterAPI(writer.getColumnVersionReader(), 0),
+                            new TestTableWriterAPI(writer.columnVersionReader(), 0),
                             txReader,
                             columnVersionReader
                     );
@@ -835,19 +835,13 @@ public class SymbolCacheTest extends AbstractCairoTest {
         }
     }
 
-    private static class TestTableWriterAPI implements TableWriterAPI {
+    private record TestTableWriterAPI(ColumnVersionReader columnVersionReader,
+                                      int watermark) implements TableWriterAPI {
 
         private final static TableToken emptyTableToken = new TableToken("", "", null, 0, false, false, false);
-        private final ColumnVersionReader columnVersionReader;
-        private final int watermark;
 
         public TestTableWriterAPI(ColumnVersionReader columnVersionReader) {
             this(columnVersionReader, -1);
-        }
-
-        public TestTableWriterAPI(ColumnVersionReader columnVersionReader, int watermark) {
-            this.columnVersionReader = columnVersionReader;
-            this.watermark = watermark;
         }
 
         @Override
@@ -874,11 +868,6 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
         @Override
         public void commit() {
-        }
-
-        @Override
-        public ColumnVersionReader getColumnVersionReader() {
-            return columnVersionReader;
         }
 
         @Override

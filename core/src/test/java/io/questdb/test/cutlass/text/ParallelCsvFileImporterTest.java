@@ -1623,7 +1623,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImportTimestampTypFormatMismatch() {
+    public void testImportTimestampTypeFormatMismatch() {
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
             importer.of("timestamp_test", "test-timestamps.csv", 1, PartitionBy.DAY, (byte) ',', "ts_ns", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
@@ -3585,7 +3585,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    public interface TextImportRunnable {
+    interface TextImportRunnable {
         void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
     }
 
