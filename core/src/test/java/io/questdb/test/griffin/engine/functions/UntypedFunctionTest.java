@@ -24,14 +24,13 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.UntypedFunction;
 import org.junit.Test;
 
-public class ByteFunctionTest {
-    private static final ByteFunction function = new ByteFunction() {
+public class UntypedFunctionTest {
+    private static final UntypedFunction function = new UntypedFunction() {
         @Override
-        public byte getByte(Record rec) {
+        public int getType() {
             return 0;
         }
 
@@ -60,6 +59,11 @@ public class ByteFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetByte() {
+        function.getByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

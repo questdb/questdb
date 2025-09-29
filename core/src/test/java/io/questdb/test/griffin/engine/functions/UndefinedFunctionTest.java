@@ -24,16 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.griffin.engine.functions.UntypedFunction;
+import io.questdb.griffin.engine.functions.UndefinedFunction;
 import org.junit.Test;
 
-public class UntypedFunctionTest {
-    private static final UntypedFunction function = new UntypedFunction() {
-        @Override
-        public int getType() {
-            return 0;
-        }
-
+public class UndefinedFunctionTest {
+    private static final UndefinedFunction function = new UndefinedFunction() {
         @Override
         public boolean isThreadSafe() {
             return true;
