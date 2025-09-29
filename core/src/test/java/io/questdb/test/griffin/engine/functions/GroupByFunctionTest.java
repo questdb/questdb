@@ -84,6 +84,56 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public long getDecimal128Hi(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal128Lo(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256HH(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256HL(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256LH(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256LL(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return 0;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return 0;
         }

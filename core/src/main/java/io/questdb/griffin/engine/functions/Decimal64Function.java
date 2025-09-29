@@ -25,9 +25,55 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 
 public abstract class Decimal64Function extends DecimalFunction implements Function {
     protected Decimal64Function(int type) {
         super(type);
+    }
+
+    @Override
+    public final long getDecimal128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
     }
 }

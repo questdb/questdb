@@ -44,6 +44,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         return "cast(Dξ)";
     }
 
+    public static Function newInstance(Function arg, int targetType, int position) {
+        return new Func(arg, targetType, position);
+    }
+
     @Override
     public Function newInstance(
             int position,
@@ -52,7 +56,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1).getType(), argPositions.getQuick(0));
+        return newInstance(args.getQuick(0), args.getQuick(1).getType(), argPositions.getQuick(0));
     }
 
     private static class Func extends AbstractCastToDecimalFunction {

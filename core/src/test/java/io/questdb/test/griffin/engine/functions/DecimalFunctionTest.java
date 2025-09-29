@@ -25,14 +25,21 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.Decimal8Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 
 public class DecimalFunctionTest {
-    private static final DecimalFunction function = new DecimalFunction(ColumnType.getDecimalType(1, 0)) {
+    private static final DecimalFunction function = new Decimal8Function(ColumnType.getDecimalType(1, 0)) {
         @Override
         public boolean isThreadSafe() {
             return true;
+        }
+
+        @Override
+        public byte getDecimal8(Record record) {
+            return (byte) 0;
         }
     };
 

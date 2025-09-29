@@ -31,7 +31,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal16Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal32Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
+import io.questdb.griffin.engine.functions.Decimal8Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -76,7 +81,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal128Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal128Func extends Decimal128Function implements UnaryFunction {
         private final Function arg;
         private long low;
 
@@ -116,7 +121,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal16Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal16Func extends Decimal16Function implements UnaryFunction {
         private final Function arg;
 
         public Decimal16Func(Function arg) {
@@ -144,7 +149,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal256Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal256Func extends Decimal256Function implements UnaryFunction {
         private final Function arg;
         private long hl;
         private long lh;
@@ -205,7 +210,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal32Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal32Func extends Decimal32Function implements UnaryFunction {
         private final Function arg;
 
         public Decimal32Func(Function arg) {
@@ -233,7 +238,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal64Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal64Func extends Decimal64Function implements UnaryFunction {
         private final Function arg;
 
         public Decimal64Func(Function arg) {
@@ -261,7 +266,7 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Decimal8Func extends DecimalFunction implements UnaryFunction {
+    private static class Decimal8Func extends Decimal8Function implements UnaryFunction {
         private final Function arg;
 
         public Decimal8Func(Function arg) {

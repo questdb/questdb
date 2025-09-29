@@ -110,6 +110,56 @@ public class RecordFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128Hi() {
+        function.getDecimal128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128Lo() {
+        function.getDecimal128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256HH() {
+        function.getDecimal256HH(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256HL() {
+        function.getDecimal256HL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LH() {
+        function.getDecimal256LH(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LL() {
+        function.getDecimal256LL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDouble() {
         function.getDouble(null);
     }

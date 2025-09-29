@@ -32,6 +32,9 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -227,7 +230,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Dynamic128Func extends DecimalFunction implements BinaryFunction {
+    private static class Dynamic128Func extends Decimal128Function implements BinaryFunction {
         private final Decimal128 decimal128 = new Decimal128();
         private final int fromScale;
         private final RoundingMode roundingMode;
@@ -302,7 +305,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Dynamic256Func extends DecimalFunction implements BinaryFunction {
+    private static class Dynamic256Func extends Decimal256Function implements BinaryFunction {
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromScale;
         private final RoundingMode roundingMode;
@@ -387,7 +390,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Dynamic64Func extends DecimalFunction implements BinaryFunction {
+    private static class Dynamic64Func extends Decimal64Function implements BinaryFunction {
         private final Decimal64 decimal64 = new Decimal64();
         private final int fromScale;
         private final RoundingMode roundingMode;

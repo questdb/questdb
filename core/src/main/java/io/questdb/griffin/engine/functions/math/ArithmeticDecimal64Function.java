@@ -30,12 +30,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.Decimal64Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 
-abstract class ArithmeticDecimal64Function extends DecimalFunction implements BinaryFunction {
+abstract class ArithmeticDecimal64Function extends Decimal64Function implements BinaryFunction {
     protected final Decimal64 decimal = new Decimal64();
     protected final Function left;
     protected final int precision;

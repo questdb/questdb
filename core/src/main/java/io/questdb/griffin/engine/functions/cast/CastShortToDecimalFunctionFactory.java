@@ -34,6 +34,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
@@ -145,7 +148,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal128UnscaledFunc extends Decimal128Function implements UnaryFunction {
         private final Function value;
         private long lo;
 
@@ -184,7 +187,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal256UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal256UnscaledFunc extends Decimal256Function implements UnaryFunction {
         private final Function value;
         private long hl;
         private long lh;
@@ -240,7 +243,7 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal64UnscaledFunc extends Decimal64Function implements UnaryFunction {
         private final short maxValue;
         private final short minValue;
         private final int position;

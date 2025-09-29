@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.Decimal256Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -68,7 +69,7 @@ public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), position);
     }
 
-    private static class Func extends DecimalFunction implements GroupByFunction, UnaryFunction {
+    private static class Func extends Decimal256Function implements GroupByFunction, UnaryFunction {
         private final Function arg;
         private final Decimal256 decimal = new Decimal256();
         private final int position;

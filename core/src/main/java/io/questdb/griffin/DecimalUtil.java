@@ -134,7 +134,7 @@ public final class DecimalUtil {
             case ColumnType.INT:
                 return CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
             case ColumnType.LONG:
-                return CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+                return CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext.getDecimal256());
         }
         return null;
     }

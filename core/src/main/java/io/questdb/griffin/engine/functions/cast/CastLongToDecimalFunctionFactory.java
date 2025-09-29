@@ -34,6 +34,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
@@ -48,11 +51,11 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             int position,
             Function arg,
             int targetType,
-            SqlExecutionContext sqlExecutionContext
+            Decimal256 decimal256
     ) throws SqlException {
         if (arg.isConstant()) {
             long value = arg.getLong(null);
-            return newConstantInstance(sqlExecutionContext, position, targetType, value);
+            return newConstantInstance(decimal256, position, targetType, value);
         }
 
         final int targetScale = ColumnType.getDecimalScale(targetType);
@@ -68,7 +71,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
     public static Function newInstance(
             int position,
             Function arg,
-            SqlExecutionContext sqlExecutionContext
+            Decimal256 decimal256
     ) throws SqlException {
         int targetPrecision;
         if (arg.isConstant()) {
@@ -78,7 +81,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             targetPrecision = Numbers.getPrecision(Long.MAX_VALUE);
         }
         int targetType = ColumnType.getDecimalType(targetPrecision, 0);
-        return newInstance(position, arg, targetType, sqlExecutionContext);
+        return newInstance(position, arg, targetType, decimal256);
     }
 
     @Override
@@ -94,11 +97,11 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return newInstance(argPositions.getQuick(0), args.getQuick(0), args.getQuick(1).getType(), sqlExecutionContext);
+        return newInstance(argPositions.getQuick(0), args.getQuick(0), args.getQuick(1).getType(), sqlExecutionContext.getDecimal256());
     }
 
     private static Function newConstantInstance(
-            SqlExecutionContext sqlExecutionContext,
+            Decimal256 decimal256,
             int valuePosition,
             int targetType,
             long value
@@ -119,16 +122,15 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
             ).position(valuePosition);
         }
 
-        Decimal256 d = sqlExecutionContext.getDecimal256();
-        d.ofLong(value, 0);
+        decimal256.ofLong(value, 0);
         if (targetScale != 0 && value != 0) {
             // No overflow possible as we already checked the precision before
-            d.rescale(targetScale);
+            decimal256.rescale(targetScale);
         }
 
         // We don't try to narrow the type on its actual precision so that the user may pre-widen the constant decimal
         // to avoid doing it at query execution.
-        return DecimalUtil.createDecimalConstant(d, targetPrecision, targetScale);
+        return DecimalUtil.createDecimalConstant(decimal256, targetPrecision, targetScale);
     }
 
     private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
@@ -146,7 +148,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal128UnscaledFunc extends Decimal128Function implements UnaryFunction {
         private final Function value;
         private long lo;
 
@@ -185,7 +187,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal256UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal256UnscaledFunc extends Decimal256Function implements UnaryFunction {
         private final Function value;
         private long hl;
         private long lh;
@@ -241,7 +243,7 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal64UnscaledFunc extends Decimal64Function implements UnaryFunction {
         private final long maxValue;
         private final long minValue;
         private final int position;

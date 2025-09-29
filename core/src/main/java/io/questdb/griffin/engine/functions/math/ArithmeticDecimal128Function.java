@@ -85,6 +85,26 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
     }
 
     @Override
+    public long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getDecimal32(Record rec) {
         if (!calc(rec)) {
             return Decimals.DECIMAL32_NULL;

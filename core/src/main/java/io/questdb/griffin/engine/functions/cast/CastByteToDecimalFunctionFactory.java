@@ -34,7 +34,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.Decimal64Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -145,7 +147,35 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal128UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
+        private final byte maxUnscaledValue;
+        private final byte minUnscaledValue;
+
+        public AbstractCastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
+            super(value, targetType, position);
+            this.maxUnscaledValue = (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE);
+            this.minUnscaledValue = (byte) Math.max(-maxUnscaledValue, Byte.MIN_VALUE);
+        }
+
+        protected boolean cast(Record rec) {
+            byte value = this.arg.getByte(rec);
+            if (value == Numbers.BYTE_NULL) {
+                return false;
+            }
+            if (value < minUnscaledValue || value > maxUnscaledValue) {
+                throw ImplicitCastException.inconvertibleValue(
+                        value,
+                        ColumnType.BYTE,
+                        type
+                ).position(position);
+            }
+            decimal.ofLong(value, 0);
+            decimal.rescale(scale);
+            return true;
+        }
+    }
+
+    private static class CastDecimal128UnscaledFunc extends Decimal128Function implements UnaryFunction {
         private final Function value;
         private long lo;
 
@@ -184,7 +214,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal256UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal256UnscaledFunc extends Decimal256Function implements UnaryFunction {
         private final Function value;
         private long hl;
         private long lh;
@@ -240,7 +270,7 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastDecimal64UnscaledFunc extends DecimalFunction implements UnaryFunction {
+    private static class CastDecimal64UnscaledFunc extends Decimal64Function implements UnaryFunction {
         private final byte maxValue;
         private final byte minValue;
         private final int position;
@@ -315,34 +345,6 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
                         type
                 ).position(position);
             }
-        }
-    }
-
-    private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
-        private final byte maxUnscaledValue;
-        private final byte minUnscaledValue;
-
-        public AbstractCastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
-            super(value, targetType, position);
-            this.maxUnscaledValue = (byte) Math.min(maxUnscaledValue, Byte.MAX_VALUE);
-            this.minUnscaledValue = (byte) Math.max(-maxUnscaledValue, Byte.MIN_VALUE);
-        }
-
-        protected boolean cast(Record rec) {
-            byte value = this.arg.getByte(rec);
-            if (value == Numbers.BYTE_NULL) {
-                return false;
-            }
-            if (value < minUnscaledValue || value > maxUnscaledValue) {
-                throw ImplicitCastException.inconvertibleValue(
-                        value,
-                        ColumnType.BYTE,
-                        type
-                ).position(position);
-            }
-            decimal.ofLong(value, 0);
-            decimal.rescale(scale);
-            return true;
         }
     }
 }
