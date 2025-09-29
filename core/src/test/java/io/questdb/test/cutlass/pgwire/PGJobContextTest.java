@@ -2210,28 +2210,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableInFilter() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2360,6 +2338,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableIsNotNull() throws Exception {
@@ -5206,6 +5206,59 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testInsert2dArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+                stmt.setArray(1, arr);
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsert2dArrayBindingVarsWrongDimensions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                final Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d});
+                stmt.setArray(1, arr);
+                try {
+                    stmt.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]",
+                            "inconvertible value: `{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}` [STRING -> DOUBLE[][]]"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertAllTypes() throws Exception {
         skipOnWalRun(); // non-partitioned table
         // heavy bind variable use
@@ -6106,34 +6159,6 @@ nodejs code:
             try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                 sink.clear();
                 assertResultSet(expected, sink, resultSet);
-            }
-        });
-    }
-
-    @Test
-    public void testInsertTwoDimensionalArrayBindingVars() throws Exception {
-        skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
-                stmt.setArray(1, arr);
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet(
-                            "al[ARRAY]\n" +
-                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
-                            sink,
-                            rs
-                    );
-                }
             }
         });
     }
