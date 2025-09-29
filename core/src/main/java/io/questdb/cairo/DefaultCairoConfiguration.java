@@ -102,7 +102,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double autoScaleSymbolCapacityFactor() {
+    public double autoScaleSymbolCapacityThreshold() {
         return 0.8;
     }
 

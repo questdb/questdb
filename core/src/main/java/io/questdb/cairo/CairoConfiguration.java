@@ -83,9 +83,9 @@ public interface CairoConfiguration {
      * the symbol table relative to the table capacity, after which table is resized. For example 0.8 would indicate
      * that as soon as symbol count goes over 80% of the capacity, the symbol table is resized.
      *
-     * @return resize factor
+     * @return resize threshold
      */
-    double autoScaleSymbolCapacityFactor();
+    double autoScaleSymbolCapacityThreshold();
 
     default boolean disableColumnPurgeJob() {
         return false;
