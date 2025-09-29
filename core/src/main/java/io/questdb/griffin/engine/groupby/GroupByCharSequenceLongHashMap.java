@@ -166,8 +166,8 @@ public class GroupByCharSequenceLongHashMap {
         if (index < 0) {
             setValueAtRaw(-index - 1, value);
         } else {
-            spareSink.of(0).put(key); // allocating
-            setKeyAtRaw(index, spareSink.ptr());
+            keyIndexSink.of(0).put(key); // allocating
+            setKeyAtRaw(index, keyIndexSink.ptr());
             setValueAtRaw(index, value);
             int size = size();
             int sizeLimit = sizeLimit();

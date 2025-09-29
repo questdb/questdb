@@ -80,7 +80,7 @@ public class GroupByUtf8SequenceLongHashMap {
     public long get(Utf8Sequence key) {
         return getAt(keyIndex(key));
     }
-    
+
     public void inc(Utf8Sequence key) {
         inc(key, 1);
     }
@@ -101,7 +101,7 @@ public class GroupByUtf8SequenceLongHashMap {
     public long mergeAdd(GroupByUtf8SequenceLongHashMap srcMap) {
         for (int i = 0; i < srcMap.capacity(); i++) {
             final long kPtr = srcMap.keyAt(i);
-            if (kPtr != noKeyValue) {
+            if (kPtr != srcMap.noKeyValue) {
                 spareSink.of(kPtr);
                 final long value = srcMap.valueAt(i);
                 inc(spareSink, value);
@@ -167,8 +167,9 @@ public class GroupByUtf8SequenceLongHashMap {
         if (index < 0) {
             setValueAtRaw(-index - 1, value);
         } else {
+            keyIndexSink.of(0).put(key);
             spareSink.of(0).put(key); // allocating
-            setKeyAtRaw(index, spareSink.ptr());
+            setKeyAtRaw(index, keyIndexSink.ptr());
             setValueAtRaw(index, value);
             int size = size();
             int sizeLimit = sizeLimit();
