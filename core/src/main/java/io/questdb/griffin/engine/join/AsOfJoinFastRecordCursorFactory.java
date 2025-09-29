@@ -135,7 +135,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
-        public static final int NOT_REMEMBERED = -1;
+        public static final long NOT_REMEMBERED = Long.MIN_VALUE;
+
         private final IntLongHashMap symKeyToRowId = new IntLongHashMap(8, NOT_REMEMBERED);
         private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
@@ -237,7 +238,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 if (!isSlaveWithinToleranceInterval(masterTimestamp, slaveTimestamp)) {
                     // we are past the tolerance interval, no need to traverse the slave cursor any further
                     record.hasSlave(false);
-                    rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, SymbolTable.VALUE_NOT_FOUND);
+                    long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId);
+                    // Remember that we didn't find the matching symbol by saving rowId as (-rowId - 1)
+                    rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1);
                     break;
                 }
                 if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
@@ -245,10 +248,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     if (masterTimestamp > validityPeriodEnd) {
                         // Extend remembered period end to current masterTimestamp. The fact that we got to this point
                         // in our search means we haven't found a more recent symbol. Therefore, the remembered symbol
-                        // is still the applicable one.
+                        // is still the applicable one. Same for remembered non-existence of symbol.
                         symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
                     }
-                    if (rememberedRowId != SymbolTable.VALUE_NOT_FOUND) {
+                    if (rememberedRowId >= 0) {
                         if (isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(true);
                             slaveTimeFrameCursor.recordAt(slaveRecB, rememberedRowId);
@@ -263,11 +266,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                             record.hasSlave(false);
                             break;
                         }
-                        keyedFrameIndex = Rows.toPartitionIndex(rememberedRowId);
-                        keyedRowId = Rows.toLocalRowID(rememberedRowId);
+                        long rememberedNoMatchRow = -rememberedRowId - 1;
+                        keyedFrameIndex = Rows.toPartitionIndex(rememberedNoMatchRow);
+                        keyedRowId = Rows.toLocalRowID(rememberedNoMatchRow);
                         slaveTimeFrameCursor.jumpTo(keyedFrameIndex);
                         slaveTimeFrameCursor.open();
-                        slaveTimeFrameCursor.recordAt(slaveRecB, rememberedRowId);
+                        slaveTimeFrameCursor.recordAt(slaveRecB, rememberedNoMatchRow);
                         rowLo = slaveTimeFrame.getRowLo();
                     }
                 }
@@ -285,10 +289,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 if (keyedRowId < rowLo) {
                     // we exhausted this frame, let's try the previous one
                     if (!slaveTimeFrameCursor.prev()) {
-                        // there is no previous frame, we are done, no match :(
-                        // if we are here, chances are we are also pretty slow because we are scanning
-                        // the entire slave cursor, until we either find a matching key or exhaust the cursor.
-                        rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, SymbolTable.VALUE_NOT_FOUND);
+                        // there is no previous frame, search space is exhausted
+                        long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId + 1);
+                        // Remember that we didn't find the matching symbol by saving rowId as (-rowId - 1)
+                        rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1);
                         record.hasSlave(false);
                         break;
                     }
@@ -298,9 +302,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     keyedRowId = slaveTimeFrame.getRowHi() - 1;
                     rowLo = slaveTimeFrame.getRowLo();
                 }
-                long foundRowId = Rows.toRowID(keyedFrameIndex, keyedRowId);
-                rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, foundRowId);
-                slaveTimeFrameCursor.recordAt(slaveRecB, foundRowId);
+                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
