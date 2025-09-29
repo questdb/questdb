@@ -188,6 +188,11 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     }
 
     @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        return this;
+    }
+
+    @Override
     public void setAllocator(GroupByAllocator allocator) {
         mapA.setAllocator(allocator);
         mapB.setAllocator(allocator);
