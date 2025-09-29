@@ -29,6 +29,7 @@ import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized flyweight hash map used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -75,15 +76,19 @@ public class GroupByLongLongHashMap {
     }
 
     public void inc(long key) {
-        inc(key, 1);
+        if (key != noKeyValue) {
+            inc(key, 1);
+        }
     }
 
     public void inc(long key, long delta) {
-        long index = keyIndex(key);
-        if (index < 0) {
-            incRaw(-index - 1, delta);
-        } else {
-            putAt(index, key, delta);
+        if (key != noKeyValue) {
+            long index = keyIndex(key);
+            if (index < 0) {
+                incRaw(-index - 1, delta);
+            } else {
+                putAt(index, key, delta);
+            }
         }
     }
 
@@ -115,6 +120,12 @@ public class GroupByLongLongHashMap {
             mask = capacity() - 1;
         }
         return this;
+    }
+
+    @TestOnly
+    public GroupByLongLongHashMap of(long ptr, GroupByAllocator allocator) {
+        this.setAllocator(allocator);
+        return of(ptr);
     }
 
     public long ptr() {
