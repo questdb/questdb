@@ -208,7 +208,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnCommitPartitioned() throws Exception {
+    public void testAddColumnCommitPartitioned() {
         int count = 10000;
         create(FF, PartitionBy.DAY, count);
         Rnd rnd = new Rnd();
@@ -327,7 +327,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnDuplicate() throws Exception {
+    public void testAddColumnDuplicate() {
         long ts = populateTable(FF, PartitionBy.MONTH);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             try {
@@ -503,7 +503,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnNonPartitioned() throws Exception {
+    public void testAddColumnNonPartitioned() {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -518,7 +518,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnPartitioned() throws Exception {
+    public void testAddColumnPartitioned() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -638,14 +638,14 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnToNonEmptyNonPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyNonPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.NONE, n);
         populateAndColumnPopulate(n);
     }
 
     @Test
-    public void testAddColumnToNonEmptyPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.DAY, n);
         populateAndColumnPopulate(n);
@@ -1112,7 +1112,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCancelRowAfterAddColumn() throws Exception {
+    public void testCancelRowAfterAddColumn() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         Rnd rnd = new Rnd();
@@ -1623,7 +1623,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseActivePartitionAndRollback() throws Exception {
+    public void testCloseActivePartitionAndRollback() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -1747,7 +1747,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDefaultPartition() throws Exception {
+    public void testDefaultPartition() {
         populateTable();
     }
 
@@ -1902,7 +1902,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexIsAddedToTable() throws Exception {
+    public void testIndexIsAddedToTable() {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
         TableToken tableToken;
@@ -2065,7 +2065,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3PartitionTruncate() throws Exception {
+    public void testO3PartitionTruncate() {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
         final String tableName = "testO3PartitionTruncate";
 
@@ -2407,7 +2407,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveTimestamp() throws Exception {
+    public void testRemoveTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2642,7 +2642,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTimestamp() throws Exception {
+    public void testRenameTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2675,7 +2675,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTimestampFromPartitionedTable() throws Exception {
+    public void testRenameTimestampFromPartitionedTable() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2708,14 +2708,14 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackNonPartitioned() throws Exception {
+    public void testRollbackNonPartitioned() {
         final int N = 20000;
         create(FF, PartitionBy.NONE, N);
         testRollback(N);
     }
 
     @Test
-    public void testRollbackPartitionRemoveFailure() throws Exception {
+    public void testRollbackPartitionRemoveFailure() {
         final int N = 10000;
         create(FF, PartitionBy.DAY, N);
 
@@ -2766,7 +2766,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackPartitionRenameFailure() throws Exception {
+    public void testRollbackPartitionRenameFailure() {
         final int N = 10000;
         create(FF, PartitionBy.DAY, N);
 
@@ -2817,7 +2817,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackPartitioned() throws Exception {
+    public void testRollbackPartitioned() {
         int N = 20000;
         create(FF, PartitionBy.DAY, N);
         testRollback(N);
@@ -3124,17 +3124,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateMidO3Transaction() throws Exception {
+    public void testTruncateMidO3Transaction() {
         testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test
-    public void testTruncateMidRowAppend() throws Exception {
+    public void testTruncateMidRowAppend() {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
 
     @Test
-    public void testTruncateMidTransaction() throws Exception {
+    public void testTruncateMidTransaction() {
         testTruncate(TableWriterTest::danglingTransactionModifier);
     }
 
@@ -4175,23 +4175,27 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10000);
             long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
             Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
+            DefaultTestCairoConfiguration conf = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
-            }, PRODUCT)) {
+            };
+            try (TableWriter writer = newOffPoolWriter(conf, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
 
                 try {
                     writer.renameColumn("productName", "nameOfProduct");
                     Assert.fail();
-                } catch (CairoException ignore) {
+                } catch (CairoError renameError) {
+                    Assert.assertTrue(writer.isDistressed());
                 }
 
                 Assert.assertTrue(ff.wasCalled());
+            }
 
+            try (TableWriter writer = newOffPoolWriter(conf, PRODUCT)) {
                 ts = append10KProducts(ts, rnd, writer);
                 writer.commit();
             }

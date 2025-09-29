@@ -27,6 +27,11 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 
+/**
+ * When joining on a single symbol column, detects when the slave column doesn't have
+ * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
+ * in that case.
+ */
 public interface SymbolShortCircuit {
     boolean isShortCircuit(Record masterRecord);
 

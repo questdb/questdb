@@ -27,9 +27,8 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 
-public class ArrayColumn extends ArrayFunction {
+public class ArrayColumn extends ArrayFunction implements ColumnFunction {
     private final int columnIndex;
 
     public ArrayColumn(int columnIndex, int columnType) {
@@ -47,13 +46,12 @@ public class ArrayColumn extends ArrayFunction {
     }
 
     @Override
-    public boolean isThreadSafe() {
-        // This function is thread-safe since
-        return true;
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
+    public boolean isThreadSafe() {
+        return true;
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
@@ -84,6 +85,21 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         Misc.free(frameMemoryPool);
         frameAddressCache.clear();
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @Override
+    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+        int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+        int frameIndex = timeFrame.frameIndex;
+        if (frameIndex == -1) {
+            return null;
+        }
+        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        return reader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+    }
+
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
     }
 
     @Override
