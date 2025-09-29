@@ -160,6 +160,42 @@ public final class DecimalUtil {
     }
 
     /**
+     * Returns the precision and scale that can accommodate a specific type.
+     * Note that all types aren't supported, only those are:
+     * - Decimals
+     * - Long
+     * - Int
+     * - Short
+     * - Byte
+     * - Timestamp
+     * - Date
+     *
+     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
+     * if the type is not supported.
+     */
+    public static int getTypePrecisionScale(int type) {
+        if (ColumnType.isDecimal(type)) {
+            short p = (short) ColumnType.getDecimalPrecision(type);
+            short s = (short) ColumnType.getDecimalScale(type);
+            return Numbers.encodeLowHighShorts(p, s);
+        }
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG:
+                return Numbers.encodeLowHighShorts((short) 19, (short) 0);
+            case ColumnType.INT:
+                return Numbers.encodeLowHighShorts((short) 10, (short) 0);
+            case ColumnType.SHORT:
+                return Numbers.encodeLowHighShorts((short) 5, (short) 0);
+            case ColumnType.BYTE:
+                return Numbers.encodeLowHighShorts((short) 3, (short) 0);
+            default:
+                return 0;
+        }
+    }
+
+    /**
      * Load any decimal value from a Function into a Decimal256
      */
     public static void load(Decimal256 decimal, Function value, @Nullable Record rec) {
@@ -171,59 +207,110 @@ public final class DecimalUtil {
      * Load any decimal value from a Function into a Decimal256
      */
     public static void load(Decimal256 decimal, Function value, @Nullable Record rec, int fromType) {
-        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        final int fromScale = ColumnType.getDecimalScale(fromType);
-
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
                 if (b == Decimals.DECIMAL8_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(b, fromScale);
+                    decimal.ofLong(b, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 short s = value.getDecimal16(rec);
                 if (s == Decimals.DECIMAL16_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(s, fromScale);
+                    decimal.ofLong(s, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 int i = value.getDecimal32(rec);
                 if (i == Decimals.DECIMAL32_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(i, fromScale);
+                    decimal.ofLong(i, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 3:
+            case ColumnType.DECIMAL64:
                 long l = value.getDecimal64(rec);
                 if (l == Decimals.DECIMAL64_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(l, fromScale);
+                    decimal.ofLong(l, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 4:
+            case ColumnType.DECIMAL128:
                 long hi = value.getDecimal128Hi(rec);
                 long lo = value.getDecimal128Lo(rec);
                 if (Decimal128.isNull(hi, lo)) {
                     decimal.ofNull();
                 } else {
                     long v = hi < 0 ? -1 : 0;
-                    decimal.of(v, v, hi, lo, fromScale);
+                    decimal.of(v, v, hi, lo, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            default:
+            case ColumnType.DECIMAL256:
                 long hh = value.getDecimal256HH(rec);
                 long hl = value.getDecimal256HL(rec);
                 long lh = value.getDecimal256LH(rec);
                 long ll = value.getDecimal256LL(rec);
-                decimal.of(hh, hl, lh, ll, fromScale);
+                decimal.of(hh, hl, lh, ll, ColumnType.getDecimalScale(fromType));
                 break;
+            case ColumnType.LONG: {
+                long v = value.getLong(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.DATE: {
+                long v = value.getDate(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.TIMESTAMP: {
+                long v = value.getTimestamp(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.INT: {
+                int v = value.getInt(rec);
+                if (v == Numbers.INT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.SHORT: {
+                short v = value.getShort(rec);
+                if (v == Numbers.SHORT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.BYTE: {
+                byte v = value.getByte(rec);
+                if (v == Numbers.BYTE_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
         }
     }
 
@@ -292,44 +379,114 @@ public final class DecimalUtil {
      */
     public static void load(Decimal64 decimal, Function value, @Nullable Record rec) {
         final int fromType = value.getType();
-        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        final int fromScale = ColumnType.getDecimalScale(fromType);
 
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
                 if (b == Decimals.DECIMAL8_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(b, fromScale);
+                    decimal.of(b, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 short s = value.getDecimal16(rec);
                 if (s == Decimals.DECIMAL16_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(s, fromScale);
+                    decimal.of(s, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 int i = value.getDecimal32(rec);
                 if (i == Decimals.DECIMAL32_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(i, fromScale);
+                    decimal.of(i, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 3:
+            case ColumnType.DECIMAL64:
                 long l = value.getDecimal64(rec);
                 if (l == Decimals.DECIMAL64_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(l, fromScale);
+                    decimal.of(l, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            default:
-                throw new UnsupportedOperationException("Too large precision for Decimal64:" + fromPrecision);
+            case ColumnType.DECIMAL128:
+                long hi = value.getDecimal128Hi(rec);
+                long lo = value.getDecimal128Lo(rec);
+                if (Decimal128.isNull(hi, lo)) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(lo, ColumnType.getDecimalScale(fromType));
+                }
+                break;
+            case ColumnType.DECIMAL256:
+                long hh = value.getDecimal256HH(rec);
+                long hl = value.getDecimal256HL(rec);
+                long lh = value.getDecimal256LH(rec);
+                long ll = value.getDecimal256LL(rec);
+                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(ll, ColumnType.getDecimalScale(fromType));
+                }
+                break;
+            case ColumnType.LONG: {
+                long v = value.getLong(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
+            case ColumnType.DATE: {
+                long v = value.getDate(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
+            case ColumnType.TIMESTAMP: {
+                long v = value.getTimestamp(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
+            case ColumnType.INT: {
+                int v = value.getInt(rec);
+                if (v == Numbers.INT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
+            case ColumnType.SHORT: {
+                short v = value.getShort(rec);
+                if (v == Numbers.SHORT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
+            case ColumnType.BYTE: {
+                byte v = value.getByte(rec);
+                if (v == Numbers.BYTE_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(v, 0);
+                }
+                break;
+            }
         }
     }
 
@@ -338,53 +495,114 @@ public final class DecimalUtil {
      */
     public static void load(Decimal128 decimal, Function value, @Nullable Record rec) {
         final int fromType = value.getType();
-        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        final int fromScale = ColumnType.getDecimalScale(fromType);
 
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
                 if (b == Decimals.DECIMAL8_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(b, fromScale);
+                    decimal.ofLong(b, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 short s = value.getDecimal16(rec);
                 if (s == Decimals.DECIMAL16_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(s, fromScale);
+                    decimal.ofLong(s, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 int i = value.getDecimal32(rec);
                 if (i == Decimals.DECIMAL32_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(i, fromScale);
+                    decimal.ofLong(i, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 3:
+            case ColumnType.DECIMAL64:
                 long l = value.getDecimal64(rec);
                 if (l == Decimals.DECIMAL64_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(l, fromScale);
+                    decimal.ofLong(l, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 4:
+            case ColumnType.DECIMAL128:
                 long hi = value.getDecimal128Hi(rec);
                 long lo = value.getDecimal128Lo(rec);
                 if (Decimal128.isNull(hi, lo)) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(hi, lo, fromScale);
+                    decimal.of(hi, lo, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            default:
-                throw new UnsupportedOperationException("Too large precision for Decimal128:" + fromPrecision);
+            case ColumnType.DECIMAL256:
+                long hh = value.getDecimal256HH(rec);
+                long hl = value.getDecimal256HL(rec);
+                long lh = value.getDecimal256LH(rec);
+                long ll = value.getDecimal256LL(rec);
+                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(lh, ll, ColumnType.getDecimalScale(fromType));
+                }
+                break;
+            case ColumnType.LONG: {
+                long v = value.getLong(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.DATE: {
+                long v = value.getDate(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.TIMESTAMP: {
+                long v = value.getTimestamp(rec);
+                if (v == Numbers.LONG_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.INT: {
+                int v = value.getInt(rec);
+                if (v == Numbers.INT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.SHORT: {
+                short v = value.getShort(rec);
+                if (v == Numbers.SHORT_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
+            case ColumnType.BYTE: {
+                byte v = value.getByte(rec);
+                if (v == Numbers.BYTE_NULL) {
+                    decimal.ofNull();
+                } else {
+                    decimal.ofLong(v, 0);
+                }
+                break;
+            }
         }
     }
 
