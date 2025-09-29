@@ -326,24 +326,4 @@ public class GroupByDecimalTest extends AbstractCairoTest {
                 "select price, qty, count(*) from multidectest group by price, qty order by price, qty",
                 null, null, true, true);
     }
-
-
-    /**
-     * Helper method to create financial test data
-     */
-    private void createFinancialTestTable() throws Exception {
-        execute("create table trades (price decimal(10, 2), quantity decimal(10, 2), symbol string, trade_id long)");
-
-        // Create 20 trades with repeating patterns
-        StringBuilder sb = new StringBuilder("insert into trades values ");
-        for (int i = 1; i <= 20; i++) {
-            if (i > 1) sb.append(", ");
-            double price = 100.00 + ((i - 1) % 10) * 10.50;
-            double quantity = ((i - 1) % 5) * 100.25;
-            String symbol = i % 4 == 0 ? "AAPL" : i % 4 == 1 ? "MSFT" : i % 4 == 2 ? "GOOGL" : "TSLA";
-            sb.append(String.format("(%.2fm, %.2fm, '%s', %d)", price, quantity, symbol, i));
-        }
-        execute(sb.toString());
-    }
-
 }
