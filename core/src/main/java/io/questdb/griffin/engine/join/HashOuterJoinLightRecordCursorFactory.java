@@ -63,7 +63,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just INT + optional BOOLEAN, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
