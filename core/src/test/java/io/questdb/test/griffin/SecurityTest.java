@@ -136,11 +136,6 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int finish() {
-                return 0;
-            }
-
-            @Override
             public AtomicBoolean getCancelledFlag() {
                 return null;
             }

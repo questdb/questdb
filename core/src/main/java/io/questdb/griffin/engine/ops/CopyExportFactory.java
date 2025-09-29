@@ -108,7 +108,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     public CopyExportFactory(
             MessageBus messageBus,
-            CopyExportContext copyContext,
+            CopyExportContext exportContext,
             CopyModel model,
             CopyExportResult copyExportResult,
             SecurityContext securityContext,
@@ -117,7 +117,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     ) throws SqlException {
         super(METADATA);
         this.suspendEvent = suspendEvent;
-        this.of(messageBus, copyContext, model, copyExportResult, securityContext, sqlText);
+        this.of(messageBus, exportContext, model, copyExportResult, securityContext, sqlText);
     }
 
     @Override
@@ -222,14 +222,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     }
 
     private void of(MessageBus messageBus,
-                    CopyExportContext copyImportContext,
+                    CopyExportContext exportContext,
                     CopyModel model,
                     CopyExportResult result,
                     SecurityContext securityContext,
                     CharSequence sqlText) throws SqlException {
         this.messageBus = messageBus;
-        this.copyContext = copyImportContext;
-
+        this.copyContext = exportContext;
         if (model.getTableName() != null) {
             this.tableName = unquote(model.getTableName()).toString();
             this.tableOrSelectTextPos = model.getTableNameExpr().position;

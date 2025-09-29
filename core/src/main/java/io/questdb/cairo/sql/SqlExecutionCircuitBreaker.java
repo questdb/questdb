@@ -47,11 +47,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public int finish() {
-            return 0;
-        }
-
-        @Override
         public AtomicBoolean getCancelledFlag() {
             return null;
         }
@@ -129,9 +124,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     void cancel();
 
     boolean checkIfTripped(long millis, long fd);
-
-    // returns remaining processes to await
-    int finish();
 
     AtomicBoolean getCancelledFlag();
 

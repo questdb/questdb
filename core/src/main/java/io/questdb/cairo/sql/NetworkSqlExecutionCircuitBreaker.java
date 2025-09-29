@@ -110,12 +110,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public int finish() {
-        setCancelledFlag(null);
-        return -1;
-    }
-
-    @Override
     public AtomicBoolean getCancelledFlag() {
         return cancelledFlag;
     }

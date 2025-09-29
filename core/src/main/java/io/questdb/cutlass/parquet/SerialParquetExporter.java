@@ -61,7 +61,6 @@ public class SerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialParquetExporter.class);
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
-    private final CharSequence copyExportRoot;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
     private final Path fromParquet;
@@ -69,6 +68,7 @@ public class SerialParquetExporter implements Closeable {
     private final Path tempPath;
     private final Path toParquet;
     private ExecutionCircuitBreaker circuitBreaker;
+    private CharSequence copyExportRoot;
     private int numOfFiles;
     private PhaseStatusReporter statusReporter;
     private CopyExportRequestTask task;
@@ -77,7 +77,6 @@ public class SerialParquetExporter implements Closeable {
         this.cairoEngine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = this.configuration.getFilesFacade();
-        this.copyExportRoot = this.configuration.getSqlCopyExportRoot();
         this.toParquet = new Path();
         this.fromParquet = new Path();
         this.tempPath = new Path();
@@ -104,6 +103,7 @@ public class SerialParquetExporter implements Closeable {
     public void of(CopyExportRequestTask task,
                    ExecutionCircuitBreaker circuitBreaker,
                    PhaseStatusReporter statusReporter) {
+        this.copyExportRoot = configuration.getSqlCopyExportRoot();
         this.task = task;
         this.circuitBreaker = circuitBreaker;
         this.statusReporter = statusReporter;
@@ -388,7 +388,7 @@ public class SerialParquetExporter implements Closeable {
         }
     }
 
-    StringSink getExportPath() {
+    CharSequence getExportPath() {
         return exportPath;
     }
 
