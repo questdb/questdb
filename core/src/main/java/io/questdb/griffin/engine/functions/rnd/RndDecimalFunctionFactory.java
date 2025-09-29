@@ -127,7 +127,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         public long getDecimal256LL(Record rec) {
             throw new UnsupportedOperationException();
         }
-        
+
         @Override
         public int getDecimal32(Record rec) {
             throw new UnsupportedOperationException();
