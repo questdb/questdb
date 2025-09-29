@@ -46,11 +46,11 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGHexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
@@ -80,8 +80,8 @@ public class Services {
         return createHttpServer(
                 serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(httpServerConfiguration, Requester.HTTP_SERVER),
-                workerPoolManager.getSharedWorkerCount()
+                workerPoolManager.getSharedPoolNetwork(httpServerConfiguration, Requester.HTTP_SERVER),
+                workerPoolManager.getSharedQueryWorkerCount()
         );
     }
 
@@ -89,8 +89,8 @@ public class Services {
     public HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            int sharedWorkerCount
+            WorkerPool networkSharedPool,
+            int sharedQueryWorkerCount
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         if (!httpServerConfiguration.isEnabled()) {
@@ -101,7 +101,7 @@ public class Services {
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
-                workerPool,
+                networkSharedPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
                 headerParserFactory
@@ -109,8 +109,7 @@ public class Services {
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
-                workerPool.getWorkerCount(),
-                sharedWorkerCount
+                sharedQueryWorkerCount
         );
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
@@ -124,8 +123,7 @@ public class Services {
                 server,
                 serverConfiguration,
                 cairoEngine,
-                workerPool,
-                sharedWorkerCount,
+                sharedQueryWorkerCount,
                 jsonQueryProcessorBuilder,
                 ilpV2WriteProcessorBuilder
         );
@@ -148,20 +146,20 @@ public class Services {
         // - DEDICATED (6 worker) when ^ ^ is not set and host has > 16 cpus
         // - SHARED otherwise
 
-        // The writerPool is:
+        // The sharedPoolWrite is:
         // - DEDICATED when PropertyKey.LINE_TCP_WRITER_WORKER_COUNT is > 0
         // - DEDICATED (1 worker) when ^ ^ is not set
         // - SHARED otherwise
 
-        final WorkerPool ioPool = workerPoolManager.getInstance(
-                config.getIOWorkerPoolConfiguration(),
+        final WorkerPool sharedPoolNetwork = workerPoolManager.getSharedPoolNetwork(
+                config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
-        final WorkerPool writerPool = workerPoolManager.getInstance(
+        final WorkerPool sharedPoolWrite = workerPoolManager.getSharedPoolWrite(
                 config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
-        return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
+        return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite);
     }
 
     @Nullable
@@ -176,9 +174,9 @@ public class Services {
 
         // The pool is always the SHARED pool
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPool());
+        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork());
     }
 
     @Nullable
@@ -193,11 +191,11 @@ public class Services {
         // The pool is:
         // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
         // - DEDICATED (1 worker) otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, workerPool);
+        return createMinHttpServer(configuration, networkSharedPool);
     }
 
     @Nullable
@@ -245,9 +243,8 @@ public class Services {
         return server;
     }
 
-    @Nullable
-    public IPGWireServer createPGWireServer(
-            PGWireConfiguration configuration,
+    public PGServer createPGWireServer(
+            PGConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
@@ -258,23 +255,22 @@ public class Services {
         // The pool is:
         // - DEDICATED when PropertyKey.PG_WORKER_COUNT is > 0
         // - SHARED otherwise
-        final WorkerPool workerPool = workerPoolManager.getInstance(
+        final WorkerPool networkSharedPool = workerPoolManager.getSharedPoolNetwork(
                 configuration,
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? HexTestsCircuitBreakRegistry.INSTANCE : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        PGCircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? PGHexTestsCircuitBreakRegistry.INSTANCE :
+                new DefaultPGCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return IPGWireServer.newInstance(
+        return new PGServer(
                 configuration,
                 cairoEngine,
-                workerPool,
+                networkSharedPool,
                 registry,
                 () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        workerPool.getWorkerCount(),
-                        workerPoolManager.getSharedWorkerCount()
-                )
-        );
+                        workerPoolManager.getSharedQueryWorkerCount()
+                ));
     }
 }

@@ -36,19 +36,19 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
 import io.questdb.std.IOURingFacadeImpl;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -58,10 +58,10 @@ import java.util.function.LongSupplier;
 
 public interface CairoConfiguration {
 
-    long O_ASYNC = 0x40;
-    long O_DIRECT = 0x4000;
-    long O_NONE = 0;
-    long O_SYNC = 0x80;
+    int O_ASYNC = 0x40;
+    int O_DIRECT = 0x4000;
+    int O_NONE = 0;
+    int O_SYNC = 0x80;
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean attachPartitionCopy();
@@ -121,6 +121,12 @@ public interface CairoConfiguration {
 
     @NotNull
     BuildInformation getBuildInformation();
+
+    default boolean getBypassWalFdCache() {
+        // If wal fd re-usage is not allowed it means fd cache should not be used for wal and sequencer files.
+        // This typically means that those files be renamed/replaced outside QuestDB java code.
+        return getWalMaxSegmentFileDescriptorsCache() < 1;
+    }
 
     boolean getCairoSqlLegacyOperatorPrecedence();
 
@@ -185,6 +191,9 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getDbDirectory(); // env['cairo.root'], defaults to db
 
+    @Nullable
+    String getDbLogName();
+
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
@@ -209,6 +218,8 @@ public interface CairoConfiguration {
 
     @NotNull
     FactoryProvider getFactoryProvider();
+
+    boolean getFileDescriptorCacheEnabled();
 
     int getFileOperationRetryCount();
 
@@ -283,8 +294,6 @@ public interface CairoConfiguration {
 
     int getMatViewMaxRefreshRetries();
 
-    long getMatViewMinRefreshInterval();
-
     long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
@@ -321,7 +330,6 @@ public interface CairoConfiguration {
 
     int getMkDirMode();
 
-    @NotNull
     default NanosecondClock getNanosecondClock() {
         return NanosecondClockImpl.INSTANCE;
     }
@@ -497,6 +505,8 @@ public interface CairoConfiguration {
 
     int getSqlJitIRMemoryPageSize();
 
+    int getSqlJitMaxInListSizeThreshold();
+
     int getSqlJitMode();
 
     int getSqlJitPageAddressCacheThreshold();
@@ -666,7 +676,7 @@ public interface CairoConfiguration {
 
     long getWriterCommandQueueSlotSize();
 
-    long getWriterFileOpenOpts();
+    int getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
 
@@ -700,6 +710,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isPartitionEncoderParquetRawArrayEncoding();
+
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isPartitionO3OverwriteControlEnabled();
@@ -719,6 +731,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelGroupByEnabled();
 
     boolean isSqlParallelReadParquetEnabled();
+
+    boolean isSqlParallelTopKEnabled();
 
     boolean isTableTypeConversionEnabled();
 

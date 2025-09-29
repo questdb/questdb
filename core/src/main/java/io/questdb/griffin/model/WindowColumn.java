@@ -48,13 +48,13 @@ public final class WindowColumn extends QueryColumn {
     public static final int FRAMING_ROWS = FRAMING_RANGE + 1;//2
     public static final int FRAMING_GROUPS = FRAMING_ROWS + 1;//3
     public static final int PRECEDING = 1;
-    public static final long TIME_UNIT_MICROSECOND = 1L;
-    public static final long TIME_UNIT_MILLISECOND = 1000 * TIME_UNIT_MICROSECOND;
-    public static final long TIME_UNIT_SECOND = 1000L * TIME_UNIT_MILLISECOND;
-    public static final long TIME_UNIT_MINUTE = 60 * TIME_UNIT_SECOND;
-    public static final long TIME_UNIT_HOUR = 60 * TIME_UNIT_MINUTE;
-    public static final long TIME_UNIT_DAY = 24 * TIME_UNIT_HOUR;
-    public static int ITME_UNIT_MICROSECOND = 1;
+    public static final char TIME_UNIT_DAY = 'd';
+    public static final char TIME_UNIT_HOUR = 'h';
+    public static final char TIME_UNIT_MICROSECOND = 'u';
+    public static final char TIME_UNIT_MILLISECOND = 'T';
+    public static final char TIME_UNIT_MINUTE = 'm';
+    public static final char TIME_UNIT_NANOSECOND = 'n';
+    public static final char TIME_UNIT_SECOND = 's';
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
@@ -66,13 +66,13 @@ public final class WindowColumn extends QueryColumn {
     private long rowsHi = Long.MAX_VALUE;
     private ExpressionNode rowsHiExpr;
     private int rowsHiExprPos;
-    private long rowsHiExprTimeUnit;
+    private char rowsHiExprTimeUnit;
     private int rowsHiKind = CURRENT;
     private int rowsHiKindPos = 0;
     private long rowsLo = Long.MIN_VALUE;
     private ExpressionNode rowsLoExpr;
     private int rowsLoExprPos;
-    private long rowsLoExprTimeUnit;
+    private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
 
@@ -92,10 +92,10 @@ public final class WindowColumn extends QueryColumn {
         orderByDirection.clear();
         rowsLoExpr = null;
         rowsLoExprPos = 0;
-        rowsLoExprTimeUnit = 1;
+        rowsLoExprTimeUnit = 0;
         rowsHiExpr = null;
         rowsHiExprPos = 0;
-        rowsHiExprTimeUnit = 1;
+        rowsHiExprTimeUnit = 0;
         rowsLoKind = PRECEDING;
         rowsLoKindPos = 0;
         rowsHiKind = CURRENT;
@@ -149,7 +149,7 @@ public final class WindowColumn extends QueryColumn {
         return rowsHiExprPos;
     }
 
-    public long getRowsHiExprTimeUnit() {
+    public char getRowsHiExprTimeUnit() {
         return rowsHiExprTimeUnit;
     }
 
@@ -173,7 +173,7 @@ public final class WindowColumn extends QueryColumn {
         return rowsLoExprPos;
     }
 
-    public long getRowsLoExprTimeUnit() {
+    public char getRowsLoExprTimeUnit() {
         return rowsLoExprTimeUnit;
     }
 
@@ -236,7 +236,7 @@ public final class WindowColumn extends QueryColumn {
         this.rowsHiExprPos = rowsHiExprPos;
     }
 
-    public void setRowsHiExprTimeUnit(long rowsHiExprTimeUnit) {
+    public void setRowsHiExprTimeUnit(char rowsHiExprTimeUnit) {
         this.rowsHiExprTimeUnit = rowsHiExprTimeUnit;
     }
 
@@ -254,7 +254,7 @@ public final class WindowColumn extends QueryColumn {
         this.rowsLoExprPos = rowsLoExprPos;
     }
 
-    public void setRowsLoExprTimeUnit(long rowsLoExprTimeUnit) {
+    public void setRowsLoExprTimeUnit(char rowsLoExprTimeUnit) {
         this.rowsLoExprTimeUnit = rowsLoExprTimeUnit;
     }
 

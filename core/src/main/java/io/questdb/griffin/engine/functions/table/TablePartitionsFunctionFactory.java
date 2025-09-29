@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,11 +51,15 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
         final TableToken tt;
+        int timestampType;
         try {
             tt = context.getTableToken(args.getQuick(0).getStrA(null));
+            try (TableMetadata metadata = context.getCairoEngine().getTableMetadata(tt)) {
+                timestampType = metadata.getTimestampType();
+            }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt));
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType));
     }
 }

@@ -25,7 +25,9 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -43,7 +45,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
@@ -62,9 +63,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -81,7 +82,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
-    private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final IntList tableNamePositions = new IntList();
@@ -106,6 +106,7 @@ public class SqlParser {
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCountRef = this::rewriteCount;
+    private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
@@ -219,7 +220,7 @@ public class SqlParser {
             throw SqlException.$(unitPos, "invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was '")
                     .put(tok).put('\'');
         }
-        return Timestamps.toHoursOrMonths(ttlValue, unit, valuePos);
+        return CommonUtils.toHoursOrMonths(ttlValue, unit, valuePos);
     }
 
     public static ExpressionNode recursiveReplace(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -248,36 +249,40 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    public static void validateMatViewDelay(int lengthInterval, char lengthUnit, int delayInterval, char delayUnit, int pos) throws SqlException {
+    public static void validateMatViewDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
+        if (delay < 0) {
+            throw SqlException.position(pos).put("delay cannot be negative");
+        }
+
         int lengthMinutes;
         switch (lengthUnit) {
             case 'm':
-                lengthMinutes = lengthInterval;
+                lengthMinutes = length;
                 break;
             case 'h':
-                lengthMinutes = lengthInterval * 60;
+                lengthMinutes = length * 60;
                 break;
             case 'd':
-                lengthMinutes = lengthInterval * 24 * 60;
+                lengthMinutes = length * 24 * 60;
                 break;
             default:
-                throw SqlException.position(pos).put("unsupported length unit: ").put(lengthInterval).put(lengthUnit)
+                throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
                         .put(", supported units are 'm', 'h', 'd'");
         }
 
         int delayMinutes;
         switch (delayUnit) {
             case 'm':
-                delayMinutes = delayInterval;
+                delayMinutes = delay;
                 break;
             case 'h':
-                delayMinutes = delayInterval * 60;
+                delayMinutes = delay * 60;
                 break;
             case 'd':
-                delayMinutes = delayInterval * 24 * 60;
+                delayMinutes = delay * 24 * 60;
                 break;
             default:
-                throw SqlException.position(pos).put("unsupported delay unit: ").put(delayInterval).put(delayUnit)
+                throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
                         .put(", supported units are 'm', 'h', 'd'");
         }
 
@@ -363,6 +368,8 @@ public class SqlParser {
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         switch (token.charAt(0)) {
+            case 'n':
+                // nanos
             case 'U':
                 // micros
             case 'T':
@@ -404,66 +411,6 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
         return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
-    }
-
-    private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
-        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            tableNames.clear();
-            tableNamePositions.clear();
-            collectAllTableNames(m, tableNames, null);
-            final boolean baseTableQueried = tableNames.contains(baseTableName);
-            final int queriedTableCount = tableNames.size();
-            if (baseTableQueried) {
-                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
-                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
-                            .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                if ((m.getSampleByFrom() != null || m.getSampleByTo() != null)) {
-                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
-                    throw SqlException.position(position)
-                            .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
-                if (sampleByFill != null && sampleByFill.size() > 0) {
-                    throw SqlException.position(sampleByFill.get(0).position)
-                            .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
-                }
-
-                ObjList<QueryColumn> columns = m.getColumns();
-                QueryColumn windowFuncColumn = null;
-                for (int i = 0, n = columns.size(); i < n; i++) {
-                    QueryColumn column = columns.getQuick(i);
-                    if (column.isWindowColumn()) {
-                        windowFuncColumn = column;
-                    }
-                }
-                if (windowFuncColumn != null) {
-                    throw SqlException.position(windowFuncColumn.getAst().position)
-                            .put("window function on base table is not supported for materialized views: ").put(baseTableName);
-                }
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                validateMatViewQuery(joinModel, baseTableName);
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                // allow self-UNION on base table, but disallow UNION on base table with any other tables
-                if (baseTableQueried && queriedTableCount > 1) {
-                    throw SqlException.position(m.getUnionModel().getModelPosition())
-                            .put("union on base table is not supported for materialized views: ").put(baseTableName);
-                }
-                validateMatViewQuery(unionModel, baseTableName);
-            }
-        }
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -719,7 +666,7 @@ public class SqlParser {
                 alias = createColumnAlias(tokenAlias, qc.getAst().type, aliasMap);
             }
         }
-        qc.setAlias(alias);
+        qc.setAlias(alias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
         aliasMap.put(alias, qc);
     }
 
@@ -965,7 +912,7 @@ public class SqlParser {
         boolean deferred = false;
         if (isRefreshKeyword(tok)) {
             refreshDefined = true;
-            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as'");
+            tok = tok(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'as'");
             int every = 0;
             char everyUnit = 0;
             // 'incremental' is obsolete, replaced with 'immediate'
@@ -978,8 +925,8 @@ public class SqlParser {
                 tok = tok(lexer, "'deferred' or 'period' or 'as'");
             } else if (isEveryKeyword(tok)) {
                 tok = tok(lexer, "interval");
-                every = Timestamps.getStrideMultiple(tok);
-                everyUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                every = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                everyUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewEveryUnit(everyUnit, lexer.lastTokenPosition());
                 refreshType = MatViewDefinition.REFRESH_TYPE_TIMER;
                 tok = tok(lexer, "'deferred' or 'start' or 'period' or 'as'");
@@ -994,18 +941,24 @@ public class SqlParser {
                 }
             }
 
+            // Timer uses microsecond precision for start time calculation
             if (isPeriodKeyword(tok)) {
-                // REFRESH [IMMEDIATE | MANUAL | EVERY <interval>] PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
+                // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                 expectTok(lexer, "(");
                 expectTok(lexer, "length");
                 tok = tok(lexer, "LENGTH interval");
-                final int length = Timestamps.getStrideMultiple(tok);
-                final char lengthUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                 validateMatViewLength(length, lengthUnit, lexer.lastTokenPosition());
-                final TimestampSampler periodSampler = TimestampSamplerFactory.getInstance(length, lengthUnit, lexer.lastTokenPosition());
+                final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
+                        MicrosTimestampDriver.INSTANCE,
+                        length,
+                        lengthUnit,
+                        lexer.lastTokenPosition()
+                );
                 tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                TimeZoneRules tzRules = null;
+                TimeZoneRules tzRulesMicros = null;
                 String tz = null;
                 if (isTimeKeyword(tok)) {
                     expectTok(lexer, "zone");
@@ -1015,9 +968,9 @@ public class SqlParser {
                     }
                     tz = unquote(tok).toString();
                     try {
-                        tzRules = Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, tz);
-                    } catch (NumericException e) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid timezone: ").put(tz);
+                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
+                    } catch (CairoException e) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
                     }
                     tok = tok(lexer, "'delay' or ')'");
                 }
@@ -1026,8 +979,8 @@ public class SqlParser {
                 char delayUnit = 0;
                 if (isDelayKeyword(tok)) {
                     tok = tok(lexer, "DELAY interval");
-                    delay = Timestamps.getStrideMultiple(tok);
-                    delayUnit = Timestamps.getStrideUnit(tok, lexer.lastTokenPosition());
+                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
+                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
                     validateMatViewDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                     tok = tok(lexer, "')'");
                 }
@@ -1037,11 +990,11 @@ public class SqlParser {
                 }
 
                 // Period timer start is at the boundary of the current period.
-                final long now = configuration.getMicrosecondClock().getTicks();
-                final long nowLocal = tzRules != null ? now + tzRules.getOffset(now) : now;
-                final long start = periodSampler.round(nowLocal);
+                final long nowMicros = configuration.getMicrosecondClock().getTicks();
+                final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
+                final long startUs = periodSamplerMicros.round(nowLocalMicros);
 
-                mvOpBuilder.setTimer(tz, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
                 mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 tok = tok(lexer, "'as'");
             } else if (!isAsKeyword(tok)) {
@@ -1050,12 +1003,12 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'as' expected");
                 }
                 // Use the current time as the start timestamp if it wasn't specified.
-                long start = configuration.getMicrosecondClock().getTicks();
-                String timeZone = null;
+                long startUs = configuration.getMicrosecondClock().getTicks();
+                String tz = null;
                 if (isStartKeyword(tok)) {
                     tok = tok(lexer, "START timestamp");
                     try {
-                        start = IntervalUtils.parseFloorPartialTimestamp(GenericLexer.unquote(tok));
+                        startUs = MicrosTimestampDriver.INSTANCE.parseFloorLiteral(GenericLexer.unquote(tok));
                     } catch (NumericException e) {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid START timestamp value");
                     }
@@ -1064,16 +1017,16 @@ public class SqlParser {
                     if (isTimeKeyword(tok)) {
                         expectTok(lexer, "zone");
                         tok = tok(lexer, "TIME ZONE name");
-                        timeZone = unquote(tok).toString();
+                        tz = unquote(tok).toString();
                         tok = tok(lexer, "'as'");
                     }
                 }
-                mvOpBuilder.setTimer(timeZone, start, every, everyUnit);
+                mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
             } else if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // REFRESH EVERY <interval> AS
                 // Don't forget to set timer params.
-                final long start = configuration.getMicrosecondClock().getTicks();
-                mvOpBuilder.setTimer(null, start, every, everyUnit);
+                final long startUs = configuration.getMicrosecondClock().getTicks();
+                mvOpBuilder.setTimer(null, startUs, every, everyUnit);
             }
         }
         mvOpBuilder.setRefreshType(refreshType);
@@ -1323,7 +1276,7 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                if (model.getColumnType() != ColumnType.TIMESTAMP) {
+                if (!ColumnType.isTimestamp(model.getColumnType())) {
                     throw SqlException
                             .position(timestamp.position)
                             .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(model.getColumnType()))
@@ -1739,6 +1692,10 @@ public class SqlParser {
                 continue;
             }
 
+            if (isDeclareKeyword(tok)) {
+                throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
+            }
+
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
                 lexer.unparseLast();
                 break;
@@ -2124,6 +2081,12 @@ public class SqlParser {
 
         if (isWithKeyword(tok)) {
             return parseWith(lexer, sqlParserCallback, null);
+        }
+
+        if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put(
+                    "'create', 'format', 'insert', 'update', 'select' or 'with'"
+            ).put(" expected");
         }
 
         return parseSelect(lexer, sqlParserCallback, null);
@@ -2923,7 +2886,6 @@ public class SqlParser {
                     }
                 }
 
-                final CharSequence alias;
                 tok = optTok(lexer);
 
                 QueryColumn col;
@@ -3076,8 +3038,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3120,8 +3082,8 @@ public class SqlParser {
                                         lexer.unparseLast();
                                         winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                            long timeUnit = parseTimeUnit(lexer);
-                                            if (timeUnit != -1) {
+                                            char timeUnit = parseTimeUnit(lexer);
+                                            if (timeUnit != 0) {
                                                 winCol.setRowsHiExprTimeUnit(timeUnit);
                                             }
                                         }
@@ -3160,8 +3122,8 @@ public class SqlParser {
                                     lexer.unparseLast();
                                     winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
-                                        long timeUnit = parseTimeUnit(lexer);
-                                        if (timeUnit != -1) {
+                                        char timeUnit = parseTimeUnit(lexer);
+                                        if (timeUnit != 0) {
                                             winCol.setRowsLoExprTimeUnit(timeUnit);
                                         }
                                     }
@@ -3223,6 +3185,8 @@ public class SqlParser {
                     col = queryColumnPool.next().of(null, expr);
                 }
 
+                final CharSequence alias;
+                final int aliasPosition;
                 if (tok != null && columnAliasStop.excludes(tok)) {
                     assertNotDot(lexer, tok);
 
@@ -3235,11 +3199,13 @@ public class SqlParser {
                         validateIdentifier(lexer, aliasTok);
                         boolean unquoting = Chars.indexOf(aliasTok, '.') == -1;
                         alias = unquoting ? unquote(aliasTok) : aliasTok;
+                        aliasPosition = lexer.lastTokenPosition();
                     } else {
                         validateIdentifier(lexer, tok);
                         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         boolean unquoting = Chars.indexOf(tok, '.') == -1;
                         alias = GenericLexer.immutableOf(unquoting ? unquote(tok) : tok);
+                        aliasPosition = lexer.lastTokenPosition();
                     }
 
                     if (col.getAst().isWildcard()) {
@@ -3250,6 +3216,7 @@ public class SqlParser {
                     aliasMap.put(alias, col);
                 } else {
                     alias = null;
+                    aliasPosition = QueryColumn.SYNTHESIZED_ALIAS_POSITION;
                 }
 
                 // correlated sub-queries do not have expr.token values (they are null)
@@ -3261,7 +3228,7 @@ public class SqlParser {
                     if (alias.length() == 0) {
                         throw err(lexer, null, "column alias cannot be a blank string");
                     }
-                    col.setAlias(alias);
+                    col.setAlias(alias, aliasPosition);
                 }
 
                 accumulatedColumns.add(col);
@@ -3383,11 +3350,13 @@ public class SqlParser {
         model.setTableNameExpr(tableNameExpr);
     }
 
-    private long parseTimeUnit(GenericLexer lexer) throws SqlException {
+    private char parseTimeUnit(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "'preceding' or time unit");
-        long unit = -1;
-        if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
-            unit = WindowColumn.ITME_UNIT_MICROSECOND;
+        char unit = 0;
+        if (isNanosecondsKeyword(tok) || isNanosecondKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_NANOSECOND;
+        } else if (isMicrosecondKeyword(tok) || isMicrosecondsKeyword(tok)) {
+            unit = WindowColumn.TIME_UNIT_MICROSECOND;
         } else if (isMillisecondKeyword(tok) || isMillisecondsKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_MILLISECOND;
         } else if (isSecondKeyword(tok) || isSecondsKeyword(tok)) {
@@ -3399,7 +3368,7 @@ public class SqlParser {
         } else if (isDayKeyword(tok) || isDaysKeyword(tok)) {
             unit = WindowColumn.TIME_UNIT_DAY;
         }
-        if (unit == -1) {
+        if (unit == 0) {
             lexer.unparseLast();
         }
         return unit;
@@ -3925,22 +3894,49 @@ public class SqlParser {
 
     private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
         int typePosition = lexer.lastTokenPosition();
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+        if (Chars.equalsNc(tok, '[')) {
+            // '[' is a wierd type name, it could be that someone is either:
+            // 1. array dereferencing [x]
+            // 2. inverting array definition, []type
+            // 3. left out array definition (type), e.g. just []
+            // 4. dangling [, e.g. there is no closing ]
+
+            // we can be brave here, we will error out already, [ is not a type regardless of what we find
+            tok = optTok(lexer);
+            if (tok == null) {
+                throw SqlException.position(typePosition).put("dangling '[' where column type is expected");
+            }
+
+            if (Chars.equals(tok, ']')) {
+                // we have []
+                // lets see if there is a type
+                tok = optTok(lexer);
+                if (tok == null) {
+                    throw SqlException.position(typePosition).put("did you mean 'double[]'?");
+                }
+                if (!Chars.equals(tok, ')') && !Chars.equals(tok, ',') && !Chars.equals(tok, '(')) {
+                    throw SqlException.position(typePosition).put("did you mean '").put(tok).put("[]'?");
+                }
+            }
+            throw SqlException.position(typePosition).put("column type is expected here");
+        }
+        final int columnType = SqlUtil.toPersistedType(tok, typePosition);
+        final int typeTagPosition = lexer.lastTokenPosition();
 
         // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
-        if (typeTag == ColumnType.DOUBLE) {
+        if (ColumnType.tagOf(columnType) == ColumnType.DOUBLE) {
             CharSequence next = optTok(lexer);
             if (next != null && !isPrecisionKeyword(next)) {
                 lexer.unparseLast();
             }
         }
 
-        int nDims = SqlUtil.parseArrayDimensionality(lexer);
+        int nDims = SqlUtil.parseArrayDimensionality(lexer, columnType, typeTagPosition);
         if (nDims > 0) {
-            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+            if (!ColumnType.isSupportedArrayElementType(columnType)) {
                 throw SqlException.position(typePosition)
                         .put("unsupported array element type [type=")
-                        .put(ColumnType.nameOf(typeTag))
+                        .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
             if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
@@ -3949,14 +3945,16 @@ public class SqlParser {
                         .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
                         .put(']');
             }
-            return ColumnType.encodeArrayType(typeTag, nDims);
-        } else if (typeTag == ColumnType.GEOHASH) {
+            return ColumnType.encodeArrayType(columnType, nDims);
+        }
+
+        if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
-        return typeTag;
+        return columnType;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
@@ -4006,6 +4004,80 @@ public class SqlParser {
         }
     }
 
+    private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
+        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
+            tableNames.clear();
+            tableNamePositions.clear();
+            collectAllTableNames(m, tableNames, null);
+            final boolean baseTableQueried = tableNames.contains(baseTableName);
+            final int queriedTableCount = tableNames.size();
+            if (baseTableQueried) {
+                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
+                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
+                            .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                if ((m.getSampleByFrom() != null || m.getSampleByTo() != null)) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position)
+                            .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position)
+                            .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                ObjList<QueryColumn> columns = m.getColumns();
+                QueryColumn windowFuncColumn = null;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    if (column.isWindowColumn()) {
+                        windowFuncColumn = column;
+                    }
+
+                    if (!Chars.equals(column.getName(), '*') && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
+                        if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                            throw SqlException
+                                    .position(column.getAst().position)
+                                    .put("column '").put(column.getName()).put("' requires an explicit alias. Use: ")
+                                    .put(column.getName()).put(" AS your_column_name");
+                        } else {
+                            throw SqlException
+                                    .position(column.getAliasPosition())
+                                    .put("column alias '").put(column.getName()).put("' contains unsupported characters");
+                        }
+                    }
+                }
+
+                if (windowFuncColumn != null) {
+                    throw SqlException.position(windowFuncColumn.getAst().position)
+                            .put("window function on base table is not supported for materialized views: ").put(baseTableName);
+                }
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                validateMatViewQuery(joinModel, baseTableName);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                // allow self-UNION on base table, but disallow UNION on base table with any other tables
+                if (baseTableQueried && queriedTableCount > 1) {
+                    throw SqlException.position(m.getUnionModel().getModelPosition())
+                            .put("union on base table is not supported for materialized views: ").put(baseTableName);
+                }
+                validateMatViewQuery(unionModel, baseTableName);
+            }
+        }
+    }
+
     void clear() {
         queryModelPool.clear();
         queryColumnPool.clear();
@@ -4024,6 +4096,7 @@ public class SqlParser {
         topLevelWithModel.clear();
         explainModelPool.clear();
         digit = 1;
+        traversalAlgo.clear();
     }
 
     ExpressionNode expr(

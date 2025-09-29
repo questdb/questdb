@@ -31,24 +31,43 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
+@RunWith(Parameterized.class)
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public AlterTableConvertPartitionTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testConvertAllPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertAllPartitions";
             createTable(
                     tableName,
                     "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
@@ -71,7 +90,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertAllPartitionsToParquetAndBack";
             createTableStr(
                     tableName,
                     "insert into " + tableName + " values(1, 'abc', '2024-06-10T00:00:00.000000Z')",
@@ -92,13 +111,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
-            assertSql("id\tstr\ttimestamp\n" +
+            assertSql(
+                    replaceTimestampSuffix("id\tstr\ttimestamp\n" +
                             "1\tabc\t2024-06-10T00:00:00.000000Z\n" +
                             "2\tedf\t2024-06-11T00:00:00.000000Z\n" +
                             "3\tabc\t2024-06-12T00:00:00.000000Z\n" +
                             "4\tedf\t2024-06-12T00:00:01.000000Z\n" +
                             "6\tedf\t2024-06-12T00:00:02.000000Z\n" +
-                            "5\tabc\t2024-06-15T00:00:00.000000Z\n",
+                            "5\tabc\t2024-06-15T00:00:00.000000Z\n", timestampType.getTypeName()),
                     "select * from " + tableName
             );
         });
@@ -113,7 +133,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " x id," +
                             " rnd_boolean() a_boolean," +
                             " rnd_byte() a_byte," +
-                            " timestamp_sequence('2024-06', 500) designated_ts" +
+                            " timestamp_sequence('2024-06', 500)::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -129,7 +149,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertListPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertListPartitions";
             createTable(
                     tableName,
                     "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
@@ -150,12 +170,29 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertListZeroSizeArrayData() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x (" +
+                            " an_array double[]," +
+                            " a_ts timestamp" +
+                            ") timestamp(a_ts) partition by month;"
+            );
+
+            execute("insert into x(an_array, a_ts) values(array[], '2024-07');");
+            execute("insert into x(an_array, a_ts) values(array[1.0, 2.0, 3.0], '2024-08');");
+            execute("alter table x convert partition to parquet where a_ts > 0;");
+            assertPartitionExists("x", "2024-07.2");
+        });
+    }
+
+    @Test
     public void testConvertListZeroSizeVarcharData() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
                     "create table x as (select" +
                             " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
-                            " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
+                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampType.getTypeName() + " as a_ts," +
                             " from long_sequence(1)) timestamp (a_ts) partition by MONTH"
             );
 
@@ -192,13 +229,18 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_uuid4() a_uuid," +
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " rnd_double_array(1) an_array," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                            " timestamp_sequence(500000000000, 600) a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
+                            " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
-            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06'",
+                    0,
+                    "cannot convert partition to parquet, partition does not exist"
+            );
 
             execute("alter table x convert partition to parquet list '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
@@ -216,7 +258,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS * 5 + ") designated_ts" +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS * 5 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -270,15 +312,20 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " rnd_uuid4() a_uuid," +
                             " rnd_long256() a_long256," +
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " rnd_double_array(1) an_array," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                            " timestamp_sequence(500000000000, 600) a_ts," +
-                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
+                            " timestamp_sequence(500000000000, 600)::" + timestampType.getTypeName() + " a_ts," +
+                            " timestamp_sequence(400000000000, " + Micros.DAY_MICROS / 12 + ")::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
             execute("create table y as (select * from x)", sqlExecutionContext);
 
-            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
+            assertException(
+                    "alter table x convert partition to parquet list '2024-06'",
+                    0,
+                    "cannot convert partition to parquet, partition does not exist"
+            );
 
             execute("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01.1");
@@ -298,7 +345,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -322,7 +369,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertPartitionsWithColTops() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertPartitionsWithColTops";
             createTable(
                     tableName,
                     "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
@@ -349,7 +396,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertPartitionsWithColTopsSelect() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertPartitionsWithColTopsSelect";
             createTable(
                     tableName,
                     "insert into " + tableName + " values(1, '2024-11-01T00:00:00.000000Z')",
@@ -367,7 +414,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("alter table " + tableName + " convert partition to parquet where timestamp >= 0");
 
             assertQuery(
-                    "id\ttimestamp\ta\n" +
+                    replaceTimestampSuffix("id\ttimestamp\ta\n" +
                             "1\t2024-11-01T00:00:00.000000Z\tnull\n" +
                             "2\t2024-11-02T00:00:00.000000Z\tnull\n" +
                             "3\t2024-11-03T00:00:00.000000Z\tnull\n" +
@@ -375,7 +422,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "5\t2024-11-05T00:00:00.000000Z\tnull\n" +
                             "5\t2024-11-05T00:00:00.000000Z\t5\n" +
                             "6\t2024-11-06T00:00:00.000000Z\t6\n" +
-                            "7\t2024-11-07T00:00:00.000000Z\t7\n",
+                            "7\t2024-11-07T00:00:00.000000Z\t7\n", timestampType.getTypeName()),
                     tableName,
                     "timestamp",
                     true,
@@ -390,7 +437,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute(
                     "create table x as (select" +
                             " x a_long," +
-                            " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
+                            " to_timestamp('2024-07', 'yyyy-MM')::" + timestampType.getTypeName() + " as a_ts," +
                             " from long_sequence(10)) timestamp (a_ts) partition by MONTH"
             );
 
@@ -407,7 +454,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertTimestampPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testConvertTimestampPartitions";
             createTable(
                     tableName,
                     "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
@@ -431,11 +478,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
-            assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
-                            + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
-                            + "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n"
-                            + "2\t2024-06-12\tfalse\ttrue\t658\t\t\n" +
-                            "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+            assertQuery(
+                    replaceTimestampSuffix(
+                            "index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
+                                    "2\t2024-06-12\tfalse\ttrue\t" + (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? 652 : 657) + "\t\t\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                            timestampType.getTypeName()
+                    ),
                     "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     false,
                     true
@@ -469,7 +520,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName, String... inserts) throws Exception {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp();
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("id", ColumnType.INT)
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             execute(inserts[i]);
@@ -477,7 +530,10 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void createTableStr(String tableName, String... inserts) throws Exception {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).col("str", ColumnType.STRING).timestamp();
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                .col("id", ColumnType.INT)
+                .col("str", ColumnType.STRING)
+                .timestamp(timestampType.getTimestampType());
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             execute(inserts[i]);

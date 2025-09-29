@@ -1,0 +1,10 @@
+# name: test/sql/copy/parquet/map_duckdb.test
+# description: Unsupported column types like DuckDB's map are skipped
+# group: [parquet]
+
+require parquet
+
+query I
+SELECT * FROM parquet_scan('data/parquet-testing/map_duckdb.parquet')
+----
+42

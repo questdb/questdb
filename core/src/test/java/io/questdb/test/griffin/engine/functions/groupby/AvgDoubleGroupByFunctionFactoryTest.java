@@ -43,7 +43,8 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
                     "sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp\n" +
-                            "44.0\t1.0\tnull\t1.0\t44.0\t44.0\t0.0\n", "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
+                            "44.0\t1.0\t1.0\t1.0\t44.0\t44.0\t0.0\n",
+                    "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
             );
         });
     }

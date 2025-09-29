@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.ObjList;
@@ -46,6 +48,7 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
     private static final long COLUMN_STRUCT_SIZE;
+    private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
@@ -223,6 +226,10 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    /**
+     * Note: low-level parquet metadata tracks all columns (unsupported are tagged as Undefined),
+     * but higher-level GenericRecordMetadata produced via copyToSansUnsupported() omits them.
+     */
     public class Metadata {
         private final ObjList<DirectString> columnNames = new ObjList<>();
 
@@ -238,12 +245,22 @@ public class PartitionDecoder implements QuietCloseable {
             return columnNames.getQuick(columnIndex);
         }
 
-        public void copyTo(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
+        /**
+         * Copies supported columns into the provided metadata, skipping any with Undefined type.
+         * If treatSymbolsAsVarchar is true, symbol columns are exposed as VARCHAR.
+         */
+        public void copyToSansUnsupported(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
             metadata.clear();
             final int columnCount = columnCount();
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = Chars.toString(columnName(i));
                 final int columnType = getColumnType(i);
+
+                if (ColumnType.isUndefined(columnType)) {
+                    LOG.info().$("unsupported column type, skipping [column=").$(columnName).I$();
+                    continue;
+                }
+
                 if (ColumnType.isSymbol(columnType)) {
                     if (treatSymbolsAsVarchar) {
                         metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));

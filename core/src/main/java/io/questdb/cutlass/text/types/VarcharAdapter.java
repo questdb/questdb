@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.SwarUtils;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -33,6 +34,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 
 public class VarcharAdapter extends AbstractTypeAdapter {
     private static final byte DOUBLE_QUOTE = '"';
+    private static final long DOUBLE_QUOTE_WORD = SwarUtils.broadcast(DOUBLE_QUOTE);
     private final DirectUtf8Sink utf8Sink;
 
     public VarcharAdapter(DirectUtf8Sink utf8Sink) {
@@ -65,11 +67,25 @@ public class VarcharAdapter extends AbstractTypeAdapter {
     private static void deflateConsecutiveDoubleQuotes(DirectUtf8Sequence value, DirectUtf8Sink utf8Sink) {
         utf8Sink.clear();
         int quoteCount = 0;
-        for (int i = 0; i < value.size(); i++) {
-            byte b = value.byteAt(i);
+        final int len = value.size();
+        int i = 0;
+        while (i < len) {
+            if (i < len - 7) {
+                final long word = value.longAt(i);
+                final long zeroBytesWord = SwarUtils.markZeroBytes(word ^ DOUBLE_QUOTE_WORD);
+                if (zeroBytesWord == 0) {
+                    // fast path for no double quotes in consequent 8 bytes
+                    quoteCount = 0;
+                    utf8Sink.putAny8(word);
+                    i += 8;
+                    continue;
+                }
+            }
+
+            byte b = value.byteAt(i++);
             if (b == DOUBLE_QUOTE) {
                 if (quoteCount++ % 2 == 0) {
-                    utf8Sink.putAny(b);
+                    utf8Sink.putAny(DOUBLE_QUOTE);
                 }
             } else {
                 quoteCount = 0;

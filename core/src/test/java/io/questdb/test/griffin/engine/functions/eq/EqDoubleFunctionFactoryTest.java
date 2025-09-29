@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.eq;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -197,7 +198,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
         args.add(DoubleConstant.NULL);
-        args.add(new TimestampConstant(20000L));
+        args.add(new TimestampConstant(20000L, ColumnType.TIMESTAMP_MICRO));
 
         IntList argPositions = new IntList();
         argPositions.add(2);
@@ -321,7 +322,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNTimestamp() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampConstant(20000L));
+        args.add(new TimestampConstant(20000L, ColumnType.TIMESTAMP_MICRO));
         args.add(DoubleConstant.NULL);
 
         IntList argPositions = new IntList();
@@ -336,7 +337,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testRightNaNTimestampNaN() throws SqlException {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
-        args.add(new TimestampConstant(Numbers.LONG_NULL) {
+        args.add(new TimestampConstant(Numbers.LONG_NULL, ColumnType.TIMESTAMP_MICRO) {
             @Override
             public boolean isConstant() {
                 return false;

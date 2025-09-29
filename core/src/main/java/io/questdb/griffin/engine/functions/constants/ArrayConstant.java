@@ -49,13 +49,8 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
                 array.ofNull();
                 return;
             }
-            array.setType(type);
-            int nDims = arrayIn.getDimCount();
-            for (int dim = 0; dim < nDims; dim++) {
-                array.setDimLen(dim, arrayIn.getDimLen(dim));
-            }
-            array.applyShape();
-            arrayIn.appendToMemFlat(array.startMemoryA(), 0, arrayIn.getFlatViewLength());
+            MemoryA mem = array.copyShapeAndStartMemoryA(arrayIn);
+            arrayIn.appendToMemFlat(mem, 0, arrayIn.getFlatViewLength());
         } catch (Throwable th) {
             close();
             throw th;
@@ -131,7 +126,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     @Override
     public void toPlan(PlanSink sink) {
         StringSink strSink = new StringSink();
-        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayWriteState.INSTANCE, false);
+        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayWriteState.INSTANCE);
         sink.val("ARRAY" + strSink);
     }
 

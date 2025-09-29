@@ -48,7 +48,9 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
-            if (Chars.startsWith(value, '\'')) {
+            if (Chars.startsWith(value, '\'')
+                    && Chars.endsWith(value, '\'')
+                    && value.length() > 1) {
                 this.value = Chars.toString(value, 1, value.length() - 1);
             } else {
                 this.value = Chars.toString(value);

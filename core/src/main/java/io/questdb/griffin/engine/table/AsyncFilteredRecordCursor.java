@@ -130,23 +130,24 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            LOG.debug()
-                    .$("closing [shard=").$(frameSequence.getShard())
-                    .$(", frameIndex=").$(frameIndex)
-                    .$(", frameCount=").$(frameLimit)
-                    .$(", frameId=").$(frameSequence.getId())
-                    .$(", cursor=").$(cursor)
-                    .I$();
+            isOpen = false;
+            Misc.free(frameMemoryPool);
 
             if (frameSequence != null) {
+                LOG.debug()
+                        .$("closing [shard=").$(frameSequence.getShard())
+                        .$(", frameIndex=").$(frameIndex)
+                        .$(", frameCount=").$(frameLimit)
+                        .$(", frameId=").$(frameSequence.getId())
+                        .$(", cursor=").$(cursor)
+                        .I$();
+
                 collectCursor(true);
                 if (frameLimit > -1) {
                     frameSequence.await();
                 }
                 frameSequence.clear();
             }
-            Misc.free(frameMemoryPool);
-            isOpen = false;
         }
     }
 

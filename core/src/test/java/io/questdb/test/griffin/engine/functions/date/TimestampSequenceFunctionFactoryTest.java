@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
 import org.junit.BeforeClass;
@@ -34,6 +35,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
+        testNanoClock = StationaryNanosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -61,6 +63,49 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInitCallNano() throws Exception {
+        final String expected = "ts\n" +
+                "2021-04-25T00:00:00.000000000Z\n" +
+                "2021-04-25T00:00:00.300000000Z\n" +
+                "2021-04-25T00:00:00.600000000Z\n" +
+                "2021-04-25T00:00:01.100000000Z\n" +
+                "2021-04-25T00:00:01.800000000Z\n" +
+                "2021-04-25T00:00:02.000000000Z\n" +
+                "2021-04-25T00:00:02.600000000Z\n" +
+                "2021-04-25T00:00:02.900000000Z\n" +
+                "2021-04-25T00:00:03.300000000Z\n" +
+                "2021-04-25T00:00:03.800000000Z\n";
+
+        assertSql(
+                expected,
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         rnd_long(1,10,0) * 100000000L\n" +
+                        ") ts from long_sequence(10, 900, 800)"
+        );
+    }
+
+    @Test
+    public void testNanoTimestampSequenceWithZeroStartValue() throws Exception {
+        final String expected = "ac\tts\n" +
+                "1\t1970-01-01T00:00:00.000000000Z\n" +
+                "2\t1970-01-01T00:00:00.000001000Z\n" +
+                "3\t1970-01-01T00:00:00.000002000Z\n" +
+                "4\t1970-01-01T00:00:00.000003000Z\n" +
+                "5\t1970-01-01T00:00:00.000004000Z\n" +
+                "6\t1970-01-01T00:00:00.000005000Z\n" +
+                "7\t1970-01-01T00:00:00.000006000Z\n" +
+                "8\t1970-01-01T00:00:00.000007000Z\n" +
+                "9\t1970-01-01T00:00:00.000008000Z\n" +
+                "10\t1970-01-01T00:00:00.000009000Z\n";
+
+        assertSql(
+                expected,
+                "select x ac, timestamp_sequence(0::timestamp_ns, 1000) ts from long_sequence(10)"
+        );
+    }
+
+    @Test
     public void testStableProjection() throws Exception {
         // test that output of timestamp_sequence() does not change
         // within the same row.
@@ -68,7 +113,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
         allowFunctionMemoization();
 
-        final String expected = "ts\tdateadd\n" +
+        String expected = "ts\tdateadd\n" +
                 "2021-04-25T00:00:00.000000Z\t2021-04-25T01:00:00.000000Z\n" +
                 "2021-04-25T00:05:00.000000Z\t2021-04-25T01:05:00.000000Z\n" +
                 "2021-04-25T00:10:00.000000Z\t2021-04-25T01:10:00.000000Z\n" +
@@ -87,11 +132,31 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
                         "         300_000_000L\n" +
                         ") ts, dateadd('h', 1, ts) from long_sequence(10)"
         );
+
+        expected = "ts\tdateadd\n" +
+                "2021-04-25T00:00:00.000000000Z\t2021-04-25T01:00:00.000000000Z\n" +
+                "2021-04-25T00:05:00.000000000Z\t2021-04-25T01:05:00.000000000Z\n" +
+                "2021-04-25T00:10:00.000000000Z\t2021-04-25T01:10:00.000000000Z\n" +
+                "2021-04-25T00:15:00.000000000Z\t2021-04-25T01:15:00.000000000Z\n" +
+                "2021-04-25T00:20:00.000000000Z\t2021-04-25T01:20:00.000000000Z\n" +
+                "2021-04-25T00:25:00.000000000Z\t2021-04-25T01:25:00.000000000Z\n" +
+                "2021-04-25T00:30:00.000000000Z\t2021-04-25T01:30:00.000000000Z\n" +
+                "2021-04-25T00:35:00.000000000Z\t2021-04-25T01:35:00.000000000Z\n" +
+                "2021-04-25T00:40:00.000000000Z\t2021-04-25T01:40:00.000000000Z\n" +
+                "2021-04-25T00:45:00.000000000Z\t2021-04-25T01:45:00.000000000Z\n";
+
+        assertSql(
+                expected,
+                "SELECT timestamp_sequence(\n" +
+                        "         to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                        "         300_000_000_000L\n" +
+                        ") ts, dateadd('h', 1, ts) from long_sequence(10)"
+        );
     }
 
     @Test
     public void testTimestampSequenceWithSystimestampCall() throws Exception {
-        final String expected = "ac\tts\n" +
+        String expected = "ac\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:00.001000Z\n" +
                 "3\t1970-01-01T00:00:00.002000Z\n" +
@@ -106,6 +171,23 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
         assertSql(
                 expected,
                 "select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)"
+        );
+
+        expected = "ac\tts\n" +
+                "1\t1970-01-01T00:00:00.000000000Z\n" +
+                "2\t1970-01-01T00:00:00.000001000Z\n" +
+                "3\t1970-01-01T00:00:00.000002000Z\n" +
+                "4\t1970-01-01T00:00:00.000003000Z\n" +
+                "5\t1970-01-01T00:00:00.000004000Z\n" +
+                "6\t1970-01-01T00:00:00.000005000Z\n" +
+                "7\t1970-01-01T00:00:00.000006000Z\n" +
+                "8\t1970-01-01T00:00:00.000007000Z\n" +
+                "9\t1970-01-01T00:00:00.000008000Z\n" +
+                "10\t1970-01-01T00:00:00.000009000Z\n";
+
+        assertSql(
+                expected,
+                "select x ac, timestamp_sequence(systimestamp_ns(), 1000) ts from long_sequence(10)"
         );
     }
 

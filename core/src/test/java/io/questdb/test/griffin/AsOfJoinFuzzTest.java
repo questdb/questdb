@@ -25,22 +25,49 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
+@RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
+    private static final int RUN_N_PERMUTATIONS = 10;
+    private final TestTimestampType leftTableTimestampType;
+    private final TestTimestampType rightTableTimestampType;
+
+    public AsOfJoinFuzzTest(TestTimestampType leftTimestampType, TestTimestampType rightTimestampType) {
+        this.leftTableTimestampType = leftTimestampType;
+        this.rightTableTimestampType = rightTimestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}-{1}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO, TestTimestampType.MICRO}, {TestTimestampType.MICRO, TestTimestampType.NANO},
+                {TestTimestampType.NANO, TestTimestampType.MICRO}, {TestTimestampType.NANO, TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testFuzzManyDuplicates() throws Exception {
@@ -72,66 +99,68 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch0(Rnd rnd) throws Exception {
+    private void assertResultSetsMatch0(Rnd rnd, boolean symbolIndexCreated) {
         Object[][] allOpts = {
                 JoinType.values(),
-                {true, false}, // exercise interval intrinsics
+                NumIntervals.values(),
                 LimitType.values(),
                 {true, false}, // exercise filters
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
-                {true, false} // AVOID BINARY_SEARCH hint
+                {true, false}, // AVOID_BINARY_SEARCH hint
         };
 
-        Object[][] permutations;
+        final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
+        final Object[][] permutations;
         if (RUN_ALL_PERMUTATIONS) {
-            permutations = TestUtils.cartesianProduct(allOpts);
+            permutations = allPermutations;
         } else {
-            // to keep the test fast, we only run a single permutation at a time
-            permutations = new Object[1][allOpts.length];
-            for (int i = 0; i < allOpts.length; i++) {
-                Object[] opts = allOpts[i];
-                permutations[0][i] = opts[rnd.nextInt(opts.length)];
-            }
+            List<Object[]> allPermutationsList = Arrays.asList(allPermutations);
+            Collections.shuffle(allPermutationsList);
+            permutations = Arrays.copyOf(allPermutations, RUN_N_PERMUTATIONS);
         }
 
         for (int i = 0, n = permutations.length; i < n; i++) {
             Object[] params = permutations[i];
             JoinType joinType = (JoinType) params[0];
-            boolean exerciseIntervals = (boolean) params[1];
+            NumIntervals numIntervals = (NumIntervals) params[1];
             LimitType limitType = (LimitType) params[2];
             boolean exerciseFilters = (boolean) params[3];
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
             boolean avoidBinarySearchHint = (boolean) params[7];
+
+            String paramsMsg = "joinType=" + joinType +
+                    ", numIntervals=" + numIntervals +
+                    ", limitType=" + limitType +
+                    ", exerciseFilters=" + exerciseFilters +
+                    ", projectionType=" + projectionType +
+                    ", applyOuterProjection = " + applyOuterProjection +
+                    ", maxTolerance=" + maxTolerance +
+                    ", avoidBinarySearchHint=" + avoidBinarySearchHint +
+                    ", useSymbolIndex=" + symbolIndexCreated;
+            LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
-                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, applyOuterProjection, maxTolerance, avoidBinarySearchHint, rnd);
-            } catch (AssertionError e) {
-                throw new AssertionError("Failed with parameters: " +
-                        "joinType=" + joinType +
-                        ", exerciseIntervals=" + exerciseIntervals +
-                        ", limitType=" + limitType +
-                        ", exerciseFilters=" + exerciseFilters +
-                        ", projectionType=" + projectionType +
-                        ", applyOuterProjection = " + applyOuterProjection +
-                        ", maxTolerance=" + maxTolerance +
-                        ", avoidBinarySearchHint=" + avoidBinarySearchHint,
-                        e);
+                assertResultSetsMatch0(joinType, numIntervals, limitType, exerciseFilters, projectionType,
+                        applyOuterProjection, maxTolerance, avoidBinarySearchHint, symbolIndexCreated, rnd);
+            } catch (Throwable e) {
+                throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
         }
     }
 
     private void assertResultSetsMatch0(
             JoinType joinType,
-            boolean exerciseIntervals,
+            NumIntervals numIntervalsOpt,
             LimitType limitType,
             boolean exerciseFilters,
             ProjectionType projectionType,
             boolean applyOuterProjection,
             long maxTolerance,
             boolean avoidBinarySearchHint,
+            boolean symbolIndexCreated,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -141,10 +170,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 join = " ASOF";
                 onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
                 break;
-            case ASOF_NONKEYD:
+            case ASOF_NONKEYED:
                 join = " ASOF";
                 break;
-            case LT_NONKEYD:
+            case LT_NONKEYED:
                 join = " LT";
                 break;
             case LT:
@@ -155,17 +184,19 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
-        long toleranceSeconds = 0;
+        final long toleranceSeconds;
         if (maxTolerance != -1) {
             toleranceSeconds = rnd.nextLong(maxTolerance) + 1;
             onSuffix += " tolerance " + toleranceSeconds + "s ";
+        } else {
+            toleranceSeconds = 0;
         }
 
         StringSink filter = new StringSink();
-        if (exerciseIntervals) {
-            int n = rnd.nextInt(5) + 1;
-            long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            for (int i = 0; i < n; i++) {
+        if (numIntervalsOpt != NumIntervals.ZERO) {
+            final int numIntervals = (numIntervalsOpt == NumIntervals.ONE) ? 1 : rnd.nextInt(4) + 2;
+            long baseTs = MicrosFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            for (int i = 0; i < numIntervals; i++) {
                 if (i == 0) {
                     filter.put(" where ts between '");
                 } else {
@@ -173,18 +204,18 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 }
                 int startDays = rnd.nextInt(10 * (i + 1));
                 int endDays = startDays + rnd.nextInt(100) + 1;
-                long tsStart = baseTs + Timestamps.DAY_MICROS * startDays;
-                long tsEnd = baseTs + Timestamps.DAY_MICROS * endDays;
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsStart);
+                long tsStart = baseTs + Micros.DAY_MICROS * startDays;
+                long tsEnd = baseTs + Micros.DAY_MICROS * endDays;
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsStart);
                 filter.put("' and '");
-                TimestampFormatUtils.appendDateTimeUSec(filter, tsEnd);
+                MicrosFormatUtils.appendDateTimeUSec(filter, tsEnd);
                 filter.put("'");
             }
         }
         if (exerciseFilters) {
             int n = rnd.nextInt(5) + 1;
             for (int i = 0; i < n; i++) {
-                if (i == 0 && !exerciseIntervals) {
+                if (i == 0 && numIntervalsOpt == NumIntervals.ZERO) {
                     filter.put("where i != ");
                 } else {
                     filter.put(" and i != ");
@@ -197,7 +228,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             filter.put(" and s = 's_0' ");
         }
 
-        String projection = "";
+        String projection;
         // (ts TIMESTAMP, i INT, s SYMBOL)
         String slaveTimestampColumnName = "ts1";
         switch (projectionType) {
@@ -241,12 +272,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             switch (joinType) {
                 case ASOF:
                     // intentional fallthrough
-                case ASOF_NONKEYD:
+                case ASOF_NONKEYED:
                     hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
                     break;
                 case LT:
                     // intentional fallthrough
-                case LT_NONKEYD:
+                case LT_NONKEYED:
                     hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
                     break;
                 default:
@@ -276,10 +307,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql("EXPLAIN " + query, false);
         if (avoidBinarySearchHint) {
+            TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
-        } else if (joinType == JoinType.ASOF_NONKEYD || (joinType == JoinType.ASOF && projectionType == ProjectionType.NONE && !exerciseFilters && !exerciseIntervals)) {
+        } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+        } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
+            TestUtils.assertContains(sink, "AsOf Join " + (symbolIndexCreated ? "Indexed" : "Fast") + " Scan");
         }
 
         final StringSink actualSink = new StringSink();
@@ -290,19 +324,23 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         if (slaveTimestampColumnName != null) {
             try (RecordCursorFactory factory = select(query);
-                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
                 Record record = cursor.getRecord();
                 RecordMetadata metadata = factory.getMetadata();
                 int masterColIndex = metadata.getColumnIndex("ts");
                 int slaveColIndex = metadata.getColumnIndex(slaveTimestampColumnName);
+                TimestampDriver masterTimestampDriver = ColumnType.getTimestampDriver(metadata.getColumnType(masterColIndex));
+                TimestampDriver slaveTimestampDriver = ColumnType.getTimestampDriver(metadata.getColumnType(slaveColIndex));
+
                 while (cursor.hasNext()) {
-                    long masterTimestamp = record.getTimestamp(masterColIndex);
-                    long slaveTimestamp = record.getTimestamp(slaveColIndex);
+                    long masterTimestamp = masterTimestampDriver.toMicros(record.getTimestamp(masterColIndex));
+                    long slaveTimestamp = slaveTimestampDriver.toMicros(record.getTimestamp(slaveColIndex));
                     Assert.assertTrue(slaveTimestamp <= masterTimestamp);
 
                     if (maxTolerance != -1 && slaveTimestamp != Numbers.LONG_NULL) {
-                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Timestamps.SECOND_MICROS);
-                        Assert.assertTrue("Slave timestamp " + Timestamps.toString(slaveTimestamp) + " is less than minimum allowed " + Timestamps.toString(masterTimestamp),
+                        long minSlaveTimestamp = masterTimestamp - (toleranceSeconds * Micros.SECOND_MICROS);
+                        Assert.assertTrue("Slave timestamp " + Micros.toString(slaveTimestamp) + " is less than minimum allowed " + Micros.toString(masterTimestamp),
                                 slaveTimestamp >= minSlaveTimestamp);
                     }
                 }
@@ -318,29 +356,35 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal", leftTableTimestampType.getTypeName());
+            long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
+            boolean useSymbolIndex = rnd.nextBoolean();
+            String index = useSymbolIndex ? " INDEX" : "";
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts) partition by day bypass wal",
+                    rightTableTimestampType.getTypeName());
+            ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd);
+            assertResultSetsMatch0(rnd, useSymbolIndex);
         });
     }
 
@@ -350,40 +394,50 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
+            final TimestampDriver leftTimestampDriver = leftTableTimestampType.getDriver();
+            executeWithRewriteTimestamp("CREATE TABLE t1 (ts #TIMESTAMP, i INT, s SYMBOL) timestamp(ts)", leftTableTimestampType.getTypeName());
+            long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
+            boolean useSymbolIndex = rnd.nextBoolean();
+            String index = useSymbolIndex ? " INDEX" : "";
+            final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts)",
+                    rightTableTimestampType.getTypeName());
+            ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
+            ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
             for (int i = 0; i < table2Size; i++) {
                 if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
+                    ts += rightTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd);
+            assertResultSetsMatch0(rnd, useSymbolIndex);
         });
     }
 
     private enum JoinType {
-        ASOF, ASOF_NONKEYD, LT_NONKEYD, LT
+        ASOF, ASOF_NONKEYED, LT_NONKEYED, LT
     }
 
     private enum LimitType {
         NO_LIMIT,
         POSITIVE_LIMIT,
         NEGATIVE_LIMIT
+    }
+
+    private enum NumIntervals {
+        ZERO, ONE, MANY
     }
 
     private enum ProjectionType {

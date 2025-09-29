@@ -33,20 +33,27 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastLongToTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "cast(Ln)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function var = args.getQuick(0);
-        return new CastLongToTimestampFunction(var);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0), args.getQuick(1).getType());
     }
 
-    public static class CastLongToTimestampFunction extends AbstractCastToTimestampFunction {
-        public CastLongToTimestampFunction(Function arg) {
-            super(arg);
+    public static class Func extends AbstractCastToTimestampFunction {
+
+        public Func(Function arg, int timestampType) {
+            super(arg, timestampType);
         }
 
         @Override

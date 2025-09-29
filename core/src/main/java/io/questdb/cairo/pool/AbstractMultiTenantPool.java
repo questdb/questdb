@@ -178,7 +178,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
 
         notifyListener(thread, tableToken, PoolListener.EV_UNLOCKED, -1, -1);
-        LOG.debug().$("unlocked [table=`").$(tableToken).I$();
+        LOG.debug().$("unlocked [table=").$(tableToken).I$();
     }
 
     private void checkClosed() {

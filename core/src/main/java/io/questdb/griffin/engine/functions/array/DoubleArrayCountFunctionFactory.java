@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCountFunctionFactory implements FunctionFactory {
@@ -49,31 +50,12 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    static class Func extends IntFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+    static class Func extends IntFunction implements UnaryFunction {
 
         private final Function arrayArg;
-        private int count;
 
         Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
-                count++;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            count = view.flatView().countDouble(view.getFlatViewOffset(), view.getFlatViewLength());
-        }
-
-        @Override
-        public void applyToNullArray() {
-
         }
 
         @Override
@@ -84,9 +66,12 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             ArrayView arr = arrayArg.getArray(rec);
-            count = 0;
-            calculate(arr);
-            return count;
+            if (arr.isNull()) {
+                return 0;
+            } else if (arr.isVanilla()) {
+                return arr.flatView().countDouble(arr.getFlatViewOffset(), arr.getFlatViewLength());
+            }
+            return calculateRecursive(arr, 0, 0, 0);
         }
 
         @Override
@@ -97,6 +82,27 @@ public class DoubleArrayCountFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private static int calculateRecursive(ArrayView view, int dim, int flatIndex, int count) {
+            final int len = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < len; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        count++;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < len; i++) {
+                    count = calculateRecursive(view, dim + 1, flatIndex, count);
+                    flatIndex += stride;
+                }
+            }
+            return count;
         }
     }
 }

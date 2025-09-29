@@ -165,7 +165,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                 "select t1.id, t1.val as val1, t2.val as val2, t1.val + t2.val as sum " +
                         "from t1 inner join t2 on t1.id = t2.id",
                 false,
-                true
+                false
         );
     }
 
@@ -188,7 +188,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
                         " o.amount + tax as total" +
                         " from orders o join customers c on o.id = c.id",
                 false,
-                true
+                false
         );
     }
 

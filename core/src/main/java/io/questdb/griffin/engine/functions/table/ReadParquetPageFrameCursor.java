@@ -100,12 +100,17 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public boolean isExternal() {
+        return true;
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return null;
     }
 
     @Override
-    public @Nullable PageFrame next() {
+    public @Nullable PageFrame next(long skipTarget) {
         final int rowGroupIndex = ++frame.rowGroupIndex;
         if (rowGroupIndex < rowGroupCount) {
             frame.rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);

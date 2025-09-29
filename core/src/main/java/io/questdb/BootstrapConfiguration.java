@@ -25,7 +25,7 @@
 package io.questdb;
 
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 
 import java.util.Map;
 

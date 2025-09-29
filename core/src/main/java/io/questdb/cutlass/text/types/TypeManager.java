@@ -33,6 +33,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.MicrosFormatFactory;
+import io.questdb.std.datetime.nanotime.NanosFormatFactory;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 
@@ -75,16 +77,30 @@ public class TypeManager implements Mutable {
         }
 
         final ObjList<DateFormat> timestampFormats = inputFormatConfiguration.getTimestampFormats();
+        final ObjList<String> timestampPatterns = inputFormatConfiguration.getTimestampPatterns();
         final ObjList<DateLocale> timestampLocales = inputFormatConfiguration.getTimestampLocales();
         final IntList timestampUtf8Flags = inputFormatConfiguration.getTimestampUtf8Flags();
         for (int i = 0, n = timestampFormats.size(); i < n; i++) {
             if (timestampUtf8Flags.getQuick(i) == 1) {
-                probes.add(new TimestampUtf8Adapter(utf16Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampUtf8Adapter(utf16Sink).of(timestampFormats.getQuick(i), timestampLocales.getQuick(i), timestampPatterns.getQuick(i)));
             } else {
-                probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i)));
+                probes.add(new TimestampAdapter().of(timestampFormats.getQuick(i), timestampLocales.getQuick(i), timestampPatterns.getQuick(i)));
             }
         }
         this.probeCount = probes.size();
+    }
+
+    /**
+     * Adaptively selects the appropriate timestamp format factory based on the precision
+     * requirements detected in the input pattern.
+     */
+    public static DateFormat adaptiveGetTimestampFormat(CharSequence pattern) {
+        boolean requiresNanoseconds = requiresNanosecondPrecision(pattern);
+        if (requiresNanoseconds) {
+            return NanosFormatFactory.INSTANCE.get(pattern);
+        } else {
+            return MicrosFormatFactory.INSTANCE.get(pattern);
+        }
     }
 
     @Override
@@ -161,16 +177,47 @@ public class TypeManager implements Mutable {
         return indexed ? indexedSymbolAdapter : notIndexedSymbolAdapter;
     }
 
-    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale) {
+    public TypeAdapter nextTimestampAdapter(boolean decodeUtf8, DateFormat format, DateLocale locale, String pattern) {
         if (decodeUtf8) {
             TimestampUtf8Adapter adapter = timestampUtf8AdapterPool.next();
-            adapter.of(format, locale);
+            adapter.of(format, locale, pattern);
             return adapter;
         }
 
         TimestampAdapter adapter = timestampAdapterPool.next();
-        adapter.of(format, locale);
+        adapter.of(format, locale, pattern);
         return adapter;
+    }
+
+    private static boolean requiresNanosecondPrecision(CharSequence pattern) {
+        if (pattern == null) {
+            return false;
+        }
+
+        for (int i = 0, n = pattern.length(); i < n; i++) {
+            char c = pattern.charAt(i);
+
+            if (c == 'N') {
+                // N+
+                if (i + 1 < n && pattern.charAt(i + 1) == '+') {
+                    return true;
+                }
+
+                int nCount = 1;
+                while (i + nCount < n && pattern.charAt(i + nCount) == 'N') {
+                    nCount++;
+                }
+
+                // Only N and NNN are valid nanos patterns
+                if (nCount == 1 || nCount == 3) {
+                    return true;
+                }
+
+                i += nCount - 1;
+            }
+        }
+
+        return false;
     }
 
     private void addDefaultProbes() {

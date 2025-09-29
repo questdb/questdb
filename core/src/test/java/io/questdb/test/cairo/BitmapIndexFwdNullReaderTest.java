@@ -31,7 +31,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitmapIndexFwdNullReaderTest {
-    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader();
+    private static final BitmapIndexFwdNullReader reader = new BitmapIndexFwdNullReader(-1, -1);
 
     @Test
     public void testAlwaysOpen() {
@@ -69,7 +69,7 @@ public class BitmapIndexFwdNullReaderTest {
         Assert.assertEquals(0, reader.getKeyMemorySize());
         Assert.assertEquals(0, reader.getValueBaseAddress());
         Assert.assertEquals(0, reader.getValueMemorySize());
-        Assert.assertEquals(0, reader.getUnIndexedNullCount());
+        Assert.assertEquals(0, reader.getColumnTop());
         Assert.assertEquals(0, reader.getValueBlockCapacity());
     }
 }

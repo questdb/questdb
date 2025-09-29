@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
@@ -54,9 +55,10 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), configuration);
     }
 
-    private static class Func extends ArrayFunction implements DoubleUnaryArrayAccessor, UnaryFunction {
+    private static class Func extends ArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
+        private double compensation = 0d;
         private double currentSum;
         private MemoryA memory;
 
@@ -64,31 +66,6 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
             this.arrayArg = arrayArg;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
             this.array = new DirectArray(configuration);
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
-                currentSum += v;
-            }
-            memory.putDouble(currentSum);
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                double v = flatView.getDoubleAtAbsIndex(i);
-                if (!Double.isNaN(v)) {
-                    currentSum += v;
-                }
-                memory.putDouble(currentSum);
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
         }
 
         @Override
@@ -110,12 +87,30 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
                 return array;
             }
 
-            currentSum = 0d;
+            currentSum = Double.NaN;
+            compensation = 0d;
             array.setType(getType());
             array.setDimLen(0, arr.getCardinality());
             array.applyShape();
             memory = array.startMemoryA();
-            calculate(arr);
+            if (arr.isNull()) {
+                array.ofNull();
+            } else if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    accumulate(flatView.getDoubleAtAbsIndex(i));
+                }
+                if (compensation == 0d && Numbers.isNull(currentSum)) {
+                    // no non-null values so return null
+                    array.ofNull();
+                }
+            } else {
+                calculateRecursive(arr, 0, 0);
+            }
+            if (compensation == 0d && Numbers.isNull(currentSum)) {
+                // no non-null values so return null
+                array.ofNull();
+            }
             return array;
         }
 
@@ -128,6 +123,35 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
-    }
 
+        private void accumulate(double v) {
+            if (Numbers.isFinite(v)) {
+                if (compensation == 0d && Numbers.isNull(currentSum)) {
+                    currentSum = 0d;
+                }
+                final double y = v - compensation;
+                final double t = currentSum + y;
+                compensation = t - currentSum - y;
+                currentSum = t;
+            }
+            memory.putDouble(currentSum);
+        }
+
+        private void calculateRecursive(ArrayView view, int dim, int flatIndex) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    accumulate(view.getDouble(flatIndex));
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    calculateRecursive(view, dim + 1, flatIndex);
+                    flatIndex += stride;
+                }
+            }
+        }
+    }
 }

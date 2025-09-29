@@ -142,7 +142,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    from long_sequence(10)) timestamp (ts)",
                 expected,
                 true,
-                true,
+                false,
                 false
         );
     }
@@ -1486,7 +1486,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    from long_sequence(100)) timestamp (ts)",
                 expected,
                 true,
-                true,
+                false,
                 false
         );
     }

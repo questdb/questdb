@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -88,6 +89,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private String timestampColumnName;
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
+    private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
     private boolean walEnabled;
@@ -526,16 +528,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         columnBits.clear();
         if (timestampColumnName == null) {
             timestampIndex = metadata.getTimestampIndex();
+            timestampType = metadata.getTimestampType();
         } else {
             timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
             if (timestampIndex == -1) {
                 throw SqlException.position(timestampColumnNamePosition)
                         .put("designated timestamp column doesn't exist [name=").put(timestampColumnName).put(']');
             }
-            int timestampColType = metadata.getColumnType(timestampIndex);
-            if (timestampColType != ColumnType.TIMESTAMP) {
+            timestampType = metadata.getColumnType(timestampIndex);
+            if (!ColumnType.isTimestamp(timestampType)) {
                 throw SqlException.position(timestampColumnNamePosition)
-                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
         }
         ObjList<CharSequence> castColNames = colNameToCastClausePos.keys();
@@ -569,6 +572,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final String columnName = metadata.getColumnName(i);
             final TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
+            if (!TableUtils.isValidColumnName(columnName, 255)) {
+                throw SqlException.position(tableNamePosition)
+                        .put("invalid column name [name=")
+                        .put(columnName)
+                        .put(", position=")
+                        .put(i)
+                        .put(']');
+            }
 
             int columnType;
             int symbolCapacity;
@@ -668,5 +679,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     int getTimestampColumnNamePosition() {
         return timestampColumnNamePosition;
+    }
+
+    int getTimestampType() {
+        return timestampType;
     }
 }

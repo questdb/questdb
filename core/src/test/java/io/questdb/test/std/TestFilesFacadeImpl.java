@@ -78,7 +78,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public long openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, int opts) {
         long fd = super.openRW(name, opts);
         track(name, fd);
         return fd;

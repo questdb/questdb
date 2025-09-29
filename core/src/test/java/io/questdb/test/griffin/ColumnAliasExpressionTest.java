@@ -169,6 +169,30 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectArray() throws Exception {
+        assertGeneratedColumnEqual(
+                "ARRAY[1, 2, 3]\n[1.0,2.0,3.0]\n",
+                "select array[1, 2, 3]",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "ARRAY[1, 2]\n[1.0,2.0]\n",
+                "select array[1, 2]",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "ARRAY[1]\n[1.0]\n",
+                "select array[1]",
+                0
+        );
+        assertGeneratedColumnEqual(
+                "ARRAY[ARRAY[1]]\n[[1.0]]\n",
+                "select array[array[1]]",
+                0
+        );
+    }
+
+    @Test
     public void testCase() throws Exception {
         assertGeneratedColumnEqual(
                 "case when a >= 0 then 'positive' else 'negative' end\n",

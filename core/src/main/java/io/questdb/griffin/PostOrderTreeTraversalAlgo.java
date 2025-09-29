@@ -24,12 +24,15 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntStack;
+import io.questdb.std.Mutable;
 
 import java.util.ArrayDeque;
 
-public final class PostOrderTreeTraversalAlgo {
+public final class PostOrderTreeTraversalAlgo implements Mutable {
+    private static final int CYCLICAL_AST_LIMIT = 1_000_000;
     private final IntStack backupDepth = new IntStack();
     private final IntStack indexStack = new IntStack();
     private final IntStack indexStackBackup = new IntStack();
@@ -40,16 +43,27 @@ public final class PostOrderTreeTraversalAlgo {
         int size = stack.size();
         backupDepth.push(size);
         for (int i = 0; i < size; i++) {
-            stackBackup.push(stack.poll());
+            stackBackup.push(stack.pop());
             indexStackBackup.push(indexStack.pop());
         }
     }
 
+    @Override
+    public void clear() {
+        backupDepth.clear();
+        indexStack.clear();
+        indexStackBackup.clear();
+        stack.clear();
+        stackBackup.clear();
+    }
+
     public void restore() {
+        stack.clear();
+        indexStack.clear();
         if (backupDepth.size() > 0) {
             int size = backupDepth.pop();
             for (int i = 0; i < size; i++) {
-                stack.push(stackBackup.poll());
+                stack.push(stackBackup.pop());
                 indexStack.push(indexStackBackup.pop());
             }
         }
@@ -66,7 +80,11 @@ public final class PostOrderTreeTraversalAlgo {
             // When paramCount < 3, we are relying on rhs (index 0) and lhs (index 1) to store the node parameters.
             indexStack.clear();
 
+            int limit = CYCLICAL_AST_LIMIT;
             while (!stack.isEmpty() || node != null) {
+                if (limit-- <= 0) {
+                    throw CairoException.nonCritical().put("detected a recursive expression AST");
+                }
                 if (node != null) {
                     if (!visitor.descend(node)) {
                         node = null;

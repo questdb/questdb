@@ -94,7 +94,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Long top K");
+        sink.type("Long Top K");
         sink.meta("lo").val(lo);
         sink.attr("keys").val('[');
         sink.putBaseColumnName(columnIndex);

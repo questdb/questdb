@@ -36,18 +36,18 @@ public class WalMetrics implements Mutable {
     private final LongGauge applyRowsWriteRateGauge;
     private final Counter applyRowsWrittenCounter;
     private final Counter rowsWrittenCounter;
-    private final Counter seqTxnCounter;
+    private final LongGauge seqTxnGauge;
     private final AtomicLong totalRowsWritten = new AtomicLong();
     private final AtomicLong totalRowsWrittenTotalTime = new AtomicLong();
-    private final Counter writerTxnCounter;
+    private final LongGauge writerTxnGauge;
 
     public WalMetrics(MetricsRegistry metricsRegistry) {
         this.applyPhysicallyWrittenRowsCounter = metricsRegistry.newCounter("wal_apply_physically_written_rows");
         this.applyRowsWriteRateGauge = metricsRegistry.newLongGauge("wal_apply_rows_per_second");
         this.applyRowsWrittenCounter = metricsRegistry.newCounter("wal_apply_written_rows");
         this.rowsWrittenCounter = metricsRegistry.newCounter("wal_written_rows");
-        this.seqTxnCounter = metricsRegistry.newCounter("wal_apply_seq_txn");
-        this.writerTxnCounter = metricsRegistry.newCounter("wal_apply_writer_txn");
+        this.seqTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_seq_txn");
+        this.writerTxnGauge = metricsRegistry.newAtomicLongGauge("wal_apply_writer_txn");
     }
 
     public void addApplyRowsWritten(long rows, long physicallyWrittenRows, long timeMicros) {
@@ -64,11 +64,11 @@ public class WalMetrics implements Mutable {
     }
 
     public void addSeqTxn(long txnDelta) {
-        seqTxnCounter.add(txnDelta);
+        seqTxnGauge.add(txnDelta);
     }
 
     public void addWriterTxn(long txnDelta) {
-        writerTxnCounter.add(txnDelta);
+        writerTxnGauge.add(txnDelta);
     }
 
     @Override
@@ -77,9 +77,9 @@ public class WalMetrics implements Mutable {
         applyRowsWriteRateGauge.setValue(0);
         applyRowsWrittenCounter.reset();
         rowsWrittenCounter.reset();
-        seqTxnCounter.reset();
+        seqTxnGauge.setValue(0);
         totalRowsWritten.set(0);
         totalRowsWrittenTotalTime.set(0);
-        writerTxnCounter.reset();
+        writerTxnGauge.setValue(0);
     }
 }

@@ -50,7 +50,7 @@ public final class NullArrayConstant extends ArrayFunction implements ConstantFu
     @Override
     public void toPlan(PlanSink sink) {
         StringSink strSink = new StringSink();
-        ArrayTypeDriver.arrayToJson(ArrayConstant.NULL, strSink, NoopArrayWriteState.INSTANCE, false);
+        ArrayTypeDriver.arrayToJson(ArrayConstant.NULL, strSink, NoopArrayWriteState.INSTANCE);
         sink.val("ARRAY" + strSink);
     }
 }

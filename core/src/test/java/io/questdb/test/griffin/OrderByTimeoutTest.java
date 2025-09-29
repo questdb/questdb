@@ -41,8 +41,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class OrderByTimeoutTest extends AbstractCairoTest {
-
-    public static int breakConnection = -1;
+    private static int breakConnection = -1;
 
     @Before
     public void setUp() {
@@ -104,12 +103,18 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day;"
             );
 
-            // this test somehow used to rely on code calling "getClock()" to decrement the breakLimit
-            // clock is cached and relying on it is not a good idea.
+            // This test somehow used to rely on code calling "getClock()" to decrement the breakLimit.
+            // The clock is cached and relying on it is not a good idea.
             // We should select more rows than max value of the break limit.
             int breakTestLimit = 20;
-            String sql = "select * from trips  order by b desc limit 30";
-            testSql(breakTestLimit, sql);
+            String sql = "select * from trips order by b desc limit 30";
+            final boolean oldParallelTopKEnabled = sqlExecutionContext.isParallelTopKEnabled();
+            sqlExecutionContext.setParallelTopKEnabled(false);
+            try {
+                testSql(breakTestLimit, sql);
+            } finally {
+                sqlExecutionContext.setParallelTopKEnabled(oldParallelTopKEnabled);
+            }
         });
     }
 

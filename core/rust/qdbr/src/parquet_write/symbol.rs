@@ -1,8 +1,8 @@
-use super::util::BinaryMaxMin;
+use super::util::BinaryMaxMinStats;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util::{build_plain_page, encode_primitive_def_levels, ExactSizedIter};
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
@@ -67,7 +67,7 @@ fn encode_symbols_dict<'a>(
     column_vals: &'a [i32], // The QuestDB symbol column indices (i.e. numeric values).
     offsets: &'a [u64],     // Memory-mapped offsets into the QuestDB global symbol table.
     chars: &'a [u8], // Memory-mapped global symbol table. Sequence of 4-code-unit-len-prefixed utf16 strings.
-    stats: &'a mut BinaryMaxMin,
+    stats: &'a mut BinaryMaxMinStats,
 ) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
     let local_keys = column_vals
         .iter()
@@ -183,21 +183,21 @@ pub fn symbol_to_pages(
         }
     });
     let mut data_buffer = vec![];
-    encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
+    encode_primitive_def_levels(&mut data_buffer, deflevels_iter, num_rows, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
         encode_symbols_dict(column_values, offsets, chars, &mut stats)
             .context("could not write symbols dict map page")?;
-    let bits_per_key = util::get_bit_width(max_key as u64);
+    let bits_per_key = util::bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;
     let keys = ExactSizedIter::new(keys, non_null_len);
     // bits_per_key as a single byte...
     data_buffer.push(bits_per_key);
     // followed by the encoded keys.
-    encode_u32(&mut data_buffer, keys, bits_per_key as u32)?;
+    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
 
     let data_page = build_plain_page(
         data_buffer,

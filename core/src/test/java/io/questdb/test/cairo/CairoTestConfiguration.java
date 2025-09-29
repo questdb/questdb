@@ -35,9 +35,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
 import io.questdb.std.RostiAllocFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -121,12 +121,14 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public @NotNull MillisecondClock getMillisecondClock() {
-        return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() / 1000L;
     }
 
     @Override
-    public @NotNull NanosecondClock getNanosecondClock() {
-        return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
+    public NanosecondClock getNanosecondClock() {
+        MicrosecondClock microsecondClock = overrides.getTestMicrosClock();
+        return () -> microsecondClock.getTicks() * 1000L;
     }
 
     @Override

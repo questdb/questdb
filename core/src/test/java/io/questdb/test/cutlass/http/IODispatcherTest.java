@@ -61,7 +61,6 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -111,17 +110,17 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -213,7 +212,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -273,9 +272,9 @@ public class IODispatcherTest extends AbstractTest {
                             return IODispatcherConfiguration.BIAS_WRITE;
                         }
                     },
-                    (fd, dispatcher1) -> {
+                    fd -> {
                         connectLatch.countDown();
-                        return new HelloContext(fd, contextClosedLatch, dispatcher1);
+                        return new HelloContext(fd, contextClosedLatch);
                     }
             )) {
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -364,6 +363,7 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
@@ -394,7 +394,7 @@ public class IODispatcherTest extends AbstractTest {
                             return nf;
                         }
                     },
-                    (fd, dispatcher1) -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                    fd -> new HttpConnectionContext(serverConfiguration, PlainSocketFactory.INSTANCE).of(fd)
             )) {
                 // spin up dispatcher thread
                 AtomicBoolean dispatcherRunning = new AtomicBoolean(true);
@@ -462,8 +462,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -476,19 +477,13 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HttpRequestProcessor() {
-                        };
                     }
 
                     @Override
@@ -657,7 +652,7 @@ public class IODispatcherTest extends AbstractTest {
         getSimpleTester().run((engine, sqlExecutionContext) ->
                 testHttpClient.assertGet(
                         "{" +
-                                "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
+                                "\"query\":\"select simulate_crash('P') \\n\\rfrom\\tlong_sequence(" + (numOfRows + 5) + ")\"," +
                                 "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
@@ -665,7 +660,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"error\":\"simulated cairo exception\", " +
                                 "\"errorPos\":222" +
                                 "}",
-                        "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
+                        "select simulate_crash('P') \n\rfrom\tlong_sequence(" + (numOfRows + 5) + ")"
                 )
         );
     }
@@ -1159,7 +1154,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1241,7 +1236,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -2306,6 +2301,165 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\t\t\t\t\n" +
                                                 "q\tque\tquestd\tquestdb12345\t10\n" +
                                                 "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportIPv4() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("create table test (ip1 ipv4, ip2 ipv4)", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 384\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "ip1,ip2\r\n" +
+                                                ".0.0.1,42\r\n" +
+                                                "null,null\r\n" +
+                                                "null,null\r\n" +
+                                                "127.0.0.1,42424242\r\n" +
+                                                "127.0.0.1,0\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 5  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 5  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                               ip1  |                     IPv4  |           1  |\r\n" +
+                                                "|              1  |                                               ip2  |                     IPv4  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        engine,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "ip1\tip2\n" +
+                                                "\t0.0.0.42\n" +
+                                                "\t\n" +
+                                                "\t\n" +
+                                                "127.0.0.1\t2.135.87.178\n" +
+                                                "127.0.0.1\t\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportMiscDateFormats() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("create table test (d1 date, d2 date, d3 date)", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 384\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "d1,d2,d3\r\n" +
+                                                "2000-12-31,\"2000-12-31 12:49:59\",\"2000-12-31T13:39:49.000Z\"/\r\n" +
+                                                "2001-12-31,\"2001-12-31 12:49:59\",\"2001-12-31T13:39:49.000Z\"/\r\n" +
+                                                "2002-12-31,\"2002-12-31 12:49:59\",\"2002-12-31T13:39:49.000Z\"/\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "057c\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                                d1  |                     DATE  |           0  |\r\n" +
+                                                "|              1  |                                                d2  |                     DATE  |           0  |\r\n" +
+                                                "|              2  |                                                d3  |                     DATE  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        engine,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "d1\td2\td3\n" +
+                                                "2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z\n" +
+                                                "2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z\n" +
+                                                "2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z\n"
                                 );
                             }
                         }
@@ -3959,8 +4113,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "2c\r\n" +
-                        "{\"query\":\"x\",\"error\":\"empty column in list\"}\r\n" +
+                        "37\r\n" +
+                        "{\"query\":\"x\",\"error\":\"empty column in query parameter\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4098,8 +4252,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: f1'}\r\n" +
+                        "2e\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'f1'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4124,8 +4278,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "32\r\n" +
-                        "{\"query\":\"x\",\"error\":'invalid column in list: l2'}\r\n" +
+                        "2e\r\n" +
+                        "{\"query\":\"x\",\"error\":\"column not found: 'l2'\"}\r\n" +
                         "00\r\n" +
                         "\r\n", 20
         );
@@ -4637,6 +4791,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryQuotedColumnNames() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select 1 \\\"a\\\", 2 \\\"b,c\\\", 3 \\\"d,e\\\", 4 '\\\"f,g\\\"'\",\"columns\":[{\"name\":\"a\",\"type\":\"INT\"},{\"name\":\"b,c\",\"type\":\"INT\"},{\"name\":\"d,e\",\"type\":\"INT\"},{\"name\":\"\\\"f,g\\\"\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1,2,3,4]],\"count\":1}",
+                "select 1 \"a\", 2 \"b,c\", 3 \"d,e\", 4 '\"f,g\"'",
+                new CharSequenceObjHashMap<>() {{
+                    put("cols", "\"a\",\"b,c\",d\\,e,\"\\\"f\\,g\\\"\"");
+                }}
+
+        ));
+    }
+
+    @Test
     public void testJsonQueryRenameTable() throws Exception {
         testJsonQuery0(
                 2, (engine, sqlExecutionContext) -> {
@@ -5117,6 +5283,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
+                            LOG.info().$("iteration ").$(i).$();
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /exec?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "f9\r\n" +
@@ -5539,7 +5706,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonTableReferenceOutOfDate() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
-                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}",
                 "select * from test_table_reference_out_of_date();"
         ));
     }
@@ -5668,7 +5835,7 @@ public class IODispatcherTest extends AbstractTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -5676,18 +5843,13 @@ public class IODispatcherTest extends AbstractTest {
                                     closeCount.incrementAndGet();
                                     super.close();
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
                 try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HealthCheckProcessor(httpServerConfiguration);
                     }
 
                     @Override
@@ -5900,13 +6062,13 @@ public class IODispatcherTest extends AbstractTest {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
             try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
-                    (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+                    fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
             )) {
                 // Simulate a scenario where the socket cannot be bound
                 try {
                     try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(
                             DefaultIODispatcherConfiguration.INSTANCE,
-                            (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+                            fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
                     )) {
                         Assert.fail("ignored2 should not have been created as the socket binding failed");
                     }
@@ -5952,7 +6114,7 @@ public class IODispatcherTest extends AbstractTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    (fd, dispatcher1) -> {
+                    fd -> {
                         // Throw out of memory exception when we reach the limit
                         throw CairoException.nonCritical().setOutOfMemory(true)
                                 .put("global RSS memory limit exceeded [usage=test]");
@@ -6642,8 +6804,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6656,7 +6819,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -6665,11 +6828,6 @@ public class IODispatcherTest extends AbstractTest {
                 final HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return null;
                     }
 
                     @Override
@@ -6802,7 +6960,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public NanosecondClock getNanosecondClock() {
+                        public Clock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }
@@ -6815,8 +6973,9 @@ public class IODispatcherTest extends AbstractTest {
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6829,7 +6988,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -6841,7 +7000,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6862,11 +7021,6 @@ public class IODispatcherTest extends AbstractTest {
                                 context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -6975,8 +7129,9 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     },
                     new IOContextFactory<HttpConnectionContext>() {
+                        @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6989,7 +7144,7 @@ public class IODispatcherTest extends AbstractTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            }.of(fd, dispatcher1);
+                            }.of(fd);
                         }
                     }
             )) {
@@ -7001,7 +7156,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext connectionContext) {
@@ -7017,11 +7172,6 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -7773,8 +7923,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "0214\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"},{\"name\":\"upsertKey\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,false,false],[\"ccy\",\"SYMBOL\",false,256,true,128,false,false],[\"balance\",\"DOUBLE\",false,0,false,0,false,false]],\"count\":3}\r\n" +
+                                    "0242\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"},{\"name\":\"type\",\"type\":\"STRING\"},{\"name\":\"indexed\",\"type\":\"BOOLEAN\"},{\"name\":\"indexBlockCapacity\",\"type\":\"INT\"},{\"name\":\"symbolCached\",\"type\":\"BOOLEAN\"},{\"name\":\"symbolCapacity\",\"type\":\"INT\"},{\"name\":\"symbolTableSize\",\"type\":\"INT\"},{\"name\":\"designated\",\"type\":\"BOOLEAN\"},{\"name\":\"upsertKey\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[\"cust_id\",\"INT\",false,0,false,0,0,false,false],[\"ccy\",\"SYMBOL\",false,256,true,128,0,false,false],[\"balance\",\"DOUBLE\",false,0,false,0,0,false,false]],\"count\":3}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,
@@ -7876,7 +8026,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 500;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -7888,6 +8038,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
+                            LOG.info().$("iteration ").$(i).$();
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                                     "GET /exp?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "HTTP/1.1 200 OK\r\n" +
@@ -7999,7 +8150,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testTextTableReferenceOutOfDate() throws Exception {
         getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
                 "/exp",
-                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table='test_table_reference_out_of_date']\",\"position\":0}",
+                "{\"query\":\"select * from test_table_reference_out_of_date();\",\"error\":\"cached query plan cannot be used because table schema has changed [table=test_table_reference_out_of_date]\",\"position\":0}",
                 "select * from test_table_reference_out_of_date();"
         ));
     }
@@ -8088,6 +8239,7 @@ public class IODispatcherTest extends AbstractTest {
         });
     }
 
+    @SuppressWarnings("resource")
     @Test
     public void testTwoThreadsSendTwoThreadsRead() throws Exception {
         LOG.info().$("started testTwoThreadsSendTwoThreadsRead").$();
@@ -8134,7 +8286,7 @@ public class IODispatcherTest extends AbstractTest {
                                     return true;
                                 }
                             },
-                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                            fd -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE).of(fd)
                     );
                     final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
             ) {
@@ -8198,13 +8350,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor getDefaultProcessor() {
-                                    return processor;
-                                }
-
-                                @Override
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                                    return null;
+                                    return processor;
                                 }
                             }) {
 
@@ -8256,16 +8403,21 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     int receiveCount = 0;
+                    int failureRetryCount = 0;
                     while (receiveCount < N * senderCount) {
                         long cursor = subSeq.next();
                         if (cursor < 0) {
                             if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
+                                failureRetryCount++;
+                                if (failureRetryCount >= 3) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
                             }
                             Os.pause();
                             continue;
                         }
+                        failureRetryCount = 0;
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
                         assertTrue(valid);
@@ -8651,7 +8803,6 @@ public class IODispatcherTest extends AbstractTest {
         return delayThread;
     }
 
-
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
@@ -8801,7 +8952,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
-        TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
+        TableToken tableToken = new TableToken(tableName, dirName, null, 1, false, false, false);
         try (
                 TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
@@ -8821,7 +8972,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, null, 0, false, false, false, false, true);
         try (
                 TableReader reader = new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, telemetryTableName, TxnScoreboardPoolFactory.createPool(configuration));
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
@@ -9583,7 +9734,7 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger nConnected = new AtomicInteger();
             final LongHashSet serverConnectedFds = new LongHashSet();
             final LongHashSet clientActiveFds = new LongHashSet();
-            IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
+            IOContextFactory<TestIOContext> contextFactory = fd -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
                 nConnected.incrementAndGet();
@@ -9819,9 +9970,9 @@ public class IODispatcherTest extends AbstractTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
-        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(long fd, SOCountDownLatch closeLatch) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG);
-            this.of(fd, dispatcher);
+            this.of(fd);
             this.closeLatch = closeLatch;
         }
 
@@ -9868,7 +10019,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

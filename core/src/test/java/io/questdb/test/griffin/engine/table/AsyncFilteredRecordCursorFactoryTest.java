@@ -377,7 +377,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
                     }
                 }, 4, 1
-        ); // sharedWorkerCount < workerCount
+        ); // sharedQueryWorkerCount < workerCount
     }
 
     @Test
@@ -1001,7 +1001,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                                 }
 
                                                 @Override
-                                                public int getWorkerCount() {
+                                                public int getSharedQueryWorkerCount() {
                                                     return sharedPoolWorkerCount;
                                                 }
                                             }
@@ -1041,11 +1041,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool0(runnable, workerCount, workerCount, circuitBreaker);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
-        withPool0(runnable, workerCount, sharedWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount) throws Exception {
+        withPool0(runnable, workerCount, sharedQueryWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
     }
 
-    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedQueryWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
             final TestWorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
@@ -1062,13 +1062,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 }
 
                                 @Override
-                                public int getSharedWorkerCount() {
-                                    return sharedWorkerCount;
-                                }
-
-                                @Override
-                                public int getWorkerCount() {
-                                    return workerCount;
+                                public int getSharedQueryWorkerCount() {
+                                    return sharedQueryWorkerCount;
                                 }
                             }
                     );
@@ -1112,12 +1107,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 boolean baseSupportsRandomAccess,
                 int framingMode,
                 long rowsLo,
-                int rowsLoKindPos,
+                char rowsLoUnit,
+                int rowsLoExprPos,
                 long rowsHi,
-                int rowsHiKindPos,
+                char rowsHiUnit,
+                int rowsHiExprPos,
                 int exclusionKind,
                 int exclusionKindPos,
                 int timestampIndex,
+                int timestampType,
                 boolean ignoreNulls,
                 int nullsDescPos
         ) {
@@ -1131,12 +1129,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     baseSupportsRandomAccess,
                     framingMode,
                     rowsLo,
-                    rowsLoKindPos,
+                    rowsLoUnit,
+                    rowsLoExprPos,
                     rowsHi,
-                    rowsHiKindPos,
+                    rowsHiUnit,
+                    rowsHiExprPos,
                     exclusionKind,
                     exclusionKindPos,
                     timestampIndex,
+                    timestampType,
                     ignoreNulls,
                     nullsDescPos
             );
@@ -1163,6 +1164,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getIntervalFunctionType() {
+            return sqlExecutionContext.getIntervalFunctionType();
+        }
+
+        @Override
         public int getJitMode() {
             return sqlExecutionContext.getJitMode();
         }
@@ -1173,8 +1179,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getNow() {
-            return sqlExecutionContext.getNow();
+        public long getNanosecondTimestamp() {
+            return sqlExecutionContext.getNanosecondTimestamp();
+        }
+
+        @Override
+        public long getNow(int timestampType) {
+            return sqlExecutionContext.getNow(timestampType);
+        }
+
+        @Override
+        public int getNowTimestampType() {
+            return sqlExecutionContext.getNowTimestampType();
         }
 
         @Override
@@ -1205,11 +1221,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public WindowContext getWindowContext() {
             return sqlExecutionContext.getWindowContext();
-        }
-
-        @Override
-        public int getWorkerCount() {
-            return sqlExecutionContext.getWorkerCount();
         }
 
         @Override
@@ -1245,6 +1256,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelReadParquetEnabled() {
             return sqlExecutionContext.isParallelReadParquetEnabled();
+        }
+
+        @Override
+        public boolean isParallelTopKEnabled() {
+            return sqlExecutionContext.isParallelTopKEnabled();
         }
 
         @Override
@@ -1303,13 +1319,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setIntervalFunctionType(int intervalType) {
+            sqlExecutionContext.setIntervalFunctionType(intervalType);
+        }
+
+        @Override
         public void setJitMode(int jitMode) {
             sqlExecutionContext.setJitMode(jitMode);
         }
 
         @Override
-        public void setNowAndFixClock(long now) {
-            sqlExecutionContext.setNowAndFixClock(now);
+        public void setNowAndFixClock(long now, int nowTimestampType) {
+            sqlExecutionContext.setNowAndFixClock(now, nowTimestampType);
         }
 
         @Override
@@ -1325,6 +1346,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
+        }
+
+        @Override
+        public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
+            sqlExecutionContext.setParallelTopKEnabled(parallelTopKEnabled);
         }
 
         @Override

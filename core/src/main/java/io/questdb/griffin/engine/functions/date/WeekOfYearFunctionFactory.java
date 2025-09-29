@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,9 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class WeekOfYearFunctionFactory implements FunctionFactory {
 
@@ -51,15 +51,17 @@ public class WeekOfYearFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), ColumnType.getTimestampDriver(ColumnType.getTimestampType(args.getQuick(0).getType())));
     }
 
     private static final class Func extends IntFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public Func(Function arg) {
+        public Func(Function arg, TimestampDriver driver) {
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -69,11 +71,7 @@ public class WeekOfYearFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return Numbers.INT_NULL;
-            }
-            return Timestamps.getWeek(value);
+            return driver.getWeek(arg.getTimestamp(rec));
         }
 
         @Override

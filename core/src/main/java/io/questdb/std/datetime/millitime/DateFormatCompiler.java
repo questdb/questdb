@@ -25,14 +25,24 @@
 package io.questdb.std.datetime.millitime;
 
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.datetime.AbstractDateFormat;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+
+import static io.questdb.std.datetime.CommonUtils.HOUR_24;
+import static io.questdb.std.datetime.CommonUtils.HOUR_AM;
 
 public class DateFormatCompiler {
     static final int OP_AM_PM = 14;
@@ -615,6 +625,16 @@ public class DateFormatCompiler {
         }
     }
 
+    private void assembleGetColumnTypeMethod(int getColumnTypeNameIndex, int getColumnTypeSigIndex, int columnTypeIndex) {
+        asm.startMethod(getColumnTypeNameIndex, getColumnTypeSigIndex, 1, 1);
+        asm.ldc(columnTypeIndex);
+        asm.ireturn();
+        asm.endMethodCode();
+        asm.putShort(0);
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
     private void assembleParseMethod(
             IntList ops,
             ObjList<String> delimiters,
@@ -711,7 +731,7 @@ public class DateFormatCompiler {
         asm.ldc2_w(minLongIndex);
         asm.lstore(LOCAL_OFFSET);
 
-        asm.iconst(DateFormatUtils.HOUR_24);
+        asm.iconst(HOUR_24);
         asm.istore(LOCAL_HOUR_TYPE);
 
         if ((stackState & (1 << LOCAL_ERA)) == 0) {
@@ -1054,7 +1074,7 @@ public class DateFormatCompiler {
                     String delimiter = delimiters.getQuick(-op - 1);
                     int len = delimiter.length();
                     if (len == 1) {
-                        // TimestampFormatUtils.assertChar(' ', in, pos++, hi);
+                        // MicrosFormatUtils.assertChar(' ', in, pos++, hi);
                         asm.iconst(delimiter.charAt(0));
                         asm.aload(P_INPUT_STR);
                         asm.iload(LOCAL_POS);
@@ -1062,7 +1082,7 @@ public class DateFormatCompiler {
                         asm.iload(P_HI);
                         asm.invokeStatic(assertCharIndex);
                     } else {
-                        // pos = TimestampFormatUtils.assertString(", ", 2, in, pos, hi);
+                        // pos = MicrosFormatUtils.assertString(", ", 2, in, pos, hi);
                         asm.ldc(delimIndices.getQuick(-op - 1));
                         asm.iconst(len);
                         asm.aload(P_INPUT_STR);
@@ -1260,7 +1280,7 @@ public class DateFormatCompiler {
         int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour241Index = asm.poolMethod(DateFormatUtils.class, "appendHour241", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour241PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour241Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(MicrosFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
 
@@ -1289,6 +1309,11 @@ public class DateFormatCompiler {
         int formatNameIndex = asm.poolUtf8("format");
         int formatSigIndex = asm.poolUtf8("(JLio/questdb/std/datetime/DateLocale;Ljava/lang/CharSequence;Lio/questdb/std/str/CharSink;)V");
 
+        int getColumnTypeNameIndex = asm.poolUtf8("getColumnType");
+        int getColumnTypeSigIndex = asm.poolUtf8("()I");
+        int columnTypeIndex = asm.getPoolCount();
+        asm.poolIntConst(ColumnType.DATE);
+
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path
         // that doesn't require constant
@@ -1308,7 +1333,7 @@ public class DateFormatCompiler {
         asm.defineClass(thisClassIndex, superclassIndex);
         asm.interfaceCount(0);
         asm.fieldCount(0);
-        asm.methodCount(3);
+        asm.methodCount(4);
         asm.defineDefaultConstructor(superIndex);
 
         assembleParseMethod(
@@ -1381,6 +1406,8 @@ public class DateFormatCompiler {
                 formatNameIndex,
                 formatSigIndex
         );
+
+        assembleGetColumnTypeMethod(getColumnTypeNameIndex, getColumnTypeSigIndex, columnTypeIndex);
 
         // class attribute count
         asm.putShort(0);
@@ -1671,9 +1698,9 @@ public class DateFormatCompiler {
 
     private void setHourType(int stackState) {
         asm.iload(LOCAL_HOUR_TYPE);
-        asm.iconst(DateFormatUtils.HOUR_24);
+        asm.iconst(HOUR_24);
         int branch = asm.if_icmpne();
-        asm.iconst(DateFormatUtils.HOUR_AM);
+        asm.iconst(HOUR_AM);
         asm.istore(LOCAL_HOUR_TYPE);
         int p = asm.position();
         frameOffsets.add(Numbers.encodeLowHighInts(stackState, p));

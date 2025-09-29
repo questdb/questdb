@@ -41,7 +41,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private long size;
     private long version;
 
-
     // size should be read from the transaction file
     // it can be zero when there are no columns deviating from the main
     // data branch
@@ -343,7 +342,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         } else {
             throw CairoException.critical(0)
                     .put("invalid Column Version state ")
-                    .ts(dstTimestamp)
+                    .put(dstTimestamp)
                     .put(" column version state, cannot update partition information");
         }
         hasChanges = true;

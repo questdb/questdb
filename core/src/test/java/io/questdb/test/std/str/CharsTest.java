@@ -28,7 +28,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.*;
+import io.questdb.std.str.FileNameExtractorUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -427,6 +431,18 @@ public class CharsTest {
     }
 
     @Test
+    public void testIndexOfNonWhitespace() {
+        String in = " a bbbbs   sss";
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 0, in.length(), 0));
+
+        Assert.assertEquals(7, Chars.indexOfNonWhitespace(in, 3, 11, -1));
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 0, 1, -1));
+
+        Assert.assertEquals(11, Chars.indexOfNonWhitespace(in, 8, in.length(), 1));
+        Assert.assertEquals(-1, Chars.indexOfNonWhitespace(in, 8, 10, 1));
+    }
+
+    @Test
     public void testIsAscii() {
         Assert.assertTrue(Chars.isAscii(""));
         Assert.assertTrue(Chars.isAscii("foo bar baz"));
@@ -474,6 +490,14 @@ public class CharsTest {
         Assert.assertTrue(Chars.isQuoted("''"));
         Assert.assertTrue(Chars.isQuoted("\"banana\""));
         Assert.assertTrue(Chars.isQuoted("\"\""));
+    }
+
+    @Test
+    public void testLastIndexOfDifferent() {
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("   ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
+        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
+        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
     }
 
     @Test
@@ -657,13 +681,5 @@ public class CharsTest {
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();
         }
-    }
-
-    @Test
-    public void testLastIndexOfDifferent() {
-        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("   ", 0, 3, ' '));
-        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
-        Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
-        Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
     }
 }

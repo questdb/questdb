@@ -115,8 +115,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
-        Misc.freeObjList(arrayBuffers);
         symbolTableCache.clear();
+        Misc.freeObjList(arrayBuffers);
         clear();
     }
 
@@ -458,7 +458,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     // Note: this method doesn't break caching in PageFrameMemoryPool
-    // as this method assumes that the record can't be used once
+    // as the method assumes that the record can't be used once
     // the frame memory is switched to another frame.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();

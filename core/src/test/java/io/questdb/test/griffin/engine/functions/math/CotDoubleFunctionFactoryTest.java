@@ -54,7 +54,7 @@ public class CotDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testZero() throws SqlException {
-        call(0.0).andAssert(Double.POSITIVE_INFINITY, DELTA);
+        call(0.0).andAssert(Double.NaN, DELTA);
         call(-0.0000000000000001).andAssert(-1.0E16, DELTA);
         call(0.0000000000000001).andAssert(1.0E16, DELTA);
     }

@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -62,38 +63,13 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         return true;
     }
 
-    private static class Func extends DoubleFunction implements BinaryFunction, DoubleUnaryArrayAccessor {
+    private static class Func extends DoubleFunction implements BinaryFunction {
         private final Function leftArg;
         private final Function rightArg;
-        private double scalar;
-        private double value;
 
         public Func(Function leftArg, Function rightArg) {
             this.leftArg = leftArg;
             this.rightArg = rightArg;
-        }
-
-        @Override
-        public void applyToElement(ArrayView view, int index) {
-            double v = view.getDouble(index);
-            if (!Double.isNaN(v)) {
-                value += v * scalar;
-            }
-        }
-
-        @Override
-        public void applyToEntireVanillaArray(ArrayView view) {
-            FlatArrayView flatView = view.flatView();
-            for (int i = view.getFlatViewOffset(), n = view.getFlatViewOffset() + view.getFlatViewLength(); i < n; i++) {
-                double v = flatView.getDoubleAtAbsIndex(i);
-                if (!Double.isNaN(v)) {
-                    value += v * scalar;
-                }
-            }
-        }
-
-        @Override
-        public void applyToNullArray() {
         }
 
         @Override
@@ -102,13 +78,23 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
             if (arr.isNull()) {
                 return Double.NaN;
             }
-            scalar = rightArg.getDouble(rec);
-            if (Double.isNaN(scalar)) {
+            double scalarValue = rightArg.getDouble(rec);
+            if (Numbers.isNull(scalarValue)) {
                 return Double.NaN;
             }
-            value = 0d;
-            calculate(arr);
-            return value;
+            double value = 0d;
+
+            if (arr.isVanilla()) {
+                FlatArrayView flatView = arr.flatView();
+                for (int i = arr.getLo(), n = arr.getHi(); i < n; i++) {
+                    double v = flatView.getDoubleAtAbsIndex(i);
+                    if (Numbers.isFinite(v)) {
+                        value += v * scalarValue;
+                    }
+                }
+                return value;
+            }
+            return calculateRecursive(arr, 0, 0, scalarValue, value);
         }
 
         @Override
@@ -129,6 +115,27 @@ public class DoubleArrayAndScalarDotProductFunctionFactory implements FunctionFa
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        private static double calculateRecursive(ArrayView view, int dim, int flatIndex, double scalarValue, double sum) {
+            final int count = view.getDimLen(dim);
+            final int stride = view.getStride(dim);
+            final boolean atDeepestDim = dim == view.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    double v = view.getDouble(flatIndex);
+                    if (Numbers.isFinite(v)) {
+                        sum += v * scalarValue;
+                    }
+                    flatIndex += stride;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    sum = calculateRecursive(view, dim + 1, flatIndex, scalarValue, sum);
+                    flatIndex += stride;
+                }
+            }
+            return sum;
         }
     }
 }

@@ -60,11 +60,11 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "2.2250738585072014E-308\t1.0\n" +
                             "1.0\t1.0\n" +
                             "1.7976931348623157E308\t1.0\n" +
-                            "null\t1.0\n" +
+                            "null\tnull\n" +
                             "-2.2250738585072014E-308\t-1.0\n" +
                             "-1.0\t-1.0\n" +
                             "-1.7976931348623157E308\t-1.0\n" +
-                            "null\t-1.0\n" +
+                            "null\tnull\n" +
                             "null\tnull\n",
                     "select d, sign(d) from tab");
         });
@@ -84,11 +84,11 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                             "1.4E-45\t1.0\n" +
                             "1.0\t1.0\n" +
                             "3.4028235E38\t1.0\n" +
-                            "null\t1.0\n" +
+                            "null\tnull\n" +
                             "-1.4E-45\t-1.0\n" +
                             "-1.0\t-1.0\n" +
                             "-3.4028235E38\t-1.0\n" +
-                            "null\t-1.0\n" +
+                            "null\tnull\n" +
                             "null\tnull\n",
                     "select f, sign(f) from tab");
         });

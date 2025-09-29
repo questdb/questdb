@@ -33,7 +33,7 @@ import org.junit.Test;
 public class DivFloatFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testDivByZero() throws SqlException {
-        call(10f, 0f).andAssert(Float.POSITIVE_INFINITY, 0.000001);
+        call(10f, 0f).andAssert(Float.NaN, 0.000001);
     }
 
     @Test

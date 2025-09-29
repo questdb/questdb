@@ -25,8 +25,9 @@
 package io.questdb.test.griffin.engine.functions.eq;
 
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -36,6 +37,8 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     public void testBasicConstant() throws SqlException {
         assertSql("column\n" +
                 "true\n", "select '2017-01-01'::symbol = '2017-01-01'::timestamp");
+        assertSql("column\n" +
+                "true\n", "select '2017-01-01'::symbol = '2017-01-01'::timestamp_ns");
 
     }
 
@@ -64,6 +67,30 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicCast1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            assertSql(
+                    "sym\tt\n" +
+                            "28258937621\t1970-01-01T00:00:28.258937621Z\n" +
+                            "84704108866\t1970-01-01T00:01:24.704108866Z\n" +
+                            "4684409603\t1970-01-01T00:00:04.684409603Z\n" +
+                            "29566122052\t1970-01-01T00:00:29.566122052Z\n" +
+                            "62471208567\t1970-01-01T00:01:02.471208567Z\n" +
+                            "17048275024\t1970-01-01T00:00:17.048275024Z\n" +
+                            "80408674000\t1970-01-01T00:01:20.408674000Z\n" +
+                            "23080510639\t1970-01-01T00:00:23.080510639Z\n" +
+                            "82509017689\t1970-01-01T00:01:22.509017689Z\n" +
+                            "28729051699\t1970-01-01T00:00:28.729051699Z\n",
+                    "select sym, t from x where sym = t"
+            );
+        });
+    }
+
+    @Test
     public void testDynamicCastConst() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_timestamp(0, 86400000, 0) t from long_sequence(10))");
@@ -79,6 +106,21 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicCastConst1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            assertSql(
+                    "sym\tt\n" +
+                            "82509017689\t1970-01-01T00:01:22.509017689Z\n",
+                    "select sym, t from x where '82509017689'::symbol = t"
+            );
+        });
+    }
+
+    @Test
     public void testDynamicCastNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_timestamp(0, 86400000, 0) t from long_sequence(10))");
@@ -88,6 +130,20 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "sym\tt\n",
                     "select sym, t from x where sym = null::timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicCastNull1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            assertSql(
+                    "sym\tt\n",
+                    "select sym, t from x where sym = null::timestamp_ns"
             );
         });
     }
@@ -117,14 +173,67 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicCastNulls1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 3) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            assertSql(
+                    "sym\tt\n" +
+                            "28258937621\t1970-01-01T00:00:28.258937621Z\n" +
+                            "\t\n" +
+                            "17536982995\t1970-01-01T00:00:17.536982995Z\n" +
+                            "35652982957\t1970-01-01T00:00:35.652982957Z\n" +
+                            "65390153277\t1970-01-01T00:01:05.390153277Z\n" +
+                            "15568952078\t1970-01-01T00:00:15.568952078Z\n" +
+                            "74965011151\t1970-01-01T00:01:14.965011151Z\n" +
+                            "12591706140\t1970-01-01T00:00:12.591706140Z\n" +
+                            "23253230564\t1970-01-01T00:00:23.253230564Z\n" +
+                            "\t\n",
+                    "select sym, t from x where sym = t"
+            );
+        });
+    }
+
+    @Test
     public void testDynamicSymbolTable() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "x\n" +
-                        "3\n" +
-                        "8\n" +
-                        "10\n",
-                "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp"
-        ));
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "x\n" +
+                            "3\n" +
+                            "8\n" +
+                            "10\n",
+                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp"
+            );
+
+            assertSql(
+                    "x\n" +
+                            "1\n" +
+                            "3\n" +
+                            "4\n" +
+                            "5\n" +
+                            "8\n" +
+                            "10\n",
+                    "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp_ns"
+            );
+        });
+    }
+
+    @Test
+    public void testOptimisationWithARuntimeConstantNanoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            String query = "select sym, t from x where sym = $1";
+
+            bindVariableService.setTimestampNano(0, NanosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:28.258937621Z"));
+            assertQuery("sym\tt\n" +
+                    "28258937621\t1970-01-01T00:00:28.258937621Z\n", query, "", true, false);
+
+        });
     }
 
     @Test
@@ -136,7 +245,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
 
             String query = "select sym, t from x where sym = $1";
 
-            bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("1970-01-01T00:00:37.847040Z"));
+            bindVariableService.setTimestamp(0, MicrosTimestampDriver.INSTANCE.parseFloorLiteral("1970-01-01T00:00:37.847040Z"));
             assertQuery("sym\tt\n" +
                     "37847040\t1970-01-01T00:00:37.847040Z\n", query, "", true, false);
 
@@ -172,6 +281,18 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                             "\n" +
                             "\n",
                     "select a from x where a = null::timestamp"
+            );
+            assertSql(
+                    "a\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n",
+                    "select a from x where a = null::timestamp_ns"
             );
         });
     }

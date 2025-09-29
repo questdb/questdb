@@ -32,6 +32,7 @@ import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface MetadataService {
 
@@ -153,6 +154,8 @@ public interface MetadataService {
 
     TableToken getTableToken();
 
+    int getTimestampType();
+
     UpdateOperator getUpdateOperator();
 
     void removeColumn(@NotNull CharSequence columnName);
@@ -168,6 +171,21 @@ public interface MetadataService {
     void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName);
 
     /**
+     * Sets refresh type and settings for materialized view.
+     */
+    void setMatViewRefresh(
+            int refreshType,
+            int timerInterval,
+            char timerUnit,
+            long timerStartUs,
+            @Nullable CharSequence timerTimeZone,
+            int periodLength,
+            char periodLengthUnit,
+            int periodDelay,
+            char periodDelayUnit
+    );
+
+    /**
      * Sets the incremental refresh limit for materialized view:
      * if positive, it's in hours;
      * if negative, it's in months (and the actual value is positive);
@@ -178,7 +196,7 @@ public interface MetadataService {
     /**
      * Sets incremental refresh timer values for materialized view.
      */
-    void setMatViewRefreshTimer(long start, int interval, char unit);
+    void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 

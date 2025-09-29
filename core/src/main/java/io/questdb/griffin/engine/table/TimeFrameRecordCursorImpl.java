@@ -24,11 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -65,7 +67,7 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
-    private PartitionBy.PartitionCeilMethod partitionCeilMethod;
+    private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private int partitionHi;
     private TableReader reader;
 
@@ -81,7 +83,23 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
+        frameAddressCache.clear();
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @Override
+    public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
+        int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+        int frameIndex = timeFrame.frameIndex;
+        if (frameIndex == -1) {
+            return null;
+        }
+        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        return reader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+    }
+
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
     }
 
     @Override
@@ -142,13 +160,16 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         partitionHi = reader.getPartitionCount();
-        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());
+        partitionCeilMethod = PartitionBy.getPartitionCeilMethod(
+                reader.getMetadata().getTimestampType(),
+                reader.getPartitionedBy()
+        );
         isFrameCacheBuilt = false;
         toTop();
         return this;
@@ -219,8 +240,8 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     private void buildFrameCache() {
-        // TODO: bulding page frame cache assumes opening all partitions;
-        //       would be great if we could open partitions lazily
+        // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
+        //                  we should open partitions lazily
         if (!isFrameCacheBuilt) {
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {

@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -134,48 +134,48 @@ public class JoinTest extends AbstractCairoTest {
                 TableWriter.Row rQuotes;
 
                 // quote googl @ 10:00:02
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000000Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000000Z"));
                 rQuotes.putSym(0, "googl");
                 rQuotes.putDouble(1, 100.2);
                 rQuotes.putDouble(2, 100.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000001
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000001Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000001Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 185.9);
                 rQuotes.putDouble(2, 187.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000002
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 186.1);
                 rQuotes.putDouble(2, 187.8);
                 rQuotes.append();
 
                 // order googl @ 10.00.03
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:03.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:03.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 2000);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // quote msft @ 10.00.03.000001
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 183.4);
                 rQuotes.putDouble(2, 185.9);
                 rQuotes.append();
 
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:04.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:04.000000Z"));
                 rOrders.putSym(0, "msft");
                 rOrders.putDouble(1, 150);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // order googl @ 10.00.05
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:05.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:05.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 3000);
                 rOrders.putByte(2, (byte) '2');
@@ -1821,9 +1821,9 @@ public class JoinTest extends AbstractCairoTest {
             execute("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
 
             for (String joinType : Arrays.asList("LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
-                testJoinColumnPropagationIntoJoinModel0(joinType, false);
+                testJoinColumnPropagationIntoJoinModel0(joinType);
             }
-            testJoinColumnPropagationIntoJoinModel0("JOIN", true);
+            testJoinColumnPropagationIntoJoinModel0("JOIN");
         });
     }
 
@@ -1856,7 +1856,13 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryNoLeakCheck(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10 order by c, a, b", null, true, true);
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10 order by c, a, b",
+                    null,
+                    true,
+                    false
+            );
         });
     }
 
@@ -1991,7 +1997,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c) order by z.c, b, d",
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -2064,7 +2070,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by kk, l1", null, true, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by kk, l1", null, true, false);
         });
     }
 
@@ -2135,7 +2141,13 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryNoLeakCheck(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by z.c, d-b", null, true, true);
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by z.c, d-b",
+                    null,
+                    true,
+                    false
+            );
         });
     }
 
@@ -2191,7 +2203,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b", null, true, true);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b", null, true, false);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -2210,7 +2222,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, d-b",
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -2272,7 +2284,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by kk, b1", null, true, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by kk, b1", null, true, false);
         });
     }
 
@@ -2318,7 +2330,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, false);
         });
     }
 
@@ -2340,7 +2352,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3", null, true, true);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3", null, true, false);
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             execute("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -2354,7 +2366,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3",
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -2458,7 +2470,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d", null, true, true);
+            assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d", null, true, false);
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
@@ -2471,7 +2483,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d",
                     null,
                     true,
-                    true
+                    false
             );
         });
     }
@@ -2505,7 +2517,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
             // filter is applied to intermediate join result
-            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, true);
+            assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d", null, true, false);
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
             execute("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
@@ -2528,7 +2540,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, d",
                     null,
                     true,
-                    true
+                    false
             );
 
         });
@@ -2588,7 +2600,13 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             execute("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryNoLeakCheck(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c) order by z.c, b", null, true, true);
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c) order by z.c, b",
+                    null,
+                    true,
+                    false
+            );
         });
     }
 
@@ -2728,7 +2746,7 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, true);
+            assertQueryAndCache(expected, query, null, false);
         });
     }
 
@@ -2753,7 +2771,7 @@ public class JoinTest extends AbstractCairoTest {
                             ")"
             );
 
-            assertQueryAndCache(expected, query, null, true);
+            assertQueryAndCache(expected, query, null, false);
         });
     }
 
@@ -3895,8 +3913,8 @@ public class JoinTest extends AbstractCairoTest {
                     "    ) ON (store_nbr, family) " +
                     ") ON (store_nbr, family)";
 
-            assertRepeatedJoinQuery(query, "LT", true);
-            assertRepeatedJoinQuery(query, "ASOF", true);
+            assertRepeatedJoinQuery(query, "LT", false);
+            assertRepeatedJoinQuery(query, "ASOF", false);
             assertRepeatedJoinQuery(query, "INNER", true);
             assertRepeatedJoinQuery(query, "LEFT", false);
         });
@@ -3999,7 +4017,7 @@ public class JoinTest extends AbstractCairoTest {
                     "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\t2001-01-01T00:00:00.000000Z\t3\n" +
                     "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:01.000000Z\t4\n" +
                     "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t3\n";
-            assertQueryAndCache(expected, query, null, true, true);
+            assertQueryAndCache(expected, query, null, true, false);
         });
     }
 
@@ -4028,7 +4046,7 @@ public class JoinTest extends AbstractCairoTest {
                     "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\n" +
                     "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\n" +
                     "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\n";
-            assertQueryAndCache(expected, query, null, true, true);
+            assertQueryAndCache(expected, query, null, true, false);
         });
     }
 
@@ -4051,7 +4069,7 @@ public class JoinTest extends AbstractCairoTest {
                     "ETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\n" +
                     "ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\n" +
                     "BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\n";
-            assertQueryAndCache(expected, query, "ts", true);
+            assertQueryAndCache(expected, query, "ts", false);
         });
     }
 
@@ -4078,7 +4096,7 @@ public class JoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
                     "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
                     "4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z\n";
-            assertQueryAndCache(expected, query, "ts", true);
+            assertQueryAndCache(expected, query, "ts", false);
         });
     }
 
@@ -4117,49 +4135,49 @@ public class JoinTest extends AbstractCairoTest {
                 TableWriter.Row rQuotes;
 
                 // quote googl @ 10:00:02
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000000Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000000Z"));
                 rQuotes.putSym(0, "googl");
                 rQuotes.putDouble(1, 100.2);
                 rQuotes.putDouble(2, 100.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000001
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000001Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000001Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 185.9);
                 rQuotes.putDouble(2, 187.3);
                 rQuotes.append();
 
                 // quote msft @ 10.00.02.000002
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 186.1);
                 rQuotes.putDouble(2, 187.8);
                 rQuotes.append();
 
                 // order googl @ 10.00.03
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:03.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:03.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 2000);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // quote msft @ 10.00.03.000001
-                rQuotes = quotes.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
+                rQuotes = quotes.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:02.000002Z"));
                 rQuotes.putSym(0, "msft");
                 rQuotes.putDouble(1, 183.4);
                 rQuotes.putDouble(2, 185.9);
                 rQuotes.append();
 
                 // order msft @ 10:00:04
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:04.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:04.000000Z"));
                 rOrders.putSym(0, "msft");
                 rOrders.putDouble(1, 150);
                 rOrders.putByte(2, (byte) '1');
                 rOrders.append();
 
                 // order googl @ 10.00.05
-                rOrders = orders.newRow(TimestampFormatUtils.parseUTCTimestamp("2018-11-02T10:00:05.000000Z"));
+                rOrders = orders.newRow(MicrosFormatUtils.parseUTCTimestamp("2018-11-02T10:00:05.000000Z"));
                 rOrders.putSym(0, "googl");
                 rOrders.putDouble(1, 3000);
                 rOrders.putByte(2, (byte) '2');
@@ -5605,7 +5623,7 @@ public class JoinTest extends AbstractCairoTest {
         method.run(true);
     }
 
-    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws Exception {
+    private void testJoinColumnPropagationIntoJoinModel0(String joinType) throws Exception {
         String query = ("SELECT amount, price1\n" +
                 "FROM\n" +
                 "(\n" +
@@ -5623,10 +5641,10 @@ public class JoinTest extends AbstractCairoTest {
                 ")").replace("#JOIN_TYPE#", joinType);
         String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tnull\n" : "amount\tprice1\n2.0\t2.0\n";
 
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
-        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, false);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, false);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, false);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, false);
     }
 
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {
@@ -5934,7 +5952,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20 order by z.c, b, d",
                     null,
                     true,
-                    true
+                    false
             );
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -6024,7 +6042,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c, x.a, b from x join y on y.m = x.c order by x.c, b",
                     null,
                     true,
-                    true
+                    false
             );
 
             execute("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
@@ -6143,7 +6161,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) order by x.c, d, d-b",
                     null,
                     true,
-                    true
+                    false
             );
 
             execute("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
@@ -6192,7 +6210,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300 order by z.c, b, d",
                     null,
                     true,
-                    true
+                    false
             );
 
             execute("insert into x select cast(x+6 as int) c, abs(rnd_int() % 650) a from long_sequence(3)");

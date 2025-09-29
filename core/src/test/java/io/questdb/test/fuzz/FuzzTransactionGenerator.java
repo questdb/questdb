@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 
-import static io.questdb.std.datetime.microtime.Timestamps.DAY_MICROS;
+import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
@@ -64,6 +64,7 @@ public class FuzzTransactionGenerator {
             double probabilityOfDropTable,
             double probabilityOfSetTtl,
             double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion
@@ -80,13 +81,15 @@ public class FuzzTransactionGenerator {
                 + probabilityOfColumnTypeChange
                 + probabilityOfTruncate
                 + probabilityOfDropPartition
-                + probabilityOfDataInsert;
+                + probabilityOfDataInsert
+                + probabilityOfSymbolAccessValidation;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
+        probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
@@ -147,6 +150,10 @@ public class FuzzTransactionGenerator {
             boolean wantToTruncateTable = !wantSomething && rndDouble < aggregateProbability;
             wantSomething |= wantToTruncateTable;
 
+            aggregateProbability += probabilityOfSymbolAccessValidation;
+            boolean wantToValidateSymbolAccess = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToValidateSymbolAccess;
+
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
@@ -187,6 +194,12 @@ public class FuzzTransactionGenerator {
                     // If symbol capacity change was not generated, generate column type change
                     meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
                 }
+            } else if (wantToValidateSymbolAccess) {
+                FuzzTransaction transaction = new FuzzTransaction();
+                transaction.operationList.add(new FuzzValidateSymbolFilterOperation(symbols));
+                transaction.structureVersion = metaVersion;
+                transaction.waitBarrierVersion = waitBarrierVersion;
+                transactionList.add(transaction);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);

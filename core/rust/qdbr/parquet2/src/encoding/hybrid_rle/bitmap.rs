@@ -71,10 +71,8 @@ impl<'a> Iterator for BitmapIter<'a> {
 pub fn encode_bool<W: Write, I: Iterator<Item = bool>>(
     writer: &mut W,
     mut iterator: I,
+    length: usize,
 ) -> std::io::Result<()> {
-    // the length of the iterator.
-    let length = iterator.size_hint().1.unwrap();
-
     let chunks = length / 8;
     let reminder = length % 8;
 

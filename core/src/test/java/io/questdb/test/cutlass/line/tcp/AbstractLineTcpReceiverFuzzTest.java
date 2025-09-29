@@ -375,7 +375,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
 
                 // Extract vars for safe logging
-                long size = cursor.size();
+                long size = 0;
+                while (cursor.hasNext()) {
+                    size++;
+                }
                 int tableSize = table.size();
                 CharSequence name = table.getName();
 

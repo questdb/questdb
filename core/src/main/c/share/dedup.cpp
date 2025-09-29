@@ -639,6 +639,7 @@ bool is_fixed_column_merge_identical(
                             return true;
                         }
                     }
+                    return false;
                 }
         );
     }
@@ -1534,5 +1535,3 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isDesignatedTimestampColumnReplaceIdentic
 }
 
 } // extern C
-
-

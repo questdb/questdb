@@ -35,6 +35,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -198,14 +199,7 @@ public class HttpHeaderParserTest {
         TestUtils.assertMemoryLeak(() -> {
             String v = "Content-Type: text/html; charset=utf-8\r\n" +
                     "\r\n";
-            long p = TestUtils.toMemory(v);
-            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-                hp.parse(p, p + v.length(), false, false);
-                TestUtils.assertEquals("text/html", hp.getContentType());
-                TestUtils.assertEquals("utf-8", hp.getCharset());
-            } finally {
-                Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
-            }
+            assertContentType(v, "text/html", "utf-8", null);
         });
     }
 
@@ -231,26 +225,43 @@ public class HttpHeaderParserTest {
     public void testContentTypeAndUnknown() {
         String v = "Content-Type: text/html; encoding=abc\r\n" +
                 "\r\n";
-        long p = TestUtils.toMemory(v);
-        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), false, false);
-            TestUtils.assertEquals("text/html", hp.getContentType());
-        } finally {
-            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
-        }
+        assertContentType(v, "text/html", null, null);
     }
 
     @Test
     public void testContentTypeBoundaryAndUnknown() {
         String v = "Content-Type: text/html; boundary=----WebKitFormBoundaryQ3pdBTBXxEFUWDML; encoding=abc\r\n" +
                 "\r\n";
-        long p = TestUtils.toMemory(v);
+        assertContentType(v, "text/html", null, "\r\n------WebKitFormBoundaryQ3pdBTBXxEFUWDML");
+    }
+
+    @Test
+    public void testContentTypeBoundaryQuoted() {
+        String v = "Content-Type: multipart/mixed; boundary=\"gc0pJq0M:08jU5\\\"34c0p\"\r\n" +
+                "\r\n";
+        assertContentType(v, "multipart/mixed", null, "\r\n--gc0pJq0M:08jU5\"34c0p");
+    }
+
+    @Test
+    public void testContentTypeSemantics() {
+        assertContentType("Content-Type:   text/html \r\n\r\n", "text/html", null, null);
+        assertContentType("Content-Type:  text/html ; charset = utf-8\r\n\r\n", "text/html", "utf-8", null);
+        assertContentType("Content-Type: application/problem+json; charset = \"utf-8\" ; boundary = \"a;\\\"\\\\b\" \r\n\r\n", "application/problem+json", "utf-8", "\r\n--a;\"\\b");
+    }
+
+    private void assertContentType(@NotNull String header, @NotNull String expectedType, String expectedCharset, String expectedBoundary) {
+        long p = TestUtils.toMemory(header);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + v.length(), false, false);
-            TestUtils.assertEquals("text/html", hp.getContentType());
-            TestUtils.assertEquals("\r\n------WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
+            hp.parse(p, p + header.length(), false, false);
+            TestUtils.assertEquals(expectedType, hp.getContentType());
+            if (expectedBoundary != null) {
+                TestUtils.assertEquals(expectedBoundary, hp.getBoundary());
+            }
+            if (expectedCharset != null) {
+                TestUtils.assertEquals(expectedCharset, hp.getCharset());
+            }
         } finally {
-            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(p, header.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

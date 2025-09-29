@@ -186,9 +186,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             for (int i = 0; i < slotCount; i++) {
                 perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         }
     }
 

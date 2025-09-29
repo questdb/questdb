@@ -27,12 +27,11 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
@@ -57,6 +56,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
+    int getDefaultColumnTypeForTimestamp();
+
     int getDefaultPartitionBy();
 
     boolean getDisconnectOnError();
@@ -65,7 +66,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     FilesFacade getFilesFacade();
 
-    WorkerPoolConfiguration getIOWorkerPoolConfiguration();
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -83,7 +84,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     Metrics getMetrics();
 
-    MicrosecondClock getMicrosecondClock();
+    Clock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
@@ -91,7 +92,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     long getSymbolCacheWaitBeforeReload();
 
-    LineTcpTimestampAdapter getTimestampAdapter();
+    byte getTimestampUnit();
 
     long getWriterIdleTimeout();
 

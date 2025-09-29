@@ -26,41 +26,28 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cutlass.pgwire.IPGWireServer;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.PlainSocket;
 import io.questdb.network.Socket;
 import io.questdb.network.SocketFactory;
+import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.util.Collection;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@RunWith(Parameterized.class)
 public class PGTlsCompatTest extends BasePGTest {
-
-    public PGTlsCompatTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
-    }
 
     @Test
     public void testTlsSessionGetsCreatedWhenSocketSupportsTls() throws Exception {
@@ -68,7 +55,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -81,7 +68,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -109,7 +96,7 @@ public class PGTlsCompatTest extends BasePGTest {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -122,7 +109,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -145,12 +132,11 @@ public class PGTlsCompatTest extends BasePGTest {
 
     @Test
     public void testTlsSessionRequestErrors() throws Exception {
-        Assume.assumeFalse(legacyMode);
         assertMemoryLeak(() -> {
             final AtomicInteger createTlsSessionCalls = new AtomicInteger();
             final AtomicInteger tlsIOCalls = new AtomicInteger();
 
-            final PGWireConfiguration conf = new Port0PGWireConfiguration() {
+            final PGConfiguration conf = new Port0PGConfiguration() {
                 @Override
                 public FactoryProvider getFactoryProvider() {
                     return new DefaultFactoryProvider() {
@@ -169,7 +155,7 @@ public class PGTlsCompatTest extends BasePGTest {
 
             final int N = 10;
             final WorkerPool workerPool = new TestWorkerPool(1, conf.getMetrics());
-            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final PGServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
                 final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
 
@@ -231,13 +217,13 @@ public class PGTlsCompatTest extends BasePGTest {
         }
 
         @Override
-        public int startTlsSession(CharSequence peerName) {
+        public void startTlsSession(CharSequence peerName) throws TlsSessionInitFailedException {
             if (!tlsSessionStarted) {
                 createTlsSessionCalls.incrementAndGet();
                 tlsSessionStarted = true;
-                return 0;
+                return;
             }
-            return -1;
+            throw TlsSessionInitFailedException.instance("TLS session has been started already");
         }
 
         @Override

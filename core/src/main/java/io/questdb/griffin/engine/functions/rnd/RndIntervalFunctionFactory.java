@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -61,6 +62,10 @@ public class RndIntervalFunctionFactory implements FunctionFactory {
     private static class RndFunction extends IntervalFunction implements Function, FunctionExtension {
         private final Interval interval = new Interval();
         private Rnd rnd;
+
+        protected RndFunction() {
+            super(ColumnType.INTERVAL_TIMESTAMP_MICRO);
+        }
 
         @Override
         public FunctionExtension extendedOps() {

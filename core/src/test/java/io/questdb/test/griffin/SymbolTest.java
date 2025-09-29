@@ -149,7 +149,7 @@ public class SymbolTest extends AbstractCairoTest {
                             " order by sym desc",
                     null,
                     true,
-                    true,
+                    false,
                     false
             );
         });

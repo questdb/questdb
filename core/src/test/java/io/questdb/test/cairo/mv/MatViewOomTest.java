@@ -27,10 +27,28 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 
+@RunWith(Parameterized.class)
 public class MatViewOomTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public MatViewOomTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testOom() throws Exception {
@@ -46,11 +64,13 @@ public class MatViewOomTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
         assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL;"
-            );
+
+            CharSequence sqlText = "create table base_price (" +
+                    "sym varchar, price double, ts #TIMESTAMP" +
+                    ") timestamp(ts) partition by DAY WAL;";
+
+            sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+            engine.execute(sqlText, sqlExecutionContext);
 
             execute(
                     "insert into base_price select " +

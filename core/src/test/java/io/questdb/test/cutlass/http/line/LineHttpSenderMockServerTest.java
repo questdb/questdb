@@ -36,6 +36,8 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -45,21 +47,42 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.*;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
     public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
             port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(PROTOCOL_VERSION_V1);
 
+    public static final Function<Integer, Sender.LineSenderBuilder> NO_PROTOCOL_VERSION_SET_FACTORY =
+            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
+
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
+
+    private final static AtomicLong REMAINING_SERVER_RECV_FAILURES = new AtomicLong();
+    private final NetworkFacade FAILING_FACADE = new NetworkFacadeImpl() {
+        @Override
+        public int recvRaw(long fd, long buffer, int bufferLen) {
+            if (REMAINING_SERVER_RECV_FAILURES.getAndDecrement() > 0) {
+                return -1;
+            }
+            return super.recvRaw(fd, buffer, bufferLen);
+        }
+    };
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        REMAINING_SERVER_RECV_FAILURES.set(0); // no failure by default
+    }
 
     @Test
     public void testAutoFlushInterval() throws Exception {
@@ -132,6 +155,44 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
                 .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+    }
+
+    @Test
+    public void testRetryingWhenGettingProtocolVersion() throws Exception {
+        // inject a bunch of failures on the server side recv
+        // this closes a connection while a client is trying to read protocol version (/settings)
+
+        // let's test the client retries reading the protocol version by default
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .stringColumn("str", "foo")
+                    .atNow();
+            sender.flush();
+        }, NO_PROTOCOL_VERSION_SET_FACTORY); // important - we dot set protocol version explicitly so this forces the client to fetch it from the server
+
+
+        // now let's test the same with retrying disabled - fetching the protocol version must fail
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        try {
+            mockHttpProcessor = new MockHttpProcessor()
+                    .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                    .replyWithStatus(204);
+            testWithMock(mockHttpProcessor, sender -> {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .stringColumn("str", "foo")
+                        .atNow();
+                sender.flush();
+                Assert.fail("Exception expected");
+            }, NO_PROTOCOL_VERSION_SET_FACTORY.andThen(b -> b.retryTimeoutMillis(0))); // disable retries
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
+        }
     }
 
     @Test
@@ -530,6 +591,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withDumpingTraffic(false)
                 .withAllowDeflateBeforeSend(false)
                 .withServerKeepAlive(true)
+                .withNetwork(FAILING_FACADE)
                 .withHttpProtocolVersion("HTTP/1.1 ")
                 .build(cairoConfiguration);
     }

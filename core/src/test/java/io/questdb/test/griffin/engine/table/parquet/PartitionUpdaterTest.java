@@ -33,11 +33,30 @@ import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class PartitionUpdaterTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public PartitionUpdaterTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testBadUpdate() throws Exception {
@@ -47,13 +66,14 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
             final FilesFacade ff = configuration.getFilesFacade();
             execute("create table " + tableName + " as (select" +
                     " x id," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " timestamp_sequence(400000000000, 500)::" + timestampType.getTypeName() + " designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
 
-            try (Path path = new Path();
-                 PartitionDescriptor descriptor = new PartitionDescriptor();
-                 TableReader reader = engine.getReader(tableName);
-                 PartitionUpdater updater = new PartitionUpdater(ff)
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor descriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader(tableName);
+                    PartitionUpdater updater = new PartitionUpdater(ff)
             ) {
                 // Initial partition dir created.
                 final TableToken table = engine.getTableTokenIfExists(tableName);
@@ -96,8 +116,10 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         1,  // index of the timestamp column
                         0, // uncompressed
                         false,
+                        false,
                         0,
-                        0);
+                        0
+                );
 
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
 

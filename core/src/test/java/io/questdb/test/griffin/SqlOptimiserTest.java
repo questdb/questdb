@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
@@ -465,7 +466,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
@@ -876,7 +878,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "from tab1 join tab2 on tab1.id = tab2.id\n" +
                             "order by a desc " +
                             "limit 10",
-                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    Sort\n" +
                             "      keys: [a desc]\n" +
                             "        SelectedRecord\n" +
@@ -913,7 +915,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by a desc, ts " +
                             "limit 10",
                     "SelectedRecord\n" +
-                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "        Sort\n" +
                             "          keys: [a desc, ts]\n" +
                             "            SelectedRecord\n" +
@@ -1076,11 +1078,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1112,11 +1114,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1148,11 +1150,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts1]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1185,11 +1187,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s1, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s1, ts1]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1221,11 +1223,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts]\n" +
                             "        SelectedRecord\n" +
-                            "            AsOf Join Fast Scan\n" +
+                            "            AsOf Join Indexed Scan\n" +
                             "              condition: t2.s=t1.s\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
@@ -1263,7 +1265,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 9\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1305,7 +1307,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1402,7 +1404,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts, ts1, s1]\n" +
                             "        SelectedRecord\n" +
@@ -1499,7 +1501,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            SortedSymbolIndex\n" +
@@ -1595,7 +1597,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s]\n" +
                             "        SelectedRecord\n" +
@@ -1692,7 +1694,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [ts, s1, s, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1790,7 +1792,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1832,7 +1834,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1000000 skip-over-rows: 0 limit: 21\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1000000\n" +
                             "    Sort\n" +
                             "      keys: [s, ts, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1887,11 +1889,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    LIMIT 1000000;";
 
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Sort light lo: 1000000\n" +
-                    "  keys: [s, ts]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: t1\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Top K lo: 1000000 workers: 1\n" +
+                            "  filter: null\n" +
+                            "  keys: [s, ts]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t1\n"
+            );
 
             Misc.free(select(query, sqlExecutionContext));
         });
@@ -2105,15 +2111,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "on y2.LAST = y1.ts";
             String queryNew = query + " union \n" + query;
             final QueryModel model = compileModel(queryNew);
-            TestUtils.assertEquals("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                    "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
-                    "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                    "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                    "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                    " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                    "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                    "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString0());
+            TestUtils.assertEquals(
+                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
+                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                            "limit 1) y2 on y2.LAST = y1.ts)",
+                    model.toString0()
+            );
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -2129,13 +2138,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
-                            "            Sort light lo: 1\n" +
+                            "            Async Top K lo: 1 workers: 1\n" +
+                            "              filter: null\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: y2\n");
-
+                            "                        Frame forward scan on: y2\n"
+            );
         });
     }
 
@@ -3045,6 +3055,220 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteTrivialExpressions() throws Exception {
+        testRewriteTrivialExpressions(false);
+    }
+
+    @Test
+    public void testRewriteTrivialExpressions2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id0 long,\n" +
+                            "    id1 long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, 1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, 2, '2021-01-01T12:35:00');");
+
+            final String query = "SELECT id0, id1, 2 - id0 + 1 id0_1, 2 / (id1 * 2) id1_1, count(*) AS c " +
+                    "FROM x " +
+                    "GROUP BY id0, id1, id0 / 42, 1 / (id1 * 42) " +
+                    "ORDER BY c DESC";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Radix sort light\n" +
+                            "  keys: [c desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [id0,id1,2-id0+1,2/id1*2,c]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [id0,id1,column,column1]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id0\tid1\tid0_1\tid1_1\tc\n" +
+                            "2\t2\t1\t0\t1\n" +
+                            "1\t1\t2\t1\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteTrivialExpressionsInOuterJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "WITH x1 AS ( " +
+                    "  SELECT id id0, id / 2 id1, count(*) AS c " +
+                    "  FROM x " +
+                    "  GROUP BY id, id / 2 " +
+                    "  ORDER BY c DESC" +
+                    ") " +
+                    "SELECT * " +
+                    "FROM x x0 " +
+                    "JOIN x1 ON x0.id = x1.id0;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: x1.id0=x0.id\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [c desc]\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [id,id/2,c]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [id]\n" +
+                            "                      values: [count(*)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id\tts\tid0\tid1\tc\n" +
+                            "1\t2021-01-01T12:34:00.000000Z\t1\t0\t1\n" +
+                            "2\t2021-01-01T12:35:00.000000Z\t2\t1\t1\n",
+                    query,
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteTrivialExpressionsInOuterJoin2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "WITH x1 AS ( " +
+                    "  SELECT id id0, id / 2 id1, id / 2 + 1 id2, count(*) AS c " +
+                    "  FROM x " +
+                    "  GROUP BY id, id / 2, id / 2 + 1 " +
+                    "  ORDER BY c DESC" +
+                    ") " +
+                    "SELECT * " +
+                    "FROM x x0 " +
+                    "JOIN x1 ON x0.id = x1.id0;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: x1.id0=x0.id\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n" +
+                            "        Hash\n" +
+                            "            Radix sort light\n" +
+                            "              keys: [c desc]\n" +
+                            "                VirtualRecord\n" +
+                            "                  functions: [id,id/2,id/2+1,c]\n" +
+                            "                    Async Group By workers: 1\n" +
+                            "                      keys: [id]\n" +
+                            "                      values: [count(*)]\n" +
+                            "                      filter: null\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id\tts\tid0\tid1\tid2\tc\n" +
+                            "1\t2021-01-01T12:34:00.000000Z\t1\t0\t1\t1\n" +
+                            "2\t2021-01-01T12:35:00.000000Z\t2\t1\t2\t1\n",
+                    query,
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteTrivialExpressionsInOuterUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (\n" +
+                            "    id long,\n" +
+                            "    ts timestamp\n" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
+            execute("INSERT INTO x VALUES(2, '2021-01-01T12:35:00');");
+
+            final String query = "SELECT 1 id0, 2 id1, 1 c FROM long_sequence(1) " +
+                    "UNION ALL " +
+                    "(SELECT id id0, id * 2 id1, count(*) AS c " +
+                    "FROM x " +
+                    "GROUP BY id, id * 2 " +
+                    "ORDER BY c DESC);";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union All\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1,2,1]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [c desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [id,id*2,c]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [id]\n" +
+                            "              values: [count(*)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "id0\tid1\tc\n" +
+                            "1\t2\t1\n" +
+                            "2\t4\t1\n" +
+                            "1\t2\t1\n",
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteTrivialExpressions_aliasExpressionsEnabled() throws Exception {
+        testRewriteTrivialExpressions(true);
+    }
+
+    @Test
     public void testSampleByExpressionDependOtherColumn() throws Exception {
         execute("create table t (\n" +
                 "  timestamp TIMESTAMP,\n" +
@@ -3436,7 +3660,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: (null,'2018-01-31')\n" +
+                    "      range: (,'2018-01-31')\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3468,7 +3692,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3799,7 +4023,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(shouldSucceedParallel, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      range: ('2017-12-20',null)\n" +
+                    "      range: ('2017-12-20',)\n" +
                     "      stride: '5d'\n" +
                     "      values: [null,null]\n" +
                     "        Async Group By workers: 1\n" +
@@ -3814,7 +4038,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
                     "  fill: null\n" +
-                    "  range: ('2017-12-20',null)\n" +
+                    "  range: ('2017-12-20',)\n" +
                     "  values: [avg(x),sum(x)]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
@@ -3830,98 +4054,120 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(SampleByTest.FROM_TO_DDL);
             execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
-            final String unionAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
-                    "union all\n" +
-                    "select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+            final String unionAllQuery = "select *" +
+                    "from (" +
+                    "  select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null) " +
+                    "  union all " +
+                    "  select ts, avg(x), sum(x) from fromto2 sample by 5d from '2017-12-20' to '2018-01-31' fill(null)" +
+                    ")" +
+                    "order by ts";
 
             final String unionQuery = unionAllQuery.replace("union all", "union");
 
-            assertPlanNoLeakCheck(unionAllQuery, "Union All\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertPlanNoLeakCheck(
+                    unionAllQuery,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Union All\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto2\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
 
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionAllQuery);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\tsum\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n",
+                    unionAllQuery,
+                    "ts",
+                    true,
+                    false
+            );
 
-            assertPlanNoLeakCheck(unionQuery, "Union\n" +
-                    "    Sort\n" +
-                    "      keys: [ts]\n" +
-                    "        Fill Range\n" +
-                    "          range: ('2017-12-20','2018-01-31')\n" +
-                    "          stride: '5d'\n" +
-                    "          values: [null,null]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [ts]\n" +
-                    "              values: [avg(x),sum(x)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: fromto\n" +
-                    "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null,null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [ts]\n" +
-                    "          values: [avg(x),sum(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto2\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertPlanNoLeakCheck(
+                    unionQuery,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Union\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                            "        Fill Range\n" +
+                            "          range: ('2017-12-20','2018-01-31')\n" +
+                            "          stride: '5d'\n" +
+                            "          values: [null,null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [avg(x),sum(x)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: fromto2\n" +
+                            "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
 
-            assertSql("ts\tavg\tsum\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionQuery);
+            assertQueryNoLeakCheck(
+                    "ts\tavg\tsum\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t10440\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t63480\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t41520\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\tnull\n",
+                    unionQuery,
+                    "ts",
+                    true,
+                    false
+            );
         });
     }
 
@@ -4506,7 +4752,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"
@@ -4534,7 +4780,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "    Radix sort light\n" +
                         "      keys: [ts2]\n" +
                         "        Async JIT Filter workers: 1\n" +
-                        "          filter: ts2>=1\n" +
+                        "          filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: cpu_ts\n"
@@ -4628,7 +4874,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         "            Radix sort light\n" +
                         "              keys: [ts2]\n" +
                         "                Async JIT Filter workers: 1\n" +
-                        "                  filter: ts2>=1\n" +
+                        "                  filter: ts2>=1970-01-01T00:00:00.000001Z\n" +
                         "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: cpu_ts\n"
@@ -4673,6 +4919,54 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:00.000003Z\tB\t3.0\t3\t3\tnull\t8.0\t3\n" +
                 "1970-01-01T00:00:00.000002Z\tA\t2.0\t2\t2\t1.0\t9.0\t2\n" +
                 "1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3\n", q6);
+    }
+
+    private void testRewriteTrivialExpressions(boolean aliasExpressionsEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(aliasExpressionsEnabled));
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE hits (\n" +
+                            "    ClientIP ipv4,\n" +
+                            "    EventTime timestamp\n" +
+                            ") TIMESTAMP(EventTime) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");
+            execute("INSERT INTO hits VALUES('198.162.0.12', '2021-01-01T12:35:00');");
+
+            final String query = "SELECT ClientIP, clientip - 1, ClientIP - 2, -3 + Clientip cip3, count(*) AS c " +
+                    "FROM hits " +
+                    "GROUP BY ClientIP, clientip - 1, clientIP - 2, -3 + Clientip " +
+                    "ORDER BY c DESC " +
+                    "LIMIT 10;";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "VirtualRecord\n" +
+                            "  functions: [ClientIP,ClientIP-1,ClientIP-2,-3+ClientIP,c]\n" +
+                            "    Long Top K lo: 10\n" +
+                            "      keys: [c desc]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [ClientIP]\n" +
+                            "          values: [count(*)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: hits\n"
+            );
+
+            final String expectedColumns = aliasExpressionsEnabled
+                    ? "ClientIP\tclientip - 1\tClientIP - 2\tcip3\tc\n"
+                    : "ClientIP\tcolumn\tcolumn1\tcip3\tc\n";
+            assertQueryNoLeakCheck(
+                    expectedColumns +
+                            "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
+                            "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     protected QueryModel compileModel(String query) throws SqlException {

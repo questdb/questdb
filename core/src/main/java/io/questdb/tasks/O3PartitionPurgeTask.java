@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 public class O3PartitionPurgeTask {
     private int partitionBy;
     private TableToken tableToken;
+    private int timestampType;
 
     public int getPartitionBy() {
         return partitionBy;
@@ -38,8 +39,13 @@ public class O3PartitionPurgeTask {
         return tableToken;
     }
 
-    public void of(TableToken tableToken, int partitionBy) {
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    public void of(TableToken tableToken, int timestampType, int partitionBy) {
         this.tableToken = tableToken;
+        this.timestampType = timestampType;
         this.partitionBy = partitionBy;
     }
 }

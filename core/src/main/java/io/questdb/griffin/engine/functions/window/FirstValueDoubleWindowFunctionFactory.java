@@ -43,6 +43,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
@@ -73,7 +74,10 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        checkWindowParameter(position, sqlExecutionContext);
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        windowContext.validate(position, supportNullsDesc());
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
             return new DoubleNullFunction(args.get(0),
                     NAME,
@@ -84,20 +88,22 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         return windowContext.isIgnoreNulls() ?
-                this.generateIgnoreNullsFunction(position, args, configuration) :
-                this.generateRespectNullsFunction(position, args, configuration);
+                this.generateIgnoreNullsFunction(position, args, configuration, windowContext) :
+                this.generateRespectNullsFunction(position, args, configuration, windowContext);
     }
 
     private Function generateIgnoreNullsFunction(
             int position,
             ObjList<Function> args,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            WindowContext windowContext
     ) throws SqlException {
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving first_value() ignore nulls over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
@@ -185,7 +191,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -266,7 +272,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstNotNullValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueDoubleWindowFunctionFactory.FirstValueOverCurrentRowFunction(args.get(0), true);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -292,13 +298,16 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     private Function generateRespectNullsFunction(
             int position,
             ObjList<Function> args,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            WindowContext windowContext
     ) throws SqlException {
         int framingMode = windowContext.getFramingMode();
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
         if (partitionByRecord != null) {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
@@ -387,7 +396,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                             args.get(0)
                     );
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
@@ -467,7 +476,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
                     return new FirstValueOverWholeResultSetFunction(args.get(0));
                 } // between current row and current row
-                else if (rowsLo == 0 && rowsLo == rowsHi) {
+                else if (rowsLo == 0 && rowsHi == 0) {
                     return new FirstValueOverCurrentRowFunction(args.get(0), false);
                 } // between [unbounded | x] preceding and [y preceding | current row]
                 else {
@@ -1325,7 +1334,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override
@@ -1682,7 +1692,8 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
         }
 
         @Override

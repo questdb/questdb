@@ -268,7 +268,7 @@ fn substitute_variables(
     text: &str,
     variables: &HashMap<String, String>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let re = Regex::new(r"\$\{([^}]+)\}")?;
+    let re = Regex::new(r"\$\{([^}]+)}")?;
     let result = re.replace_all(text, |caps: &regex::Captures| {
         variables
             .get(&caps[1])
@@ -279,7 +279,7 @@ fn substitute_variables(
 }
 
 fn replace_param_placeholders(query: &str) -> String {
-    let re = Regex::new(r"\$\[(\d+)\]").unwrap();
+    let re = Regex::new(r"\$\[(\d+)]").unwrap();
     re.replace_all(query, |caps: &regex::Captures| format!("${}", &caps[1]))
         .to_string()
 }
@@ -314,7 +314,7 @@ fn extract_parameters(
                         "char" => Box::new(substituted),
 
                         // date is formatted as '2024-10-02' we need to create a timestamp (NaiveDateTime) out of it
-                        // why? QuestDB sends date columns over PGWire as Timestamps so when Rust PGWire client
+                        // why? QuestDB sends date columns over PGWire as Micros so when Rust PGWire client
                         // asks (PGWire DESCRIBE) server for a date column, server returns pretends it's a timestamp
                         // and the client refuses to set a date value to a timestamp column
                         "date" => Box::new(
@@ -406,7 +406,7 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         Type::FLOAT8 => {
             Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx)))
         }
-        tokio_postgres::types::Type::BOOL => Value::Bool(row.get(idx)),
+        Type::BOOL => Value::Bool(row.get(idx)),
         Type::TIMESTAMP => {
             let val: NaiveDateTime = row.get(idx);
             Value::String(val.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
@@ -506,7 +506,7 @@ fn handle_execute_result(
     Ok(())
 }
 
-/// String representation of a PostgreSQL multi-dimensional array
+/// String representation of a PostgreSQL multidimensional array
 #[derive(Debug, Clone)]
 pub struct PgArrayString(pub String);
 

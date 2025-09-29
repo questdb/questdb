@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -52,8 +54,15 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final long lo = args.getQuick(0).getTimestamp(null);
-        final long hi = args.getQuick(1).getTimestamp(null);
+        Function arg = args.getQuick(0);
+        Function arg2 = args.getQuick(1);
+        int arg1Type = ColumnType.getTimestampType(arg.getType());
+        int arg2Type = ColumnType.getTimestampType(arg2.getType());
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(arg1Type, arg2Type);
+        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final long lo = driver.from(arg.getTimestamp(null), arg1Type);
+        final long hi = driver.from(arg2.getTimestamp(null), arg2Type);
         final int nanRate = args.getQuick(2).getInt(null);
 
         if (nanRate < 0) {
@@ -61,19 +70,20 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new Func(lo, hi, nanRate, timestampType);
         }
 
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends TimestampFunction implements Function {
+    public static class Func extends TimestampFunction implements Function {
         private final long lo;
         private final int nanRate;
         private final long range;
         private Rnd rnd;
 
-        public Func(long lo, long hi, int nanRate) {
+        public Func(long lo, long hi, int nanRate, int timestampType) {
+            super(timestampType);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;

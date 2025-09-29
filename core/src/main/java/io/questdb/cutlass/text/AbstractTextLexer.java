@@ -35,6 +35,7 @@ import io.questdb.std.SwarUtils;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
@@ -43,7 +44,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
     private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
     private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
-    private static final long NON_ASCII_MASK_FULL = SwarUtils.broadcast((byte) 0x80);
 
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
@@ -310,7 +310,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                     if (zeroBytesWord == 0) {
                         ptr += 7;
                         this.fieldHi += 7;
-                        this.ascii &= (word & NON_ASCII_MASK_FULL) == 0;
+                        this.ascii &= Utf8s.isAscii(word);
                         continue;
                     } else {
                         int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
@@ -320,7 +320,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
                             // These bytes come on LOW bits of the "word". To check that these bytes are
                             // positive, we need to isolate them. We do that by masking out the entire
                             // word, save for the bytes we intend to keep.
-                            this.ascii &= ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
+                            this.ascii &= Utf8s.isAscii(word & (0xffffffffffffffffL >>> (64 - firstIndex * 8)));
                             ptr += firstIndex;
                         }
                         this.fieldHi += firstIndex;

@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
  * SortedLightRecordCursor which implements LIMIT clause.
  */
 public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCursor, DynamicLimitCursor {
-
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;

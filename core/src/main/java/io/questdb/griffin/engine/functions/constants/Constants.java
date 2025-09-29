@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -35,7 +37,7 @@ public final class Constants {
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
     private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.NULL + 1);
     private static final ObjList<ConstantFunction> nullDoubleArrayConstants = new ObjList<>();
-    private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
+    private static final IntObjHashMap<TypeConstant> typeConstants = new IntObjHashMap<>(32);
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
         final int type = ColumnType.getGeoHashTypeWithBits(bits);
@@ -75,6 +77,12 @@ public final class Constants {
                 }
                 return new NullArrayConstant(columnType);
             }
+            case ColumnType.TIMESTAMP:
+                return ColumnType.getTimestampDriver(columnType).getTimestampConstantNull();
+            case ColumnType.INTERVAL:
+                if (columnType != typeTag) {
+                    return IntervalUtils.getTimestampDriverByIntervalType(columnType).getIntervalConstantNull();
+                }
             default:
                 return nullConstants.getQuick(typeTag);
         }
@@ -95,7 +103,7 @@ public final class Constants {
             }
         }
         // GEOHASH takes a different path, no need to extract tag
-        return typeConstants.getQuick(columnType);
+        return typeConstants.get(columnType);
     }
 
     static {
@@ -105,7 +113,6 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
         nullConstants.extendAndSet(ColumnType.LONG, LongConstant.NULL);
         nullConstants.extendAndSet(ColumnType.DATE, DateConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampConstant.NULL);
         nullConstants.extendAndSet(ColumnType.BYTE, ByteConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.SHORT, ShortConstant.ZERO);
         nullConstants.extendAndSet(ColumnType.CHAR, CharConstant.ZERO);
@@ -122,30 +129,34 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
         nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
-        nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.INTERVAL, IntervalConstant.RAW_NULL);
         nullConstants.setPos(ColumnType.NULL + 1);
 
-        typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG, LongTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.DATE, DateTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.TIMESTAMP, TimestampTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.CHAR, CharTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.UUID, UuidTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
-        typeConstants.extendAndSet(ColumnType.INTERVAL, IntervalTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.INT, IntTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.STRING, StrTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.SYMBOL, SymbolTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.LONG, LongTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.DATE, DateTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.TIMESTAMP_MICRO, TimestampTypeConstant.TIMESTAMP_MS_CONSTANT);
+        typeConstants.put(ColumnType.TIMESTAMP_NANO, TimestampTypeConstant.TIMESTAMP_NS_CONSTANT);
+        typeConstants.put(ColumnType.BYTE, ByteTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.SHORT, ShortTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.CHAR, CharTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.BOOLEAN, BooleanTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.BINARY, BinTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.REGCLASS, RegClassTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.REGPROCEDURE, RegProcedureTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.ARRAY_STRING, StringArrayTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.UUID, UuidTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.IPv4, IPv4TypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.VARCHAR, VarcharTypeConstant.INSTANCE);
+        typeConstants.put(ColumnType.INTERVAL_RAW, IntervalTypeConstant.RAW_INSTANCE);
+        typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_MICRO, IntervalTypeConstant.TIMESTAMP_MICRO_INSTANCE);
+        typeConstants.put(ColumnType.INTERVAL_TIMESTAMP_NANO, IntervalTypeConstant.TIMESTAMP_NANO_INSTANCE);
+
 
         // pre-populate double array types up to 10 dimensions
         for (int i = 0; i < 10; i++) {

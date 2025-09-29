@@ -177,7 +177,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
                             .$(", id=").$(frameSequence.getId())
-                            .$(", taskType=").$(task.getType())
+                            .$(", taskType=").$(task.getTaskType())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .$(", active=").$(frameSequence.isActive())
@@ -192,7 +192,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     LOG.error()
                             .$("reduce error [error=").$(th)
                             .$(", id=").$(frameSequence.getId())
-                            .$(", taskType=").$(task.getType())
+                            .$(", taskType=").$(task.getTaskType())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
                             .I$();

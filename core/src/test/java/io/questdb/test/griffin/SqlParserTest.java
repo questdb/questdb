@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -94,7 +95,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACCurrentExprFollowingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and 4 + 3 #UNIT following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between current row and 4 + 3 following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between current row and 4+3 following) from xyz",
                 modelOf("xyz")
@@ -149,7 +150,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprFollowingExprFollowingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT following and 23 #UNIT following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 following and 23 following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 following and 23 following) from xyz",
                 modelOf("xyz")
@@ -163,7 +164,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprFollowingExprFollowingClauseValid() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 22 #UNIT following and 3 #UNIT following exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 22 following and 3 following exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 22 following and 3 following) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -241,7 +242,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingCurrentClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 #UNIT preceding and current row exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 preceding and current row exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 1 preceding and current row) from xyz",
                 modelOf("xyz")
@@ -264,7 +265,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingExprFollowingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 10 #UNIT following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 preceding and 10 following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 10 following) from xyz",
                 modelOf("xyz")
@@ -324,7 +325,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingExprPrecedingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 28 #UNIT preceding and 12 #UNIT preceding exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 28 preceding and 12 preceding exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 28 preceding and 12 preceding) from xyz",
                 modelOf("xyz")
@@ -338,7 +339,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingExprPrecedingClauseValid1() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 20 #UNIT preceding and 10 #UNIT preceding exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 20 preceding and 10 preceding exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 20 preceding and 10 preceding) from xyz",
                 modelOf("xyz")
@@ -352,7 +353,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingExprPrecedingClauseValid2() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 preceding and 20 preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -365,7 +366,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingExprPrecedingClauseValidUnion() throws Exception {
         assertWindowQuery(
-                "select-choose a, b, c from (select [a, b, c] from xyz timestamp (ts)) union all select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 #UNIT preceding and 20 #UNIT preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
+                "select-choose a, b, c from (select [a, b, c] from xyz timestamp (ts)) union all select-window a, b, f(c) f over (partition by b order by ts #FRAME between 10 preceding and 20 preceding exclude no others) from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a, b, c from xyz" +
                         " union all " +
                         "select a,b, f(c) over (partition by b order by ts #FRAME between 10 preceding and 20 preceding) from xyz",
@@ -380,7 +381,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingUnboundedFollowingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 #UNIT preceding and unbounded following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 preceding and unbounded following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 1/1 preceding and unbounded following) from xyz",
                 modelOf("xyz")
@@ -394,7 +395,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingUnboundedFollowingExcludeCurrentRowClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 0 + 1 #UNIT preceding and unbounded following exclude current row) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 0 + 1 preceding and unbounded following exclude current row) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 0+1 preceding and unbounded following exclude current row) from xyz",
                 modelOf("xyz")
@@ -417,7 +418,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingUnboundedFollowingExcludeGroupClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 0 #UNIT preceding and unbounded following exclude group) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 0 preceding and unbounded following exclude group) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 1+0 preceding and unbounded following exclude group) from xyz",
                 modelOf("xyz")
@@ -449,7 +450,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingUnboundedFollowingExcludeNoOthersClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 1 #UNIT preceding and unbounded following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 + 1 preceding and unbounded following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 1+1 preceding and unbounded following exclude no others) from xyz",
                 modelOf("xyz")
@@ -472,7 +473,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACExprPrecedingUnboundedFollowingExcludeTiesClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 #UNIT preceding and unbounded following exclude ties) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 1 / 1 preceding and unbounded following exclude ties) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 1/1 preceding and unbounded following exclude ties) from xyz",
                 modelOf("xyz")
@@ -535,10 +536,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
         for (int i = 0; i < unitsAndValues.length; i++) {
             String expectedUnit = unitsAndValues[i].replaceAll("s$", "");
             assertQuery(
-                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and current row exclude no others) " +
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and current row exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range 10 #unit preceding) from xyz"
+                    "select a,b, f(c) over (partition by b order by ts range 10 preceding) from xyz"
                             .replace("#unit", unitsAndValues[i]),
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
@@ -548,10 +549,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
             );
 
             assertQuery(
-                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 #unit preceding and 1 #unit following exclude no others) " +
+                    ("select-window a, b, f(c) f over (partition by b order by ts range between 10 preceding and 1 following exclude no others) " +
                             "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))")
                             .replace("#unit", expectedUnit),
-                    "select a,b, f(c) over (partition by b order by ts range between 10 #unit preceding and 1 #unit following) from xyz"
+                    "select a,b, f(c) over (partition by b order by ts range between 10 preceding and 1 following) from xyz"
                             .replace("#unit", unitsAndValues[i]),
                     modelOf("xyz")
                             .col("a", ColumnType.INT)
@@ -679,7 +680,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACShorthandExprPreceding() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 #UNIT preceding and current row exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between 12 preceding and current row exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME 12 preceding) from xyz",
                 modelOf("xyz")
@@ -783,7 +784,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testACUnboundedPrecedingExprFollowingClause() throws Exception {
         assertWindowQuery(
-                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between unbounded preceding and 10 #UNIT following exclude no others) " +
+                "select-window a, b, f(c) f over (partition by b order by ts #FRAME between unbounded preceding and 10 following exclude no others) " +
                         "from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz timestamp (ts)))",
                 "select a,b, f(c) over (partition by b order by ts #FRAME between unbounded preceding and 10 following) from xyz",
                 modelOf("xyz")
@@ -2073,7 +2074,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE MATERIALIZED VIEW myview REFRESH",
                 39,
-                "'immediate' or 'manual' or 'period' or 'start' or 'every' or 'as' expected"
+                "'immediate' or 'manual' or 'period' or 'every' or 'as' expected"
         );
     }
 
@@ -2416,11 +2417,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView57() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY -1s;",
+                46,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView58() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH EVERY 0s;",
+                46,
+                "positive number expected: 0s"
+        );
+    }
+
+    @Test
+    public void testCreateMatView59() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH -1d);",
+                62,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
     public void testCreateMatView6() throws Exception {
         assertSyntaxError(
                 "create materialized view 'myview' with refresh",
                 39,
                 "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView60() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 0d);",
+                62,
+                "positive number expected: 0d"
+        );
+    }
+
+    @Test
+    public void testCreateMatView61() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY -1h);",
+                71,
+                "positive number expected: -"
+        );
+    }
+
+    @Test
+    public void testCreateMatView62() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW myview REFRESH MANUAL PERIOD (LENGTH 1d DELAY 0h);",
+                71,
+                "positive number expected: 0h"
         );
     }
 
@@ -2448,6 +2503,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create materialized view 'myview' refresh immediate",
                 51,
                 "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
+        TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
+                .timestamp()
+                .col("a", ColumnType.DOUBLE)
+                .wal();
+
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) from tab sample by 1h",
+                48,
+                "column 'sum(a)' requires an explicit alias. Use: sum(a) AS your_column_name",
+                model
+        );
+        assertSyntaxError("create materialized view x as select timestamp, sum(a) \"a,b\" from tab sample by 1h",
+                55,
+                "column alias 'a,b' contains unsupported characters",
+                model
         );
     }
 
@@ -3883,6 +3958,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableWithInvalidColumnNameShouldFail() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError("create table x as (select rnd_str('a', 'b', 'c') from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
+        assertSyntaxError("create table x as (select 1 \"rnd_str('a', 'b', 'c')\" from long_sequence(10))",
+                13,
+                "invalid column name [name=rnd_str('a', 'b', 'c'), position=0]"
+        );
+    }
+
+    @Test
     public void testCreateTableWithInvalidParameter1() throws Exception {
         assertSyntaxError(
                 "create table x (a INT, t TIMESTAMP) timestamp(t) partition by DAY WITH maxUncommittedRows=10000, o3invalid=250ms",
@@ -4811,6 +4899,55 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "EXPLAIN (FORMAT TEXT) ",
                 "explain (format text ) select * from x", ExecutionModel.EXPLAIN,
                 modelOf("x").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExpressionAliasDots() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual floor(1.2) \"floor(1.2)\", 'Hello there.' \"'Hello there.'\" from (long_sequence(1))",
+                "select floor(1.2), 'Hello there.'"
+        );
+    }
+
+    @Test
+    public void testExpressionAliasFunctions() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual trim(a) trim(a), floor(b) floor(b) from (select [a, b] from xyz timestamp (ts))",
+                "select trim(a), floor(b) from xyz",
+                modelOf("xyz")
+                        .col("b", ColumnType.DOUBLE)
+                        .col("a", ColumnType.STRING)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testExpressionAliasOperators() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertQuery(
+                "select-virtual a * 2 + b / (d - c) 'a * 2 + b / (d - c)' from (select [a, b, c, d] from xyz timestamp (ts))",
+                "select a*2+b/(d-c) from xyz",
+                modelOf("xyz")
+                        .col("d", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("a", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testExpressionAliasOptOut() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
+        assertQuery(
+                "select-virtual trim(a) trim, 1 + 1 column from (select [a] from xyz timestamp (ts))",
+                "select trim(a), 1 + 1 from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.STRING)
+                        .timestamp("ts")
         );
     }
 
@@ -9148,7 +9285,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';",
                     75,
                     "'to' expected"
@@ -9161,7 +9298,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to",
                     78,
                     "TO timestamp expected"
@@ -9174,7 +9311,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'",
                     79,
                     "invalid TO timestamp value"
@@ -9187,7 +9324,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'",
                     79,
                     "TO timestamp must not be earlier than FROM timestamp"
@@ -9240,7 +9377,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
                     "'full' or 'incremental' or 'range' expected"
@@ -9253,7 +9390,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
                     47,
                     "unexpected token"
@@ -9266,7 +9403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE;",
                     40,
                     "'from' expected"
@@ -9279,7 +9416,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM",
                     45,
                     "FROM timestamp expected"
@@ -9292,7 +9429,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
             execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;",
                     46,
                     "invalid FROM timestamp value"
@@ -11348,7 +11485,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameLocked() throws Exception {
         assertMemoryLeak(() -> {
             String dirName = "tab" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            TableToken tableToken = new TableToken("tab", dirName, 1 + getSystemTablesCount(engine), false, false, false);
+            TableToken tableToken = new TableToken("tab", dirName, null, 1 + getSystemTablesCount(engine), false, false, false);
             CharSequence lockedReason = engine.lockAll(tableToken, "testing", true);
             Assert.assertNull(lockedReason);
             try {
@@ -12090,8 +12227,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             Assert.assertEquals(ExecutionModel.QUERY, model.getModelType());
                             sink.clear();
                             ((Sinkable) model).toSink(sink);
-                            String expected = expectedTemplate.replace("#FRAME", frameType.trim())
-                                    .replace("#UNIT ", "range ".equals(frameType) ? "microsecond " : "");
+                            String expected = expectedTemplate.replace("#FRAME", frameType.trim());
                             TestUtils.assertEquals(expected, sink);
                             if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
                                 validateTopDownColumns((QueryModel) model);
@@ -12106,54 +12242,5 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @FunctionalInterface
     public interface CairoAware {
         void run() throws SqlException;
-    }
-
-    @Test
-    public void testExpressionAliasOperators() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual a * 2 + b / (d - c) 'a * 2 + b / (d - c)' from (select [a, b, c, d] from xyz timestamp (ts))",
-                "select a*2+b/(d-c) from xyz",
-                modelOf("xyz")
-                        .col("d", ColumnType.INT)
-                        .col("c", ColumnType.INT)
-                        .col("b", ColumnType.INT)
-                        .col("a", ColumnType.INT)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testExpressionAliasDots() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual floor(1.2) \"floor(1.2)\", 'Hello there.' \"'Hello there.'\" from (long_sequence(1))",
-                "select floor(1.2), 'Hello there.'"
-        );
-    }
-
-    @Test
-    public void testExpressionAliasFunctions() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
-        assertQuery(
-                "select-virtual trim(a) trim(a), floor(b) floor(b) from (select [a, b] from xyz timestamp (ts))",
-                "select trim(a), floor(b) from xyz",
-                modelOf("xyz")
-                        .col("b", ColumnType.DOUBLE)
-                        .col("a", ColumnType.STRING)
-                        .timestamp("ts")
-        );
-    }
-
-    @Test
-    public void testExpressionAliasOptOut() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
-        assertQuery(
-                "select-virtual trim(a) trim, 1 + 1 column from (select [a] from xyz timestamp (ts))",
-                "select trim(a), 1 + 1 from xyz",
-                modelOf("xyz")
-                        .col("a", ColumnType.STRING)
-                        .timestamp("ts")
-        );
     }
 }

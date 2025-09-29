@@ -30,9 +30,7 @@ import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Numbers;
 
 public class IPv4Constant extends IPv4Function implements ConstantFunction {
-
     public static final IPv4Constant NULL = new IPv4Constant(Numbers.IPv4_NULL);
-
     private final int value;
 
     public IPv4Constant(int value) {

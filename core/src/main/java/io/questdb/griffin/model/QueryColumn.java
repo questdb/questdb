@@ -35,7 +35,9 @@ import java.util.Objects;
 
 public class QueryColumn implements Mutable, Sinkable {
     public static final ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
+    public static final int SYNTHESIZED_ALIAS_POSITION = -1;
     private CharSequence alias;
+    private int aliasPosition;
     private ExpressionNode ast;
     private int columnType;
     private boolean includeIntoWildcard = true;
@@ -61,6 +63,10 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public CharSequence getAlias() {
         return alias;
+    }
+
+    public int getAliasPosition() {
+        return aliasPosition;
     }
 
     public ExpressionNode getAst() {
@@ -104,11 +110,12 @@ public class QueryColumn implements Mutable, Sinkable {
         return this;
     }
 
-    public void setAlias(CharSequence alias) {
+    public void setAlias(CharSequence alias, int aliasPosition) {
         if (this.alias == alias || Chars.equalsNc(alias, this.alias)) {
             return;
         }
         this.alias = alias;
+        this.aliasPosition = aliasPosition;
     }
 
     public void setIncludeIntoWildcard(boolean includeIntoWildcard) {

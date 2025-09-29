@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -62,7 +63,6 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
         private final Function leftArg;
         private final int leftArgPos;
         private final Function rightArg;
-        private double value;
 
         public Func(
                 Function leftArg,
@@ -89,25 +89,25 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                 return 0d;
             }
 
-            if (!left.shapeEquals(right)) {
+            if (left.shapeDiffers(right)) {
                 throw CairoException.nonCritical().position(leftArgPos)
                         .put("arrays have different shapes [leftShape=").put(left.shapeToString())
                         .put(", rightShape=").put(right.shapeToString())
                         .put(']');
             }
-            value = 0d;
             if (left.isVanilla() && right.isVanilla()) {
+                double value = 0d;
                 for (int i = 0, n = left.getFlatViewLength(); i < n; i++) {
                     double leftVal = left.getDouble(i);
                     double rightVal = right.getDouble(i);
-                    if (Double.isFinite(leftVal) && Double.isFinite(rightVal)) {
+                    if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
                         value += leftVal * rightVal;
                     }
                 }
+                return value;
             } else {
-                applyRecursive(0, left, 0, right, 0);
+                return applyRecursive(0, left, 0, right, 0, 0);
             }
-            return value;
         }
 
         @Override
@@ -130,12 +130,13 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private void applyRecursive(
+        private static double applyRecursive(
                 int dim,
                 ArrayView left,
                 int flatIndexLeft,
                 ArrayView right,
-                int flatIndexRight
+                int flatIndexRight,
+                double sum
         ) {
             final int count = left.getDimLen(dim);
             final int strideLeft = left.getStride(dim);
@@ -145,19 +146,20 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
                 for (int i = 0; i < count; i++) {
                     double leftVal = left.getDouble(flatIndexLeft);
                     double rightVal = right.getDouble(flatIndexLeft);
-                    if (Double.isFinite(leftVal) && Double.isFinite(rightVal)) {
-                        value += leftVal * rightVal;
+                    if (Numbers.isFinite(leftVal) && Numbers.isFinite(rightVal)) {
+                        sum += leftVal * rightVal;
                     }
                     flatIndexLeft += strideLeft;
                     flatIndexRight += strideRight;
                 }
             } else {
                 for (int i = 0; i < count; i++) {
-                    applyRecursive(dim + 1, left, flatIndexLeft, right, flatIndexRight);
+                    sum = applyRecursive(dim + 1, left, flatIndexLeft, right, flatIndexRight, sum);
                     flatIndexLeft += strideLeft;
                     flatIndexRight += strideRight;
                 }
             }
+            return sum;
         }
     }
 }

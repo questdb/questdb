@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
@@ -67,12 +68,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
             boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
+            char rowsLoUnit,
             int rowsLoExprPos,
             long rowsHi,
+            char rowsHiUnit,
             int rowsHiExprPos,
             int exclusionKind,
             int exclusionKindPos,
             int timestampIndex,
+            int timestampType,
             boolean ignoreNulls,
             int nullsDescPos
     ) {
@@ -99,6 +103,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getIntervalFunctionType() {
+        return ColumnType.INTERVAL_TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getJitMode() {
         return 0;
     }
@@ -109,8 +118,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public long getNow() {
+    public long getNanosecondTimestamp() {
         return 0L;
+    }
+
+    @Override
+    public long getNow(int timestampType) {
+        return 0L;
+    }
+
+    @Override
+    public int getNowTimestampType() {
+        return ColumnType.TIMESTAMP_MICRO;
     }
 
     @Override
@@ -134,6 +153,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public int getSharedQueryWorkerCount() {
+        return 0;
+    }
+
+    @Override
     public SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return null;
     }
@@ -141,11 +165,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     @Override
     public WindowContext getWindowContext() {
         return null;
-    }
-
-    @Override
-    public int getWorkerCount() {
-        return 0;
     }
 
     @Override
@@ -179,6 +198,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public boolean isParallelReadParquetEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelTopKEnabled() {
         return false;
     }
 
@@ -229,11 +253,15 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setIntervalFunctionType(int intervalFunctionType) {
+    }
+
+    @Override
     public void setJitMode(int jitMode) {
     }
 
     @Override
-    public void setNowAndFixClock(long now) {
+    public void setNowAndFixClock(long now, int nowTimestampType) {
     }
 
     @Override
@@ -246,6 +274,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
+    public void setParallelTopKEnabled(boolean parallelTopKEnabled) {
     }
 
     @Override

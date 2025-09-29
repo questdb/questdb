@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.mig;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -174,7 +178,7 @@ final class Mig607 {
         path.concat(columnName).put(".o").$();
     }
 
-    private static void trimFile(FilesFacade ff, LPSZ path, long size, long opts) {
+    private static void trimFile(FilesFacade ff, LPSZ path, long size, int opts) {
         final long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happen on migration but better to be on safe side anyway
@@ -231,6 +235,7 @@ final class Mig607 {
                         long txSuffix = txMem.getLong(MigrationActions.prefixedBlockOffset(partitionDataOffset, 2, Long.BYTES));
                         setPathForNativePartition(
                                 path.trimTo(plen),
+                                ColumnType.TIMESTAMP_MICRO,
                                 partitionBy,
                                 txMem.getLong(partitionDataOffset),
                                 txSuffix

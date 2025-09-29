@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.Numbers;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);
@@ -38,9 +39,8 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
         this.value = value;
     }
 
-    @SuppressWarnings("ExpressionComparedToItself")
     public static DoubleConstant newInstance(double value) {
-        return value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
+        return Numbers.isFinite(value) ? new DoubleConstant(value) : DoubleConstant.NULL;
     }
 
     @Override
@@ -48,12 +48,10 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
         return value;
     }
 
-    @SuppressWarnings("ExpressionComparedToItself")
     @Override
     public boolean isNullConstant() {
         // NaN is used as a marker for NULL
-        // we can't use value != value because it will always be false
-        return value != value;
+        return Numbers.isNull(value);
     }
 
     @Override

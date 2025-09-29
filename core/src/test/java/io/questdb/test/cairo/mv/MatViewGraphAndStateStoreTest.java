@@ -25,12 +25,12 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
-import io.questdb.mp.NoOpQueue;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -41,7 +41,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
-    private final MatViewGraph graph = new MatViewGraph(new NoOpQueue<>());
+    private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
     private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
@@ -218,6 +218,7 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         viewDefinition.init(
                 MatViewDefinition.REFRESH_TYPE_IMMEDIATE,
                 false,
+                ColumnType.TIMESTAMP_MICRO,
                 viewToken,
                 "x",
                 baseTableToken.getTableName(),
@@ -239,13 +240,13 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     }
 
     private TableToken newTableToken(String tableName) {
-        TableToken t = new TableToken(tableName, tableName, 0, false, true, false, false, true);
+        TableToken t = new TableToken(tableName, tableName, null, 0, false, true, false, false, true);
         tableTokens.add(t);
         return t;
     }
 
     private TableToken newViewToken(String tableName) {
-        TableToken v = new TableToken(tableName, tableName, 0, true, true, false, false, true);
+        TableToken v = new TableToken(tableName, tableName, null, 0, true, true, false, false, true);
         tableTokens.add(v);
         return v;
     }

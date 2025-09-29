@@ -180,6 +180,46 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteringOnSingleQuote() throws Exception {
+        assertQueryAndPlan("Time\tSpread\tBid_Volume\task_volume\n",
+                "SELECT timestamp as Time,\n" +
+                        "avg(asks[1,1]-bids[1,1]) as Spread,\n" +
+                        "sum(bids[1,1]*bids[2,1]) as Bid_Volume,\n" +
+                        "sum(asks[1,1]*asks[2,1]) as ask_volume\n" +
+                        "FROM market_data\n" +
+                        "WHERE symbol = ''''\n" +
+                        "SAMPLE BY 1s\n" +
+                        "ORDER BY timestamp DESC\n" +
+                        "LIMIT 6;",
+                "\n" +
+                        "CREATE TABLE 'market_data' ( \n" +
+                        "\ttimestamp TIMESTAMP,\n" +
+                        "\tsymbol SYMBOL CAPACITY 16384 CACHE,\n" +
+                        "\tbids DOUBLE[][],\n" +
+                        "\tasks DOUBLE[][]\n" +
+                        ") timestamp(timestamp);",
+                "Time###DESC",
+                "INSERT INTO market_data (timestamp, symbol, bids, asks) " +
+                        "VALUES " +
+                        "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
+                        "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);",
+                "Time\tSpread\tBid_Volume\task_volume\n" +
+                        "1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0\n",
+                true,
+                true,
+                false,
+                "Sort light lo: 6\n" +
+                        "  keys: [Time desc]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [Time]\n" +
+                        "      values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]\n" +
+                        "      filter: symbol='''\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: market_data\n");
+    }
+
+    @Test
     public void testIndexBindVariableReplacedContext() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +

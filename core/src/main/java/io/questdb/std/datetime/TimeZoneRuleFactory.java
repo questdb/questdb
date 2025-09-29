@@ -27,10 +27,12 @@ package io.questdb.std.datetime;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
+import io.questdb.std.datetime.nanotime.Nanos;
+import io.questdb.std.datetime.nanotime.TimeZoneRulesNanos;
 
 import java.time.ZoneId;
 import java.time.zone.ZoneRules;
@@ -41,6 +43,7 @@ public class TimeZoneRuleFactory {
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
     public static final int RESOLUTION_MICROS = 1;
     public static final int RESOLUTION_MILLIS = 0;
+    public static final int RESOLUTION_NANOS = 2;
     private final ObjList<TimeZoneRules> ruleList = new ObjList<>();
     private final CharSequenceIntHashMap ruleMap = new CharSequenceIntHashMap();
 
@@ -50,6 +53,7 @@ public class TimeZoneRuleFactory {
             final ZoneRules rules = ZoneRulesProvider.getRules(z, true);
             ruleList.add(new TimeZoneRulesMillis(rules));
             ruleList.add(new TimeZoneRulesMicros(rules));
+            ruleList.add(new TimeZoneRulesNanos(rules));
             ruleMap.put(z, index++);
         }
 
@@ -67,7 +71,8 @@ public class TimeZoneRuleFactory {
                     long offset = Dates.parseOffset(alias, 0, alias.length());
                     if (offset != Long.MIN_VALUE) {
                         ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Dates.MINUTE_MILLIS));
-                        ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Timestamps.MINUTE_MICROS));
+                        ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Micros.MINUTE_MICROS));
+                        ruleList.add(new FixedTimeZoneRule(Numbers.decodeLowInt(offset) * Nanos.MINUTE_NANOS));
                         ruleMap.put(key, index++);
                     }
                 } else {
@@ -82,6 +87,6 @@ public class TimeZoneRuleFactory {
     }
 
     public TimeZoneRules getTimeZoneRulesQuick(int index, int resolution) {
-        return ruleList.getQuick(2 * index + resolution);
+        return ruleList.getQuick(3 * index + resolution);
     }
 }

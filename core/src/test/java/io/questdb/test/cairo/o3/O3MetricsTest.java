@@ -26,37 +26,57 @@ package io.questdb.test.cairo.o3;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
+
+@RunWith(Parameterized.class)
 public class O3MetricsTest extends AbstractO3Test {
-    private static final long MICROS_IN_DAY = 86400000000L;
     private static final long MICROS_IN_HOUR = 3600000000L;
-    private static final long MICROS_IN_MINUTE = 60000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
+
+    public O3MetricsTest(TestTimestampType timestampType) {
+        super(timestampType);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testAppendOneRow() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(13));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 13));
                 r.putInt(0, 9);
                 r.append();
                 w.commit();
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = "i\tts\n" +
+            final String expected = replaceTimestampSuffix("i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
                     "3\t2000-01-01T07:00:00.000000Z\n" +
@@ -65,7 +85,7 @@ public class O3MetricsTest extends AbstractO3Test {
                     "6\t2000-01-01T10:00:00.000000Z\n" +
                     "7\t2000-01-01T11:00:00.000000Z\n" +
                     "8\t2000-01-01T12:00:00.000000Z\n" +
-                    "9\t2000-01-01T13:00:00.000000Z\n";  // new row
+                    "9\t2000-01-01T13:00:00.000000Z\n", timestampType.getTypeName());  // new row
 
             TestUtils.assertEquals(expected, sink);
 
@@ -79,12 +99,12 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertMiddleEmptyPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(2, 0, 0));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 2, 0, 0));
                 r.putInt(0, 4);
                 r.append();
 
@@ -93,10 +113,10 @@ public class O3MetricsTest extends AbstractO3Test {
 
             {
                 engine.print("x", sink, sqlExecutionContext);
-                final String expected = "i\tts\n" +
+                final String expected = replaceTimestampSuffix("i\tts\n" +
                         "1\t2000-01-01T05:00:00.000000Z\n" +
                         "2\t2000-01-01T06:00:00.000000Z\n" +
-                        "4\t2000-01-03T00:00:00.000000Z\n";  // new row
+                        "4\t2000-01-03T00:00:00.000000Z\n", timestampType.getTypeName());  // new row
 
                 TestUtils.assertEquals(expected, sink);
             }
@@ -110,7 +130,7 @@ public class O3MetricsTest extends AbstractO3Test {
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(1, 0, 0));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 1, 0, 0));
                 r.putInt(0, 3);
                 r.append();
 
@@ -119,11 +139,11 @@ public class O3MetricsTest extends AbstractO3Test {
 
             {
                 engine.print("x", sink, sqlExecutionContext);
-                final String expected = "i\tts\n" +
+                final String expected = replaceTimestampSuffix("i\tts\n" +
                         "1\t2000-01-01T05:00:00.000000Z\n" +
                         "2\t2000-01-01T06:00:00.000000Z\n" +
                         "3\t2000-01-02T00:00:00.000000Z\n" +  // new row
-                        "4\t2000-01-03T00:00:00.000000Z\n";
+                        "4\t2000-01-03T00:00:00.000000Z\n", timestampType.getTypeName());
 
                 TestUtils.assertEquals(expected, sink);
             }
@@ -140,19 +160,19 @@ public class O3MetricsTest extends AbstractO3Test {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(4));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 4));
                 r.putInt(0, 0);
                 r.append();
                 w.commit();
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = "i\tts\n" +
+            final String expected = replaceTimestampSuffix("i\tts\n" +
                     "0\t2000-01-01T04:00:00.000000Z\n" +  // new row
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -161,7 +181,7 @@ public class O3MetricsTest extends AbstractO3Test {
                     "5\t2000-01-01T09:00:00.000000Z\n" +
                     "6\t2000-01-01T10:00:00.000000Z\n" +
                     "7\t2000-01-01T11:00:00.000000Z\n" +
-                    "8\t2000-01-01T12:00:00.000000Z\n";
+                    "8\t2000-01-01T12:00:00.000000Z\n", timestampType.getTypeName());
 
             TestUtils.assertEquals(expected, sink);
 
@@ -178,19 +198,19 @@ public class O3MetricsTest extends AbstractO3Test {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(8, 30));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 8, 30));
                 r.putInt(0, 100);
                 r.append();
                 w.commit();
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = "i\tts\n" +
+            final String expected = replaceTimestampSuffix("i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
                     "3\t2000-01-01T07:00:00.000000Z\n" +
@@ -199,7 +219,7 @@ public class O3MetricsTest extends AbstractO3Test {
                     "5\t2000-01-01T09:00:00.000000Z\n" +
                     "6\t2000-01-01T10:00:00.000000Z\n" +
                     "7\t2000-01-01T11:00:00.000000Z\n" +
-                    "8\t2000-01-01T12:00:00.000000Z\n";
+                    "8\t2000-01-01T12:00:00.000000Z\n", timestampType.getTypeName());
 
             TestUtils.assertEquals(expected, sink);
 
@@ -215,32 +235,32 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertRowsAfterEachPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 24;
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(23, 30));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 23, 30));
                 r.putInt(0, 101);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(23, 15));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 23, 15));
                 r.putInt(0, 102);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(23, 45));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 23, 45));
                 r.putInt(0, 103);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 4, 45));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 1, 4, 45));
                 r.putInt(0, 201);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 4, 30));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 1, 4, 30));
                 r.putInt(0, 202);
                 r.append();
 
-                r = w.newRow(millenniumTimestamp(1, 4, 15));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 1, 4, 15));
                 r.putInt(0, 203);
                 r.append();
 
@@ -248,7 +268,7 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = "i\tts\n" +
+            final String expected = replaceTimestampSuffix("i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
                     "3\t2000-01-01T07:00:00.000000Z\n" +
@@ -278,7 +298,7 @@ public class O3MetricsTest extends AbstractO3Test {
                     "24\t2000-01-02T04:00:00.000000Z\n" +
                     "203\t2000-01-02T04:15:00.000000Z\n" +  // new row
                     "202\t2000-01-02T04:30:00.000000Z\n" +  // new row
-                    "201\t2000-01-02T04:45:00.000000Z\n";  // new row
+                    "201\t2000-01-02T04:45:00.000000Z\n", timestampType.getTypeName());  // new row
 
             TestUtils.assertEquals(expected, sink);
 
@@ -294,12 +314,12 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertRowsBeforePartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
 
-                r = w.newRow(millenniumTimestamp(-1));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), -1));
                 r.putInt(0, -1);
                 r.append();
 
@@ -307,10 +327,10 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             engine.print("x", sink, sqlExecutionContext);
-            final String expected = "i\tts\n" +
+            final String expected = replaceTimestampSuffix("i\tts\n" +
                     "-1\t1999-12-31T23:00:00.000000Z\n" +  // new row
                     "1\t2000-01-01T05:00:00.000000Z\n" +
-                    "2\t2000-01-01T06:00:00.000000Z\n";
+                    "2\t2000-01-01T06:00:00.000000Z\n", timestampType.getTypeName());
 
             TestUtils.assertEquals(expected, sink);
 
@@ -326,7 +346,7 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testWithO3MaxLag() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount, timestampType.getTypeName());
 
             Metrics metrics = engine.getMetrics();
 
@@ -334,24 +354,24 @@ public class O3MetricsTest extends AbstractO3Test {
             Assert.assertEquals(rowCount, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
-                TableWriter.Row r = w.newRow(millenniumTimestamp(0));
+                TableWriter.Row r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 0));
                 r.putInt(0, 100);
                 r.append();
                 ++rowCount;
 
-                r = w.newRow(millenniumTimestamp(7));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 7));
                 r.putInt(0, 200);
                 r.append();
                 ++rowCount;
 
-                r = w.newRow(millenniumTimestamp(8));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 8));
                 r.putInt(0, 300);
                 r.append();
                 ++rowCount;
 
                 w.ic();
 
-                r = w.newRow(millenniumTimestamp(7, 45));
+                r = w.newRow(millenniumTimestamp(timestampType.getTimestampType(), 7, 45));
                 r.putInt(0, 400);
                 r.append();
                 ++rowCount;
@@ -366,21 +386,24 @@ public class O3MetricsTest extends AbstractO3Test {
         });
     }
 
-    private static long millenniumTimestamp(int hours) {
-        return MILLENNIUM + (hours * MICROS_IN_HOUR);
+    private static long millenniumTimestamp(int timestampType, int hours) {
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        return driver.fromMicros(MILLENNIUM) + driver.fromHours(hours);
     }
 
-    private static long millenniumTimestamp(int hours, int minutes) {
-        return MILLENNIUM +
-                (hours * MICROS_IN_HOUR) +
-                (minutes * MICROS_IN_MINUTE);
+    private static long millenniumTimestamp(int timestampType, int hours, int minutes) {
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        return driver.fromMicros(MILLENNIUM) +
+                driver.fromHours(hours) +
+                driver.fromMinutes(minutes);
     }
 
-    private static long millenniumTimestamp(int days, int hours, int minutes) {
-        return MILLENNIUM +
-                (days * MICROS_IN_DAY) +
-                (hours * MICROS_IN_HOUR) +
-                (minutes * MICROS_IN_MINUTE);
+    private static long millenniumTimestamp(int timestampType, int days, int hours, int minutes) {
+        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        return driver.fromMicros(MILLENNIUM) +
+                driver.fromDays(days) +
+                driver.fromHours(hours) +
+                driver.fromMinutes(minutes);
     }
 
     /**
@@ -390,13 +413,14 @@ public class O3MetricsTest extends AbstractO3Test {
     private static void setupBasicTable(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            long rowCount
+            long rowCount,
+            String timestampType
     ) throws SqlException {
         final String createTableSql = String.format(
                 "create table x as (" +
                         "  select" +
                         "    cast(x as int) i," +
-                        "    to_timestamp('2000-01', 'yyyy-MM') + ((x + 4) * %d) ts" +
+                        "    (to_timestamp('2000-01', 'yyyy-MM') + ((x + 4) * %d))::" + timestampType + " ts" +
                         "  from" +
                         "    long_sequence(%d)" +
                         ") timestamp(ts) partition by DAY",

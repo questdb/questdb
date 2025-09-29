@@ -73,6 +73,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL + 1; // 22
     public final static short SET_MAT_VIEW_REFRESH_LIMIT = CHANGE_SYMBOL_CAPACITY + 1; // 23
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
+    public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -222,7 +223,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     setMatViewRefreshLimit(svc);
                     break;
                 case SET_MAT_VIEW_REFRESH_TIMER:
+                    // legacy operation, kept for compat purposes
                     setMatViewRefreshTimer(svc);
+                    break;
+                case SET_MAT_VIEW_REFRESH:
+                    setMatViewRefresh(svc);
                     break;
                 default:
                     LOG.error()
@@ -497,6 +502,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -520,7 +526,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .put(toParquet ? "parquet" : "native")
                         .put("[table=")
                         .put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));
@@ -537,6 +543,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         (int) extraInfo.getQuick(i * 2 + 1),
                         attachDetachStatus,
                         tableToken,
+                        svc.getTimestampType(),
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
@@ -568,7 +575,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             if (!svc.removePartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
                         .put("could not remove partition [table=").put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')
                         .position((int) extraInfo.getQuick(i * 2 + 1));
@@ -585,7 +592,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         try {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
-            LOG.error().$("could not change o3MaxLag [table=").$safe(getTableToken().getTableName())
+            LOG.error().$("could not change o3MaxLag [table=").$(getTableToken())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
                     .I$();
@@ -686,6 +693,30 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
+    private void setMatViewRefresh(MetadataService svc) {
+        final int refreshType = (int) extraInfo.get(0);
+        final int timerInterval = (int) extraInfo.get(1);
+        final char timerUnit = (char) extraInfo.get(2);
+        final long timerStartUs = extraInfo.get(3);
+        final int periodLength = (int) extraInfo.get(4);
+        final char periodLengthUnit = (char) extraInfo.get(5);
+        final int periodDelay = (int) extraInfo.get(6);
+        final char periodDelayUnit = (char) extraInfo.get(7);
+        final CharSequence timerTimeZone = activeExtraStrInfo.getStrA(0);
+
+        svc.setMatViewRefresh(
+                refreshType,
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit
+        );
+    }
+
     private void setMatViewRefreshLimit(MetadataService svc) {
         final int limitHoursOrMonths = (int) extraInfo.get(0);
         try {
@@ -697,11 +728,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void setMatViewRefreshTimer(MetadataService svc) {
-        final long start = extraInfo.get(0);
+        final long startUs = extraInfo.get(0);
         final int interval = (int) extraInfo.get(1);
         final char unit = (char) extraInfo.get(2);
         try {
-            svc.setMatViewRefreshTimer(start, interval, unit);
+            svc.setMatViewRefreshTimer(startUs, interval, unit);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;
