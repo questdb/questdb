@@ -38,7 +38,6 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByCharSequenceLongHashMap;
 import io.questdb.griffin.engine.groupby.GroupByCharSink;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
@@ -48,7 +47,8 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     double loadFactor = 0.7d;
     GroupByCharSequenceLongHashMap mapA = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
     GroupByCharSequenceLongHashMap mapB = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByCharSink sink = new GroupByCharSink();
+    GroupByCharSink sinkA = new GroupByCharSink();
+    GroupByCharSink sinkB = new GroupByCharSink();
     int valueIndex;
 
     public ModeStringGroupByFunction(@NotNull Function arg) {
@@ -59,7 +59,8 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     public void clear() {
         mapA.resetPtr();
         mapB.resetPtr();
-        sink.of(0);
+        sinkA.of(0);
+        sinkB.of(0);
     }
 
     @Override
@@ -100,31 +101,12 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public CharSequence getStrA(Record record) {
-        long mapPtr = record.getLong(valueIndex);
-        if (mapPtr <= 0) {
-            return null;
-        }
-        mapA.of(mapPtr);
-        long modeKey = LONG_NULL;
-        long modeCount = -1;
-
-        for (int i = 0, n = mapA.capacity(); i < n; i++) {
-            final long kPtr = mapA.keyAt(i);
-            if (kPtr != LONG_NULL) {
-                final long value = mapA.valueAt(i);
-                if (value > modeCount) {
-                    modeKey = kPtr;
-                    modeCount = value;
-                }
-            }
-        }
-        sink.of(modeKey);
-        return sink;
+        return getStr(record, sinkA);
     }
 
     @Override
-    public @Nullable CharSequence getStrB(Record rec) {
-        return null;
+    public CharSequence getStrB(Record record) {
+        return getStr(record, sinkB);
     }
 
     @Override
@@ -170,7 +152,8 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     public void setAllocator(GroupByAllocator allocator) {
         mapA.setAllocator(allocator);
         mapB.setAllocator(allocator);
-        sink.setAllocator(allocator);
+        sinkA.setAllocator(allocator);
+        sinkB.setAllocator(allocator);
     }
 
     @Override
@@ -191,6 +174,29 @@ public class ModeStringGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
+    }
+
+    CharSequence getStr(Record record, GroupByCharSink sink) {
+        long mapPtr = record.getLong(valueIndex);
+        if (mapPtr <= 0) {
+            return null;
+        }
+        mapA.of(mapPtr);
+        long modeKey = LONG_NULL;
+        long modeCount = -1;
+
+        for (int i = 0, n = mapA.capacity(); i < n; i++) {
+            final long kPtr = mapA.keyAt(i);
+            if (kPtr != LONG_NULL) {
+                final long value = mapA.valueAt(i);
+                if (value > modeCount) {
+                    modeKey = kPtr;
+                    modeCount = value;
+                }
+            }
+        }
+        sink.of(modeKey);
+        return sink;
     }
 }
 
