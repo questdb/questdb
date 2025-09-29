@@ -1163,8 +1163,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try {
                 rewriteAndSwapMetadata(metadata);
-
-                // linking of the files has to be done after _todo is removed
                 hardLinkAndPurgeSymbolTableFiles(
                         columnName,
                         columnIndex,
@@ -1449,9 +1447,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
                             // root symbol files use separate txn
-                            final long defaultColumnNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
+                            final long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(columnIndex);
 
-                            offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
+                            offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {
                                 LOG.error().$(path).$(" is not found").$();
                                 throw CairoException.fileNotFound().put("offset file does not exist: ").put(path);
@@ -1468,7 +1466,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
 
-                            final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
+                            final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             final long columnSecondarySize = ff.length(charFileName);
                             final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
                             partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
@@ -4107,12 +4105,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (type > -1) {
                 if (ColumnType.isSymbol(type)) {
                     final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
-                    long columnNameTxn = columnVersionWriter.getSymbolTableNameTxn(i);
+                    long symbolTableNameTxn = columnVersionWriter.getSymbolTableNameTxn(i);
                     SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                             configuration,
                             path.trimTo(pathSize),
                             metadata.getColumnName(i),
-                            columnNameTxn,
+                            symbolTableNameTxn,
                             txWriter.getSymbolValueCount(symbolIndexInTxWriter),
                             symbolIndexInTxWriter,
                             txWriter,
@@ -5648,8 +5646,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } catch (Throwable e) {
                 ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                 ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                ff.removeQuiet(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                 throw e;
             }
 
@@ -9624,11 +9620,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnIndex > -1) {
                     int symbolCount = w.getSymbolCount();
                     int symbolCapacity = w.getSymbolCapacity();
-                    // 80% using integer arithmetic
                     if (symbolCount * configuration.autoScaleSymbolCapacityThreshold() > symbolCapacity) {
                         changeSymbolCapacity(
                                 metadata.getColumnName(w.getColumnIndex()),
-                                symbolCapacity * 2, // symbol capacity is power of 2
+                                // scale capacity to symbol count, if that grows rapidly, and to capacity increments if
+                                // symbol count grows slowly
+                                Math.max(symbolCapacity * 2, Numbers.floorPow2(symbolCount)),
                                 AllowAllSecurityContext.INSTANCE // this is internal housekeeping task, triggered by WAL apply job
                         );
                     }

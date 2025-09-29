@@ -38,6 +38,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
@@ -54,13 +55,13 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
     private final long waitIntervalBeforeReload;
     private int columnIndex;
     private String columnName;
-    private long columnNameTxn;
+    private ColumnVersionReader columnVersionReader;
     private CairoConfiguration configuration;
     private int denseSymbolIndex;
     private long lastSymbolReaderReloadTimestamp;
-    private Utf8Sequence pathToTableDir;
+    private Utf8StringSink pathToTableDir;
+    private long symbolTableNameTxn;
     private TxReader txReader;
-    private ColumnVersionReader columnVersionReader;
     private TableWriterAPI writerAPI;
 
     public SymbolCache(LineTcpReceiverConfiguration configuration) {
@@ -105,17 +106,17 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         ) {
             // when symbol capacity auto-scales, we also need to reload symbol map reader, as in
             // make it open different set of files altogether
-            long nextColumnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
-            if (nextColumnNameTxn != columnNameTxn) {
+            long nextSymbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+            if (nextSymbolTableNameTxn != symbolTableNameTxn) {
                 // reload
                 symbolMapReader.of(
                         configuration,
                         pathToTableDir,
                         columnName,
-                        nextColumnNameTxn,
+                        nextSymbolTableNameTxn,
                         symbolValueCount
                 );
-                this.columnNameTxn = nextColumnNameTxn;
+                this.symbolTableNameTxn = nextSymbolTableNameTxn;
             } else {
                 symbolMapReader.updateSymbolCount(symbolValueCount);
             }
@@ -137,9 +138,6 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
             String columnName,
             int columnIndex,
             int denseSymbolIndex,
-            // This is a fragile relationship. The code is legacy, SymbolCache is only used
-            // from ILP TCP and TableUpdateDetails. So the latter owns this path and promises
-            // to never mutate it. So that the cache can use it to re-open symbol map.
             Utf8Sequence pathToTableDir,
             TableWriterAPI writerAPI,
             TxReader txReader,
@@ -153,12 +151,12 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         this.columnVersionReader = columnVersionReader;
         int symCount = readSymbolCount(denseSymbolIndex, false);
         // hold on to the column name txn so that we know when to reload
-        this.columnNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+        this.symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
         this.columnName = columnName;
-        // yes, it is ok to store, ILP and this are friends
-        this.pathToTableDir = pathToTableDir;
+        this.pathToTableDir = new Utf8StringSink();
+        this.pathToTableDir.put(pathToTableDir);
 
-        symbolMapReader.of(configuration, pathToTableDir, columnName, columnNameTxn, symCount);
+        symbolMapReader.of(configuration, pathToTableDir, columnName, symbolTableNameTxn, symCount);
         symbolValueToKeyMap.clear();
     }
 

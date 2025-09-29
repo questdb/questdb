@@ -308,19 +308,19 @@ public class MetadataCache implements QuietCloseable {
             final int rootLen = path.size();
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
-            final long columnNameTxn;
+            final long symbolTableNameTxn;
             final FilesFacade ff = configuration.getFilesFacade();
             try (columnVersionReader) {
                 columnVersionReader.ofRO(ff, path.$());
                 columnVersionReader.readUnsafe();
-                columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
+                symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
             }
 
             // initialize symbol map memory
             final long capacityOffset = SymbolMapWriter.HEADER_CAPACITY;
             final int capacity;
             final byte isCached;
-            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
+            final LPSZ offsetFileName = TableUtils.offsetFileName(path.trimTo(rootLen), columnName, symbolTableNameTxn);
             long fd = TableUtils.openRO(ff, offsetFileName, LOG);
             try {
                 // use txn to find the correct symbol entry

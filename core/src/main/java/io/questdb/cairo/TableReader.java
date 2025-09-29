@@ -1464,9 +1464,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
                 if (symbolMapReader instanceof SymbolMapReaderImpl) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-                    final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
+                    final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
-                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);
+                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount);
                 }
             }
         }
@@ -1707,14 +1707,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void renewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-            final long columnNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
+            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
             String columnName = metadata.getColumnName(columnIndex);
             if (!(reader instanceof SymbolMapReaderImpl symbolMapReader)) {
-                reader = new SymbolMapReaderImpl(configuration, path, columnName, columnNameTxn, 0);
+                reader = new SymbolMapReaderImpl(configuration, path, columnName, symbolTableNameTxn, 0);
             } else {
                 // Fully reopen the symbol map reader only when necessary
-                if (symbolMapReader.needsReopen(columnNameTxn)) {
-                    symbolMapReader.of(configuration, path, columnName, columnNameTxn, 0);
+                if (symbolMapReader.needsReopen(symbolTableNameTxn)) {
+                    symbolMapReader.of(configuration, path, columnName, symbolTableNameTxn, 0);
                 }
             }
         } else {

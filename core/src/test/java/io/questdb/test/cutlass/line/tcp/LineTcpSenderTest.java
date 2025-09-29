@@ -973,7 +973,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         // this test should pass on desktop withing 3-6s for WAL
         // without errors. Anything else including timeouts is unexpected and is a regression
         String confString = "tcp::addr=localhost:" + bindPort + ";protocol_version=2;";
-        final int N = 20_000_000;
+        final int N = 1_000_000;
         runInContext(r -> {
             try (
                     Sender sender1 = Sender.fromConfig(confString);

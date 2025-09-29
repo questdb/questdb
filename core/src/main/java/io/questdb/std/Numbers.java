@@ -671,6 +671,10 @@ public final class Numbers {
         return value <= 0 ? 0 : Long.highestOneBit(value);
     }
 
+    public static int floorPow2(int value) {
+        return value <= 0 ? 0 : Integer.highestOneBit(value);
+    }
+
     // returns lo | hi network address in a single long
     public static long getBroadcastAddress(CharSequence sequence) throws NumericException {
         long subnetAndNetmask = Numbers.getIPv4Subnet(sequence);
