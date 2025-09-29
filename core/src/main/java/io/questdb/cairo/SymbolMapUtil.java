@@ -29,7 +29,11 @@ import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -96,7 +100,7 @@ public class SymbolMapUtil {
                 // .c file is empty, nothing to do
                 return;
             }
-            charMem = open(configuration, ff, mapPageSize, -1, charFileName(path.trimTo(plen), name, columnNameTxn), charMem);
+            charMem = open(configuration, ff, mapPageSize, charFileLen, path.$(), charMem);
 
             // Read .c file and rebuild symbol map
             long strOffset = 0;
@@ -111,7 +115,7 @@ public class SymbolMapUtil {
                 // read symbol value
                 CharSequence symbol = charMem.getStrA(strOffset);
                 strOffset += Vm.getStorageLength(symbol);
-                if (symbol.length() == 0) {
+                if (symbol.isEmpty()) {
                     LOG.info().$("symbol is empty [index=").$(i).$(']').$();
                 }
 
@@ -134,13 +138,15 @@ public class SymbolMapUtil {
         }
     }
 
-    private static MemoryCMOR open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, LPSZ path, MemoryCMOR mem) {
-        if (size == -1) {
-            long fileSize = ff.length(path);
-            if (fileSize > 0) {
-                size = fileSize;
-            }
-        }
+    private static MemoryCMOR open(
+            CairoConfiguration configuration,
+            FilesFacade ff,
+            long mapPageSize,
+            long size,
+            LPSZ path,
+            MemoryCMOR mem
+    ) {
+        assert size != -1;
 
         if (mem == null) {
             mem = Vm.getMemoryCMOR(false);
@@ -190,5 +196,9 @@ public class SymbolMapUtil {
         offsetMem.jumpTo(keyToOffset(0));
 
         indexWriter.truncate();
+    }
+
+    static long calculateExtendSegmentSize(CairoConfiguration configuration, long fileLen) {
+        return Math.min(Numbers.floorPow2(Math.max(configuration.getSymbolTableMinAllocationPageSize(), fileLen)), configuration.getSymbolTableMaxAllocationPageSize());
     }
 }

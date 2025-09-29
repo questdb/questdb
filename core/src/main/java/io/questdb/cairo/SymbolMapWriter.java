@@ -79,8 +79,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
-            final long mapPageSize = configuration.getSymbolTableAppendPageSize();
-
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -101,7 +99,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem = Vm.getWholeMARWInstance(
                     ff,
                     lpsz,
-                    Numbers.floorPow2(Math.max(mapPageSize, len)),
+                    SymbolMapUtil.calculateExtendSegmentSize(configuration, len),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -122,7 +120,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.charMem = Vm.getWholeMARWInstance(
                     ff,
                     lpsz,
-                    Numbers.floorPow2(Math.max(mapPageSize, len)),
+                    SymbolMapUtil.calculateExtendSegmentSize(configuration, len),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -269,7 +267,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             final int plen = path.size();
             int symbolCount = getSymbolCount();
             final FilesFacade ff = configuration.getFilesFacade();
-            final long mapPageSize = configuration.getSymbolTableAppendPageSize();
 
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             this.symbolCapacity = newCapacity;
@@ -280,7 +277,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem.of(
                     ff,
                     name,
-                    Numbers.floorPow2(Math.max(mapPageSize, ff.length(name))),
+                    SymbolMapUtil.calculateExtendSegmentSize(configuration, ff.length(name)),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -315,7 +312,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.offsetMem.of(
                     ff,
                     lpsz,
-                    Numbers.floorPow2(Math.max(mapPageSize, len)),
+                    SymbolMapUtil.calculateExtendSegmentSize(configuration, len),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
@@ -330,7 +327,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             this.charMem.of(
                     ff,
                     lpsz,
-                    Numbers.floorPow2(Math.max(mapPageSize, len)),
+                    SymbolMapUtil.calculateExtendSegmentSize(configuration, len),
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );

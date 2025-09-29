@@ -1042,8 +1042,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return getDelegate().getSymbolTableAppendPageSize();
+    public long getSymbolTableMaxAllocationPageSize() {
+        return getDelegate().getSymbolTableMaxAllocationPageSize();
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return getDelegate().getSymbolTableMinAllocationPageSize();
     }
 
     @Override

@@ -360,8 +360,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
-                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                TestUtils.assertReader("""
+                        int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
+                        42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
+                        """, reader, new StringSink());
             }
         });
     }
@@ -419,11 +421,15 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = getReader("mytable")) {
                     if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
-                        TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
-                                "null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                        TestUtils.assertReader("""
+                                negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
+                                null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z
+                                """, reader, new StringSink());
                     } else {
-                        TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
-                                "null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000000Z\n", reader, new StringSink());
+                        TestUtils.assertReader("""
+                                negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
+                                null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000000Z
+                                """, reader, new StringSink());
                     }
                 }
             }
@@ -532,9 +538,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
             assertTableSizeEventually(engine, "mytable", 2);
             try (TableReader reader = getReader("mytable")) {
-                TestUtils.assertReader("x\ty\ta1\ttimestamp\n" +
-                        "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
-                        "10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n", reader, new StringSink());
+                TestUtils.assertReader("""
+                        x\ty\ta1\ttimestamp
+                        9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
+                        10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z
+                        """, reader, new StringSink());
             }
 
         });
@@ -599,10 +607,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "s\tu\ttimestamp\n" +
-                        "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n"
-                        : "s\tu\ttimestamp\n" +
-                        "non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000000Z\n";
+                        ? """
+                        s\tu\ttimestamp
+                        non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z
+                        """
+                        : """
+                        s\tu\ttimestamp
+                        non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -649,10 +661,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "u1\tu2\tu3\ttimestamp\n" +
-                        "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n"
-                        : "u1\tu2\tu3\ttimestamp\n" +
-                        "11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000000Z\n";
+                        ? """
+                        u1\tu2\tu3\ttimestamp
+                        11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z
+                        """
+                        : """
+                        u1\tu2\tu3\ttimestamp
+                        11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -687,10 +703,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "ts_col\ttimestamp\n" +
-                        "2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000Z\n"
-                        : "ts_col\ttimestamp\n" +
-                        "2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000000Z\n";
+                        ? """
+                        ts_col\ttimestamp
+                        2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000Z
+                        """
+                        : """
+                        ts_col\ttimestamp
+                        2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -743,18 +763,22 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 5);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "unit\tts\ttimestamp\n" +
-                        "m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000Z\n" +
-                        "s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000Z\n" +
-                        "ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n" +
-                        "us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n" +
-                        "ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n"
-                        : "unit\tts\ttimestamp\n" +
-                        "m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000000Z\n" +
-                        "s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000000Z\n" +
-                        "ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z\n" +
-                        "us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z\n" +
-                        "ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z\n";
+                        ? """
+                        unit\tts\ttimestamp
+                        m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000Z
+                        s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000Z
+                        ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                        us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                        ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                        """
+                        : """
+                        unit\tts\ttimestamp
+                        m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000000Z
+                        s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000000Z
+                        ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
+                        us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
+                        ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -784,8 +808,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
-                String expected = "ts\ttimestamp\n" +
-                        "2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z\n";
+                String expected = """
+                        ts\ttimestamp
+                        2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -822,10 +848,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "unit\tts\ttimestamp\n" +
-                        "ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568Z\n"
-                        : "unit\tts\ttimestamp\n" +
-                        "ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568901Z\n";
+                        ? """
+                        unit\tts\ttimestamp
+                        ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568Z
+                        """
+                        : """
+                        unit\tts\ttimestamp
+                        ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568901Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -942,7 +972,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testSymbolCapacityReloadFuzz() throws Exception {
         // this test should pass on desktop withing 3-6s for WAL
         // without errors. Anything else including timeouts is unexpected and is a regression
-        String confString = "tcp::addr=localhost:" + bindPort + ";";
+        String confString = "tcp::addr=localhost:" + bindPort + ";protocol_version=2;";
+        final int N = 20_000_000;
         runInContext(r -> {
             try (
                     Sender sender1 = Sender.fromConfig(confString);
@@ -961,7 +992,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 new Thread(() -> {
                     try {
                         Rnd rnd1 = new Rnd(seed1a, seed1b);
-                        for (int i = 0; i < 1_000_000; i++) {
+                        for (int i = 0; i < N; i++) {
                             sender1.table("mytable")
                                     .symbol("sym1", rnd1.nextString(10))
                                     .symbol("sym2", rnd1.nextString(2))
@@ -982,7 +1013,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 new Thread(() -> {
                     try {
                         Rnd rnd2 = new Rnd(seed2a, seed2b);
-                        for (int i = 0; i < 1_000_000; i++) {
+                        for (int i = 0; i < N; i++) {
                             sender2.table("mytable")
                                     .symbol("sym1", rnd2.nextString(10))
                                     .symbol("sym2", rnd2.nextString(2))
@@ -1175,10 +1206,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
-                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n"
-                        : "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
-                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000000Z\t2022-02-25T00:00:00.000000000Z\n";
+                        ? """
+                        int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
+                        42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
+                        """
+                        : """
+                        int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
+                        42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000000Z\t2022-02-25T00:00:00.000000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -1207,10 +1242,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, table, 1);
             try (TableReader reader = getReader(table)) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "max\tmin\ttimestamp\n" +
-                        "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n"
-                        : "max\tmin\ttimestamp\n" +
-                        "9223372036854775807\tnull\t2023-02-22T00:00:00.000000000Z\n";
+                        ? """
+                        max\tmin\ttimestamp
+                        9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z
+                        """
+                        : """
+                        max\tmin\ttimestamp
+                        9223372036854775807\tnull\t2023-02-22T00:00:00.000000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });
@@ -1334,10 +1373,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                        ? "u1\ttimestamp\n" +
-                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n"
-                        : "u1\ttimestamp\n" +
-                        "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000000Z\n";
+                        ? """
+                        u1\ttimestamp
+                        11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z
+                        """
+                        : """
+                        u1\ttimestamp
+                        11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000000Z
+                        """;
                 TestUtils.assertReader(expected, reader, new StringSink());
             }
         });

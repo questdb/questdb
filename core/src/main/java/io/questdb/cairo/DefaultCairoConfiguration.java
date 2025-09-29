@@ -272,7 +272,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getDataIndexKeyAppendPageSize() {
-        return 1024 * 1024;
+        return Files.PAGE_SIZE;
     }
 
     @Override
@@ -1067,8 +1067,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return 256 * 1024;
+    public long getSymbolTableMaxAllocationPageSize() {
+        return 8 * 1024 * 1024;
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return Files.PAGE_SIZE;
     }
 
     @Override

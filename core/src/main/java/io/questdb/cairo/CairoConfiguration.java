@@ -603,7 +603,9 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
-    long getSymbolTableAppendPageSize();
+    long getSymbolTableMinAllocationPageSize();
+
+    long getSymbolTableMaxAllocationPageSize();
 
     long getSystemDataAppendPageSize();
 
