@@ -277,11 +277,11 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CAPACITY_TEST\n",
                 "select mode(f) from tab",
                 "create table tab as (\n" +
-                        "                                               select f::symbol f FROM (\n" +
-                        "                                               select cast('CAPACITY_TEST' as symbol) as f from long_sequence(5)\n" +
-                        "                                           union all\n" +
-                        "                                            select cast('OTHER_' || x as symbol) as f from long_sequence(3)\n" +
-                        "                                        ))",
+                        "select f::symbol f FROM (\n" +
+                        "select cast('CAPACITY_TEST' as symbol) as f from long_sequence(5)\n" +
+                        "union all\n" +
+                        "select cast('OTHER_' || x as symbol) as f from long_sequence(3)\n" +
+                        "))",
                 null,
                 false,
                 true
