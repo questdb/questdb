@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.Decimal8Function;
-import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
@@ -163,6 +162,141 @@ public class DecimalUtilTest extends AbstractTest {
         ConstantFunction result = DecimalUtil.createDecimalConstant(0, 0, 0, 123, 2, 0);
         Assert.assertTrue(result instanceof Decimal8Constant);
         Assert.assertEquals(123, result.getDecimal8(null));
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleByte() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.BYTE);
+        Assert.assertEquals(3, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleDate() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.DATE);
+        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleDecimalEdgeCases() {
+        // Test maximum precision and scale
+        int maxType = ColumnType.getDecimalType(76, 76);
+        int result = DecimalUtil.getTypePrecisionScale(maxType);
+        Assert.assertEquals(76, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(76, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test minimum precision and scale
+        int minType = ColumnType.getDecimalType(1, 0);
+        result = DecimalUtil.getTypePrecisionScale(minType);
+        Assert.assertEquals(1, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test precision without scale
+        int noScaleType = ColumnType.getDecimalType(38, 0);
+        result = DecimalUtil.getTypePrecisionScale(noScaleType);
+        Assert.assertEquals(38, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleDecimalTypes() {
+        // Test DECIMAL8 (precision 2, scale 1)
+        int decimal8Type = ColumnType.getDecimalType(2, 1);
+        int result = DecimalUtil.getTypePrecisionScale(decimal8Type);
+        Assert.assertEquals(2, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(1, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test DECIMAL16 (precision 4, scale 2)
+        int decimal16Type = ColumnType.getDecimalType(4, 2);
+        result = DecimalUtil.getTypePrecisionScale(decimal16Type);
+        Assert.assertEquals(4, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(2, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test DECIMAL32 (precision 9, scale 5)
+        int decimal32Type = ColumnType.getDecimalType(9, 5);
+        result = DecimalUtil.getTypePrecisionScale(decimal32Type);
+        Assert.assertEquals(9, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(5, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test DECIMAL64 (precision 18, scale 10)
+        int decimal64Type = ColumnType.getDecimalType(18, 10);
+        result = DecimalUtil.getTypePrecisionScale(decimal64Type);
+        Assert.assertEquals(18, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(10, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test DECIMAL128 (precision 38, scale 20)
+        int decimal128Type = ColumnType.getDecimalType(38, 20);
+        result = DecimalUtil.getTypePrecisionScale(decimal128Type);
+        Assert.assertEquals(38, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(20, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+
+        // Test DECIMAL256 (precision 76, scale 40)
+        int decimal256Type = ColumnType.getDecimalType(76, 40);
+        result = DecimalUtil.getTypePrecisionScale(decimal256Type);
+        Assert.assertEquals(76, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(40, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleInt() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.INT);
+        Assert.assertEquals(10, io.questdb.std.Numbers.decodeLowShort(result)); // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleLong() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.LONG);
+        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleShort() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.SHORT);
+        Assert.assertEquals(5, io.questdb.std.Numbers.decodeLowShort(result));  // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleTimestamp() {
+        int result = DecimalUtil.getTypePrecisionScale(ColumnType.TIMESTAMP);
+        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
+        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
+    }
+
+    @Test
+    public void testGetTypePrecisionScaleUnsupportedTypes() {
+        // Test BOOLEAN - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.BOOLEAN));
+
+        // Test STRING - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.STRING));
+
+        // Test SYMBOL - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.SYMBOL));
+
+        // Test DOUBLE - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.DOUBLE));
+
+        // Test FLOAT - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.FLOAT));
+
+        // Test BINARY - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.BINARY));
+
+        // Test CHAR - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.CHAR));
+
+        // Test UUID - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.UUID));
+
+        // Test VARCHAR - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.VARCHAR));
+
+        // Test INTERVAL - should return 0
+        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.INTERVAL));
     }
 
     @Test
@@ -657,141 +791,6 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseScaleZero() throws SqlException {
         int scale = DecimalUtil.parseScale(0, "0", 0, 1);
         Assert.assertEquals(0, scale);
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleByte() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.BYTE);
-        Assert.assertEquals(3, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleDate() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.DATE);
-        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleDecimalEdgeCases() {
-        // Test maximum precision and scale
-        int maxType = ColumnType.getDecimalType(76, 76);
-        int result = DecimalUtil.getTypePrecisionScale(maxType);
-        Assert.assertEquals(76, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(76, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test minimum precision and scale
-        int minType = ColumnType.getDecimalType(1, 0);
-        result = DecimalUtil.getTypePrecisionScale(minType);
-        Assert.assertEquals(1, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test precision without scale
-        int noScaleType = ColumnType.getDecimalType(38, 0);
-        result = DecimalUtil.getTypePrecisionScale(noScaleType);
-        Assert.assertEquals(38, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleDecimalTypes() {
-        // Test DECIMAL8 (precision 2, scale 1)
-        int decimal8Type = ColumnType.getDecimalType(2, 1);
-        int result = DecimalUtil.getTypePrecisionScale(decimal8Type);
-        Assert.assertEquals(2, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(1, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test DECIMAL16 (precision 4, scale 2)
-        int decimal16Type = ColumnType.getDecimalType(4, 2);
-        result = DecimalUtil.getTypePrecisionScale(decimal16Type);
-        Assert.assertEquals(4, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(2, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test DECIMAL32 (precision 9, scale 5)
-        int decimal32Type = ColumnType.getDecimalType(9, 5);
-        result = DecimalUtil.getTypePrecisionScale(decimal32Type);
-        Assert.assertEquals(9, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(5, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test DECIMAL64 (precision 18, scale 10)
-        int decimal64Type = ColumnType.getDecimalType(18, 10);
-        result = DecimalUtil.getTypePrecisionScale(decimal64Type);
-        Assert.assertEquals(18, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(10, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test DECIMAL128 (precision 38, scale 20)
-        int decimal128Type = ColumnType.getDecimalType(38, 20);
-        result = DecimalUtil.getTypePrecisionScale(decimal128Type);
-        Assert.assertEquals(38, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(20, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-
-        // Test DECIMAL256 (precision 76, scale 40)
-        int decimal256Type = ColumnType.getDecimalType(76, 40);
-        result = DecimalUtil.getTypePrecisionScale(decimal256Type);
-        Assert.assertEquals(76, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(40, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleInt() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.INT);
-        Assert.assertEquals(10, io.questdb.std.Numbers.decodeLowShort(result)); // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleLong() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.LONG);
-        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleShort() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.SHORT);
-        Assert.assertEquals(5, io.questdb.std.Numbers.decodeLowShort(result));  // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result)); // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleTimestamp() {
-        int result = DecimalUtil.getTypePrecisionScale(ColumnType.TIMESTAMP);
-        Assert.assertEquals(19, io.questdb.std.Numbers.decodeLowShort(result)); // precision
-        Assert.assertEquals(0, io.questdb.std.Numbers.decodeHighShort(result));  // scale
-    }
-
-    @Test
-    public void testGetTypePrecisionScaleUnsupportedTypes() {
-        // Test BOOLEAN - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.BOOLEAN));
-
-        // Test STRING - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.STRING));
-
-        // Test SYMBOL - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.SYMBOL));
-
-        // Test DOUBLE - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.DOUBLE));
-
-        // Test FLOAT - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.FLOAT));
-
-        // Test BINARY - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.BINARY));
-
-        // Test CHAR - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.CHAR));
-
-        // Test UUID - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.UUID));
-
-        // Test VARCHAR - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.VARCHAR));
-
-        // Test INTERVAL - should return 0
-        Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.INTERVAL));
     }
 
     @Test
