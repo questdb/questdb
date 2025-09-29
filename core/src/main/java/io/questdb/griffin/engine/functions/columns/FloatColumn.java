@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class FloatColumn extends FloatFunction implements Function {
+public class FloatColumn extends FloatFunction implements ColumnFunction {
     private static final ObjList<FloatColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -48,6 +46,11 @@ public class FloatColumn extends FloatFunction implements Function {
     }
 
     @Override
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
     public float getFloat(Record rec) {
         return rec.getFloat(columnIndex);
     }
@@ -55,11 +58,6 @@ public class FloatColumn extends FloatFunction implements Function {
     @Override
     public boolean isThreadSafe() {
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

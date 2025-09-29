@@ -344,20 +344,6 @@ Java_io_questdb_std_Vect_avgLongAcc(JNIEnv *env, jclass cl, jlong pi, jlong coun
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_Vect_avgShortAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
-    auto *ppi = reinterpret_cast<int16_t *>(pi);
-    double_t avg = 0;
-    double_t c = 1;
-    for (uint32_t i = 0; i < count; i++) {
-        int16_t v = ppi[i];
-        avg += ((double_t) v - avg) / c;
-        ++c;
-    }
-    *(reinterpret_cast<jlong *>(pCount)) = ((jlong) c - 1);
-    return avg;
-}
-
-JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong count, jlong pCount) {
     auto *ppi = reinterpret_cast<double_t *>(pi);
     double_t avg = 0;
