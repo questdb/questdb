@@ -304,7 +304,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 if (tud == null) {
                     tud = getTableUpdateDetailsFromSharedArea(securityContext, netIoJob, ctx, parser);
                 }
-            } else if (tud.isWriterInError()) {
+            } else if (tud.isWriterInError() || tud.getWriter() == null) {
                 TableUpdateDetails removed = ctx.removeTableUpdateDetails(measurementName);
                 assert tud == removed;
                 removed.close();
@@ -390,8 +390,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
         long seq = getNextPublisherEventSequence(writerThreadId);
         if (seq > -1) {
             try {
-                if (tud.isWriterInError()) {
-                    throw CairoException.critical(0).put("writer is in error, aborting ILP pipeline");
+                if (tud.isWriterInError() || tud.getWriter() == null) {
+                    throw CairoException.critical(0).put("writer is in error or released, aborting ILP pipeline");
                 }
                 queue[writerThreadId].get(seq).createMeasurementEvent(securityContext, tud, parser, netIoJob.getWorkerId());
             } finally {
