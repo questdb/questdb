@@ -288,6 +288,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertException("ALTER TABLE tango ADD COLUMN arr UUID[]", 33, "unsupported array element type [type=UUID]");
             assertException("ALTER TABLE tango ADD COLUMN arr LONG128[]", 33, "unsupported array element type [type=LONG128]");
             assertException("ALTER TABLE tango ADD COLUMN arr GEOHASH[]", 33, "unsupported array element type [type=GEOHASH]");
+            assertException("ALTER TABLE tango ADD COLUMN arr DECIMAL[]", 33, "unsupported array element type [type=DECIMAL]");
         });
     }
 
