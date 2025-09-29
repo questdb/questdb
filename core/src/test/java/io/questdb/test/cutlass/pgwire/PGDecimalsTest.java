@@ -28,6 +28,10 @@ import io.questdb.std.Decimal256;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
 public class PGDecimalsTest extends BasePGTest {
 
     // Test boundary values for each decimal type
@@ -218,6 +222,36 @@ public class PGDecimalsTest extends BasePGTest {
     public void testDecimal8_WithScale() throws Exception {
         assertDecimalConversion("9.9", 2, 1);
         assertDecimalConversion("-9.9", 2, 1);
+    }
+
+    @Test
+    public void testDecimalBind() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(2, 0), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
+                statement.setLong(1, 10);
+                statement.setTimestamp(2, new java.sql.Timestamp(0));
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE tango SET dec = ?")) {
+                statement.setLong(1, 12);
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            try (PreparedStatement stmt = connection.prepareStatement("tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("dec[NUMERIC],ts[TIMESTAMP]\n" +
+                                    "12,1970-01-01 00:00:00.0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
     }
 
     // Test fractional values
