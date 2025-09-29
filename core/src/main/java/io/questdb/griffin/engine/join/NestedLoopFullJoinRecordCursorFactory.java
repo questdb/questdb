@@ -49,8 +49,8 @@ import org.jetbrains.annotations.NotNull;
  * and returns all row pairs matching filter plus all unmatched rows from master and slave factory.
  */
 public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final NestedLoopFullRecordCursor cursor;
     private final Function filter;
-    private NestedLoopFullRecordCursor cursor;
 
     public NestedLoopFullJoinRecordCursorFactory(
             CairoConfiguration configuration,

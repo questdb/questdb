@@ -110,6 +110,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(filter);
+        Misc.free(cursor);
     }
 
     private static class NestedLoopRightRecordCursor extends AbstractJoinCursor {
