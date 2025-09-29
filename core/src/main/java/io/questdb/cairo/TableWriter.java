@@ -5456,6 +5456,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void handleHousekeepingException(Throwable e) {
         // Log the exception stack.
+        distressed = true;
         LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
                 .$(", error=").$(e)
                 .I$();
