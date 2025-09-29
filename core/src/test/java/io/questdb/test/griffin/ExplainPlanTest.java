@@ -25,18 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
@@ -171,13 +175,15 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
+
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static org.junit.Assert.*;
 
 public class ExplainPlanTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(ExplainPlanTest.class);
@@ -1439,6 +1445,64 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: tab\n"
             );
 
+        });
+    }
+
+    @Test
+    public void testExplainInReadOnlymode() throws Exception {
+        assertMemoryLeak(() -> {
+            // create a table, otherwise EXPLAIN UPDATE and EXPLAIN SELECT fails with "table doesn't exist"
+            execute("CREATE TABLE reference_prices (\n" +
+                    "  venue SYMBOL index ,\n" +
+                    "  symbol SYMBOL index,\n" +
+                    "  instrumentType SYMBOL index,\n" +
+                    "  referencePriceType SYMBOL index,\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  referencePrice DOUBLE\n" +
+                    ") timestamp (ts)");
+
+            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+                // use the read-only security context
+                executionContext.with(ReadOnlySecurityContext.INSTANCE);
+
+                assertWritePermissionDenied("EXPLAIN CREATE TABLE reference_prices (\n" +
+                        "  venue SYMBOL index ,\n" +
+                        "  symbol SYMBOL index,\n" +
+                        "  instrumentType SYMBOL index,\n" +
+                        "  referencePriceType SYMBOL index,\n" +
+                        "  ts TIMESTAMP,\n" +
+                        "  referencePrice DOUBLE\n" +
+                        ") timestamp (ts)", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN DROP TABLE reference_prices", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN ALTER TABLE reference_prices ADD COLUMN col1 LONG", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" +
+                        "SELECT venue, symbol, avg(referencePrice) FROM reference_prices sample by 1h" +
+                        ") partition by day", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN REFRESH MATERIALIZED VIEW prices_1h FULL", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN INSERT INTO reference_prices VALUES(\n" +
+                        "'venue1', 'sym1', 'FUT', 'Close', now(), 213.456\n" +
+                        ")", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN INSERT INTO reference_prices\n" +
+                        "SELECT 'venue1', 'sym1', 'FUT', rnd_symbol('Open', 'Close'), x::timestamp, rnd_double()\n" +
+                        "FROM long_sequence(100)", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
+                        "SET referencePrice = 0 WHERE ts IN '2025-09-20'", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
+                        "SET symbol = 'FDXS' WHERE symbol = 'FDAX'", executionContext);
+
+                // SELECT is read-only, it is allowed
+                assertReadOnlyOperationAllowed("EXPLAIN SELECT * FROM reference_prices", executionContext);
+                assertReadOnlyOperationAllowed("EXPLAIN reference_prices", executionContext);
+                assertReadOnlyOperationAllowed("EXPLAIN WITH v AS (select venue from reference_prices) SELECT * FROM v", executionContext);
+            }
         });
     }
 
@@ -2737,7 +2801,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 goodArgsFound = true;
 
-                                Assert.assertFalse("function " + factory.getSignature() +
+                                assertFalse("function " + factory.getSignature() +
                                         " should serialize to text properly. current text: " +
                                         planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
                                 LOG.info().$safe(sink).$safe(planSink.getSink()).$();
@@ -2752,7 +2816,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                 "negatable flag! Factory: " + factory.getSignature() + " " + function);
                                     }
 
-                                    Assert.assertFalse(
+                                    assertFalse(
                                             "function " + factory.getSignature() + " should serialize to text properly",
                                             Chars.contains(tmpPlanSink.getSink(), "io.questdb")
                                     );
@@ -2763,7 +2827,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
                                 if (memUsedAfter > memUsedBefore) {
                                     LOG.error().$("Memory leak detected in ").$safe(factory.getSignature()).$();
-                                    Assert.fail("Memory leak detected in " + factory.getSignature());
+                                    fail("Memory leak detected in " + factory.getSignature());
                                 }
                             }
                         } catch (Exception t) {
@@ -6261,7 +6325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet");
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
+                assertTrue(Files.exists(path.$()));
 
                 assertPlanNoLeakCheck(
                         "select * from read_parquet('x.parquet') where a_long = 42;",
@@ -11956,6 +12020,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
+        try (RecordCursorFactory ignored = engine.select(sql, sqlExecutionContext)) {
+            fail("Expected exception missing");
+        } catch (SqlException e) {
+            assertEquals(8, e.getPosition());
+            assertContains(e.getFlyweightMessage(), "'create', 'format', 'insert', 'update', 'select' or 'with' expected");
+        }
+    }
+
     private void assertPlan(String ddl, String query, String expectedPlan) throws Exception {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(ddl, query, expectedPlan));
     }
@@ -11971,9 +12044,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(query, expectedPlan);
     }
 
+    private void assertReadOnlyOperationAllowed(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            assertFalse(factory.isProjection());
+        }
+    }
+
     private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws SqlException {
         assertPlanNoLeakCheck(sql, expectedPlan);
         assertSql(expectedResult, sql);
+    }
+
+    private void assertWritePermissionDenied(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+        try (RecordCursorFactory ignored = engine.select(sql, sqlExecutionContext)) {
+            fail("Expected exception missing");
+        } catch (CairoException e) {
+            assertContains(e.getFlyweightMessage(), "Write permission denied");
+        }
     }
 
     private Function getConst(IntObjHashMap<ObjList<Function>> values, int type, int paramNo, int iteration) {
