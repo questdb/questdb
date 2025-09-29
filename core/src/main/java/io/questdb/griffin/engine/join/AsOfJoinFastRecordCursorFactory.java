@@ -49,9 +49,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
-    private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
-    private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
     private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
@@ -139,6 +136,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
         public static final int NOT_REMEMBERED = -1;
+        private final IntLongHashMap symKeyToRowId = new IntLongHashMap(8, NOT_REMEMBERED);
+        private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
+        private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
