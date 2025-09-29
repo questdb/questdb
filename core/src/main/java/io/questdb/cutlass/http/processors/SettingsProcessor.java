@@ -42,6 +42,7 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -117,7 +118,6 @@ public class SettingsProcessor implements HttpRequestHandler {
     }
 
     class PostPutProcessor implements HttpPostPutProcessor {
-        private HttpConnectionContext transientContext;
         private SettingsProcessorState transientState;
 
         @Override
@@ -128,18 +128,19 @@ public class SettingsProcessor implements HttpRequestHandler {
         @Override
         public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             if (hi > lo) {
-                transientState.utf8Sink.putNonAscii(lo, hi);
+                final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
+                utf8Sink.putNonAscii(lo, hi);
             }
         }
 
         @Override
         public void onHeadersReady(HttpConnectionContext context) {
-            transientContext = context;
             transientState = LV_POST_STATE.get(context);
             if (transientState == null) {
                 LOG.debug().$("new settings state").$();
                 LV_POST_STATE.set(context, transientState = new SettingsProcessorState(serverConfiguration.getHttpServerConfiguration().getRecvBufferSize()));
             }
+            transientState.clear();
         }
 
         @Override
@@ -149,30 +150,27 @@ public class SettingsProcessor implements HttpRequestHandler {
 
                 final SettingsStore.Mode mode = SettingsStore.Mode.of(context.getRequestHeader().getMethod());
                 final long version = parseVersion(context.getRequestHeader().getUrlParam(URL_PARAM_VERSION));
-                settingsStore.save(transientState.utf8Sink, mode, version);
-                sendOk();
+                settingsStore.save(transientState.getUtf8Sink(), mode, version);
+                sendOk(context);
             } catch (CairoException e) {
                 LOG.error().$("could not save preferences [msg=").$safe(e.getFlyweightMessage()).I$();
-                sendErr(e);
+                sendErr(context, e);
             } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
                 throw e;
             } catch (Throwable e) {
                 LOG.critical().$("could not save preferences: ").$(e).I$();
-                sendErr(e);
-            } finally {
-                transientState.clear();
+                sendErr(context, e);
             }
         }
 
         @Override
         public void resumeRecv(HttpConnectionContext context) {
-            transientContext = context;
             transientState = LV_POST_STATE.get(context);
         }
 
         @Override
         public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            context.resumeResponseSend();
+            transientState.send(context);
         }
 
         private long parseVersion(Utf8Sequence version) {
@@ -184,25 +182,30 @@ public class SettingsProcessor implements HttpRequestHandler {
             }
         }
 
-        private void sendErr(CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientState.utf8Sink.clear();
-            transientState.utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");
-            transientContext.simpleResponse().sendStatusJsonContent(
+        private void sendErr(HttpConnectionContext context, Throwable e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientState.clear();
+            transientState.setStatusCode(HTTP_BAD_REQUEST);
+            final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
+            utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
+            transientState.send(context);
+        }
+
+        private void sendErr(HttpConnectionContext context, CairoException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientState.clear();
+            transientState.setStatusCode(
                     e.isPreferencesOutOfDateError() ? HTTP_CONFLICT
                             : e.isAuthorizationError() ? HTTP_UNAUTHORIZED
-                            : HTTP_BAD_REQUEST,
-                    transientState.utf8Sink
+                            : HTTP_BAD_REQUEST
             );
+            final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
+            utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getFlyweightMessage()).put("\"}");
+            transientState.send(context);
         }
 
-        private void sendErr(Throwable e) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientState.utf8Sink.clear();
-            transientState.utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
-            transientContext.simpleResponse().sendStatusJsonContent(HTTP_BAD_REQUEST, transientState.utf8Sink);
-        }
-
-        private void sendOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            transientContext.simpleResponse().sendStatusJsonContent(HTTP_OK, Utf8String.EMPTY);
+        private void sendOk(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            transientState.clear();
+            transientState.setStatusCode(HTTP_OK);
+            transientState.send(context);
         }
     }
 }
