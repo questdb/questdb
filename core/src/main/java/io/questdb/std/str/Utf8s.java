@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
+import io.questdb.std.SwarUtils;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
@@ -47,6 +48,7 @@ import static io.questdb.std.Misc.getThreadLocalUtf8Sink;
  */
 public final class Utf8s {
     private static final long ASCII_MASK = 0x8080808080808080L;
+    private static final long DOT_WORD = SwarUtils.broadcast((byte) '.');
     private static final char[] HEX_CHARS = "0123456789ABCDEF".toCharArray();
     private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
@@ -488,6 +490,23 @@ public final class Utf8s {
             }
         }
         return ll > rl;
+    }
+
+    public static boolean hasDots(Utf8Sequence value) {
+        final int len = value.size();
+        int i = 0;
+        for (; i < len - 7; i += 8) {
+            final long word = value.longAt(i);
+            if (SwarUtils.markZeroBytes(word ^ DOT_WORD) != 0) {
+                return true;
+            }
+        }
+        for (; i < len; i++) {
+            if (value.byteAt(i) == '.') {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static int hashCode(@NotNull Utf8Sequence value) {
