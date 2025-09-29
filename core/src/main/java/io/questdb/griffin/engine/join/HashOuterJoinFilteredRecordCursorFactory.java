@@ -72,7 +72,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 LONGs, we store chain references in map
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
@@ -234,8 +234,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (useSlaveCursor && slaveChain.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 do {
                     if (record.hasMaster()) {
                         if (filter.getBool(record)) {
@@ -255,13 +255,13 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 useSlaveCursor = false;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getInt(0));
+                    slaveChain.of(value.getLong(0));
                     useSlaveCursor = true;
                     record.hasSlave(true);
                     while (slaveChain.hasNext()) {
@@ -284,7 +284,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
-                slaveChain.of(value.getInt(0));
+                slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {
                     MapKey keys = matchIdsMap.withKey();
                     keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
@@ -349,22 +349,22 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 isMapBuilt = true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            if (useSlaveCursor && slaveChain.hasNext()) {
-                do {
+            if (useSlaveCursor) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                while (slaveChain.hasNext()) {
                     if (filter.getBool(record)) {
                         return true;
                     }
-                } while (slaveChain.hasNext());
+                }
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getInt(0));
+                    slaveChain.of(value.getLong(0));
                     useSlaveCursor = true;
                     record.hasSlave(true);
                     while (slaveChain.hasNext()) {
@@ -435,9 +435,9 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            if (useSlaveCursor && slaveChain.hasNext()) {
-                do {
+            if (useSlaveCursor) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                while (slaveChain.hasNext()) {
                     if (record.hasMaster()) {
                         if (filter.getBool(record)) {
                             MapKey keys = matchIdsMap.withKey();
@@ -452,7 +452,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             return true;
                         }
                     }
-                } while (slaveChain.hasNext());
+                }
             }
 
             while (masterCursor.hasNext()) {
@@ -461,7 +461,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getInt(0));
+                    slaveChain.of(value.getLong(0));
                     useSlaveCursor = true;
                     while (slaveChain.hasNext()) {
                         if (filter.getBool(record)) {
@@ -478,7 +478,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
-                slaveChain.of(value.getInt(0));
+                slaveChain.of(value.getLong(0));
                 while (slaveChain.hasNext()) {
                     MapKey keys = matchIdsMap.withKey();
                     keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);

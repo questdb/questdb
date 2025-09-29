@@ -103,9 +103,9 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             MapValue value = key.createValue();
             if (value.isNew()) {
                 long offset = chain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
+                value.putLong(0, offset); // chain head offset
+                value.putLong(1, offset); // chain tail offset
+                value.putLong(2, 1); // record count for the key
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));
                 value.addLong(2, 1);
@@ -129,9 +129,9 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             MapValue value = key.createValue();
             if (value.isNew()) {
                 long offset = chain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
+                value.putLong(0, offset); // chain head offset
+                value.putLong(1, offset); // chain tail offset
+                value.putLong(2, 1); // record count for the key
                 value.putBool(3, false);
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));

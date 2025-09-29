@@ -276,8 +276,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (record.hasMaster()) {
@@ -431,8 +431,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 isMapBuilt = true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 record.hasSlave(true);
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -443,6 +443,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             }
 
             if (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
@@ -519,8 +520,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 while (slaveChainCursor.hasNext()) {
                     slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                     if (record.hasMaster()) {
@@ -597,7 +598,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);
-            this.mapCursor = Misc.free(mapCursor);
+            mapCursor = Misc.free(mapCursor);
         }
     }
 }

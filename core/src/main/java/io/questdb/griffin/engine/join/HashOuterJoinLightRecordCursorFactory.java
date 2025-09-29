@@ -99,7 +99,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                             joinKeyMap,
                             slaveChain
-
                     );
                     break;
                 case QueryModel.JOIN_RIGHT_OUTER:
@@ -236,13 +235,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
 
             if (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterCursorSink);
                 MapValue value = key.findValue();
@@ -357,10 +357,12 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             circuitBreaker.statefulThrowExceptionIfTripped();
+
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
+
             if (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
                 key.put(masterRecord, masterKeySink);
@@ -422,8 +424,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 mapCursor = joinKeyMap.getCursor();
             }
 
-            circuitBreaker.statefulThrowExceptionIfTripped();
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
             }
@@ -444,6 +446,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
             record.hasMaster(false);
             while (mapCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapValue value = mapCursor.getRecord().getValue();
                 if (!value.getBool(1)) { // if not matched
                     slaveChainCursor = slaveChain.getCursor(value.getInt(0));

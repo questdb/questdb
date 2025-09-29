@@ -58,7 +58,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 LONGs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
@@ -70,7 +70,12 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         RecordChain slaveChain = null;
         try {
             joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
+            slaveChain = new RecordChain(
+                    slaveFactory.getMetadata(),
+                    slaveChainSink,
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
@@ -202,7 +207,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getInt(0));
+                    slaveChain.of(value.getLong(0));
                     // we know cursor has values
                     // advance to get first value
                     slaveChain.hasNext();
