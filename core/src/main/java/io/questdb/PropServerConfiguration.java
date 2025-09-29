@@ -2624,6 +2624,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
+            registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
         }
 
         public ValidationResult validate(Properties properties) {

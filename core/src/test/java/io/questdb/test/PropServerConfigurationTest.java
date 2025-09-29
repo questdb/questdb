@@ -425,7 +425,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
-        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSymbolTableMinAllocationPageSize());
+        Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getSymbolTableMinAllocationPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
