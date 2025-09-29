@@ -269,7 +269,7 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 true
         );
     }
-a
+
     @Test
     public void testModeWithSymbolCapacity() throws Exception {
         assertQuery(
