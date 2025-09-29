@@ -1352,7 +1352,8 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testArrayBindingVars() throws Exception {
         skipOnWalRun();
-        // TODO(puzpuzpuz): support for simple mode
+        // In simple mode bind vars are interpolated into the query text,
+        // and we don't have implicit cast from string to array, so test extended mode only.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
                 stmt.execute();
