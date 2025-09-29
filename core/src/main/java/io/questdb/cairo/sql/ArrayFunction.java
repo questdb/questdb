@@ -67,6 +67,56 @@ public abstract class ArrayFunction implements Function {
     }
 
     @Override
+    public long getDecimal128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -200,4 +250,5 @@ public abstract class ArrayFunction implements Function {
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
 }

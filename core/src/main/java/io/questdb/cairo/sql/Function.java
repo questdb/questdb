@@ -124,46 +124,26 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     // must be called before getDecimal128Lo method!!!
-    default long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal128Hi(Record rec);
 
-    default long getDecimal128Lo(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal128Lo(Record rec);
 
-    default short getDecimal16(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    short getDecimal16(Record rec);
 
     // must be called before any other getDecimal256XY method!!!
-    default long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal256HH(Record rec);
 
-    default long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal256HL(Record rec);
 
-    default long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal256LH(Record rec);
 
-    default long getDecimal256LL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal256LL(Record rec);
 
-    default int getDecimal32(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    int getDecimal32(Record rec);
 
-    default long getDecimal64(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    long getDecimal64(Record rec);
 
-    default byte getDecimal8(Record rec) {
-        throw new UnsupportedOperationException();
-    }
+    byte getDecimal8(Record rec);
 
     double getDouble(Record rec);
 
