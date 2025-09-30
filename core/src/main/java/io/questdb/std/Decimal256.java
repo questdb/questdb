@@ -1319,7 +1319,7 @@ public class Decimal256 implements Sinkable {
      * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
      * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
      * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one)
-     * @param lossy    allows to remove digits from the decimal after the dot to fit the provided scale
+     * @param lossy     allows to remove digits from the decimal after the dot to fit the provided scale
      * @return the precision and scale of the decimal, use {@link Numbers#decodeLowInt} to retrieve the precision and
      * {@link Numbers#decodeHighInt} to retrieve the scale
      */
