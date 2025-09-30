@@ -149,7 +149,24 @@ public abstract class AbstractLineHttpSender implements Sender {
             long flushIntervalNanos,
             Rnd rnd
     ) {
-        this(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, client, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, 0, rnd);
+        this(
+                new ObjList<>(host),
+                IntList.createWithValues(port),
+                path,
+                clientConfiguration,
+                tlsConfig,
+                client,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                minRequestThroughput,
+                flushIntervalNanos,
+                0,
+                rnd
+        );
     }
 
     @SuppressWarnings("ReplaceNullCheck")
@@ -217,7 +234,22 @@ public abstract class AbstractLineHttpSender implements Sender {
             long flushIntervalNanos,
             int protocolVersion
     ) {
-        return createLineSender(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, protocolVersion);
+        return createLineSender(
+                new ObjList<>(host),
+                IntList.createWithValues(port),
+                path,
+                clientConfiguration,
+                tlsConfig,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                minRequestThroughput,
+                flushIntervalNanos,
+                protocolVersion
+        );
     }
 
     public static AbstractLineHttpSender createLineSender(
@@ -613,7 +645,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         524:  A Timeout Occurred
         529:  Site is overloaded
         599:  Network Connect Timeout Error
-
         */
 
         byte middle = statusCode.byteAt(1);
@@ -719,10 +750,9 @@ public abstract class AbstractLineHttpSender implements Sender {
                     }
 
                     long nowNanos = System.nanoTime();
-                    retryingDeadlineNanos =
-                            (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
-                                    ? nowNanos + maxRetriesNanos
-                                    : retryingDeadlineNanos;
+                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                            ? nowNanos + maxRetriesNanos
+                            : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
                         // throw, but do not reset - a caller can try to flush later
                         throwOnHttpErrorResponse(statusCode, response, true);
@@ -737,10 +767,9 @@ public abstract class AbstractLineHttpSender implements Sender {
                 lastFlushFailed = true;
                 client.disconnect(); // forces reconnect
                 long nowNanos = System.nanoTime();
-                retryingDeadlineNanos =
-                        (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
-                                ? nowNanos + maxRetriesNanos
-                                : retryingDeadlineNanos;
+                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                        ? nowNanos + maxRetriesNanos
+                        : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up, but do not reset the sender
                     // a caller can try to flush later
