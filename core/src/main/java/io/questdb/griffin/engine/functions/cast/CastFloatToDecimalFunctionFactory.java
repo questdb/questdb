@@ -70,7 +70,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(f);
             try {
-                decimal.ofString(sink, precision, scale);
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }

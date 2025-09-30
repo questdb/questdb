@@ -1309,7 +1309,7 @@ public class Decimal256 implements Sinkable {
      * @return the precision of the decimal
      */
     public long ofString(CharSequence cs, int precision, int scale) throws NumericException {
-        return ofString(cs, 0, cs.length(), precision, scale, false);
+        return ofString(cs, 0, cs.length(), precision, scale, false, false);
     }
 
     /**
@@ -1318,11 +1318,12 @@ public class Decimal256 implements Sinkable {
      * @param cs        is the CharSequence to be parsed
      * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
      * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
-     * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one).
+     * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one)
+     * @param lossy    allows to remove digits from the decimal after the dot to fit the provided scale
      * @return the precision and scale of the decimal, use {@link Numbers#decodeLowInt} to retrieve the precision and
      * {@link Numbers#decodeHighInt} to retrieve the scale
      */
-    public long ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict) throws NumericException {
+    public long ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict, boolean lossy) throws NumericException {
         int ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
         // We don't want to parse the m suffix, we can safely skip it
         if (ch == 'm') {
@@ -1403,6 +1404,11 @@ public class Decimal256 implements Sinkable {
             while (digitHi > dot && cs.charAt(digitHi - 1) == '0') {
                 digitHi--;
             }
+        }
+
+        // If lossy is enabled, we can strip digits after the provided scale (as long as it is provided)
+        if (lossy && scale >= 0 && digitHi > dot + scale) {
+            digitHi = dot + scale + 1;
         }
 
         // Compute the scale of the given literal (e.g. '1.234' -> 3) and the total number of digits

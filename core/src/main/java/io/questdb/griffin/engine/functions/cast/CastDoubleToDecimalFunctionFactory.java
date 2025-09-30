@@ -74,7 +74,7 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(d);
             try {
-                decimal.ofString(sink, precision, scale);
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
             }

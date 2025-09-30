@@ -30,6 +30,28 @@ import org.junit.Test;
 public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCastExplains() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // Runtime cast
+                    assertSql("QUERY PLAN\n" +
+                            "VirtualRecord\n" +
+                            "  functions: [value::DECIMAL(5,2)]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [123.44999694824219f]\n" +
+                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123.45f AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
+
+                    // Constant folding
+                    assertSql("QUERY PLAN\n" +
+                                    "VirtualRecord\n" +
+                                    "  functions: [123.45]\n" +
+                                    "    long_sequence count: 1\n",
+                            "EXPLAIN SELECT cast(123.45f as DECIMAL(5, 2))");
+                }
+        );
+    }
+
+    @Test
     public void testCastInfinityAndNaN() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -71,6 +93,49 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastPrecisionValidation() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // 1000.0 requires precision 5 (4 digits + 1 for scale) but only precision 4 allowed
+                    assertException(
+                            "select cast(1000.0f as DECIMAL(4,2))",
+                            12,
+                            "decimal '1000.0f' requires precision of 6 but is limited to 4"
+                    );
+
+                    // 99999.0 should overflow DECIMAL(4)
+                    assertException(
+                            "select cast(99999.0f" +
+                                    " as DECIMAL(4,0))",
+                            12,
+                            "decimal '99999.0f' requires precision of 5 but is limited to 4"
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testCastScaleValidation() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    // This should fail because 123.456 has 3 decimal places but target scale is 2
+                    assertException(
+                            "select cast(123.456f as DECIMAL(5,2))",
+                            12,
+                            "decimal '123.456f' has 3 decimal places but scale is limited to 2"
+                    );
+
+                    // This should fail because 0.001 has 3 decimal places but target scale is 2
+                    assertException(
+                            "select cast(0.001f as DECIMAL(4,2))",
+                            12,
+                            "decimal '0.001f' has 3 decimal places but scale is limited to 2"
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testCastSimpleValues() throws Exception {
         assertMemoryLeak(
                 () -> {
@@ -106,46 +171,15 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCastScaleValidation() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    // This should fail because 123.456 has 3 decimal places but target scale is 2
-                    assertException(
-                            "select cast(123.456f as DECIMAL(5,2))",
-                            12,
-                            "decimal '123.456f' has 3 decimal places but scale is limited to 2"
-                    );
-
-                    // This should fail because 0.001 has 3 decimal places but target scale is 2
-                    assertException(
-                            "select cast(0.001f as DECIMAL(4,2))",
-                            12,
-                            "decimal '0.001f' has 3 decimal places but scale is limited to 2"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testCastPrecisionValidation() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    // 1000.0 requires precision 5 (4 digits + 1 for scale) but only precision 4 allowed
-                    assertException(
-                            "select cast(1000.0f as DECIMAL(4,2))",
-                            12,
-                            "decimal '1000.0f' requires precision of 6 but is limited to 4"
-                    );
-
-                    // 99999.0 should overflow DECIMAL(4)
-                    assertException(
-                            "select cast(99999.0f" +
-                                    " as DECIMAL(4,0))",
-                            12,
-                            "decimal '99999.0f' requires precision of 5 but is limited to 4"
-                    );
-                }
-        );
+    public void testLossy() throws Exception {
+        assertMemoryLeak(() -> {
+            // We allow lossy casts from double to decimal when it is explicit
+            assertSql(
+                    "cast\n" +
+                            "123.45\n",
+                    "WITH data AS (SELECT 123.456f AS value) SELECT cast(value as DECIMAL(5,2)) FROM data"
+            );
+        });
     }
 
     @Test
@@ -162,49 +196,6 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "WITH data AS (SELECT 123.45f value UNION ALL SELECT -67.89f UNION ALL SELECT 0.0f UNION ALL SELECT cast('NaN' as float)) " +
                                     "SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data"
                     );
-                }
-        );
-    }
-
-    @Test
-    public void testRuntimeCastOverflow() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    // Runtime cast that would overflow precision
-                    assertException(
-                            "WITH data AS (SELECT 1000.0f AS value) SELECT cast(value as DECIMAL(4,2)) FROM data",
-                            51,
-                            "inconvertible value: `1000.0` [FLOAT -> DECIMAL(4,2)]"
-                    );
-
-                    // Runtime cast that would exceed scale
-                    assertException(
-                            "WITH data AS (SELECT 123.456f AS value) SELECT cast(value as DECIMAL(5,2)) FROM data",
-                            52,
-                            "inconvertible value: `123.456` [FLOAT -> DECIMAL(5,2)]"
-                    );
-                }
-        );
-    }
-
-    @Test
-    public void testCastExplains() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    // Runtime cast
-                    assertSql("QUERY PLAN\n" +
-                            "VirtualRecord\n" +
-                            "  functions: [value::DECIMAL(5,2)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [123.44999694824219f]\n" +
-                            "        long_sequence count: 1\n", "EXPLAIN WITH data AS (SELECT 123.45f AS value) SELECT cast(value as DECIMAL(5, 2)) FROM data");
-
-                    // Constant folding
-                    assertSql("QUERY PLAN\n" +
-                                    "VirtualRecord\n" +
-                                    "  functions: [123.45]\n" +
-                                    "    long_sequence count: 1\n",
-                            "EXPLAIN SELECT cast(123.45f as DECIMAL(5, 2))");
                 }
         );
     }

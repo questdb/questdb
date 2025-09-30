@@ -1615,6 +1615,111 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testOfStringLossyFalseExactMatch() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // When scale matches exactly, lossy=false should work fine
+        long result = d.ofString("12.345", 0, 6, -1, 3, false, false);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(3, scale);
+        Assert.assertEquals("12.345", d.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringLossyFalseNegativeNumber() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy=false should throw error for negative numbers too
+        d.ofString("-123.456789", 0, 11, -1, 3, false, false);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringLossyFalseThrowsError() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy=false should throw error when scale is exceeded
+        d.ofString("12.3456", 0, 7, -1, 3, false, false);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringLossyFalseWithMoreDigits() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy=false should throw error for multiple extra digits
+        d.ofString("123.456789", 0, 10, -1, 2, false, false);
+    }
+
+    @Test
+    public void testOfStringLossyTrue() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy=true allows truncation of extra digits
+        long result = d.ofString("12.3456", 0, 7, -1, 3, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(5, precision); // 2 digits before + 3 after = 5 total
+        Assert.assertEquals(3, scale);
+        Assert.assertEquals("12.345", d.toString()); // 6 is truncated
+    }
+
+    @Test
+    public void testOfStringLossyTrueExactMatch() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // When scale matches exactly, lossy should have no effect
+        long result = d.ofString("12.345", 0, 6, -1, 3, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(3, scale);
+        Assert.assertEquals("12.345", d.toString());
+    }
+
+    @Test
+    public void testOfStringLossyTrueNegativeNumber() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // Test lossy with negative numbers
+        long result = d.ofString("-123.456789", 0, 11, -1, 3, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(3, scale);
+        Assert.assertEquals("-123.456", d.toString());
+    }
+
+    @Test
+    public void testOfStringLossyTrueWithMoreDigits() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // Truncate multiple digits
+        long result = d.ofString("123.456789", 0, 10, -1, 2, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(5, precision); // 3 digits before + 2 after = 5 total
+        Assert.assertEquals(2, scale);
+        Assert.assertEquals("123.45", d.toString()); // 6789 is truncated
+    }
+
+    @Test
+    public void testOfStringLossyTrueWithNoScale() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy with scale=-1 (auto) should not truncate
+        long result = d.ofString("12.3456", 0, 7, -1, -1, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(6, precision);
+        Assert.assertEquals(4, scale);
+        Assert.assertEquals("12.3456", d.toString());
+    }
+
+    @Test
+    public void testOfStringLossyTrueWithZeroScale() throws NumericException {
+        Decimal256 d = new Decimal256();
+        // lossy with scale=0 should truncate all decimal places
+        long result = d.ofString("12.3456", 0, 7, -1, 0, false, true);
+        int precision = Numbers.decodeLowInt(result);
+        int scale = Numbers.decodeHighInt(result);
+        Assert.assertEquals(2, precision);
+        Assert.assertEquals(0, scale);
+        Assert.assertEquals("12", d.toString());
+    }
+
+    @Test
     public void testOfStringMaxPrecision() throws NumericException {
         Decimal256 d = new Decimal256();
         String maxNumber = new String(new char[76]).replace('\0', '9');

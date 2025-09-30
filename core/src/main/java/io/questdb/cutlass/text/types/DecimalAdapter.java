@@ -76,7 +76,7 @@ public class DecimalAdapter extends AbstractTypeAdapter implements Mutable {
         try {
             // We use concurrently decimal256, but it's fine because we don't care about the resulting value, only
             // if parsing succeeds or not.
-            decimal256.ofString(text.asAsciiCharSequence(), 0, len - 1, -1, -1, true);
+            decimal256.ofString(text.asAsciiCharSequence(), 0, len - 1, -1, -1, true, false);
             return true;
         } catch (NumericException ignored) {
             return false;

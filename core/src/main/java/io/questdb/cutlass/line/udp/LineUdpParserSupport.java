@@ -269,7 +269,7 @@ public class LineUdpParserSupport {
                         try {
                             final int precision = ColumnType.getDecimalPrecision(columnType);
                             final int scale = ColumnType.getDecimalScale(columnType);
-                            decimal256.ofString(value, lo, hi, precision, scale, strict);
+                            decimal256.ofString(value, lo, hi, precision, scale, strict, false);
                         } catch (NumericException e) {
                             decimal256.ofNull();
                         }
