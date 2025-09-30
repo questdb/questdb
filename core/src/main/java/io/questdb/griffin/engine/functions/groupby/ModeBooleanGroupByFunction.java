@@ -40,8 +40,8 @@ import static io.questdb.std.Numbers.LONG_NULL;
 
 // Unlike other mode functions, boolean only has two values, so a map is not required.
 public class ModeBooleanGroupByFunction extends BooleanFunction implements UnaryFunction, GroupByFunction {
-    final Function arg;
-    int valueIndex; // a pointer to the map that allows you to derive the mode
+    private final Function arg;
+    private int valueIndex;
 
     public ModeBooleanGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
@@ -50,15 +50,13 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         boolean value = arg.getBool(record);
-        mapValue.putLong(valueIndex, value ? 0 : 1);
-        mapValue.putLong(valueIndex + 1, value ? 1 : 0);
+        mapValue.putLong(valueIndex, value ? 1 : -1);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         boolean value = arg.getBool(record);
-        mapValue.addLong(valueIndex, value ? 0 : 1);
-        mapValue.addLong(valueIndex + 1, value ? 1 : 0);
+        mapValue.addLong(valueIndex, value ? 1 : -1);
     }
 
     @Override
@@ -68,9 +66,8 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean getBool(Record record) {
-        final long falseCount = record.getLong(0);
-        final long trueCount = record.getLong(1);
-        return trueCount > falseCount;
+        final long cumSum = record.getLong(0); // summed 1s for true and -1s for false. if 0, tiebreak and say true
+        return cumSum >= 0;
     }
 
     @Override
@@ -96,8 +93,7 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // false counts
-        columnTypes.add(ColumnType.LONG); // true counts
+        columnTypes.add(ColumnType.LONG); // true/false cumulative sum
     }
 
     @Override
@@ -112,16 +108,12 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcFalseCount = srcValue.getLong(valueIndex);
-        long srcTrueCount = srcValue.getLong(valueIndex + 1);
-        destValue.addLong(valueIndex, srcFalseCount);
-        destValue.addLong(valueIndex + 1, srcTrueCount);
+        destValue.addLong(valueIndex, srcValue.getLong(valueIndex));
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, LONG_NULL);
-        mapValue.putLong(valueIndex + 1, LONG_NULL);
     }
 
     @Override
@@ -138,5 +130,4 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
     public void toTop() {
         UnaryFunction.super.toTop();
     }
-
 }

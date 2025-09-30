@@ -47,12 +47,12 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFunction, GroupByFunction {
-    final SymbolFunction arg;
-    int initialCapacity = 4;
-    double loadFactor = 0.7d;
-    GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    int valueIndex;
+    private final SymbolFunction arg;
+    private final int initialCapacity = 4;
+    private final double loadFactor = 0.7d;
+    private final GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private int valueIndex;
 
     public ModeSymbolGroupByFunction(@NotNull SymbolFunction arg) {
         this.arg = arg;

@@ -42,12 +42,12 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    final Function arg;
-    int initialCapacity = 4;
-    double loadFactor = 0.7d;
-    GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    int valueIndex;
+    private final Function arg;
+    private final int initialCapacity = 4;
+    private final double loadFactor = 0.7d;
+    private final GroupByLongLongHashMap mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByLongLongHashMap mapB = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private int valueIndex;
 
     public ModeLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;

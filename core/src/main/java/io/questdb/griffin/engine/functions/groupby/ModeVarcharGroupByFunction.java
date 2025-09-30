@@ -43,14 +43,14 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeVarcharGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
-    final Function arg;
-    int initialCapacity = 4;
-    double loadFactor = 0.7d;
-    GroupByUtf8SequenceLongHashMap mapA = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByUtf8SequenceLongHashMap mapB = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByUtf8Sink sinkA = new GroupByUtf8Sink();
-    GroupByUtf8Sink sinkB = new GroupByUtf8Sink();
-    int valueIndex;
+    private final Function arg;
+    private final int initialCapacity = 4;
+    private final double loadFactor = 0.7d;
+    private final GroupByUtf8SequenceLongHashMap mapA = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByUtf8SequenceLongHashMap mapB = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByUtf8Sink sinkA = new GroupByUtf8Sink();
+    private final GroupByUtf8Sink sinkB = new GroupByUtf8Sink();
+    private int valueIndex;
 
     public ModeVarcharGroupByFunction(@NotNull Function arg) {
         this.arg = arg;

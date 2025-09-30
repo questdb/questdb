@@ -97,6 +97,7 @@ public class GroupByLongLongHashMap {
     }
 
     public long mergeAdd(GroupByLongLongHashMap srcMap) {
+        assert srcMap.ptr != this.ptr;
         for (int i = 0; i < srcMap.capacity(); i++) {
             final long key = srcMap.keyAt(i);
             if (key != noKeyValue) {

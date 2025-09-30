@@ -98,6 +98,7 @@ public class GroupByCharSequenceLongHashMap {
     }
 
     public long mergeAdd(GroupByCharSequenceLongHashMap srcMap) {
+        assert srcMap.ptr != this.ptr;
         for (int i = 0; i < srcMap.capacity(); i++) {
             final long kPtr = srcMap.keyAt(i);
             if (kPtr != noKeyValue) {

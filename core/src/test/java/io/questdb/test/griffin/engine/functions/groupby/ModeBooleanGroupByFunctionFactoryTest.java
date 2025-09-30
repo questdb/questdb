@@ -111,11 +111,12 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    // 3 of each, tie breaker makes it true
     @Test
     public void testModeSomeNull() throws Exception {
         assertQuery(
                 "mode\n" +
-                        "false\n",
+                        "true\n",
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::boolean as f from long_sequence(2) " +
@@ -135,7 +136,8 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "g\tmode\n" +
                         "A\ttrue\n" +
-                        "B\tfalse\n",
+                        "B\tfalse\n" +
+                        "C\ttrue\n",
                 "select g, mode(f) from tab order by g",
                 "create table tab as (" +
                         "select 'A' as g, true as f from long_sequence(2) " +
@@ -145,6 +147,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "select 'B' as g, false as f from long_sequence(3) " +
                         "union all " +
                         "select 'B' as g, true as f from long_sequence(1)" +
+                        "union all " +
+                        "select 'C' as g, false as f from long_sequence(2) " +
+                        "union all " +
+                        "select 'C' as g, true as f from long_sequence(2)" +
                         ")",
                 null,
                 true,

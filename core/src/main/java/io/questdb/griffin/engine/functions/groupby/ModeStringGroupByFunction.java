@@ -42,14 +42,14 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeStringGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
-    final Function arg;
-    int initialCapacity = 4;
-    double loadFactor = 0.7d;
-    GroupByCharSequenceLongHashMap mapA = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByCharSequenceLongHashMap mapB = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    GroupByCharSink sinkA = new GroupByCharSink();
-    GroupByCharSink sinkB = new GroupByCharSink();
-    int valueIndex;
+    private final Function arg;
+    private final int initialCapacity = 4;
+    private final double loadFactor = 0.7d;
+    private final GroupByCharSequenceLongHashMap mapA = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByCharSequenceLongHashMap mapB = new GroupByCharSequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByCharSink sinkA = new GroupByCharSink();
+    private final GroupByCharSink sinkB = new GroupByCharSink();
+    private int valueIndex;
 
     public ModeStringGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
