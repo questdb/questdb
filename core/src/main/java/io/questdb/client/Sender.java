@@ -464,8 +464,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final int DEFAULT_MAX_NAME_LEN = 127;
-        private static final int DEFAULT_MAX_RETRY_MILLIS = 1_000;
-        private static final long DEFAULT_MAX_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
+        private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
+        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
@@ -728,7 +728,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
-                long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_MILLIS : retryTimeoutMillis * 1_000_000L;
+                long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
                 long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
                 long actualAutoFlushIntervalMillis;
                 if (autoFlushIntervalMillis == Integer.MAX_VALUE) {
@@ -1233,7 +1233,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 maxNameLength = DEFAULT_MAX_NAME_LEN;
             }
             if (maxBackoffMillis == PARAMETER_NOT_SET_EXPLICITLY) {
-                maxBackoffMillis = DEFAULT_MAX_RETRY_MILLIS;
+                maxBackoffMillis = DEFAULT_MAX_BACKOFF_MILLIS;
             }
         }
 
