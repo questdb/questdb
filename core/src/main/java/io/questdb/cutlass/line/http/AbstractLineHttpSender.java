@@ -438,10 +438,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         return bufferView.of(request.getContentStart(), request.getContentLength());
     }
 
-    public String buildUrl() {
-        return "http" + (isTls ? "s" : "") + "://" + currentHost() + ":" + currentPort() + this.path;
-    }
-
     @Override
     public void cancelRow() {
         validateNotClosed();
