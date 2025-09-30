@@ -68,7 +68,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 10;
-    private static final int RETRY_MAX_BACKOFF_MS = 1000;
     private static final int RETRY_MAX_JITTER_MS = 10;
     private final String authToken;
     private final int autoFlushRows;
@@ -80,6 +79,8 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
+    private final int maxBackoffMillis;
+    private final int initialBackoffMillis;
     private final String password;
     private final String path;
     private final IntList ports;
@@ -109,6 +110,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String password,
             int maxNameLength,
             long maxRetriesNanos,
+            int maxBackoffMillis,
             long minRequestThroughput,
             long flushIntervalNanos,
             Rnd rnd
@@ -126,6 +128,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 rnd
@@ -145,11 +148,12 @@ public abstract class AbstractLineHttpSender implements Sender {
             String password,
             int maxNameLength,
             long maxRetriesNanos,
+            int maxBackoffMillis,
             long minRequestThroughput,
             long flushIntervalNanos,
             Rnd rnd
     ) {
-        this(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, client, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, 0, rnd);
+        this(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, client, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, maxBackoffMillis, minRequestThroughput, flushIntervalNanos, 0, rnd);
     }
 
     @SuppressWarnings("ReplaceNullCheck")
@@ -166,6 +170,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String password,
             int maxNameLength,
             long maxRetriesNanos,
+            int maxBackoffMillis,
             long minRequestThroughput,
             long flushIntervalNanos,
             int currentAddressIndex,
@@ -173,6 +178,8 @@ public abstract class AbstractLineHttpSender implements Sender {
     ) {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
+        this.maxBackoffMillis = maxBackoffMillis;
+        this.initialBackoffMillis = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
         this.hosts = hosts;
         this.ports = ports;
         this.currentAddressIndex = currentAddressIndex;
@@ -213,11 +220,12 @@ public abstract class AbstractLineHttpSender implements Sender {
             String password,
             int maxNameLength,
             long maxRetriesNanos,
+            int maxBackoffMillis,
             long minRequestThroughput,
             long flushIntervalNanos,
             int protocolVersion
     ) {
-        return createLineSender(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, minRequestThroughput, flushIntervalNanos, protocolVersion);
+        return createLineSender(new ObjList<>(host), IntList.createWithValues(port), path, clientConfiguration, tlsConfig, autoFlushRows, authToken, username, password, maxNameLength, maxRetriesNanos, maxBackoffMillis, minRequestThroughput, flushIntervalNanos, protocolVersion);
     }
 
     public static AbstractLineHttpSender createLineSender(
@@ -232,6 +240,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             String password,
             int maxNameLength,
             long maxRetriesNanos,
+            int maxBackoffMillis,
             long minRequestThroughput,
             long flushIntervalNanos,
             int protocolVersion
@@ -255,7 +264,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                             .put(", portCount=").put(ports.size()).put(']');
                 }
                 long retryingDeadlineNanos = Long.MIN_VALUE; // we want to start retry timer only after a first failure
-                int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+                int retryBackoff = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
                 long hostBlacklistBitmap = 0; // allows blacklisting up to 64 hosts; we blacklist a host upon receiving a non-retryable error
                 final int blacklistableCount = Math.min(64, hosts.size());
                 final long allBlacklistedMask = (blacklistableCount == 64) ? -1L : ((1L << blacklistableCount) - 1);
@@ -326,7 +335,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                         break;
                     }
                     cli.disconnect(); // forces reconnect
-                    retryBackoff = backoff(rnd, retryBackoff);
+                    retryBackoff = backoff(rnd, retryBackoff, maxBackoffMillis);
                 }
             } catch (LineSenderException e) {
                 Misc.free(cli);
@@ -359,6 +368,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     password,
                     maxNameLength,
                     maxRetriesNanos,
+                    maxBackoffMillis,
                     minRequestThroughput,
                     flushIntervalNanos,
                     currentAddressIndex,
@@ -378,6 +388,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     password,
                     maxNameLength,
                     maxRetriesNanos,
+                    maxBackoffMillis,
                     minRequestThroughput,
                     flushIntervalNanos,
                     currentAddressIndex,
@@ -586,11 +597,11 @@ public abstract class AbstractLineHttpSender implements Sender {
         return this;
     }
 
-    private static int backoff(Rnd rnd, int retryBackoff) {
+    private static int backoff(Rnd rnd, int retryBackoff, int retryMaxBackoffMs) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
         int backoff = retryBackoff + jitter;
         Os.sleep(backoff);
-        return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
+        return Math.min(retryMaxBackoffMs, backoff * RETRY_BACKOFF_MULTIPLIER);
     }
 
     private static void chunkedResponseToSink(HttpClient.ResponseHeaders response, StringSink sink) {
@@ -737,7 +748,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                         throwOnHttpErrorResponse(statusCode, response, true);
                     }
                     client.disconnect(); // forces reconnect, just in case
-                    retryBackoff = backoff(rnd, retryBackoff);
+                    retryBackoff = backoff(rnd, retryBackoff, maxBackoffMillis);
                     continue;
                 }
                 throwOnHttpErrorResponse(statusCode, response, false);
@@ -763,7 +774,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     throw ex;
                 }
                 rotateAddress();
-                retryBackoff = backoff(rnd, retryBackoff);
+                retryBackoff = backoff(rnd, retryBackoff, maxBackoffMillis);
             }
         }
         reset(System.nanoTime() + flushIntervalNanos);

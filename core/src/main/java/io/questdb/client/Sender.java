@@ -464,7 +464,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final int DEFAULT_MAX_NAME_LEN = 127;
-        private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
+        private static final int DEFAULT_MAX_RETRY_MILLIS = 1_000;
+        private static final long DEFAULT_MAX_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(1);
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
@@ -487,6 +488,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private String keyId;
         private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
+        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
@@ -726,7 +728,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             if (protocol == PROTOCOL_HTTP) {
                 int actualAutoFlushRows = autoFlushRows == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_AUTO_FLUSH_ROWS : autoFlushRows;
-                long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_NANOS : retryTimeoutMillis * 1_000_000L;
+                long actualMaxRetriesNanos = retryTimeoutMillis == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MAX_RETRY_MILLIS : retryTimeoutMillis * 1_000_000L;
                 long actualMinRequestThroughput = minRequestThroughput == PARAMETER_NOT_SET_EXPLICITLY ? DEFAULT_MIN_REQUEST_THROUGHPUT : minRequestThroughput;
                 long actualAutoFlushIntervalMillis;
                 if (autoFlushIntervalMillis == Integer.MAX_VALUE) {
@@ -740,7 +742,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
                 return AbstractLineHttpSender.createLineSender(hosts, ports, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
-                        username, password, maxNameLength, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
+                        username, password, maxNameLength, actualMaxRetriesNanos, maxBackoffMillis, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
 
             assert protocol == PROTOCOL_TCP;
@@ -1142,6 +1144,46 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             return this;
         }
 
+        /**
+         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
+         * <br>
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
+         * <p>
+         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
+         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
+         * the server during temporary outages while still providing quick recovery when the service becomes available again.
+         * <p>
+         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
+         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
+         * retry attempts.
+         * <p>
+         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
+         * delay (though some small jitter is still applied).
+         * <p>
+         * Default value: 1,000 milliseconds (1 second).
+         *
+         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
+         * @return this instance, enabling method chaining.
+         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
+         *                             or if maxBackoffMillis was already configured.
+         */
+        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
+            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max backoff was already configured ")
+                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
+            }
+            if (maxBackoffMillis < 0) {
+                throw new LineSenderException("max backoff cannot be negative ")
+                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
+            }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("max backoff is not supported for TCP protocol");
+            }
+            this.maxBackoffMillis = maxBackoffMillis;
+            return this;
+        }
+
         private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
             if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
                 throw new LineSenderException("invalid ").put(name).put(" [error=").put(sink).put("]");
@@ -1189,6 +1231,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             }
             if (maxNameLength == PARAMETER_NOT_SET_EXPLICITLY) {
                 maxNameLength = DEFAULT_MAX_NAME_LEN;
+            }
+            if (maxBackoffMillis == PARAMETER_NOT_SET_EXPLICITLY) {
+                maxBackoffMillis = DEFAULT_MAX_RETRY_MILLIS;
             }
         }
 

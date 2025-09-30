@@ -55,6 +55,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                             String password,
                             int maxNameLength,
                             long maxRetriesNanos,
+                            int maxBackoffMillis,
                             long minRequestThroughput,
                             long flushIntervalNanos) {
         super(host,
@@ -67,6 +68,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
@@ -84,6 +86,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                             String password,
                             int maxNameLength,
                             long maxRetriesNanos,
+                            int maxBackoffMillis,
                             long minRequestThroughput,
                             long flushIntervalNanos,
                             int currentAddressIndex,
@@ -100,6 +103,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 currentAddressIndex,
@@ -119,6 +123,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                                String password,
                                int maxNameLength,
                                long maxRetriesNanos,
+                               int maxBackoffMillis,
                                long minRequestThroughput,
                                long flushIntervalNanos,
                                Rnd rnd) {
@@ -134,6 +139,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 rnd);
