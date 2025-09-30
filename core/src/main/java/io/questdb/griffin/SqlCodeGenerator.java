@@ -2711,6 +2711,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         boolean created = false;
                                         if (!asOfAvoidBinarySearch) {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
                                                 if (isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     int masterSymbolColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
                                                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -2722,11 +2723,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             masterMetadata.getColumnCount(),
                                                             masterSymbolColumnIndex,
                                                             slaveSymbolColumnIndex,
+                                                            symbolShortCircuit,
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
                                                     );
                                                 } else {
-                                                    SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
                                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
