@@ -508,6 +508,24 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalNull() throws Exception {
+        testUnionAllWithNull(
+                "a\tc\n" +
+                        "1.000\t\n" +
+                        "2.000\t\n" +
+                        "3.000\t\n" +
+                        "4.000\t\n" +
+                        "5.000\t\n" +
+                        "\t1.000\n" +
+                        "\t2.000\n" +
+                        "\t3.000\n" +
+                        "\t4.000\n" +
+                        "\t5.000\n",
+                "x::decimal(18, 3)"
+        );
+    }
+
+    @Test
     public void testDecimalStr() throws Exception {
         testUnionAll(
                 "a\n" +
