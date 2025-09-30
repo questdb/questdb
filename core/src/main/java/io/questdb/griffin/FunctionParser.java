@@ -830,10 +830,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     .put("invalid DECIMAL type, the precision must be between 1 and ")
                     .put(Decimals.MAX_PRECISION);
         }
-        if (scale < 0 || scale > Decimals.MAX_SCALE) {
+        if (scale < 0 || scale > precision) {
             throw SqlException.position(position)
                     .put("invalid DECIMAL type, the scale must be between 0 and ")
-                    .put(Decimals.MAX_SCALE);
+                    .put(precision);
         }
 
         return new DecimalTypeConstant(precision, scale);
