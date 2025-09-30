@@ -34,7 +34,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -59,12 +59,12 @@ import static io.questdb.cairo.TableUtils.createDirsOrFail;
 
 public class SerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialParquetExporter.class);
-    private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
     private final Path fromParquet;
     private final Utf8StringSink nameSink = new Utf8StringSink();
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path tempPath;
     private final Path toParquet;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -73,9 +73,9 @@ public class SerialParquetExporter implements Closeable {
     private PhaseStatusReporter statusReporter;
     private CopyExportRequestTask task;
 
-    public SerialParquetExporter(CairoEngine engine) {
-        this.cairoEngine = engine;
-        this.configuration = engine.getConfiguration();
+    public SerialParquetExporter(SqlExecutionContextImpl context) {
+        this.sqlExecutionContext = context;
+        this.configuration = context.getCairoEngine().getConfiguration();
         this.ff = this.configuration.getFilesFacade();
         this.toParquet = new Path();
         this.fromParquet = new Path();
@@ -100,6 +100,10 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
+    public SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
     public void of(CopyExportRequestTask task,
                    ExecutionCircuitBreaker circuitBreaker,
                    PhaseStatusReporter statusReporter) {
@@ -112,11 +116,12 @@ public class SerialParquetExporter implements Closeable {
         numOfFiles = 0;
     }
 
-    public CopyExportRequestTask.Phase process(SqlExecutionContext sqlExecutionContext) {
+    public CopyExportRequestTask.Phase process() {
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         int tempBaseDirLen = 0;
         CopyExportResult exportResult = task.getResult();
+        final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
 
         try {
             if (task.getCreateOp() != null) {
@@ -171,7 +176,9 @@ public class SerialParquetExporter implements Closeable {
                             throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                         }
                         final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
-
+                        if (reader.openPartition(partitionIndex) <= 0) {
+                            continue;
+                        }
                         // skip parquet conversion if the partition is already in parquet format
                         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                             numOfFiles++;
@@ -221,9 +228,6 @@ public class SerialParquetExporter implements Closeable {
                         }
 
                         // native partition - convert to parquet
-                        if (reader.openPartition(partitionIndex) <= 0) {
-                            continue;
-                        }
                         numOfFiles++;
                         PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                         nameSink.clear();

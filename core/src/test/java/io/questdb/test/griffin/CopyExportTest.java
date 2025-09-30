@@ -31,9 +31,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.Job;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -56,21 +58,6 @@ public class CopyExportTest extends AbstractCairoTest {
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
 
     public CopyExportTest() {
-    }
-
-    public static Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
-        return new Thread(() -> {
-            try {
-                while (latch.getCount() > 0) {
-                    if (job.run(0)) {
-                        latch.countDown();
-                    }
-                    Os.sleep(1);
-                }
-            } finally {
-                Path.clearThreadLocals();
-            }
-        });
     }
 
     @BeforeClass
@@ -198,37 +185,6 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyExportCancel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE IF NOT EXISTS \"" +
-                    "sys.text_import_log" +
-                    "\" (" +
-                    "ts timestamp, " + // 0
-                    "id string, " + // 1
-                    "table_name symbol, " + // 2
-                    "file symbol, " + // 3
-                    "phase symbol, " + // 4
-                    "status symbol, " + // 5
-                    "message string," + // 6
-                    "rows_handled long," + // 7
-                    "rows_imported long," + // 8
-                    "errors long" + // 9
-                    ") timestamp(ts) partition by DAY BYPASS WAL");
-
-            execute("CREATE TABLE IF NOT EXISTS \"" +
-                    "sys.copy_export_log"
-                    + "\" (" +
-                    "ts TIMESTAMP, " + // 0
-                    "id VARCHAR, " + // 1
-                    "table_name SYMBOL, " + // 2
-                    "export_dir SYMBOL, " + // 3
-                    "num_exported_files INT, " + // 4
-                    "phase SYMBOL, " + // 5
-                    "status SYMBOL, " + // 6
-                    "message VARCHAR, " + // 7
-                    "errors LONG" + // 8
-                    ") timestamp(ts) PARTITION BY DAY\n" +
-                    "TTL 3 DAYS WAL;"
-            );
-            drainWalQueue();
             CopyExportRunnable stmt = () -> {
                 try {
                     runAndFetchCopyExportID("copy (generate_series(0, '9999-01-01', '1U')) TO 'very_large_table' WITH FORMAT PARQUET;", sqlExecutionContext);
@@ -242,7 +198,7 @@ public class CopyExportTest extends AbstractCairoTest {
                 try {
                     long copyID;
                     do {
-                        copyID = engine.getCopyExportContext().getActiveExportID();
+                        copyID = engine.getCopyExportContext().getActiveExportId();
                     } while (copyID == -1);
 
                     StringSink sink = new StringSink();
@@ -258,13 +214,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     }
                     // wait cancel finish
                     do {
-                        copyID = engine.getCopyExportContext().getActiveExportID();
+                        copyID = engine.getCopyExportContext().getActiveExportId();
                     } while (copyID != -1);
                 } finally {
                     Path.clearThreadLocals();
                 }
             };
-            testCopyExport(stmt, test, false);
+            testCopyExport(stmt, test, false, 1);
         });
     }
 
@@ -568,7 +524,6 @@ public class CopyExportTest extends AbstractCairoTest {
                     assertEventually(() -> assertSql("export_dir\tnum_exported_files\tstatus\n" +
                                     exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\n",
                             "SELECT export_dir, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
-
             testCopyExport(stmt, test);
         });
     }
@@ -1530,12 +1485,24 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
-        TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    private static Thread createJobThread(Job job, CountDownLatch latch, int workerId) {
+        return new Thread(() -> {
+            try {
+                while (latch.getCount() > 0) {
+                    if (job.run(workerId)) {
+                        break;
+                    }
+                    Os.sleep(10);
+                }
+            } finally {
+                Path.clearThreadLocals();
+                latch.countDown();
+            }
+        });
     }
 
     // Helper methods for copy export operations
-    protected static String runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (
                 RecordCursorFactory factory = select(copySql);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -1543,39 +1510,40 @@ public class CopyExportTest extends AbstractCairoTest {
             Assert.assertTrue(cursor.hasNext());
             CharSequence value = cursor.getRecord().getStrA(0);
             Assert.assertNotNull(value);
-            return value.toString();
         }
     }
 
-    protected synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
-        testCopyExport(statement, test, true);
-    }
-
-    protected synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked) throws Exception {
-        assertMemoryLeak(() -> {
-            CountDownLatch processed = new CountDownLatch(1);
-            execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
-            try (CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine)) {
-                Thread processingThread = createJobThread(copyRequestJob, processed);
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int wait) throws Exception {
+        CountDownLatch processed = new CountDownLatch(wait);
+        execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+        ObjList<CopyExportRequestJob> jobs = new ObjList<>();
+        try {
+            for (int i = 0; i < 3; i++) {
+                CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine, i);
+                jobs.add(copyRequestJob);
+                Thread processingThread = createJobThread(copyRequestJob, processed, i);
                 processingThread.start();
-                statement.run();
-                if (blocked) {
-                    processed.await();
-                }
-                drainWalQueue(engine);
-                copyRequestJob.drain(0);
-                if (blocked) {
-                    processingThread.join();
-                    test.run();
-                } else {
-                    test.run();
-                    processingThread.join();
-                }
             }
-        });
+            statement.run();
+            if (blocked) {
+                processed.await();
+            }
+            drainWalQueue(engine);
+            test.run();
+        } finally {
+            Misc.freeObjList(jobs);
+        }
     }
 
-    protected boolean exportDirectoryExists(String dirName) {
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test) throws Exception {
+        testCopyExport(statement, test, true, 1);
+    }
+
+    private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
+        TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private boolean exportDirectoryExists(String dirName) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
             path.of(exportRoot).concat(dirName).$();
@@ -1583,7 +1551,7 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
-    protected String getOne(String query) throws SqlException {
+    private String getOne(String query) throws SqlException {
         try (
                 RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)

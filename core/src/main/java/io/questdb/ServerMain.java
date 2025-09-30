@@ -73,6 +73,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.PropertyKey.EXPORT_WORKER_COUNT;
 import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
 
 public class ServerMain implements Closeable {
@@ -369,13 +370,28 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(copyImportRequestJob);
                             sharedPoolWrite.freeOnExit(copyImportRequestJob);
                         }
+                    }
 
-                        if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
-                            final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
-                                    engine
+                    // export
+                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
+                        int workerCount = config.getExportPoolConfiguration().getWorkerCount();
+                        if (workerCount > 0) {
+                            WorkerPool exportWorkerPool = getWorkerPool(
+                                    config.getExportPoolConfiguration(),
+                                    Requester.EXPORT,
+                                    sharedPoolQuery
                             );
-                            sharedPoolQuery.assign(copyExportRequestJob);
-                            sharedPoolQuery.freeOnExit(copyExportRequestJob);
+
+                            for (int i = 0; i < workerCount; i++) {
+                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine, i);
+                                exportWorkerPool.assign(i, copyExportRequestJob);
+                                exportWorkerPool.freeOnExit(copyExportRequestJob);
+                            }
+                        } else {
+                            log.advisory().$("export is disabled; set ")
+                                    .$(EXPORT_WORKER_COUNT.getPropertyPath())
+                                    .$(" to a positive value or keep default to enable export.")
+                                    .$();
                         }
                     }
 

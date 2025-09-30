@@ -62,9 +62,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnTask> columnTaskQueue;
     private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
-    private final SPSequence copyExportRequestPubSeq;
+    private final MPSequence copyExportRequestPubSeq;
     private final RingQueue<CopyExportRequestTask> copyExportRequestQueue;
-    private final SCSequence copyExportRequestSubSeq;
+    private final MCSequence copyExportRequestSubSeq;
     private final SCSequence copyImportColSeq;
     private final SPSequence copyImportPubSeq;
     private final RingQueue<CopyImportTask> copyImportQueue;
@@ -204,10 +204,9 @@ public class MessageBusImpl implements MessageBus {
             this.copyImportRequestSubSeq = new SCSequence();
             copyImportRequestPubSeq.then(copyImportRequestSubSeq).then(copyImportRequestPubSeq);
 
-            // We allow only a single parallel export to be in-flight, hence queue size of 1.
             this.copyExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
-            this.copyExportRequestPubSeq = new SPSequence(copyExportRequestQueue.getCycle());
-            this.copyExportRequestSubSeq = new SCSequence();
+            this.copyExportRequestPubSeq = new MPSequence(copyExportRequestQueue.getCycle());
+            this.copyExportRequestSubSeq = new MCSequence(copyExportRequestQueue.getCycle());
             copyExportRequestPubSeq.then(copyExportRequestSubSeq).then(copyExportRequestPubSeq);
 
             this.walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new, configuration.getWalTxnNotificationQueueCapacity());
@@ -307,7 +306,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public SPSequence getCopyExportRequestPubSeq() {
+    public MPSequence getCopyExportRequestPubSeq() {
         return copyExportRequestPubSeq;
     }
 
@@ -317,7 +316,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public SCSequence getCopyExportRequestSubSeq() {
+    public MCSequence getCopyExportRequestSubSeq() {
         return copyExportRequestSubSeq;
     }
 

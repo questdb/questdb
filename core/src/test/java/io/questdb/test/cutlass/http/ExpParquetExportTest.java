@@ -47,7 +47,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
     private static String exportRoot;
     private static TestHttpClient testHttpClient;
-    private CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -189,7 +189,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         try {
                             long copyID;
                             do {
-                                copyID = engine.getCopyExportContext().getActiveExportID();
+                                copyID = engine.getCopyExportContext().getActiveExportId();
                             } while (copyID == -1);
                             Os.sleep(500);
 
@@ -206,7 +206,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             }
                             // wait cancel finish
                             do {
-                                copyID = engine.getCopyExportContext().getActiveExportID();
+                                copyID = engine.getCopyExportContext().getActiveExportId();
                             } while (copyID != -1);
                         } finally {
                             Path.clearThreadLocals();

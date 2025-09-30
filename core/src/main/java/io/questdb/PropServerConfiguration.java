@@ -203,6 +203,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final WorkerPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
+    private final int[] exportWorkerAffinity;
+    private final int exportWorkerCount;
+    private final boolean exportWorkerHaltOnError;
+    private final long exportWorkerNapThreshold;
+    private final long exportWorkerSleepThreshold;
+    private final long exportWorkerSleepTimeout;
+    private final long exportWorkerYieldThreshold;
     private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
@@ -893,13 +901,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuWalApplyWorkers = 2;
         int cpuSpare = 0;
+        int exportWorker = 1;
 
         if (cpuAvailable > 32) {
             cpuWalApplyWorkers = 4;
             cpuSpare = 2;
+            exportWorker = 4;
         } else if (cpuAvailable > 16) {
             cpuWalApplyWorkers = 3;
             cpuSpare = 1;
+            exportWorker = 2;
         } else if (cpuAvailable > 8) {
             cpuWalApplyWorkers = 3;
         }
@@ -1319,6 +1330,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+
+            // Export pool configuration
+            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, exportWorker);
+            this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
+            this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
+            this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
+            this.exportWorkerSleepThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
+            this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -1837,6 +1857,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return exportPoolConfiguration;
     }
 
     @Override
@@ -4138,6 +4163,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
+        }
+    }
+
+    private class PropExportPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return exportWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "export";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return exportWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return exportWorkerSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return exportWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return exportWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return exportWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return exportWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return exportWorkerCount > 0;
         }
     }
 

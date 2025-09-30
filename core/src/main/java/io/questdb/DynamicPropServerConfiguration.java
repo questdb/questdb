@@ -313,6 +313,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getExportPoolConfiguration();
+    }
+
+    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
     }

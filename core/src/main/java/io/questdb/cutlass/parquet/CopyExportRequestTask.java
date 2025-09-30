@@ -26,6 +26,8 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.network.SuspendEvent;
@@ -36,15 +38,14 @@ import org.jetbrains.annotations.Nullable;
 public class CopyExportRequestTask implements Mutable {
     private int compressionCodec;
     private int compressionLevel;
-    private long copyID;
     private CreateTableOperation createOp;
     private int dataPageSize;
+    private CopyExportContext.ExportTaskEntry entry;
     private String fileName;
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private CopyExportResult result;
     private int rowGroupSize;
-    private SecurityContext securityContext;
     private int sizeLimit;
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent;
@@ -53,10 +54,12 @@ public class CopyExportRequestTask implements Mutable {
 
     @Override
     public void clear() {
-        this.copyID = -1;
+        if (this.entry != null) {
+            this.entry.clear();
+            this.entry = null;
+        }
         this.tableName = null;
         this.fileName = null;
-        this.securityContext = null;
         this.compressionCodec = -1;
         this.compressionLevel = -1;
         this.dataPageSize = -1;
@@ -70,6 +73,10 @@ public class CopyExportRequestTask implements Mutable {
         result = null;
     }
 
+    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+        return entry.getCircuitBreaker();
+    }
+
     public int getCompressionCodec() {
         return compressionCodec;
     }
@@ -79,7 +86,7 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public long getCopyID() {
-        return copyID;
+        return entry.getId();
     }
 
     public CreateTableOperation getCreateOp() {
@@ -107,7 +114,7 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public SecurityContext getSecurityContext() {
-        return securityContext;
+        return entry.getSecurityContext();
     }
 
     public int getSizeLimit() {
@@ -135,8 +142,7 @@ public class CopyExportRequestTask implements Mutable {
     }
 
     public void of(
-            SecurityContext securityContext,
-            long copyID,
+            CopyExportContext.ExportTaskEntry entry,
             CreateTableOperation createOp,
             CopyExportResult result,
             String tableName,
@@ -153,9 +159,8 @@ public class CopyExportRequestTask implements Mutable {
             boolean userSpecifiedExportOptions
     ) {
         this.clear();
-        this.securityContext = securityContext;
+        this.entry = entry;
         this.result = result;
-        this.copyID = copyID;
         this.tableName = tableName;
         this.fileName = fileName;
         this.sizeLimit = sizeLimit;

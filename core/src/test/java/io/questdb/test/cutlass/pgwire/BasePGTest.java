@@ -531,7 +531,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         workerPool.assign(copyImportRequestJob);
         workerPool.freeOnExit(copyImportRequestJob);
 
-        copyExportRequestJob = new CopyExportRequestJob(engine);
+        copyExportRequestJob = new CopyExportRequestJob(engine, 0);
         workerPool.assign(copyExportRequestJob);
         workerPool.freeOnExit(copyExportRequestJob);
 

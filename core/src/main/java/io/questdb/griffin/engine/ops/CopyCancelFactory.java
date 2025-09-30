@@ -79,7 +79,6 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final long activeImportCopyID = copyImportContext.getActiveImportID();
-        final long activeExportCopyID = copyExportContext.getActiveExportID();
 
         if (activeImportCopyID == cancelCopyID && cancelCopyID != CopyImportContext.INACTIVE_COPY_ID) {
             final AtomicBooleanCircuitBreaker circuitBreaker = copyImportContext.getCircuitBreaker();
@@ -90,35 +89,38 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             // to determine if COPY has stopped the client has to wait for status table to
             // be updated.
             status = "cancelled";
-        } else if (activeExportCopyID == cancelCopyID && cancelCopyID != CopyExportContext.INACTIVE_COPY_ID) {
-            final AtomicBooleanCircuitBreaker circuitBreaker = copyExportContext.getCircuitBreaker();
-            copyExportContext.getExportOriginatorSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
-            circuitBreaker.cancel();
-            status = "cancelled";
         } else {
-            status = null;
-            if (importBaseFactory != null) {
-                try (RecordCursor importCursor = importBaseFactory.getCursor(executionContext)) {
-                    Record rec = importCursor.getRecord();
-                    // should be one row
-                    if (importCursor.hasNext()) {
-                        status = rec.getSymA(IMPORT_STATUS_INDEX);
+            CopyExportContext.ExportTaskEntry entry = copyExportContext.getEntry(cancelCopyID);
+            if (entry != null) {
+                final AtomicBooleanCircuitBreaker circuitBreaker = entry.getCircuitBreaker();
+                entry.getSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
+                circuitBreaker.cancel();
+                status = "cancelled";
+            } else {
+                status = null;
+                if (importBaseFactory != null) {
+                    try (RecordCursor importCursor = importBaseFactory.getCursor(executionContext)) {
+                        Record rec = importCursor.getRecord();
+                        // should be one row
+                        if (importCursor.hasNext()) {
+                            status = rec.getSymA(IMPORT_STATUS_INDEX);
+                        }
                     }
                 }
-            }
 
-            if (exportBaseFactory != null && status == null) {
-                try (RecordCursor exportCursor = exportBaseFactory.getCursor(executionContext)) {
-                    Record rec = exportCursor.getRecord();
-                    // should be one row
-                    if (exportCursor.hasNext()) {
-                        status = rec.getSymA(EXPORT_STATUS_INDEX);
+                if (exportBaseFactory != null && status == null) {
+                    try (RecordCursor exportCursor = exportBaseFactory.getCursor(executionContext)) {
+                        Record rec = exportCursor.getRecord();
+                        // should be one row
+                        if (exportCursor.hasNext()) {
+                            status = rec.getSymA(EXPORT_STATUS_INDEX);
+                        }
                     }
                 }
-            }
 
-            if (status == null) {
-                status = "unknown";
+                if (status == null) {
+                    status = "unknown";
+                }
             }
         }
         cursor.toTop();

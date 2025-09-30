@@ -179,7 +179,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
-                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count'" +
+                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -562,6 +562,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.nap.threshold\tQDB_EXPORT_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.affinity\tQDB_EXPORT_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.sleep.timeout\tQDB_EXPORT_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.haltOnError\tQDB_EXPORT_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.yield.threshold\tQDB_EXPORT_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.sleep.threshold\tQDB_EXPORT_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.capacity\tQDB_PG_CHARACTER_STORE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +

@@ -68,11 +68,11 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    SPSequence getCopyExportRequestPubSeq();
+    MPSequence getCopyExportRequestPubSeq();
 
     RingQueue<CopyExportRequestTask> getCopyExportRequestQueue();
 
-    SCSequence getCopyExportRequestSubSeq();
+    MCSequence getCopyExportRequestSubSeq();
 
     SCSequence getCopyImportColSeq();
 

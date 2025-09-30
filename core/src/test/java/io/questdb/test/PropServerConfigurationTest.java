@@ -507,6 +507,16 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+        Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertFalse(configuration.getExportPoolConfiguration().haltOnError());
+        Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+        Assert.assertEquals(10, configuration.getExportPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getExportPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getExportPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
+        
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
@@ -1440,6 +1450,16 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getExportPoolConfiguration().haltOnError());
+            Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getExportPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getExportPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getExportPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getExportPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getExportPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getExportPoolConfiguration().getYieldThreshold());
 
             Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }

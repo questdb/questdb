@@ -194,7 +194,7 @@ public class HttpQueryTestBuilder {
 
                 if (cairoConfiguration.getSqlCopyExportRoot() != null) {
                     final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
-                            engine
+                            engine, 0
                     );
                     workerPool.assign(copyExportRequestJob);
                     workerPool.freeOnExit(copyExportRequestJob);

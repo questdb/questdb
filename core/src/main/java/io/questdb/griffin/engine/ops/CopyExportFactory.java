@@ -34,14 +34,12 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
-import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
@@ -52,8 +50,8 @@ import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SPSequence;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
@@ -122,92 +120,83 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        long copyID = copyContext.assignActiveExportId(securityContext);
-        if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
-            final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
-            final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
-            circuitBreaker.reset();
-            try {
-                CreateTableOperationImpl createOp = null;
-                if (this.tableName != null) {
-                    TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-                    if (tableToken == null) {
-                        throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
-                    }
-                    if (partitionBy != -1) {
-                        try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
-                            int tablePartitionBy = meta.getPartitionBy();
-                            if (tablePartitionBy != partitionBy) {
-                                this.selectText = this.tableName;
-                            }
+        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext);
+        long copyID = entry.getId();
+        try {
+            CreateTableOperationImpl createOp = null;
+            if (this.tableName != null) {
+                TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+                if (tableToken == null) {
+                    throw SqlException.tableDoesNotExist(tableOrSelectTextPos, tableName);
+                }
+                if (partitionBy != -1) {
+                    try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+                        int tablePartitionBy = meta.getPartitionBy();
+                        if (tablePartitionBy != partitionBy) {
+                            this.selectText = this.tableName;
                         }
                     }
                 }
-
-                if (this.selectText != null) {
-                    // prepare to create a temp table
-                    exportIdSink.clear();
-                    exportIdSink.put("copy.");
-                    Numbers.appendHex(exportIdSink, copyID, true);
-                    this.tableName = exportIdSink.toString();
-                    createOp = validAndCreateTableOp(executionContext);
-                }
-
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                record.setValue(exportIdSink);
-                if (copyExportResult != null) {
-                    copyExportResult.setCopyID(copyID);
-                }
-                final SPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
-                long processingCursor = copyRequestPubSeq.next();
-                assert processingCursor > -1;
-                final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
-                task.of(
-                        securityContext,
-                        copyID,
-                        createOp,
-                        copyExportResult,
-                        tableName,
-                        fileName,
-                        sizeLimit,
-                        compressionCodec,
-                        compressionLevel,
-                        rowGroupSize,
-                        dataPageSize,
-                        statisticsEnabled,
-                        parquetVersion,
-                        suspendEvent,
-                        rawArrayEncoding,
-                        userSpecifiedExportOptions
-                );
-                if (copyContext.getReporter() != null) {
-                    copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
-                }
-                cursor.toTop();
-                copyRequestPubSeq.done(processingCursor);
-                return cursor;
-            } catch (SqlException | CairoException ex) {
-                copyContext.clear();
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getFlyweightMessage()).I$();
-                throw ex;
-            } catch (Throwable ex) {
-                copyContext.clear();
-                exportIdSink.clear();
-                Numbers.appendHex(exportIdSink, copyID, true);
-                LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
-                throw ex;
             }
-        } else {
-            long activeCopyID = copyContext.getActiveExportID();
+
+            if (this.selectText != null) {
+                // prepare to create a temp table
+                exportIdSink.clear();
+                exportIdSink.put("copy.");
+                Numbers.appendHex(exportIdSink, copyID, true);
+                this.tableName = exportIdSink.toString();
+                createOp = validAndCreateTableOp(executionContext);
+            }
+            
             exportIdSink.clear();
-            Numbers.appendHex(exportIdSink, activeCopyID, true);
-            throw SqlException.$(0, "unable to process the export request - another export may be in progress")
-                    .put(" [activeExportId=")
-                    .put(exportIdSink)
-                    .put(']');
+            Numbers.appendHex(exportIdSink, copyID, true);
+            record.setValue(exportIdSink);
+            if (copyExportResult != null) {
+                copyExportResult.setCopyID(copyID);
+            }
+
+            final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
+            final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
+            long processingCursor = copyRequestPubSeq.next();
+            if (processingCursor < 0) {
+                throw SqlException.$(0, "unable to process the export request - export queue is full");
+            }
+            final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
+            task.of(
+                    entry,
+                    createOp,
+                    copyExportResult,
+                    tableName,
+                    fileName,
+                    sizeLimit,
+                    compressionCodec,
+                    compressionLevel,
+                    rowGroupSize,
+                    dataPageSize,
+                    statisticsEnabled,
+                    parquetVersion,
+                    suspendEvent,
+                    rawArrayEncoding,
+                    userSpecifiedExportOptions
+            );
+            if (copyContext.getReporter() != null) {
+                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
+            }
+            cursor.toTop();
+            copyRequestPubSeq.done(processingCursor);
+            return cursor;
+        } catch (SqlException | CairoException ex) {
+            entry.clear();
+            exportIdSink.clear();
+            Numbers.appendHex(exportIdSink, copyID, true);
+            LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getFlyweightMessage()).I$();
+            throw ex;
+        } catch (Throwable ex) {
+            entry.clear();
+            exportIdSink.clear();
+            Numbers.appendHex(exportIdSink, copyID, true);
+            LOG.errorW().$("copy failed [id=").$(exportIdSink).$(", message=").$(ex.getMessage()).I$();
+            throw ex;
         }
     }
 
