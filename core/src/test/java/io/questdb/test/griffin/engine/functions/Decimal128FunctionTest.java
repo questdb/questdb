@@ -85,6 +85,6 @@ public class Decimal128FunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDecimal8() {
-        function.getDecimal16(null);
+        function.getDecimal8(null);
     }
 }
