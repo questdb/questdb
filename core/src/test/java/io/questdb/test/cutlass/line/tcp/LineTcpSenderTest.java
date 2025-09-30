@@ -1056,22 +1056,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 // make sure to assert before closing the Sender
                 // since the Sender will always flush on close
-                assertTableExistsEventually(engine, "mytable");
+                assertTableSizeEventually(engine, "mytable", N*2);
             }
         });
-
-        // assert for WAL-only, non-WAL tables have background thread that we
-        // may terminate before all messages are consumed
-        if (walEnabled) {
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "select count() from mytable",
-                    sink,
-                    "count\n" +
-                            2 * N + "\n"
-            );
-        }
     }
 
     @Test

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.MessageBusImpl;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
@@ -1252,6 +1253,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
+        setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
         assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
@@ -1585,6 +1587,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testParallelIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
+        setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
         assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
