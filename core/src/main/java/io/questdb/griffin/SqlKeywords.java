@@ -2325,7 +2325,6 @@ public class SqlKeywords {
         KEYWORDS.add("cast");
         KEYWORDS.add("column");
         KEYWORDS.add("create");
-        KEYWORDS.add("decimal");
         KEYWORDS.add("desc");
         KEYWORDS.add("detach");
         KEYWORDS.add("disable");

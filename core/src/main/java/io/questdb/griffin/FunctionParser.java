@@ -759,7 +759,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         //region decimal
-        if (len >= DECIMAL_KEYWORD_LENGTH + 1 && startsWithDecimalKeyword(tok) && tok.charAt(7) == '_') {
+        if (len >= DECIMAL_KEYWORD_LENGTH && startsWithDecimalKeyword(tok)) {
             return createDecimalTypeConstant(tok, len, position);
         }
 
@@ -805,7 +805,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      *                      - the token format is invalid or contains non-numeric values
      */
     private Function createDecimalTypeConstant(CharSequence tok, int len, int position) throws SqlException {
-        // A decimal type is of the format DECIMAL_p[_s], to this point we have only validated `DECIMAL_`.
+        // A decimal type is of the format DECIMAL[_p[_s]], to this point we have only validated `DECIMAL_`.
         int precision;
         int scale = 0;
         if (tok instanceof GenericLexer.FloatingSequencePair) {
@@ -818,10 +818,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             scale = DecimalUtil.parseScale(position, cs2, 0, cs2.length());
         } else {
             // Slower path
-            int sepIndex = Chars.indexOf(tok, 8, '_');
-            precision = DecimalUtil.parsePrecision(position, tok, 8, sepIndex == -1 ? len : sepIndex);
-            if (sepIndex != -1) {
-                scale = DecimalUtil.parseScale(position, tok, sepIndex + 1, len);
+            if (len == DECIMAL_KEYWORD_LENGTH) {
+                precision = 18;
+                scale = 3;
+            } else {
+                int sepIndex = Chars.indexOf(tok, 8, '_');
+                precision = DecimalUtil.parsePrecision(position, tok, 8, sepIndex == -1 ? len : sepIndex);
+                if (sepIndex != -1) {
+                    scale = DecimalUtil.parseScale(position, tok, sepIndex + 1, len);
+                }
             }
         }
 

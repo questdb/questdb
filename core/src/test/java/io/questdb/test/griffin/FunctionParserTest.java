@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
@@ -65,6 +66,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
+import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
@@ -674,6 +676,58 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function result = parseFunction("decimal(5)", new GenericRecordMetadata(), functionParser)) {
             assertTrue(result instanceof Decimal32Constant);
             assertEquals(5, ColumnType.getDecimalPrecision(result.getType()));
+            assertEquals(0, ColumnType.getDecimalScale(result.getType()));
+        }
+    }
+
+    @Test
+    public void testDecimalTypeRaw() throws SqlException {
+        functions.add(new CastIntToDecimalFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        try (Function result = parseFunction("123::decimal", new GenericRecordMetadata(), functionParser)) {
+            assertTrue(result instanceof Decimal64Constant);
+            assertEquals(18, ColumnType.getDecimalPrecision(result.getType()));
+            assertEquals(3, ColumnType.getDecimalScale(result.getType()));
+        }
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidPrecision() {
+        assertFail(5, "precision must be a number", "123::decimal_abc_3", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidPrecisionTooBig() {
+        assertFail(5, "the precision must be between 1 and", "123::decimal_80_3", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidPrecisionTooSmall() {
+        assertFail(5, "the precision must be between 1 and", "123::decimal_0_3", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidScale() {
+        assertFail(5, "scale must be a number", "123::decimal_18_abc", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidScaleTooBig() {
+        assertFail(5, "scale must be between 0 and 18", "123::decimal_18_19", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawInvalidScaleTooSmall() {
+        assertFail(5, "scale must be a number", "123::decimal_18_-1", new GenericRecordMetadata());
+    }
+
+    @Test
+    public void testDecimalTypeRawScaleDefault() throws SqlException {
+        functions.add(new CastIntToDecimalFunctionFactory());
+        FunctionParser functionParser = createFunctionParser();
+        try (Function result = parseFunction("123::decimal_10", new GenericRecordMetadata(), functionParser)) {
+            assertTrue(result instanceof Decimal64Constant);
+            assertEquals(10, ColumnType.getDecimalPrecision(result.getType()));
             assertEquals(0, ColumnType.getDecimalScale(result.getType()));
         }
     }
