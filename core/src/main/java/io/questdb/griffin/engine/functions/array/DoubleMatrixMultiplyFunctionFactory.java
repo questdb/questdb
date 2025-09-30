@@ -177,8 +177,8 @@ public class DoubleMatrixMultiplyFunctionFactory implements FunctionFactory {
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
             // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
+            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
             if (dimsLeft == 1) {
                 if (leftDerived == null) {
                     leftDerived = new DerivedArrayView();

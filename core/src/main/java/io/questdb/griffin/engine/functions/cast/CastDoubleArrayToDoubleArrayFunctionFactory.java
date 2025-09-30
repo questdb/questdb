@@ -163,9 +163,9 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
             dimsToAdd = dimsTo - dimsFrom;
             if (dimsToAdd < 0) {
                 throw SqlException.$(position, "cannot cast array to lower dimension [from=").put(ColumnType.nameOf(arg.getType()))
-                        .put(" (").put(ColumnType.decodeWeakArrayDimensionality(arg.getType())).put("D)")
+                        .put(" (").put(ColumnType.decodeArrayDimensionality(arg.getType())).put("D)")
                         .put(", to=").put(ColumnType.nameOf(type))
-                        .put(" (").put(ColumnType.decodeWeakArrayDimensionality(type)).put("D)")
+                        .put(" (").put(ColumnType.decodeArrayDimensionality(type)).put("D)")
                         .put("]. Use array flattening operation (e.g. 'flatten(arr)') instead");
             }
         }
