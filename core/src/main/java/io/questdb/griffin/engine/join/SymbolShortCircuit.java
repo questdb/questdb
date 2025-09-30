@@ -25,14 +25,23 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
-/**
- * When joining on a single symbol column, detects when the slave column doesn't have
- * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
- * in that case.
- */
 public interface SymbolShortCircuit {
+    @Transient
+    CharSequence getMasterValue(Record masterRecord);
+
+    @NotNull
+    StaticSymbolTable getSlaveSymbolTable();
+
+    /**
+     * When joining on a single symbol column, detects when the slave column doesn't have
+     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
+     * in that case.
+     */
     boolean isShortCircuit(Record masterRecord);
 
     void of(TimeFrameRecordCursor slaveCursor);
