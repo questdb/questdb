@@ -1,9 +1,7 @@
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.Bootstrap;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -30,22 +28,17 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-@SuppressWarnings("FieldCanBeLocal")
 public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     public static final Log LOG = LogFactory.getLog(LineHttpMultiUrlTest.class);
     private static final String HOST = "127.0.0.1";
     private static final int PORT1 = 9070;
     private static final int PORT2 = 9080;
     private static Rnd rnd;
-    private static long s0;
-    private static long s1;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
         rnd = TestUtils.generateRandom(LOG);
-        s0 = rnd.getSeed0();
-        s1 = rnd.getSeed1();
     }
 
     @Test
@@ -168,21 +161,17 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testFirstServerIsDownTCP() {
-        try {
-            Sender.fromConfig("tcp::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";");
+        try (Sender ignore = Sender.fromConfig("tcp::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
             Assert.fail();
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "only a single address (host:port) is supported for TCP transport");
         }
-
     }
 
     @Test
     public void testServersAllDown() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
-                sender.table("line").longColumn("foo", 123).atNow();
-                sender.flush();
+            try (Sender ignore = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";retry_timeout=500")) {
                 Assert.fail();
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
