@@ -164,9 +164,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     @Test
     public void testServersAllDown() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
-                sender.table("line").longColumn("foo", 123).atNow();
-                sender.flush();
+            try (Sender ignore = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";retry_timeout=500")) {
                 Assert.fail();
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
