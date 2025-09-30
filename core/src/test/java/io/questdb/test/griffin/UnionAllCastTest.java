@@ -488,6 +488,126 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal128Decimal128() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(36, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(33, 0) a union select 3::decimal(33, 0) union select 5::decimal(33, 0) union select 9::decimal(33, 0) union select 8::decimal(33, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal16Decimal16() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(4, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(3, 0) a union select 3::decimal(3, 0) union select 5::decimal(3, 0) union select 9::decimal(3, 0) union select 8::decimal(3, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal256Decimal256() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000000\n" +
+                        "2.000000\n" +
+                        "3.000000\n" +
+                        "4.000000\n" +
+                        "5.000000\n" +
+                        "0.000000\n" +
+                        "3.000000\n" +
+                        "5.000000\n" +
+                        "9.000000\n" +
+                        "8.000000\n",
+                "create table x as (select x::decimal(56, 6) a from long_sequence(5))",
+                "create table y as (select 0::decimal(56, 2) a union select 3::decimal(56, 2) union select 5::decimal(56, 2) union select 9::decimal(56, 2) union select 8::decimal(56, 2))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal32Decimal32() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(8, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(7, 0) a union select 3::decimal(7, 0) union select 5::decimal(7, 0) union select 9::decimal(7, 0) union select 8::decimal(7, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal64Decimal64() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(17, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(16, 0) a union select 3::decimal(16, 0) union select 5::decimal(16, 0) union select 9::decimal(16, 0) union select 8::decimal(16, 0))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimal8Decimal8() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "3.0\n" +
+                        "4.0\n" +
+                        "5.0\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(2, 1) a from long_sequence(5))",
+                "create table y as (select 0::decimal(1, 0) a union select 3::decimal(1, 0) union select 5::decimal(1, 0) union select 9::decimal(1, 0) union select 8::decimal(1, 0))",
+                false
+        );
+    }
+
+    @Test
     public void testDecimalDecimalMixedPrecisions() throws Exception {
         testUnionAll(
                 "a\n" +
