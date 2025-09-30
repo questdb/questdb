@@ -52,7 +52,7 @@ import io.questdb.std.str.Utf8Sink;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
 
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
@@ -172,30 +172,49 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public void inflateAndParse(long lo, long hi) {
-        long inputLen = hi - lo;
-        Zip.setInput(inflateStream, lo, (int) inputLen);
+        if (stopParse()) {
+            return;
+        }
 
-        while (Zip.availIn(inflateStream) > 0) {
-            int ret = Zip.inflate(inflateStream, recvBuffer.getBufPos(), (int) ((int) recvBuffer.getCurrentBufSize() - (recvBuffer.getBufPos() - recvBuffer.getBufStart())), false);
-            if (ret < 0 && ret != Zip.Z_BUF_ERROR) {
-                reject(ENCODING_NOT_SUPPORTED, "gzip decompression error: " + ret, -1);
+        Zip.setInput(inflateStream, lo, (int) (hi - lo));
+
+        long pp = recvBuffer.getBufPos();
+        while (Zip.availIn(inflateStream) > 0 && !stopParse()) {
+            long p = recvBuffer.getBufPos();
+            int len = (int) (recvBuffer.getBufEnd() - p);
+            int ret = Zip.inflate(inflateStream, p, len, false);
+
+            if (ret < 0) {
+                if (ret != Zip.Z_BUF_ERROR) {
+                    reject(ENCODING_NOT_SUPPORTED, "gzip decompression error", fd);
+                    cleanupGzip();
+                    return;
+                }
+
+                if (recvBuffer.getBufPos() > pp) {
+                    // when inflate fails with Z_BUF_ERROR - this means either
+                    // have not processed buffer yet, or it is too small. Trigger buffer processing
+                    // to make space in the buffer
+                    currentStatus = processLocalBuffer();
+                    continue;
+                }
+
+                reject(MESSAGE_TOO_LARGE, "server buffer is too small", fd);
                 cleanupGzip();
                 return;
             }
 
-            recvBuffer.setBufPos(recvBuffer.getBufPos() + ret);
-
-            if (ret > 0) {
-                currentStatus = processLocalBuffer();
-                if (stopParse()) {
-                    return;
-                }
-            }
+            recvBuffer.setBufPos(p + (len - Zip.getAvailOut(inflateStream)));
 
             if (ret == Zip.Z_STREAM_END) {
+                currentStatus = processLocalBuffer();
                 cleanupGzip();
                 break;
             }
+        }
+
+        if (recvBuffer.getBufPos() > pp) {
+            currentStatus = processLocalBuffer();
         }
     }
 
@@ -257,6 +276,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     public void setInflateStream(long streamAddr) {
+        assert this.inflateStream == 0;
         this.inflateStream = streamAddr;
     }
 
@@ -442,7 +462,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private void logError() {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+        LOG.error().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", error=").$safe(error)
                 .$(", fd=").$(fd)
                 .I$();

@@ -130,12 +130,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflate
     z_streamp strm = (z_streamp) ptr;
     strm->next_out = (Bytef *) address;
     strm->avail_out = (uInt) available;
+    return inflate(strm, flush ? Z_FINISH : Z_NO_FLUSH);
+}
 
-    int ret;
-    if ((ret = inflate(strm, flush ? Z_FINISH : Z_NO_FLUSH)) < 0) {
-        return ret;
-    }
-    return (jint) (available - strm->avail_out);
+JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_getAvailOut
+        (JNIEnv *e, jclass cl, jlong ptr) {
+    z_streamp strm = (z_streamp) ptr;
+    return (jint) strm->avail_out;
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_std_Zip_inflateEnd

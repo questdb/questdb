@@ -191,7 +191,6 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
         }
         engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
         state.cleanupGzip();
-        isGzipEncoded = false;
     }
 
     @Override
