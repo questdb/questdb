@@ -295,20 +295,12 @@ public final class DecimalUtil {
             }
             case ColumnType.SHORT: {
                 short v = value.getShort(rec);
-                if (v == Numbers.SHORT_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.ofLong(v, 0);
-                }
+                decimal.ofLong(v, 0);
                 break;
             }
             case ColumnType.BYTE: {
                 byte v = value.getByte(rec);
-                if (v == Numbers.BYTE_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.ofLong(v, 0);
-                }
+                decimal.ofLong(v, 0);
                 break;
             }
         }
@@ -471,20 +463,12 @@ public final class DecimalUtil {
             }
             case ColumnType.SHORT: {
                 short v = value.getShort(rec);
-                if (v == Numbers.SHORT_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.of(v, 0);
-                }
+                decimal.of(v, 0);
                 break;
             }
             case ColumnType.BYTE: {
                 byte v = value.getByte(rec);
-                if (v == Numbers.BYTE_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.of(v, 0);
-                }
+                decimal.of(v, 0);
                 break;
             }
         }
@@ -587,20 +571,12 @@ public final class DecimalUtil {
             }
             case ColumnType.SHORT: {
                 short v = value.getShort(rec);
-                if (v == Numbers.SHORT_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.ofLong(v, 0);
-                }
+                decimal.ofLong(v, 0);
                 break;
             }
             case ColumnType.BYTE: {
                 byte v = value.getByte(rec);
-                if (v == Numbers.BYTE_NULL) {
-                    decimal.ofNull();
-                } else {
-                    decimal.ofLong(v, 0);
-                }
+                decimal.ofLong(v, 0);
                 break;
             }
         }

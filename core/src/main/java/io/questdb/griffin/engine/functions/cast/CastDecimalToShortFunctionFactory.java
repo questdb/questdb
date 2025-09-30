@@ -150,7 +150,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             DecimalUtil.load(decimal256, arg, rec, fromType);
             if (decimal256.isNull()) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             long hh = decimal256.getHh();
             long hl = decimal256.getHl();
@@ -178,7 +178,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             long hi = this.arg.getDecimal128Hi(rec);
             long lo = this.arg.getDecimal128Lo(rec);
             if (Decimal128.isNull(hi, lo)) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             long s = hi < 0 ? -1 : 0;
             decimal256.of(s, s, hi, lo, 0);
@@ -197,7 +197,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             short value = this.arg.getDecimal16(rec);
             if (value == Decimals.DECIMAL16_NULL) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             return value;
         }
@@ -219,7 +219,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             long ll = this.arg.getDecimal256LL(rec);
             decimal256.of(hh, hl, lh, ll, 0);
             if (decimal256.isNull()) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             if (overflowsShort(decimal256)) {
                 throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.SHORT).position(position);
@@ -239,7 +239,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             int value = this.arg.getDecimal32(rec);
             if (value == Decimals.DECIMAL32_NULL) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             if (value > Short.MAX_VALUE || value < Short.MIN_VALUE) {
                 throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.SHORT).position(position);
@@ -259,7 +259,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             long value = this.arg.getDecimal64(rec);
             if (value == Decimals.DECIMAL64_NULL) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             if (value > Short.MAX_VALUE || value < Short.MIN_VALUE) {
                 throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.SHORT).position(position);
@@ -276,7 +276,7 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
         public short getShort(Record rec) {
             byte value = this.arg.getDecimal8(rec);
             if (value == Decimals.DECIMAL8_NULL) {
-                return Numbers.SHORT_NULL;
+                return 0;
             }
             return value;
         }

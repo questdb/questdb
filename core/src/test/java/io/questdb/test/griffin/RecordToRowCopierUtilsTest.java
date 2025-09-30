@@ -143,12 +143,6 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopierNullByteToDecimal() {
-        RecordToRowCopier copier = generateCopier(ColumnType.BYTE, ColumnType.getDecimalType(16, 3));
-        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.BYTE, Numbers.BYTE_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
-    }
-
-    @Test
     public void testCopierNullIntToDecimal() {
         RecordToRowCopier copier = generateCopier(ColumnType.INT, ColumnType.getDecimalType(16, 3));
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.INT, Numbers.INT_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
@@ -158,12 +152,6 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     public void testCopierNullLongToDecimal() {
         RecordToRowCopier copier = generateCopier(ColumnType.LONG, ColumnType.getDecimalType(16, 3));
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.LONG, Numbers.LONG_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
-    }
-
-    @Test
-    public void testCopierNullShortToDecimal() {
-        RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(16, 3));
-        copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, Numbers.SHORT_NULL), getLongAsserter(Decimals.DECIMAL64_NULL));
     }
 
     @Test

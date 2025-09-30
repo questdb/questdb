@@ -43,7 +43,6 @@ import java.util.Arrays;
 
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
-    public static final byte BYTE_NULL = 0;
     public static final char CHAR_NULL = CharConstant.ZERO.getChar(null);
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
@@ -54,7 +53,6 @@ public final class Numbers {
     public static final int MAX_DOUBLE_SCALE = 19;
     public static final int MAX_FLOAT_SCALE = 10;
     public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
-    public static final short SHORT_NULL = 0;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;

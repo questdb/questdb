@@ -77,10 +77,9 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testCastHighScaleLowPrecision() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    // 0 is null for short, so this should return null
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0.00\n",
                             "select cast(0::short as DECIMAL(2,2))"
                     );
 
@@ -203,10 +202,9 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "select cast(-123::short as DECIMAL(5,0))"
                     );
 
-                    // 0 is the null value for short, so this should return null
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(0::short as DECIMAL(5,0))"
                     );
                 }
@@ -231,7 +229,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(19))"
                     );
                 }
@@ -256,7 +254,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(4))"
                     );
                 }
@@ -281,7 +279,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(40))"
                     );
                 }
@@ -306,7 +304,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(9))"
                     );
                 }
@@ -331,7 +329,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(18))"
                     );
                 }
@@ -356,7 +354,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
 
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0\n",
                             "select cast(cast(null as short) as DECIMAL(2))"
                     );
                 }
@@ -382,7 +380,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                     // 0 is null for short
                     assertSql(
                             "cast\n" +
-                                    "\n",
+                                    "0.000\n",
                             "select cast(0::short as DECIMAL(5,3))"
                     );
                 }
@@ -440,7 +438,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "99\t99.00\n" +
                                     "-99\t-99.00\n" +
                                     "12\t12.00\n" +
-                                    "0\t\n",
+                                    "0\t0.00\n",
                             "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 12::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(4,2)) as decimal_value FROM data"
                     );
@@ -457,7 +455,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767.0000000000\n" +
                                     "-32768\t-32768.0000000000\n" +
                                     "1000\t1000.0000000000\n" +
-                                    "0\t\n",
+                                    "0\t0.0000000000\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1000::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(25,10)) as decimal_value FROM data"
                     );
@@ -474,7 +472,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767.00000000000000\n" +
                                     "-32768\t-32768.00000000000000\n" +
                                     "1000\t1000.00000000000000\n" +
-                                    "0\t\n",
+                                    "0\t0.00000000000000\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1000::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(50,14)) as decimal_value FROM data"
                     );
@@ -491,7 +489,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "9999\t9999.000\n" +
                                     "-9999\t-9999.000\n" +
                                     "500\t500.000\n" +
-                                    "0\t\n",
+                                    "0\t0.000\n",
                             "WITH data AS (SELECT 9999::short value UNION ALL SELECT -9999::short UNION ALL SELECT 500::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(7,3)) as decimal_value FROM data"
                     );
@@ -508,7 +506,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767.00000\n" +
                                     "-32768\t-32768.00000\n" +
                                     "1500\t1500.00000\n" +
-                                    "0\t\n",
+                                    "0\t0.00000\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1500::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(12,5)) as decimal_value FROM data"
                     );
@@ -525,7 +523,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "9\t9.0\n" +
                                     "-9\t-9.0\n" +
                                     "1\t1.0\n" +
-                                    "0\t\n",
+                                    "0\t0.0\n",
                             "WITH data AS (SELECT 9::short value UNION ALL SELECT -9::short UNION ALL SELECT 1::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(2,1)) as decimal_value FROM data"
                     );
@@ -542,7 +540,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767\n" +
                                     "-32768\t-32768\n" +
                                     "1000\t1000\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1000::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(20)) as decimal_value FROM data"
                     );
@@ -559,7 +557,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "999\t999\n" +
                                     "-999\t-999\n" +
                                     "50\t50\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 999::short value UNION ALL SELECT -999::short UNION ALL SELECT 50::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(3)) as decimal_value FROM data"
                     );
@@ -576,7 +574,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767\n" +
                                     "-32768\t-32768\n" +
                                     "1000\t1000\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1000::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(40)) as decimal_value FROM data"
                     );
@@ -593,7 +591,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767\n" +
                                     "-32768\t-32768\n" +
                                     "750\t750\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 750::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(5)) as decimal_value FROM data"
                     );
@@ -610,7 +608,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "32767\t32767\n" +
                                     "-32768\t-32768\n" +
                                     "1000\t1000\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 32767::short value UNION ALL SELECT -32768::short UNION ALL SELECT 1000::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(10)) as decimal_value FROM data"
                     );
@@ -627,7 +625,7 @@ public class CastShortToDecimalFunctionFactoryTest extends AbstractCairoTest {
                                     "99\t99\n" +
                                     "-99\t-99\n" +
                                     "1\t1\n" +
-                                    "0\t\n",
+                                    "0\t0\n",
                             "WITH data AS (SELECT 99::short value UNION ALL SELECT -99::short UNION ALL SELECT 1::short UNION ALL SELECT 0::short) " +
                                     "SELECT value, cast(value as DECIMAL(2)) as decimal_value FROM data"
                     );

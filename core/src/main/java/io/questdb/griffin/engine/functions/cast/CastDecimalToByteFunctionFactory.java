@@ -150,7 +150,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             DecimalUtil.load(decimal256, arg, rec, fromType);
             if (decimal256.isNull()) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             long hh = decimal256.getHh();
             long hl = decimal256.getHl();
@@ -178,7 +178,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             long hi = this.arg.getDecimal128Hi(rec);
             long lo = this.arg.getDecimal128Lo(rec);
             if (Decimal128.isNull(hi, lo)) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             long s = hi < 0 ? -1 : 0;
             decimal256.of(s, s, hi, lo, 0);
@@ -200,7 +200,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             short value = this.arg.getDecimal16(rec);
             if (value == Decimals.DECIMAL16_NULL) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             if (value > Byte.MAX_VALUE || value < Byte.MIN_VALUE) {
                 throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.BYTE).position(position);
@@ -225,7 +225,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             long ll = this.arg.getDecimal256LL(rec);
             decimal256.of(hh, hl, lh, ll, 0);
             if (decimal256.isNull()) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             if (overflowsByte(decimal256)) {
                 throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.BYTE).position(position);
@@ -245,7 +245,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             int value = this.arg.getDecimal32(rec);
             if (value == Decimals.DECIMAL32_NULL) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             if (value > Byte.MAX_VALUE || value < Byte.MIN_VALUE) {
                 throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.BYTE).position(position);
@@ -265,7 +265,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             long value = this.arg.getDecimal64(rec);
             if (value == Decimals.DECIMAL64_NULL) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             if (value > Byte.MAX_VALUE || value < Byte.MIN_VALUE) {
                 throw ImplicitCastException.inconvertibleValue(value, arg.getType(), ColumnType.BYTE).position(position);
@@ -282,7 +282,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             byte value = this.arg.getDecimal8(rec);
             if (value == Decimals.DECIMAL8_NULL) {
-                return Numbers.BYTE_NULL;
+                return 0;
             }
             return value;
         }

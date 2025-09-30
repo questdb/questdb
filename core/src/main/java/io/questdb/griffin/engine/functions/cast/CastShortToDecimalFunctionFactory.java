@@ -108,12 +108,8 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         final int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         final int targetScale = ColumnType.getDecimalScale(targetType);
 
-        if (value == Numbers.SHORT_NULL) {
-            return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);
-        }
-
         // Ensures that the value fits in the decimal target
-        if (Numbers.getPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
+        if (value != 0 && Numbers.getPrecision(value) + targetScale > ColumnType.getDecimalPrecision(targetType)) {
             throw ImplicitCastException.inconvertibleValue(
                     value,
                     ColumnType.SHORT,
@@ -166,10 +162,6 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal128Hi(Record rec) {
             final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                lo = Decimals.DECIMAL128_LO_NULL;
-                return Decimals.DECIMAL128_HI_NULL;
-            }
             // No need for overflow check, if the precision was lower than
             // 19 it wouldn't be a Decimal128, otherwise, any long can fit.
             lo = value;
@@ -209,12 +201,6 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal256HH(Record rec) {
             final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                ll = Decimals.DECIMAL256_LL_NULL;
-                lh = Decimals.DECIMAL256_LH_NULL;
-                hl = Decimals.DECIMAL256_HL_NULL;
-                return Decimals.DECIMAL256_HH_NULL;
-            }
             // No need for overflow check, if the precision was lower than
             // 19 it wouldn't be a Decimal256, otherwise, any int can fit.
             ll = value;
@@ -265,41 +251,27 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public short getDecimal16(Record rec) {
             final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                return Decimals.DECIMAL16_NULL;
-            }
             overflowCheck(value);
             return value;
         }
 
         @Override
         public int getDecimal32(Record rec) {
-            final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                return Decimals.DECIMAL32_NULL;
-            }
             // No overflow check needed here, if we're using this type we know that
             // we have enough space to store Short.MAX_VALUE.
-            return value;
+            return this.value.getShort(rec);
         }
 
         @Override
         public long getDecimal64(Record rec) {
-            final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                return Decimals.DECIMAL64_NULL;
-            }
             // No overflow check needed here, if we're using this type we know that
             // we have enough space to store Short.MAX_VALUE.
-            return value;
+            return this.value.getShort(rec);
         }
 
         @Override
         public byte getDecimal8(Record rec) {
             final short value = this.value.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                return Decimals.DECIMAL8_NULL;
-            }
             overflowCheck(value);
             return (byte) value;
         }
@@ -332,9 +304,6 @@ public class CastShortToDecimalFunctionFactory implements FunctionFactory {
 
         protected boolean cast(Record rec) {
             short value = this.arg.getShort(rec);
-            if (value == Numbers.SHORT_NULL) {
-                return false;
-            }
             if (value < minUnscaledValue || value > maxUnscaledValue) {
                 throw ImplicitCastException.inconvertibleValue(
                         value,
