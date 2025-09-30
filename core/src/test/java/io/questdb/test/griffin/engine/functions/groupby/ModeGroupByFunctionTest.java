@@ -27,6 +27,10 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+/**
+ * Temporary tables are used in this class, generated via union and long_sequence.
+ * Please check the comment on `testModeWithGroupBy` for clarity.
+ */
 public class ModeGroupByFunctionTest extends AbstractCairoTest {
 
     @Test
@@ -133,6 +137,24 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
         );
     }
 
+
+    /**
+     * The temporary table unrolls to this:
+     * <p>
+     * | trader | symbol |<br>
+     * | ----- | ------- |<br>
+     * | Alice | AAPL    |<br>
+     * | Alice | AAPL    |<br>
+     * | Alice | AAPL    |<br>
+     * | Alice | GOOGL   |<br>
+     * | Bob   | MSFT    |<br>
+     * | Bob   | MSFT    |<br>
+     * | Bob   | MSFT    |<br>
+     * | Bob   | MSFT    |<br>
+     * | Bob   | ISLA    |<br>
+     * | Bob   | ISLA    |<br>
+     * </p>
+     */
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
