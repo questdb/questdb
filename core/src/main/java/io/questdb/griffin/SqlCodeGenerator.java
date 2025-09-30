@@ -190,6 +190,7 @@ import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
@@ -2725,6 +2726,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
                                                     );
+                                                } else if (isSingleSymbolJoin(slaveMetadata)) {
+                                                    SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
+                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
+                                                            configuration,
+                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            master,
+                                                            masterSink,
+                                                            slave,
+                                                            slaveSink,
+                                                            masterMetadata.getColumnCount(),
+                                                            masterSymbolColumnIndex,
+                                                            slaveSymbolColumnIndex,
+                                                            symbolShortCircuit,
+                                                            slaveModel.getContext(),
+                                                            asOfToleranceInterval
+                                                    );
                                                 } else {
                                                     SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
                                                     master = new AsOfJoinFastRecordCursorFactory(
@@ -2735,8 +2752,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slave,
                                                             slaveSink,
                                                             masterMetadata.getColumnCount(),
-                                                            masterSymbolColumnIndex,
-                                                            slaveSymbolColumnIndex,
                                                             symbolShortCircuit,
                                                             slaveModel.getContext(),
                                                             asOfToleranceInterval
@@ -6583,17 +6598,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
+    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata) {
+        return isSingleSymbolJoin(slaveMetadata, false);
+    }
+
     /**
-     * Checks if the ASOF JOIN is on a single symbol column that has a bitmap index.
-     * This enables using the indexed ASOF JOIN implementation.
+     * Checks if the ASOF JOIN is on a single symbol column, and optionally requires the slave column is indexed.
+     * This is a precondition to enable some optimized ASOF JOIN implementations.
      */
-    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
+    private boolean isSingleSymbolJoin(RecordMetadata slaveMetadata, boolean requireSlaveIndex) {
         // Must be joining on exactly one column (besides timestamps)
         if (listColumnFilterA.size() != 1 || listColumnFilterB.size() != 1) {
             return false;
         }
         int slaveIndex = listColumnFilterA.getColumnIndexFactored(0);
-        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isColumnIndexed(slaveIndex);
+        return slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL &&
+                (!requireSlaveIndex || slaveMetadata.isColumnIndexed(slaveIndex));
+    }
+
+    private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
+        return isSingleSymbolJoin(slaveMetadata, true);
     }
 
     // skips skipped models until finding a WHERE clause
