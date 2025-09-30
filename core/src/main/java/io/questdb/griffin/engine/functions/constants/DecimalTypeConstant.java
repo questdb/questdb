@@ -84,12 +84,4 @@ public class DecimalTypeConstant extends DecimalFunction implements TypeConstant
     public byte getDecimal8(Record rec) {
         return Decimals.DECIMAL8_NULL;
     }
-
-    public int getPrecision() {
-        return ColumnType.getDecimalPrecision(type);
-    }
-
-    public int getScale() {
-        return ColumnType.getDecimalScale(type);
-    }
 }
