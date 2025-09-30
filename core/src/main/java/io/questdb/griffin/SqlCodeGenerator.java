@@ -1547,7 +1547,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //       This is deemed as a self-join (which it is), and due to the way columns are projected
                             //       it will take this branch (even when it fact it's comparing different columns)
                             //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. doing a perfect check
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
                             //       would require a more complex logic, which is not worth it for now
                             continue;
                         }
@@ -2712,48 +2712,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         boolean created = false;
                                         if (!asOfAvoidBinarySearch) {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
-                                                int masterSymbolColumnIndex = listColumnFilterB.getColumnIndexFactored(0);
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
-                                                if (isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                boolean isNotTrivialJoin = symbolShortCircuit != DisabledSymbolShortCircuit.INSTANCE;
+                                                JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                                int joinColumnSplit = masterMetadata.getColumnCount();
+                                                JoinContext slaveContext = slaveModel.getContext();
+                                                if (isNotTrivialJoin && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
-                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            metadata,
                                                             master,
                                                             slave,
-                                                            masterMetadata.getColumnCount(),
-                                                            masterSymbolColumnIndex,
+                                                            joinColumnSplit,
                                                             slaveSymbolColumnIndex,
                                                             symbolShortCircuit,
-                                                            slaveModel.getContext(),
+                                                            slaveContext,
                                                             asOfToleranceInterval
                                                     );
-                                                } else if (isSingleSymbolJoin(slaveMetadata)) {
+                                                } else if (isNotTrivialJoin && isSingleSymbolJoin(slaveMetadata)) {
                                                     master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
-                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            metadata,
                                                             master,
                                                             masterSink,
                                                             slave,
                                                             slaveSink,
-                                                            masterMetadata.getColumnCount(),
-                                                            masterSymbolColumnIndex,
+                                                            joinColumnSplit,
                                                             slaveSymbolColumnIndex,
                                                             symbolShortCircuit,
-                                                            slaveModel.getContext(),
+                                                            slaveContext,
                                                             asOfToleranceInterval
                                                     );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
-                                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                            metadata,
                                                             master,
                                                             masterSink,
                                                             slave,
                                                             slaveSink,
-                                                            masterMetadata.getColumnCount(),
+                                                            joinColumnSplit,
                                                             symbolShortCircuit,
-                                                            slaveModel.getContext(),
+                                                            slaveContext,
                                                             asOfToleranceInterval
                                                     );
                                                 }
