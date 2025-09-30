@@ -165,6 +165,70 @@ public class DecimalUtilTest extends AbstractTest {
     }
 
     @Test
+    public void testCreateNullDecimal128Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(30, 15)) {
+            Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, func.getDecimal128Hi(null));
+            Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, func.getDecimal128Lo(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(30, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(15, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
+    public void testCreateNullDecimal16Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(4, 1)) {
+            Assert.assertEquals(Decimals.DECIMAL16_NULL, func.getDecimal16(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(4, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(1, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
+    public void testCreateNullDecimal256Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(72, 25)) {
+            Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, func.getDecimal256HH(null));
+            Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, func.getDecimal256HL(null));
+            Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, func.getDecimal256LH(null));
+            Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, func.getDecimal256LL(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(72, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(25, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
+    public void testCreateNullDecimal32Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(8, 3)) {
+            Assert.assertEquals(Decimals.DECIMAL32_NULL, func.getDecimal32(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(8, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(3, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
+    public void testCreateNullDecimal64Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(16, 5)) {
+            Assert.assertEquals(Decimals.DECIMAL64_NULL, func.getDecimal64(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(16, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(5, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
+    public void testCreateNullDecimal8Constant() {
+        try (Function func = DecimalUtil.createNullDecimalConstant(2, 0)) {
+            Assert.assertEquals(Decimals.DECIMAL8_NULL, func.getDecimal8(null));
+            Assert.assertTrue(func.isNullConstant());
+            Assert.assertEquals(2, ColumnType.getDecimalPrecision(func.getType()));
+            Assert.assertEquals(0, ColumnType.getDecimalScale(func.getType()));
+        }
+    }
+
+    @Test
     public void testGetTypePrecisionScaleByte() {
         int result = DecimalUtil.getTypePrecisionScale(ColumnType.BYTE);
         Assert.assertEquals(3, io.questdb.std.Numbers.decodeLowShort(result));  // precision
