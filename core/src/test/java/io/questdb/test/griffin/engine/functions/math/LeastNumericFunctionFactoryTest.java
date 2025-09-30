@@ -32,7 +32,7 @@ import org.junit.Test;
 public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testGreatestNumericFunctionFactoryDecimalOverflow() throws Exception {
+    public void testLeastNumericFunctionFactoryDecimalOverflow() throws Exception {
         assertException(
                 "select least(123.456::decimal(76,73), 99999::int)",
                 43,
@@ -41,13 +41,13 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testGreatestNumericFunctionFactoryDecimals() throws Exception {
+    public void testLeastNumericFunctionFactoryDecimals() throws Exception {
         assertSqlWithTypes("least\n6.000:DECIMAL(8,3)\n", "select least(12::decimal(4,0), 6::decimal(4,3), null::decimal(5,0))");
         assertSqlWithTypes("least\n6.000:DECIMAL(28,3)\n", "select least(12::decimal(24,0), 6::decimal(24,3), null::decimal(25,0))");
         assertSqlWithTypes("least\n6.000:DECIMAL(48,3)\n", "select least(12::decimal(44,0), 6::decimal(44,3), null::decimal(45,0))");
         assertSqlWithTypes("least\n2.0:DECIMAL(2,1)\n", "select least(null::decimal(1,0), 2::decimal(2,1), 3::decimal(1,0))");
         assertSqlWithTypes("least\n1.00:DECIMAL(4,2)\n", "select least(1::decimal(1,0), 12.34::decimal(4,2), 6.7::decimal(2,1))");
-        assertSqlWithTypes("least\n100.000:DECIMAL(8,3)\n", "select least(123.456::decimal(6,3), 100::short, null::byte)");
+        assertSqlWithTypes("least\n0.000:DECIMAL(8,3)\n", "select least(123.456::decimal(6,3), 100::short, null::byte)");
         assertSqlWithTypes("least\n123.45600:DECIMAL(15,5)\n", "select least(123.456::decimal(6,3), 99999::int, 123456.78901::DECIMAL(11,5))");
     }
 

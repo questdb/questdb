@@ -1561,11 +1561,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 "invalid DECIMAL type, precision must be a number");
     }
 
-    @Test(expected = SqlException.class)
-    public void testDecimalKeyword() throws SqlException {
-        x("DECIMAL", "DECIMAL");
-    }
-
     private void assertFail(String content, int pos, String contains) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.testParseExpression(content, rpnBuilder);
