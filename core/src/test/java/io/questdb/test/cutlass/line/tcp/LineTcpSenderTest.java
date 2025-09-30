@@ -972,6 +972,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testSymbolCapacityReloadFuzz() throws Exception {
         // this test should pass on desktop withing 3-6s for WAL
         // without errors. Anything else including timeouts is unexpected and is a regression
+        setProperty(PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, "true");
         String confString = "tcp::addr=localhost:" + bindPort + ";protocol_version=2;";
         final int N = 1_000_000;
         runInContext(r -> {
