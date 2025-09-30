@@ -316,7 +316,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 Os.sleep(1_500 + jitter); // enough time to give the client a chance to reconnect to a different server
 
                 serverMain = startInstance(rootName, host, port, readOnly);
-                serverMain.start();
                 assert serverMain.hasStarted();
 
                 jitter = rnd.nextInt(jitterMillis) - jitterMillis / 2;
@@ -328,7 +327,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         } finally {
             if (serverMain == null || serverMain.hasBeenClosed()) {
                 serverMain = startInstance(rootName, host, port, readOnly);
-                serverMain.start();
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = null;
