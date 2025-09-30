@@ -640,7 +640,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     public void tearDown(boolean removeDir) {
@@ -666,7 +665,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         tearDown(true);
         super.tearDown();
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
@@ -2041,6 +2039,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected void assertQueryNoLeakCheckWithFatJoin(String sql, String expected, String ts, boolean fullFatJoins, boolean randomAccess, boolean expectedSize) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            assertQueryNoLeakCheck(expected, sql, ts, randomAccess, expectedSize);
+        }
+    }
+
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         return assertSegmentExistence(expectExists, tableToken, walId, segmentId);
@@ -2123,13 +2128,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
-        }
-    }
-
-    protected void assertSql(CharSequence sql, CharSequence expected, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
         }
     }
 

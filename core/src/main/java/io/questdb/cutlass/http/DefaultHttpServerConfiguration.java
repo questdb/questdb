@@ -39,11 +39,11 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.Clock;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -178,6 +178,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     @Override
     public int getWorkerCount() {
         return 2;
+    }
+
+    @Override
+    public boolean isAcceptingWrites() {
+        return true;
     }
 
     @Override

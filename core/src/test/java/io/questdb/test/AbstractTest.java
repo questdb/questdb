@@ -33,6 +33,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
@@ -90,6 +91,7 @@ public class AbstractTest {
         LOG.info().$("Starting test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         Metrics.ENABLED.clear();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     @After
@@ -97,6 +99,7 @@ public class AbstractTest {
         LOG.info().$("Finished test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
