@@ -29,6 +29,7 @@ import io.questdb.std.str.Utf8String;
 public final class HttpConstants {
     public static final String CONTENT_TYPE_CSV = "text/csv; charset=utf-8";
     public static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
+    public static final String CONTENT_TYPE_JSON_API = "application/vnd.api+json; charset=utf-8";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
@@ -81,6 +82,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
+    public static final Utf8String URL_PREFIX_API_V1 = new Utf8String("/api/v1");
 
     private HttpConstants() {
     }

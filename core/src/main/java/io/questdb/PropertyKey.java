@@ -567,6 +567,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_CONTEXT_WARNINGS("http.context.warnings"),
     HTTP_CONTEXT_TABLE_STATUS("http.context.table.status"),
     HTTP_CONTEXT_EXECUTE("http.context.execute"),
+    HTTP_CONTEXT_API_V1("http.context.api.v1"),
     MAT_VIEW_REFRESH_WORKER_COUNT("mat.view.refresh.worker.count"),
     MAT_VIEW_REFRESH_WORKER_AFFINITY("mat.view.refresh.worker.affinity"),
     MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR("mat.view.refresh.worker.haltOnError"),
