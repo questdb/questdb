@@ -308,7 +308,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                             if (parser.isAcceptingWrites()) {
                                 break;
                             }
-                        } else if (Utf8s.equalsNcAscii("404", statusCode)) {
+                        } else if (isNotFound(statusCode)) {
                             // The client is unable to differentiate between a server shutdown and connecting to an older version.
                             // So, the protocol is set to PROTOCOL_VERSION_V1 here for both scenarios.
                             protocolVersion = PROTOCOL_VERSION_V1;
@@ -493,7 +493,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
     }
 
-    public boolean isNotFound(DirectUtf8Sequence statusCode) {
+    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
         if (statusCode == null || statusCode.size() != 3) {
             return false;
         }
