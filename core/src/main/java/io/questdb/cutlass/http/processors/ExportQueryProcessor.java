@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -227,7 +228,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new ExportQueryProcessorState(context));
+            LV.set(context, state = new ExportQueryProcessorState(context, engine));
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
@@ -487,7 +488,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
-                            initParquetExport(context, state);
+                            initParquetExport(context, state, sqlExecutionContext.getCircuitBreaker());
                         } catch (SqlException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
@@ -695,7 +696,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
 
-    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
+    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state, SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker) throws SqlException {
         if (state.copyID == null) {
             state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
             CopyExportFactory factory = new CopyExportFactory(
@@ -705,7 +706,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     state.getExportResult(),
                     context.getSecurityContext(),
                     state.suspendEvent,
-                    state.query
+                    state.query,
+                    sqlExecutionCircuitBreaker
             );
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

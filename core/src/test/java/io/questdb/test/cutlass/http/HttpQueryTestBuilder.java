@@ -106,210 +106,214 @@ public class HttpQueryTestBuilder {
 
     public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
         assertMemoryLeak(() -> {
-            final String baseDir = temp;
-            final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
-                    .withBaseDir(baseDir)
-                    .withFactoryProvider(factoryProvider)
-                    .withStaticContentAuthRequired(httpStaticContentAuthType)
-                    .withHealthCheckAuthRequired(httpHealthCheckAuthType)
-                    .withNanosClock(nanosecondClock)
-                    .build(configuration);
-            final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
-
-            CairoConfiguration cairoConfiguration = configuration;
-            if (cairoConfiguration == null) {
-                cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
-                    @Override
-                    public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                        return new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                            @Override
-                            public long getQueryTimeout() {
-                                return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
-                                        ? queryTimeout
-                                        : super.getQueryTimeout();
-                            }
-                        };
-                    }
-
-                    @Override
-                    public @NotNull LongSupplier getCopyIDSupplier() {
-                        return () -> 0;
-                    }
-
-                    public @NotNull FilesFacade getFilesFacade() {
-                        return filesFacade;
-                    }
-
-                    @Override
-                    public @NotNull MicrosecondClock getMicrosecondClock() {
-                        return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
-                    }
-
-                    @Override
-                    public CharSequence getSqlCopyExportRoot() {
-                        return copyExportRoot != null ? copyExportRoot : super.getSqlCopyExportRoot();
-                    }
-
-                    @Override
-                    public CharSequence getSqlCopyInputRoot() {
-                        return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
-                    }
-
-                    @Override
-                    public int getSqlJitMode() {
-                        return jitMode;
-                    }
-
-                    @Override
-                    public long getWriterAsyncCommandBusyWaitTimeout() {
-                        return startWriterWaitTimeout;
-                    }
-
-                    @Override
-                    public long getWriterAsyncCommandMaxTimeout() {
-                        return maxWriterWaitTimeout;
-                    }
-
-                    @Override
-                    public boolean mangleTableDirNames() {
-                        return false;
-                    }
-                };
-            }
-            try (
-                    CairoEngine engine = new CairoEngine(cairoConfiguration);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
-            ) {
-                TelemetryJob telemetryJob = null;
-                if (telemetry) {
-                    telemetryJob = new TelemetryJob(engine);
-                }
-
-                if (cairoConfiguration.getSqlCopyInputRoot() != null) {
-                    CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
-                    workerPool.assign(copyImportRequestJob);
-                    workerPool.freeOnExit(copyImportRequestJob);
-                }
-
-                if (cairoConfiguration.getSqlCopyExportRoot() != null) {
-                    final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
-                            engine, 0
-                    );
-                    workerPool.assign(copyExportRequestJob);
-                    workerPool.freeOnExit(copyExportRequestJob);
-                }
-
-                httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/upload");
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return textImportProcessor != null ? textImportProcessor.create(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-                });
-
-                this.sqlExecutionContexts = new ObjList<>();
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/query");
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
-                            @Override
-                            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                                return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
-                            }
-                        };
-
-                        sqlExecutionContexts.add(newContext);
-
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                newContext
-                        );
-                    }
-                });
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return httpConfiguration.getContextPathExport();
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new ExportQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return httpConfiguration.getContextPathTableStatus();
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return httpConfiguration.getContextPathExec();
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return new ObjList<>("/status");
-                    }
-
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new HealthCheckProcessor(httpConfiguration);
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-                    code.run(engine, sqlExecutionContext);
-                } finally {
-                    workerPool.halt();
-
-                    if (telemetryJob != null) {
-                        Misc.free(telemetryJob);
-                    }
-                }
-            }
+            runNoLeakCheck(configuration, code);
         });
+    }
+
+    public void runNoLeakCheck(CairoConfiguration configuration, HttpClientCode code) throws Exception {
+        final String baseDir = temp;
+        final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
+                .withBaseDir(baseDir)
+                .withFactoryProvider(factoryProvider)
+                .withStaticContentAuthRequired(httpStaticContentAuthType)
+                .withHealthCheckAuthRequired(httpHealthCheckAuthType)
+                .withNanosClock(nanosecondClock)
+                .build(configuration);
+        final WorkerPool workerPool = new TestWorkerPool(workerCount, httpConfiguration.getMetrics());
+
+        CairoConfiguration cairoConfiguration = configuration;
+        if (cairoConfiguration == null) {
+            cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                @Override
+                public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                    return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                        @Override
+                        public long getQueryTimeout() {
+                            return queryTimeout > 0 || queryTimeout == SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK
+                                    ? queryTimeout
+                                    : super.getQueryTimeout();
+                        }
+                    };
+                }
+
+                @Override
+                public @NotNull LongSupplier getCopyIDSupplier() {
+                    return () -> 0;
+                }
+
+                public @NotNull FilesFacade getFilesFacade() {
+                    return filesFacade;
+                }
+
+                @Override
+                public @NotNull MicrosecondClock getMicrosecondClock() {
+                    return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
+                }
+
+                @Override
+                public CharSequence getSqlCopyExportRoot() {
+                    return copyExportRoot != null ? copyExportRoot : super.getSqlCopyExportRoot();
+                }
+
+                @Override
+                public CharSequence getSqlCopyInputRoot() {
+                    return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
+                }
+
+                @Override
+                public int getSqlJitMode() {
+                    return jitMode;
+                }
+
+                @Override
+                public long getWriterAsyncCommandBusyWaitTimeout() {
+                    return startWriterWaitTimeout;
+                }
+
+                @Override
+                public long getWriterAsyncCommandMaxTimeout() {
+                    return maxWriterWaitTimeout;
+                }
+
+                @Override
+                public boolean mangleTableDirNames() {
+                    return false;
+                }
+            };
+        }
+        try (
+                CairoEngine engine = new CairoEngine(cairoConfiguration);
+                HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+        ) {
+            TelemetryJob telemetryJob = null;
+            if (telemetry) {
+                telemetryJob = new TelemetryJob(engine);
+            }
+
+            if (cairoConfiguration.getSqlCopyInputRoot() != null) {
+                CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
+                workerPool.assign(copyImportRequestJob);
+                workerPool.freeOnExit(copyImportRequestJob);
+            }
+
+            if (cairoConfiguration.getSqlCopyExportRoot() != null) {
+                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
+                        engine, 0
+                );
+                workerPool.assign(copyExportRequestJob);
+                workerPool.freeOnExit(copyExportRequestJob);
+            }
+
+            httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return new ObjList<>("/upload");
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return textImportProcessor != null ? textImportProcessor.create(
+                            httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            engine,
+                            workerPool.getWorkerCount()
+                    ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                }
+            });
+
+            this.sqlExecutionContexts = new ObjList<>();
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return new ObjList<>("/query");
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    SqlExecutionContextImpl newContext = new SqlExecutionContextImpl(engine, workerCount) {
+                        @Override
+                        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                            return queryFutureUpdateListener != null ? queryFutureUpdateListener : QueryFutureUpdateListener.EMPTY;
+                        }
+                    };
+
+                    sqlExecutionContexts.add(newContext);
+
+                    return new JsonQueryProcessor(
+                            httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            engine,
+                            newContext
+                    );
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return httpConfiguration.getContextPathExport();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new ExportQueryProcessor(
+                            httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            engine,
+                            workerPool.getWorkerCount()
+                    );
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return httpConfiguration.getContextPathTableStatus();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new TableStatusCheckProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return httpConfiguration.getContextPathExec();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine, 1);
+                }
+            });
+
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return new ObjList<>("/status");
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new HealthCheckProcessor(httpConfiguration);
+                }
+            });
+
+            workerPool.start(LOG);
+
+            try {
+                code.run(engine, sqlExecutionContext);
+            } finally {
+                workerPool.halt();
+
+                if (telemetryJob != null) {
+                    Misc.free(telemetryJob);
+                }
+            }
+        }
     }
 
     public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {

@@ -36,6 +36,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
@@ -86,6 +87,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private SecurityContext securityContext;
     private String selectText = null;
     private int sizeLimit;
+    private SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker;
     private CharSequence sqlText;
     private boolean statisticsEnabled;
     private @Nullable SuspendEvent suspendEvent = null;
@@ -101,7 +103,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
-        this.of(messageBus, copyContext, model, null, securityContext, sqlText);
+        this.of(messageBus, copyContext, model, null, securityContext, sqlText, null);
     }
 
     public CopyExportFactory(
@@ -111,16 +113,17 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             CopyExportResult copyExportResult,
             SecurityContext securityContext,
             @Nullable SuspendEvent suspendEvent,
-            CharSequence sqlText
+            CharSequence sqlText,
+            SqlExecutionCircuitBreaker circuitBreaker
     ) throws SqlException {
         super(METADATA);
         this.suspendEvent = suspendEvent;
-        this.of(messageBus, exportContext, model, copyExportResult, securityContext, sqlText);
+        this.of(messageBus, exportContext, model, copyExportResult, securityContext, sqlText, circuitBreaker);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText, this.fileName);
+        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText, this.fileName, sqlExecutionCircuitBreaker);
         long copyID = entry.getId();
         try {
             CreateTableOperationImpl createOp = null;
@@ -215,7 +218,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     CopyModel model,
                     CopyExportResult result,
                     SecurityContext securityContext,
-                    CharSequence sqlText) throws SqlException {
+                    CharSequence sqlText,
+                    SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         this.messageBus = messageBus;
         this.copyContext = exportContext;
         if (model.getTableName() != null) {
@@ -244,6 +248,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.userSpecifiedExportOptions = model.isUserSpecifiedExportOptions();
         this.sqlText = sqlText;
         this.copyExportResult = result;
+        this.sqlExecutionCircuitBreaker = circuitBreaker;
     }
 
     private CreateTableOperationImpl validAndCreateTableOp(SqlExecutionContext executionContext) throws SqlException {

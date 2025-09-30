@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -37,6 +38,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -77,7 +79,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
-
                     testHttpClient.assertGetParquet("/exp", 1282, "basic_parquet_test");
                 });
     }
@@ -161,6 +162,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportDropConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            getExportTester()
+                    .runNoLeakCheck(null, (engine, sqlExecutionContext) -> {
+                        HttpClient client = testHttpClient.getHttpClient();
+                        HttpClient.Request req = client.newRequest("localhost", 9001);
+                        req.GET().url("/exp").query("query", "generate_series(0, '9999-01-01', '1U');");
+                        req.query("fmt", "parquet");
+                        req.send();
+                        Os.sleep(1000);
+                        client.disconnect();
+
+                        long timeoutMs = 10000; // 10 seconds
+                        long startTime = System.currentTimeMillis();
+                        while (engine.getCopyExportContext().getActiveExportId() != -1) {
+                            if (System.currentTimeMillis() - startTime > timeoutMs) {
+                                Assert.fail("Failed to cancel export");
+                            }
+                            Os.sleep(10);
+                        }
+                    });
+        });
+    }
+
+    @Test
     public void testOnParquetPartition() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -213,8 +239,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         }
                     });
                     thread.start();
-                    String expectedError = "{\"query\":\"generate_series(0, '9999-01-01', '1U')\",\"error\":\"copy task failed [id=0, phase=populating_data_to_temp_table, status=cancelled, message=cancelled by user]\",\"position\":0}";
-                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                    String expectedError = "{\"query\":\"generate_series(0, '9999-01-01', '1U')\",\"error\":\"copy task failed [id=0, phase=populating_data_to_temp_table, status=cancelled, message=cancelled by user";
+                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
                     thread.join();
                 });
     }

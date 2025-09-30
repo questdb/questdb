@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.std.FilesFacade;
@@ -36,6 +37,7 @@ import java.io.IOException;
 import static io.questdb.cutlass.text.CopyExportContext.INACTIVE_COPY_ID;
 
 public class CopyExportResult implements Closeable {
+    private final CairoEngine engine;
     private final Path path = new Path();
     private int cleanUpFileLength;
     private long copyID = INACTIVE_COPY_ID;
@@ -43,6 +45,10 @@ public class CopyExportResult implements Closeable {
     private volatile boolean needCleanUp;
     private volatile CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
     private volatile CopyExportRequestTask.Status status = CopyExportRequestTask.Status.NONE;
+
+    public CopyExportResult(CairoEngine engine) {
+        this.engine = engine;
+    }
 
     public void addFilePath(Path path, boolean needCleanUp, int cleanUpFileLength) {
         this.path.of(path);
@@ -65,6 +71,9 @@ public class CopyExportResult implements Closeable {
 
     @Override
     public void close() throws IOException {
+        if (copyID != INACTIVE_COPY_ID) {
+            engine.getCopyExportContext().cancel(copyID, null);
+        }
         Misc.free(path);
     }
 

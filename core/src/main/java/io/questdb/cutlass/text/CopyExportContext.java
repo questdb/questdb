@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.griffin.SqlException;
@@ -54,7 +55,7 @@ public class CopyExportContext {
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
-    public ExportTaskEntry assignExportEntry(SecurityContext securityContext, CharSequence sql, CharSequence path) throws SqlException {
+    public ExportTaskEntry assignExportEntry(SecurityContext securityContext, CharSequence sql, CharSequence path, SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker) throws SqlException {
         lock.writeLock().lock();
         try {
             ExportTaskEntry entry = exportSql.get(sql);
@@ -72,13 +73,32 @@ public class CopyExportContext {
             do {
                 id = copyIDSupplier.getAsLong();
             } while ((index = activeExports.keyIndex(id)) < 0);
-            entry = exportTaskEntryPools.next().of(id, securityContext, sql, path);
+            entry = exportTaskEntryPools.next().of(id, securityContext, sql, path, sqlExecutionCircuitBreaker);
             activeExports.putAt(index, id, entry);
             exportSql.put(sql, entry);
-            exportPath.put(path, entry);
+            if (path != null) {
+                exportPath.put(path, entry);
+            }
             return entry;
         } finally {
             lock.writeLock().unlock();
+        }
+    }
+
+    public boolean cancel(long id, SecurityContext securityContext) {
+        lock.readLock().lock();
+        try {
+            ExportTaskEntry e = activeExports.get(id);
+            if (e != null) {
+                if (securityContext != null) {
+                    e.getSecurityContext().authorizeCopyCancel(securityContext);
+                }
+                e.getCircuitBreaker().cancel();
+                return true;
+            }
+            return false;
+        } finally {
+            lock.readLock().unlock();
         }
     }
 
@@ -130,13 +150,14 @@ public class CopyExportContext {
     }
 
     public class ExportTaskEntry implements Mutable {
-        AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
+        AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
         SecurityContext context;
         int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
         CharSequence path;
         CopyExportRequestTask.Phase phase;
         int populatedRowCount = 0;
+        SqlExecutionCircuitBreaker realCircuitBreaker;
         CharSequence sql;
         long startTime = -1;
         int workerId = -1;
@@ -145,7 +166,7 @@ public class CopyExportContext {
         public void clear() {
             if (id != INACTIVE_COPY_ID) {
                 this.context = null;
-                circuitBreaker.clear();
+                atomicBooleanCircuitBreaker.clear();
                 releaseEntry(this);
                 this.id = INACTIVE_COPY_ID;
                 this.sql = null;
@@ -155,11 +176,12 @@ public class CopyExportContext {
                 this.workerId = -1;
                 this.populatedRowCount = 0;
                 this.finishedPartitionCount = 0;
+                realCircuitBreaker = null;
             }
         }
 
-        public AtomicBooleanCircuitBreaker getCircuitBreaker() {
-            return circuitBreaker;
+        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return realCircuitBreaker;
         }
 
         public long getId() {
@@ -170,12 +192,17 @@ public class CopyExportContext {
             return context;
         }
 
-        public ExportTaskEntry of(long id, SecurityContext context, CharSequence sql, CharSequence path) {
+        public ExportTaskEntry of(long id, SecurityContext context, CharSequence sql, CharSequence path, SqlExecutionCircuitBreaker circuitBreaker) {
             this.id = id;
             this.context = context;
             this.sql = sql;
             this.path = path;
-            circuitBreaker.reset();
+            if (circuitBreaker == null) {
+                atomicBooleanCircuitBreaker.reset();
+                this.realCircuitBreaker = atomicBooleanCircuitBreaker;
+            } else {
+                this.realCircuitBreaker = circuitBreaker;
+            }
             this.phase = CopyExportRequestTask.Phase.WAITING;
             return this;
         }

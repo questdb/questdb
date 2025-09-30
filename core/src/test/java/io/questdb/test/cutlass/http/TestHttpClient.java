@@ -40,9 +40,9 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap();
-    private final HttpClient httpClient;
+    private static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
     private final Utf8StringSink sink = new Utf8StringSink();
+    private HttpClient httpClient;
     private boolean keepConnection;
 
     public TestHttpClient() {
@@ -188,6 +188,33 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        try {
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
+
+            if (queryParams != null) {
+                for (int i = 0, n = queryParams.size(); i < n; i++) {
+                    CharSequence name = queryParams.keys().getQuick(i);
+                    req.query(name, queryParams.get(name));
+                }
+            }
+
+            reqToSink(req, sink, username, password, null, null, null);
+            TestUtils.assertContains(sink.toString(), expectedResponse);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
     public void assertGetParquet(
             CharSequence url,
             CharSequence expectedResponse,
@@ -290,7 +317,11 @@ public class TestHttpClient implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.free(httpClient);
+        httpClient = Misc.free(httpClient);
+    }
+
+    public HttpClient getHttpClient() {
+        return httpClient;
     }
 
     public Utf8StringSink getSink() {

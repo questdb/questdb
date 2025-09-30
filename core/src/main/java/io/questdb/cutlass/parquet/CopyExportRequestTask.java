@@ -26,7 +26,7 @@ package io.questdb.cutlass.parquet;
 
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -73,7 +73,7 @@ public class CopyExportRequestTask implements Mutable {
         result = null;
     }
 
-    public AtomicBooleanCircuitBreaker getCircuitBreaker() {
+    public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return entry.getCircuitBreaker();
     }
 

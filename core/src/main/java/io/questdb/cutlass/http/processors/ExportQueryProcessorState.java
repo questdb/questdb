@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,7 +46,7 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
-    private final CopyExportResult copyExportResult = new CopyExportResult();
+    private final CopyExportResult copyExportResult;
     private final CopyModel copyModel = new CopyModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -76,8 +77,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean waitingForCopy;
     private boolean queryCacheable = false;
 
-    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
+    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CairoEngine engine) {
         this.httpConnectionContext = httpConnectionContext;
+        this.copyExportResult = new CopyExportResult(engine);
         clear();
     }
 
@@ -111,7 +113,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         copyID = null;
         waitingForCopy = false;
-        suspendEvent = null;
+        suspendEvent = Misc.free(suspendEvent);
         parquetFileFd = -1;
         parquetFileSize = 0;
         parquetFileOffset = 0;
@@ -125,9 +127,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
+        System.out.println("ExportQueryProcessorState.close()");
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
-        Misc.free(suspendEvent);
         if (parquetFileBuffer != 0) {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;

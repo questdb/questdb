@@ -90,11 +90,7 @@ public class CopyCancelFactory extends AbstractRecordCursorFactory {
             // be updated.
             status = "cancelled";
         } else {
-            CopyExportContext.ExportTaskEntry entry = copyExportContext.getEntry(cancelCopyID);
-            if (entry != null) {
-                final AtomicBooleanCircuitBreaker circuitBreaker = entry.getCircuitBreaker();
-                entry.getSecurityContext().authorizeCopyCancel(executionContext.getSecurityContext());
-                circuitBreaker.cancel();
+            if (copyExportContext.cancel(cancelCopyID, executionContext.getSecurityContext())) {
                 status = "cancelled";
             } else {
                 status = null;
