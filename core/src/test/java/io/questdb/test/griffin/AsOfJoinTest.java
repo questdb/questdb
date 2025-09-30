@@ -1251,11 +1251,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = "id\tts\tid1\tts1\n" +
@@ -1318,11 +1334,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000000n;";
+            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000T;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1s;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+
+            query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1n;";
+            assertQueryNoLeakCheck("id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\tnull\t\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n", query, null, "ts", false, true);
 
             query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1m;";
             expected = "id\tts\tid1\tts1\n" +
@@ -1586,9 +1618,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            // ASOF JOIN
-            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            // LT JOIN
+            String query = "SELECT * FROM x LT JOIN y ON(sym)";
             String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // ASOF JOIN
+            query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
                     "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
                     "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
@@ -1597,17 +1641,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
-
-            // LT JOIN
-            query = "SELECT * FROM x LT JOIN y ON(sym)";
-            expected = "sym\tts\tsym1\tts1\n" +
-                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            execute("ALTER TABLE y ALTER COLUMN sym ADD INDEX");
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
         });
     }
@@ -1640,9 +1674,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            // ASOF JOIN
-            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            // LT JOIN
+            String query = "SELECT * FROM x LT JOIN y ON(sym)";
             String expected = "sym\tts\tsym1\tts1\n" +
+                    "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // ASOF JOIN
+            query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
                     "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
                     "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t😊\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
@@ -1651,17 +1697,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
-
-            // LT JOIN
-            query = "SELECT * FROM x LT JOIN y ON(sym)";
-            expected = "sym\tts\tsym1\tts1\n" +
-                    "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                    "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            execute("ALTER TABLE y ALTER COLUMN sym ADD INDEX");
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
         });
     }

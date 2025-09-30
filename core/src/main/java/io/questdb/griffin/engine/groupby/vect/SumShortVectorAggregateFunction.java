@@ -64,9 +64,8 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.sumShort(address, frameRowCount);
-            sum.add(value);
-            this.count.increment();
+            sum.add(Vect.sumShort(address, frameRowCount));
+            count.increment();
         }
     }
 

@@ -319,7 +319,7 @@ public class IntList implements Mutable, Sinkable {
      */
     public void sortGroups(int groupSize) {
         if (groupSize > 0 && pos % groupSize == 0) {
-            IntGroupSort.quickSort(groupSize, data, 0, pos / groupSize);
+            IntGroupSort.quickSort(groupSize, this, 0, pos / groupSize);
             return;
         }
         throw new IllegalStateException("sorting not supported for group size: " + groupSize + ", length: " + pos);
@@ -392,5 +392,10 @@ public class IntList implements Mutable, Sinkable {
             }
         }
         return -(high + 1);
+    }
+
+    int[] resetCapacityInternal(int intCapacity) {
+        checkCapacity(intCapacity);
+        return data;
     }
 }

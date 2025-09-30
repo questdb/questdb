@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
 public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit {
     private final int masterStringIndex;
@@ -36,6 +37,16 @@ public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit 
     public SingleStringSymbolShortCircuit(int masterStringIndex, int slaveSymbolIndex) {
         this.masterStringIndex = masterStringIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
+    }
+
+    @Override
+    public CharSequence getMasterValue(Record masterRecord) {
+        return masterRecord.getStrA(masterStringIndex);
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override
