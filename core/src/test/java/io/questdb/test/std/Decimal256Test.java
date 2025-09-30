@@ -2486,6 +2486,15 @@ public class Decimal256Test {
         Assert.assertTrue(str.contains("45"));
     }
 
+    @Test
+    public void testToStringMaxScale() {
+        Decimal256 a = new Decimal256();
+        a.copyFrom(Decimal256.MAX_VALUE);
+        a.setScale(Decimal256.MAX_SCALE);
+        a.subtract(0, 0, 0, 1, Decimal256.MAX_SCALE);
+        Assert.assertEquals("0.9999999999999999999999999999999999999999999999999999999999999999999999999998", a.toString());
+    }
+
     private void printPowerTable(long[][] table) {
         System.err.println("    private static final long[][] POWERS_TEN_TABLE = new long[][]{");
         for (int i = 0, n = table.length; i < n; i++) {
