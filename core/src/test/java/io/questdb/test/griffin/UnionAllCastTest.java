@@ -249,6 +249,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testByteDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::byte a union select 3::byte union select 5::byte union select 9::byte union select 8::byte)",
+                false
+        );
+    }
+
+    @Test
     public void testByteNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -468,6 +488,66 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalStr() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::string a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalVarchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::varchar a from long_sequence(5))",
+                "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
     public void testDoubleBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -533,6 +613,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 "create table y as (select rnd_date() b from long_sequence(5))",
                 12
+        );
+    }
+
+    @Test
+    public void testDoubleDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.0\n" +
+                        "3.0\n" +
+                        "5.0\n" +
+                        "9.0\n" +
+                        "8.0\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0d a union select 3d union select 5d union select 9d union select 8d)",
+                false
         );
     }
 
@@ -1468,6 +1568,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::int a union select 3::int union select 5::int union select 9::int union select 8::int)",
+                false
+        );
+    }
+
+    @Test
     public void testIntExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
@@ -1765,6 +1885,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::long a union select 3::long union select 5::long union select 9::long union select 8::long)",
+                false
+        );
+    }
+
+    @Test
     public void testLongInt() throws Exception {
         testUnionAll(
                 "a\n" +
@@ -1950,6 +2090,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShortDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::short a union select 3::short union select 5::short union select 9::short union select 8::short)",
+                false
+        );
+    }
+
+    @Test
     public void testShortNull() throws Exception {
         testUnionAllWithNull(
                 "a\tc\n" +
@@ -1964,6 +2124,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0\t-13027\n" +
                         "0\t-21227\n",
                 "rnd_short()"
+        );
+    }
+
+    @Test
+    public void testStrDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select '0'::string a union select '3'::string union select '5'::string union select '9'::string union select '8'::string)",
+                false
         );
     }
 
@@ -2464,6 +2644,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_uuid4() a from long_sequence(5))",
                 "create table y as (select rnd_varchar() b from long_sequence(5))",
                 true
+        );
+    }
+
+    @Test
+    public void testVarcharDecimal() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.000\n" +
+                        "2.000\n" +
+                        "3.000\n" +
+                        "4.000\n" +
+                        "5.000\n" +
+                        "0.000\n" +
+                        "3.000\n" +
+                        "5.000\n" +
+                        "9.000\n" +
+                        "8.000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select '0'::varchar a union select '3'::varchar union select '5'::varchar union select '9'::varchar union select '8'::varchar)",
+                false
         );
     }
 

@@ -74,11 +74,14 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToDecimalFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDecimalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
@@ -90,15 +93,19 @@ import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactor
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
@@ -107,6 +114,7 @@ import io.questdb.griffin.engine.functions.cast.CastTimestampToTimestampFunction
 import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
@@ -114,6 +122,7 @@ import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.columns.CharColumn;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
@@ -283,6 +292,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
@@ -511,8 +521,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         int geoBitsA = getGeoHashBits(typeA);
         int geoBitsB = getGeoHashBits(typeB);
-        boolean isGeoHashA = geoBitsA != 0;
-        boolean isGeoHashB = geoBitsB != 0;
+        boolean isGeoHashA = ColumnType.isGeoHash(typeA);
+        boolean isGeoHashB = ColumnType.isGeoHash(typeB);
         if (isGeoHashA != isGeoHashB) {
             // One type is geohash, the other isn't. Since a stringy type can be parsed
             // into geohash, output geohash when the other type is stringy. If not,
@@ -524,6 +534,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
             return geoBitsA < geoBitsB ? typeA : typeB;
+        }
+
+        boolean isDecimalA = ColumnType.isDecimalType(tagA);
+        boolean isDecimalB = ColumnType.isDecimalType(tagB);
+        if (isDecimalA || isDecimalB) {
+            int a = DecimalUtil.getTypePrecisionScale(typeA);
+            int b = DecimalUtil.getTypePrecisionScale(typeB);
+            if (a != 0 && b != 0) {
+                // Both types are decimal/implicitly castable to decimal.
+                int precisionA = Numbers.decodeLowShort(a);
+                int scaleA = Numbers.decodeHighShort(a);
+                int precisionB = Numbers.decodeLowShort(b);
+                int scaleB = Numbers.decodeHighShort(b);
+                final int scale = Math.max(scaleA, scaleB);
+                final int precision = Math.min(Math.max(precisionA - scaleA, precisionB - scaleB) + scale, Decimals.MAX_PRECISION);
+                return ColumnType.getDecimalType(precision, scale);
+            }
+            // We also support casting between decimal and stringy types.
+            return isStringyType(typeA) ? typeB :
+                    isStringyType(typeB) ? typeA :
+                            ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -1604,6 +1635,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private ObjList<Function> generateCastFunctions(
+            SqlExecutionContext executionContext,
             RecordMetadata castToMetadata,
             RecordMetadata castFromMetadata,
             int modelPosition
@@ -1912,6 +1944,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         )
                                 );
                                 break;
+                            case ColumnType.DECIMAL8:
+                            case ColumnType.DECIMAL16:
+                            case ColumnType.DECIMAL32:
+                            case ColumnType.DECIMAL64:
+                            case ColumnType.DECIMAL128:
+                            case ColumnType.DECIMAL256:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
                             case ColumnType.INTERVAL:
                                 castFunctions.add(new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType)));
                                 break;
@@ -2138,6 +2180,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                         }
                         break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
+                        if (ColumnType.isDecimalType(fromTag)) {
+                            if (fromType == toType) {
+                                castFunctions.add(DecimalColumn.newInstance(i, fromType));
+                                break;
+                            }
+                            castFunctions.add(
+                                    CastDecimalToDecimalFunctionFactory.newInstance(
+                                            0,
+                                            new DecimalColumn(i, fromType),
+                                            toType,
+                                            executionContext
+                                    )
+                            );
+                            break;
+                        }
+                        switch (fromTag) {
+                            case INT:
+                                castFunctions.add(
+                                        CastIntToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                IntColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case SHORT:
+                                castFunctions.add(
+                                        CastShortToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ShortColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case LONG:
+                                castFunctions.add(
+                                        CastLongToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                LongColumn.newInstance(i),
+                                                toType,
+                                                executionContext.getDecimal256()
+                                        )
+                                );
+                                break;
+                            case BYTE:
+                                castFunctions.add(
+                                        CastByteToDecimalFunctionFactory.newInstance(
+                                                0,
+                                                ByteColumn.newInstance(i),
+                                                toType,
+                                                executionContext
+                                        )
+                                );
+                                break;
+                            case STRING:
+                                castFunctions.add(
+                                        CastStrToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new StrColumn(i)
+                                        )
+                                );
+                                break;
+                            case VARCHAR:
+                                castFunctions.add(
+                                        CastVarcharToDecimalFunctionFactory.newInstance(
+                                                executionContext.getDecimal256(),
+                                                0,
+                                                toType,
+                                                new VarcharColumn(i)
+                                        )
+                                );
+                                break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
+                        }
                     case ColumnType.BINARY:
                         castFunctions.add(BinColumn.newInstance(i));
                         break;
@@ -5599,8 +5731,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5618,8 +5750,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionAllFactory(
@@ -5636,8 +5768,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5655,8 +5787,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
@@ -5674,8 +5806,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateUnionFactory(
@@ -5693,8 +5825,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
                     final RecordMetadata unionMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     if (castIsRequired) {
-                        castFunctionsA = generateCastFunctions(unionMetadata, metadataA, positionA);
-                        castFunctionsB = generateCastFunctions(unionMetadata, metadataB, positionB);
+                        castFunctionsA = generateCastFunctions(executionContext, unionMetadata, metadataA, positionA);
+                        castFunctionsB = generateCastFunctions(executionContext, unionMetadata, metadataB, positionB);
                     }
 
                     return generateIntersectOrExceptAllFactory(
