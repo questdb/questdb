@@ -438,10 +438,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         return bufferView.of(request.getContentStart(), request.getContentLength());
     }
 
-    public String buildUrl() {
-        return "http" + (isTls ? "s" : "") + "://" + currentHost() + ":" + currentPort() + this.path;
-    }
-
     @Override
     public void cancelRow() {
         validateNotClosed();
@@ -492,15 +488,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         request.put(value);
         request.put('i');
         return this;
-    }
-
-    @TestOnly
-    public void putRawMessage(CharSequence msg) {
-        request.put(msg); // message must include trailing \n
-        state = RequestState.EMPTY;
-        if (rowAdded()) {
-            flush();
-        }
     }
 
     @TestOnly
