@@ -6396,71 +6396,72 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testJoinClauseAlignmentBug() throws SqlException {
         assertQueryWithOuterJoinType(
                 "select-virtual NULL TABLE_CAT, TABLE_SCHEM, TABLE_NAME, switch(TABLE_SCHEM ~ '^pg_' or TABLE_SCHEM = 'information_schema', true, case when TABLE_SCHEM = 'pg_catalog' or TABLE_SCHEM = 'information_schema' then switch(relkind, 'r', 'SYSTEM TABLE', 'v', 'SYSTEM VIEW', 'i', 'SYSTEM INDEX', NULL) when TABLE_SCHEM = 'pg_toast' then switch(relkind, 'r', 'SYSTEM TOAST TABLE', 'i', 'SYSTEM TOAST INDEX', NULL) else switch(relkind, 'r', 'TEMPORARY TABLE', 'p', 'TEMPORARY TABLE', 'i', 'TEMPORARY INDEX', 'S', 'TEMPORARY SEQUENCE', 'v', 'TEMPORARY VIEW', NULL) end, false, switch(relkind, 'r', 'TABLE', 'p', 'PARTITIONED TABLE', 'i', 'INDEX', 'S', 'SEQUENCE', 'v', 'VIEW', 'c', 'TYPE', 'f', 'FOREIGN TABLE', 'm', 'MATERIALIZED VIEW', NULL), NULL) TABLE_TYPE, REMARKS, '' TYPE_CAT, '' TYPE_SCHEM, '' TYPE_NAME, '' SELF_REFERENCING_COL_NAME, '' REF_GENERATION from (select-choose [n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS] n.nspname TABLE_SCHEM, c.relname TABLE_NAME, c.relkind relkind, d.description REMARKS from (select [nspname, oid] from pg_catalog.pg_namespace() n join (select [relname, relkind, relnamespace, oid] from pg_catalog.pg_class() c where relname like 'quickstart-events2') c on c.relnamespace = n.oid post-join-where false or c.relkind = 'r' and n.nspname !~ '^pg_' and n.nspname != 'information_schema' #OUTER_JOIN_TYPE join select [description, objoid, objsubid, classoid] from pg_catalog.pg_description() d on d.objoid = c.oid outer-join-expression d.objsubid = 0 #OUTER_JOIN_TYPE join select [oid, relname, relnamespace] from pg_catalog.pg_class() dc on dc.oid = d.classoid outer-join-expression dc.relname = 'pg_class' #OUTER_JOIN_TYPE join select [oid, nspname] from pg_catalog.pg_namespace() dn on dn.oid = dc.relnamespace outer-join-expression dn.nspname = 'pg_catalog') n) n order by TABLE_TYPE, TABLE_SCHEM, TABLE_NAME",
-                "SELECT \n" +
-                        "     NULL AS TABLE_CAT, \n" +
-                        "     n.nspname AS TABLE_SCHEM, \n" +
-                        "     \n" +
-                        "     c.relname AS TABLE_NAME,  \n" +
-                        "     CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema'  \n" +
-                        "        WHEN true THEN \n" +
-                        "           CASE  \n" +
-                        "                WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TABLE' \n" +
-                        "                        WHEN 'v' THEN 'SYSTEM VIEW'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                WHEN n.nspname = 'pg_toast' THEN \n" +
-                        "                    CASE c.relkind   \n" +
-                        "                        WHEN 'r' THEN 'SYSTEM TOAST TABLE'\n" +
-                        "                        WHEN 'i' THEN 'SYSTEM TOAST INDEX'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END\n" +
-                        "                ELSE \n" +
-                        "                    CASE c.relkind\n" +
-                        "                        WHEN 'r' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'p' THEN 'TEMPORARY TABLE'\n" +
-                        "                        WHEN 'i' THEN 'TEMPORARY INDEX'\n" +
-                        "                        WHEN 'S' THEN 'TEMPORARY SEQUENCE'\n" +
-                        "                        WHEN 'v' THEN 'TEMPORARY VIEW'\n" +
-                        "                        ELSE NULL   \n" +
-                        "                    END  \n" +
-                        "            END  \n" +
-                        "        WHEN false THEN \n" +
-                        "            CASE c.relkind  \n" +
-                        "                WHEN 'r' THEN 'TABLE'  \n" +
-                        "                WHEN 'p' THEN 'PARTITIONED TABLE'  \n" +
-                        "                WHEN 'i' THEN 'INDEX'  \n" +
-                        "                WHEN 'S' THEN 'SEQUENCE'  \n" +
-                        "                WHEN 'v' THEN 'VIEW'  \n" +
-                        "                WHEN 'c' THEN 'TYPE'  \n" +
-                        "                WHEN 'f' THEN 'FOREIGN TABLE'  \n" +
-                        "                WHEN 'm' THEN 'MATERIALIZED VIEW'  \n" +
-                        "                ELSE NULL  \n" +
-                        "            END  \n" +
-                        "        ELSE NULL  \n" +
-                        "    END AS TABLE_TYPE, \n" +
-                        "    d.description AS REMARKS,\n" +
-                        "    '' as TYPE_CAT,\n" +
-                        "    '' as TYPE_SCHEM,\n" +
-                        "    '' as TYPE_NAME,\n" +
-                        "    '' AS SELF_REFERENCING_COL_NAME,\n" +
-                        "    '' AS REF_GENERATION\n" +
-                        "FROM \n" +
-                        "    pg_catalog.pg_namespace n, \n" +
-                        "    pg_catalog.pg_class c  \n" +
-                        "    #OUTER_JOIN_TYPE join pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n" +
-                        "    #OUTER_JOIN_TYPE join pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')\n" +
-                        "    #OUTER_JOIN_TYPE join pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')\n" +
-                        "WHERE \n" +
-                        "    c.relnamespace = n.oid  \n" +
-                        "    AND c.relname LIKE 'quickstart-events2' \n" +
-                        "    AND (\n" +
-                        "        false  \n" +
-                        "        OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' ) \n" +
-                        "        ) \n" +
-                        "ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"
+                """
+                        SELECT\s
+                             NULL AS TABLE_CAT,\s
+                             n.nspname AS TABLE_SCHEM,\s
+                            \s
+                             c.relname AS TABLE_NAME, \s
+                             CASE n.nspname ~ '^pg_' OR n.nspname = 'information_schema' \s
+                                WHEN true THEN\s
+                                   CASE \s
+                                        WHEN n.nspname = 'pg_catalog' OR n.nspname = 'information_schema' THEN\s
+                                            CASE c.relkind  \s
+                                                WHEN 'r' THEN 'SYSTEM TABLE'\s
+                                                WHEN 'v' THEN 'SYSTEM VIEW'
+                                                WHEN 'i' THEN 'SYSTEM INDEX'
+                                                ELSE NULL  \s
+                                            END
+                                        WHEN n.nspname = 'pg_toast' THEN\s
+                                            CASE c.relkind  \s
+                                                WHEN 'r' THEN 'SYSTEM TOAST TABLE'
+                                                WHEN 'i' THEN 'SYSTEM TOAST INDEX'
+                                                ELSE NULL  \s
+                                            END
+                                        ELSE\s
+                                            CASE c.relkind
+                                                WHEN 'r' THEN 'TEMPORARY TABLE'
+                                                WHEN 'p' THEN 'TEMPORARY TABLE'
+                                                WHEN 'i' THEN 'TEMPORARY INDEX'
+                                                WHEN 'S' THEN 'TEMPORARY SEQUENCE'
+                                                WHEN 'v' THEN 'TEMPORARY VIEW'
+                                                ELSE NULL  \s
+                                            END \s
+                                    END \s
+                                WHEN false THEN\s
+                                    CASE c.relkind \s
+                                        WHEN 'r' THEN 'TABLE' \s
+                                        WHEN 'p' THEN 'PARTITIONED TABLE' \s
+                                        WHEN 'i' THEN 'INDEX' \s
+                                        WHEN 'S' THEN 'SEQUENCE' \s
+                                        WHEN 'v' THEN 'VIEW' \s
+                                        WHEN 'c' THEN 'TYPE' \s
+                                        WHEN 'f' THEN 'FOREIGN TABLE' \s
+                                        WHEN 'm' THEN 'MATERIALIZED VIEW' \s
+                                        ELSE NULL \s
+                                    END \s
+                                ELSE NULL \s
+                            END AS TABLE_TYPE,\s
+                            d.description AS REMARKS,
+                            '' as TYPE_CAT,
+                            '' as TYPE_SCHEM,
+                            '' as TYPE_NAME,
+                            '' AS SELF_REFERENCING_COL_NAME,
+                            '' AS REF_GENERATION
+                        FROM\s
+                            pg_catalog.pg_namespace n,\s
+                            pg_catalog.pg_class c \s
+                            #OUTER_JOIN_TYPE join pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0)\s
+                            #OUTER_JOIN_TYPE join pg_catalog.pg_class dc ON (d.classoid=dc.oid AND dc.relname='pg_class')
+                            #OUTER_JOIN_TYPE join pg_catalog.pg_namespace dn ON (dn.oid=dc.relnamespace AND dn.nspname='pg_catalog')
+                        WHERE\s
+                            c.relnamespace = n.oid \s
+                            AND c.relname LIKE 'quickstart-events2'\s
+                            AND (
+                                false \s
+                                OR  ( c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' )\s
+                                )\s
+                        ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME"""
         );
     }
 
@@ -8740,14 +8741,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testPGColumnListQuery() throws SqlException {
         assertQueryWithOuterJoinType(
                 "",
-                "SELECT c.oid,\n" +
-                        "  n.nspname,\n" +
-                        "  c.relname\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "     #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 2, 3;"
+                """
+                        SELECT c.oid,
+                          n.nspname,
+                          c.relname
+                        FROM pg_catalog.pg_class c
+                             #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relname OPERATOR(pg_catalog.~) E'^(movies\\\\.csv)$'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 2, 3;"""
         );
     }
 
@@ -8755,27 +8757,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testPGTableListQuery() throws SqlException {
         assertQueryWithOuterJoinType(
                 "select-virtual Schema, Name, switch(relkind, 'r', 'table', 'v', 'view', 'm', 'materialized view', 'i', 'index', 'S', 'sequence', 's', 'special', 'f', 'foreign table', 'p', 'table', 'I', 'index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relkind, relowner, relnamespace, oid] from pg_catalog.pg_class() c #OUTER_JOIN_TYPE join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r', 'p', 'v', 'm', 'S', 'f', '') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name",
-                "SELECT n.nspname                              as \"Schema\",\n" +
-                        "       c.relname                              as \"Name\",\n" +
-                        "       CASE c.relkind\n" +
-                        "           WHEN 'r' THEN 'table'\n" +
-                        "           WHEN 'v' THEN 'view'\n" +
-                        "           WHEN 'm' THEN 'materialized view'\n" +
-                        "           WHEN 'i' THEN 'index'\n" +
-                        "           WHEN 'S' THEN 'sequence'\n" +
-                        "           WHEN 's' THEN 'special'\n" +
-                        "           WHEN 'f' THEN 'foreign table'\n" +
-                        "           WHEN 'p' THEN 'table'\n" +
-                        "           WHEN 'I' THEN 'index' END          as \"Type\",\n" +
-                        "       pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "         #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname != 'pg_catalog'\n" +
-                        "  AND n.nspname != 'information_schema'\n" +
-                        "  AND n.nspname !~ '^pg_toast'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 1, 2"
+                """
+                        SELECT n.nspname                              as "Schema",
+                               c.relname                              as "Name",
+                               CASE c.relkind
+                                   WHEN 'r' THEN 'table'
+                                   WHEN 'v' THEN 'view'
+                                   WHEN 'm' THEN 'materialized view'
+                                   WHEN 'i' THEN 'index'
+                                   WHEN 'S' THEN 'sequence'
+                                   WHEN 's' THEN 'special'
+                                   WHEN 'f' THEN 'foreign table'
+                                   WHEN 'p' THEN 'table'
+                                   WHEN 'I' THEN 'index' END          as "Type",
+                               pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+                        FROM pg_catalog.pg_class c
+                                 #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')
+                          AND n.nspname != 'pg_catalog'
+                          AND n.nspname != 'information_schema'
+                          AND n.nspname !~ '^pg_toast'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 1, 2"""
         );
     }
 
@@ -10463,28 +10466,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSelectAfterOrderBy() throws SqlException {
         assertQueryWithOuterJoinType(
                 "select-choose Schema from (select-group-by [Schema] Schema, count() count from (select-virtual [Schema, Name] Schema, Name, switch(relkind, 'r', 'table', 'v', 'view', 'm', 'materialized view', 'i', 'index', 'S', 'sequence', 's', 'special', 'f', 'foreign table', 'p', 'table', 'I', 'index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c #OUTER_JOIN_TYPE join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r', 'p', 'v', 'm', 'S', 'f', '') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
-                "select distinct Schema from \n" +
-                        "(SELECT n.nspname                              as \"Schema\",\n" +
-                        "       c.relname                              as \"Name\",\n" +
-                        "       CASE c.relkind\n" +
-                        "           WHEN 'r' THEN 'table'\n" +
-                        "           WHEN 'v' THEN 'view'\n" +
-                        "           WHEN 'm' THEN 'materialized view'\n" +
-                        "           WHEN 'i' THEN 'index'\n" +
-                        "           WHEN 'S' THEN 'sequence'\n" +
-                        "           WHEN 's' THEN 'special'\n" +
-                        "           WHEN 'f' THEN 'foreign table'\n" +
-                        "           WHEN 'p' THEN 'table'\n" +
-                        "           WHEN 'I' THEN 'index' END          as \"Type\",\n" +
-                        "       pg_catalog.pg_get_userbyid(c.relowner) as \"Owner\"\n" +
-                        "FROM pg_catalog.pg_class c\n" +
-                        "         #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n" +
-                        "WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')\n" +
-                        "  AND n.nspname != 'pg_catalog'\n" +
-                        "  AND n.nspname != 'information_schema'\n" +
-                        "  AND n.nspname !~ '^pg_toast'\n" +
-                        "  AND pg_catalog.pg_table_is_visible(c.oid)\n" +
-                        "ORDER BY 1, 2);\n"
+                """
+                        select distinct Schema from\s
+                        (SELECT n.nspname                              as "Schema",
+                               c.relname                              as "Name",
+                               CASE c.relkind
+                                   WHEN 'r' THEN 'table'
+                                   WHEN 'v' THEN 'view'
+                                   WHEN 'm' THEN 'materialized view'
+                                   WHEN 'i' THEN 'index'
+                                   WHEN 'S' THEN 'sequence'
+                                   WHEN 's' THEN 'special'
+                                   WHEN 'f' THEN 'foreign table'
+                                   WHEN 'p' THEN 'table'
+                                   WHEN 'I' THEN 'index' END          as "Type",
+                               pg_catalog.pg_get_userbyid(c.relowner) as "Owner"
+                        FROM pg_catalog.pg_class c
+                                 #OUTER_JOIN_TYPE join pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', '')
+                          AND n.nspname != 'pg_catalog'
+                          AND n.nspname != 'information_schema'
+                          AND n.nspname !~ '^pg_toast'
+                          AND pg_catalog.pg_table_is_visible(c.oid)
+                        ORDER BY 1, 2);
+                        """
         );
     }
 
