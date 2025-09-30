@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public final class SingleVarcharSymbolShortCircuit implements SymbolShortCircuit {
     private final int masterVarcharIndex;
@@ -39,6 +40,25 @@ public final class SingleVarcharSymbolShortCircuit implements SymbolShortCircuit
     public SingleVarcharSymbolShortCircuit(int masterVarcharIndex, int slaveSymbolIndex) {
         this.masterVarcharIndex = masterVarcharIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
+    }
+
+    @Override
+    public CharSequence getMasterValue(Record masterRecord) {
+        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
+        if (masterVarchar == null) {
+            return null;
+        }
+        if (masterVarchar.isAscii()) {
+            return masterVarchar.asAsciiCharSequence();
+        }
+        utf16Sink.clear();
+        utf16Sink.put(masterVarchar);
+        return utf16Sink;
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override

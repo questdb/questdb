@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.std.CompactIntHashSet;
+import org.jetbrains.annotations.NotNull;
 
 public final class SingleSymbolSymbolShortCircuit implements SymbolShortCircuit {
     private final CairoConfiguration config;
@@ -43,6 +44,16 @@ public final class SingleSymbolSymbolShortCircuit implements SymbolShortCircuit 
         this.masterSymbolIndex = masterSymbolIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
         this.config = config;
+    }
+
+    @Override
+    public CharSequence getMasterValue(Record masterRecord) {
+        return masterRecord.getSymA(masterSymbolIndex);
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override
