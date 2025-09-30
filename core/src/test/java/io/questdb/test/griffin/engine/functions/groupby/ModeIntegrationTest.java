@@ -228,28 +228,31 @@ public class ModeIntegrationTest extends AbstractCairoTest {
 
     @Test
     public void testModeWithUnion() throws Exception {
-        assertQuery(
-                "source\tmode_value\n" +
-                        "orders\tBUY\n" +
-                        "trades\tSELL\n",
-                "select source, mode(side) as mode_value from (" +
-                        "select 'orders' as source, side from orders " +
-                        "union all " +
-                        "select 'trades' as source, side from trades" +
-                        ") group by source order by source",
-                "create table orders as (" +
-                        "select 'BUY' as side from long_sequence(3) " +
-                        "union all " +
-                        "select 'SELL' as side from long_sequence(1)" +
-                        "); " +
-                        "create table trades as (" +
-                        "select 'SELL' as side from long_sequence(3) " +
-                        "union all " +
-                        "select 'BUY' as side from long_sequence(1)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            execute("create table orders as (" +
+                    "select 'BUY' as side from long_sequence(3) " +
+                    "union all " +
+                    "select 'SELL' as side from long_sequence(1)" +
+                    ");");
+            execute("create table trades as (" +
+                    "select 'SELL' as side from long_sequence(3) " +
+                    "union all " +
+                    "select 'BUY' as side from long_sequence(1)" +
+                    ")");
+            assertQueryNoLeakCheck(
+                    "source\tmode_value\n" +
+                            "orders\tBUY\n" +
+                            "trades\tSELL\n",
+                    "select source, mode(side) as mode_value from (" +
+                            "select 'orders' as source, side from orders " +
+                            "union all " +
+                            "select 'trades' as source, side from trades" +
+                            ") group by source order by source",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 }
