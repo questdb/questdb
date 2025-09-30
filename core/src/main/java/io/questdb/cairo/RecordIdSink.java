@@ -22,27 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.ObjList;
 
-public interface SymbolShortCircuit {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
+public class RecordIdSink implements RecordSink {
+    public static final ArrayColumnTypes RECORD_ID_COLUMN_TYPE = new ArrayColumnTypes();
+    public static final RecordSink RECORD_ID_SINK = new RecordIdSink();
 
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
+    private RecordIdSink() {
+    }
 
-    /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
-     */
-    boolean isShortCircuit(Record masterRecord);
+    @Override
+    public void copy(Record r, RecordSinkSPI w) {
+        w.putLong(r.getRowId());
+    }
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    @Override
+    public void setFunctions(ObjList<Function> keyFunctions) {
+    }
+
+    static {
+        RECORD_ID_COLUMN_TYPE.add(ColumnType.LONG);
+    }
 }

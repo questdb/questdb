@@ -25,24 +25,42 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
-public interface SymbolShortCircuit {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
+public class FullOuterJoinRecord extends JoinRecord {
+    protected Record masterNullRecord;
+    protected Record slaveNullRecord;
+    private Record flappingMaster;
+    private Record flappingSlave;
 
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
+    public FullOuterJoinRecord(int split, Record masterNullRecord, Record slaveNullRecord) {
+        super(split);
+        this.masterNullRecord = masterNullRecord;
+        this.slaveNullRecord = slaveNullRecord;
+    }
 
-    /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
-     */
-    boolean isShortCircuit(Record masterRecord);
+    public void of(Record master, Record slave) {
+        super.of(master, slave);
+        this.flappingMaster = master;
+        this.flappingSlave = slave;
+    }
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    void hasMaster(boolean value) {
+        if (value) {
+            master = flappingMaster;
+        } else {
+            master = masterNullRecord;
+        }
+    }
+
+    boolean hasMaster() {
+        return master != masterNullRecord;
+    }
+
+    void hasSlave(boolean value) {
+        if (value) {
+            slave = flappingSlave;
+        } else {
+            slave = slaveNullRecord;
+        }
+    }
 }

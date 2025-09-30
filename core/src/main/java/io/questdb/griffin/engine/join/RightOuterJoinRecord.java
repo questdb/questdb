@@ -25,24 +25,30 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 
-public interface SymbolShortCircuit {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
+public class RightOuterJoinRecord extends JoinRecord {
+    protected final Record nullRecord;
+    private Record flappingMaster;
 
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
+    public RightOuterJoinRecord(int split, Record nullRecord) {
+        super(split);
+        this.nullRecord = nullRecord;
+    }
 
-    /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
-     */
-    boolean isShortCircuit(Record masterRecord);
+    public void of(Record master, Record slave) {
+        super.of(master, slave);
+        this.flappingMaster = master;
+    }
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    void hasMaster(boolean value) {
+        if (value) {
+            master = flappingMaster;
+        } else {
+            master = nullRecord;
+        }
+    }
+
+    boolean hasMaster() {
+        return master != nullRecord;
+    }
 }
