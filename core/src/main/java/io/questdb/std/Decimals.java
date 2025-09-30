@@ -43,12 +43,12 @@ public final class Decimals {
             5, 5, // precision 39-76 -> 32 bytes
     };
     public static long DECIMAL128_HI_NULL = Long.MIN_VALUE;
-    public static long DECIMAL128_LO_NULL = -1L;
+    public static long DECIMAL128_LO_NULL = 0L;
     public static short DECIMAL16_NULL = Short.MIN_VALUE;
     public static long DECIMAL256_HH_NULL = Long.MIN_VALUE;
-    public static long DECIMAL256_HL_NULL = -1L;
-    public static long DECIMAL256_LH_NULL = -1L;
-    public static long DECIMAL256_LL_NULL = -1L;
+    public static long DECIMAL256_HL_NULL = 0L;
+    public static long DECIMAL256_LH_NULL = 0L;
+    public static long DECIMAL256_LL_NULL = 0L;
     public static int DECIMAL32_NULL = Integer.MIN_VALUE;
     public static long DECIMAL64_NULL = Long.MIN_VALUE;
     public static byte DECIMAL8_NULL = Byte.MIN_VALUE;
