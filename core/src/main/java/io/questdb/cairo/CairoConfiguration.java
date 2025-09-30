@@ -470,6 +470,8 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
+    int getSqlCopyExportQueueCapacity();
+
     @Nullable CharSequence getSqlCopyExportRoot();
 
     @Nullable CharSequence getSqlCopyInputRoot();

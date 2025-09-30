@@ -47,27 +47,29 @@ import java.io.Closeable;
 
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
-    private final MicrosecondClock clock;
-    private final CairoEngine engine;
-    private final TableToken statusTableToken;
+    private static MicrosecondClock CLOCK;
+    private static CairoEngine ENGINE;
+    private static TableToken TABLE_TOKEN;
+    private static TableWriter WRITER;
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
+    private final int workerId;
     private SerialParquetExporter serialExporter;
 
     public CopyExportRequestJob(final CairoEngine engine, int workerId) throws SqlException {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
         try {
-            assert workerId >= 0;
             SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
             serialExporter = new SerialParquetExporter(sqlExecutionContext);
             CairoConfiguration configuration = engine.getConfiguration();
-            this.clock = configuration.getMicrosecondClock();
-            final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-            int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+            this.workerId = workerId;
 
             if (workerId == 0) {
+                CLOCK = configuration.getMicrosecondClock();
+                final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
+                int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
-                    this.statusTableToken = compiler.query()
+                    TABLE_TOKEN = compiler.query()
                             .$("CREATE TABLE IF NOT EXISTS \"")
                             .$(statusTableName)
                             .$("\" (" +
@@ -81,18 +83,14 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                                     "message VARCHAR, " + // 7
                                     "errors LONG" + // 8
                                     ") timestamp(ts) PARTITION BY DAY\n" +
-                                    "TTL " + logRetentionDays + " DAYS WAL;"
+                                    "TTL " + logRetentionDays + " DAYS Bypass WAL;"
                             )
                             .createTable(sqlExecutionContext);
-                }
-            } else {
-                this.statusTableToken = engine.getTableTokenIfExists(statusTableName);
-                if (this.statusTableToken == null) {
-                    throw SqlException.$(0, "could not find export log table ").put(statusTableName);
+                    ENGINE = engine;
+                    engine.getCopyExportContext().setReporter(this::updateStatus);
                 }
             }
-            this.engine = engine;
-            engine.getCopyExportContext().setReporter(this::updateStatus);
+
         } catch (Throwable t) {
             close();
             throw t;
@@ -102,6 +100,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     @Override
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
+        if (this.workerId == 0) {
+            WRITER = Misc.free(WRITER);
+        }
     }
 
     public void updateStatus(
@@ -113,39 +114,55 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             @Nullable final CharSequence msg,
             long errors
     ) {
-        try (TableWriter writer = engine.getWriter(statusTableToken, "QuestDB system")) {
-            TableWriter.Row row = writer.newRow(clock.getTicks());
-            utf8StringSink.clear();
-            Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
-            row.putVarchar(1, utf8StringSink);
-            row.putSym(2, task.getTableName());
-            row.putSym(3, exportDir);
-            row.putInt(4, numOfFiles);
-            row.putSym(5, phase.getName());
-            row.putSym(6, status.getName());
-            utf8StringSink.clear();
-            utf8StringSink.put(msg);
-            row.putVarchar(7, utf8StringSink);
-            row.putLong(8, errors);
-            row.append();
-            writer.commit();
-        } catch (Throwable e) {
-            LOG.error()
-                    .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
-                    .$(", statusTableName=").$(statusTableToken)
-                    .$(", tableName=").$(task.getTableName())
-                    .$(", exportDir=").$(exportDir)
-                    .$(", numOfFiles=").$(numOfFiles)
-                    .$(", phase=").$(phase.getName())
-                    .$(", status=").$(status.getName())
-                    .$(", msg=").$(msg)
-                    .$(", errors=").$(errors)
-                    .$(", error=`").$(e).$('`')
-                    .I$();
-        }
+        // serial insert to copy_export_log table to avoid table busy
+        synchronized (CopyExportRequestJob.class) {
+            if (WRITER == null) {
+                try {
+                    WRITER = ENGINE.getWriter(TABLE_TOKEN, "QuestDB system");
+                } catch (Throwable e) {
+                    LOG.error()
+                            .$("could not re-open writer [table=").$(TABLE_TOKEN)
+                            .$(", error=`").$(e).$('`')
+                            .I$();
+                }
+            }
+            if (WRITER != null) {
+                try {
+                    TableWriter.Row row = WRITER.newRow(CLOCK.getTicks());
+                    utf8StringSink.clear();
+                    Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
+                    row.putVarchar(1, utf8StringSink);
+                    row.putSym(2, task.getTableName());
+                    row.putSym(3, exportDir);
+                    row.putInt(4, numOfFiles);
+                    row.putSym(5, phase.getName());
+                    row.putSym(6, status.getName());
+                    utf8StringSink.clear();
+                    utf8StringSink.put(msg);
+                    row.putVarchar(7, utf8StringSink);
+                    row.putLong(8, errors);
+                    row.append();
+                    WRITER.commit();
+                } catch (Throwable th) {
+                    WRITER = Misc.free(WRITER);
+                    LOG.error()
+                            .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
+                            .$(", statusTableName=").$(TABLE_TOKEN)
+                            .$(", tableName=").$(task.getTableName())
+                            .$(", exportDir=").$(exportDir)
+                            .$(", numOfFiles=").$(numOfFiles)
+                            .$(", phase=").$(phase.getName())
+                            .$(", status=").$(status.getName())
+                            .$(", msg=").$(msg)
+                            .$(", errors=").$(errors)
+                            .$(", error=`").$(th).$('`')
+                            .I$();
+                }
+            }
 
-        if (task.getResult() != null) {
-            task.getResult().report(phase, status, msg);
+            if (task.getResult() != null) {
+                task.getResult().report(phase, status, msg);
+            }
         }
     }
 

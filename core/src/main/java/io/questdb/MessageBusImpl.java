@@ -204,7 +204,7 @@ public class MessageBusImpl implements MessageBus {
             this.copyImportRequestSubSeq = new SCSequence();
             copyImportRequestPubSeq.then(copyImportRequestSubSeq).then(copyImportRequestPubSeq);
 
-            this.copyExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, 1);
+            this.copyExportRequestQueue = new RingQueue<>(CopyExportRequestTask::new, configuration.getSqlCopyExportQueueCapacity());
             this.copyExportRequestPubSeq = new MPSequence(copyExportRequestQueue.getCycle());
             this.copyExportRequestSubSeq = new MCSequence(copyExportRequestQueue.getCycle());
             copyExportRequestPubSeq.then(copyExportRequestSubSeq).then(copyExportRequestPubSeq);

@@ -166,6 +166,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceShardCount;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
+    private final int cairoSqlCopyExportQueueCapacity;
     private final String cairoSqlCopyExportRoot;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
@@ -1486,6 +1487,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                         ", description=max import chunk size can't be smaller than 16]");
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
+            this.cairoSqlCopyExportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_QUEUE_CAPACITY, 32));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
             this.o3MinLagUs = getMicros(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
@@ -3533,6 +3535,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
+        }
+
+        @Override
+        public int getSqlCopyExportQueueCapacity() {
+            return cairoSqlCopyExportQueueCapacity;
         }
 
         @Override

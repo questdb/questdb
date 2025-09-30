@@ -767,6 +767,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return getDelegate().getSqlCopyExportQueueCapacity();
+    }
+
+    @Override
     public CharSequence getSqlCopyExportRoot() {
         return getDelegate().getSqlCopyExportRoot();
     }

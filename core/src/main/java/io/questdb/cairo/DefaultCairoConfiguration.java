@@ -792,6 +792,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public CharSequence getSqlCopyExportRoot() {
         return null;
     }

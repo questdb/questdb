@@ -1252,6 +1252,39 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithParallel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string)");
+            execute("insert into test_table values (1, 'test')");
+            execute("create table test_table1 (x int, y string)");
+            execute("insert into test_table1 values (1, 'test')");
+            execute("create table test_table2 (x int, y string)");
+            execute("insert into test_table2 values (1, 'test')");
+            execute("create table test_table3 (x int, y string)");
+            execute("insert into test_table3 values (1, 'test')");
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table1 to 'output9' with format parquet", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table2 to 'output10' with format parquet", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table3 to 'output11' with format parquet", sqlExecutionContext);
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                                assertSql("export_dir\tnum_exported_files\tstatus\n" +
+                                                exportRoot + File.separator + "output10" + File.separator + "\t1\tfinished\n" +
+                                                exportRoot + File.separator + "output11" + File.separator + "\t1\tfinished\n" +
+                                                exportRoot + File.separator + "output8" + File.separator + "\t1\tfinished\n" +
+                                                exportRoot + File.separator + "output9" + File.separator + "\t1\tfinished\n",
+                                        "SELECT export_dir, num_exported_files, status FROM \"sys.copy_export_log\" where export_dir != null order by export_dir, ts");
+                            }
+                    );
+            testCopyExport(stmt, test, true, 4);
+        });
+    }
+
+    @Test
     public void testCopyWithParquetVersion() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y string)");
@@ -1426,6 +1459,37 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithSameDirsParallel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string, z double)");
+            execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
+            execute("create table test_table1 (x int, y string, z double)");
+            execute("insert into test_table1 values (1, 'hello', 1.5), (2, 'world', 2.5)");
+            execute("create table test_table2 (x int, y string, z double)");
+            execute("insert into test_table2 values (1, 'hello', 1.5), (2, 'world', 2.5), (4, 'hello1', 3.5), (5, 'world1', 4.5)");
+            execute("create table test_table3 (x int, y string, z double)");
+            execute("insert into test_table3 values (1, 'hello', 1.5), (2, 'world', 2.5)");
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'output13' with format parquet ", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table1 to 'output14' with format parquet ", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table2 to 'output13" + File.separator + "dir1" + File.separator + "dir2" + "' with format parquet ", sqlExecutionContext);
+                runAndFetchCopyExportID("copy test_table3 to 'output15" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
+            };
+            CopyExportRunnable test4 = () ->
+                    assertEventually(() -> {
+                        assertSql("path\tsize\n" +
+                                        "output13" + File.separator + "default.parquet\t818\n" +
+                                        "output13" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\t866\n" +
+                                        "output14" + File.separator + "default.parquet\t819\n" +
+                                        "output15" + File.separator + "dir1" + File.separator + "dir2" + File.separator + "default.parquet\t819\n",
+                                "select path, size from export_files() order by path");
+                    });
+            testCopyExport(stmt, test4, true, 4);
+        });
+    }
+
+    @Test
     public void testCopyWithSizeLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (x INT, y LONG)");
@@ -1518,7 +1582,7 @@ public class CopyExportTest extends AbstractCairoTest {
         execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
         try {
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine, i);
                 jobs.add(copyRequestJob);
                 Thread processingThread = createJobThread(copyRequestJob, processed, i);

@@ -55,7 +55,6 @@ import java.io.File;
 import java.io.IOException;
 
 import static io.questdb.cairo.CairoException.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.createDirsOrFail;
 
 public class SerialParquetExporter implements Closeable {
     private static final Log LOG = LogFactory.getLog(SerialParquetExporter.class);
@@ -238,8 +237,8 @@ public class SerialParquetExporter implements Closeable {
                         // log start
                         LOG.info().$("converting partition to parquet temp [table=").$(tableToken)
                                 .$(", partition=").$(nameSink).$();
-
                         createDirsOrFail(ff, tempPath, configuration.getMkDirMode());
+
                         PartitionEncoder.encodeWithOptions(
                                 partitionDescriptor,
                                 tempPath,
@@ -301,6 +300,14 @@ public class SerialParquetExporter implements Closeable {
             }
         }
         return phase;
+    }
+
+    private static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        synchronized (SerialParquetExporter.class) {
+            if (ff.mkdirs(path, mkDirMode) != 0) {
+                throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
+            }
+        }
     }
 
     private CharSequence findHighestVersionedPartitionDir(FilesFacade ff, Path basePath, CharSequence basePartitionName) {
