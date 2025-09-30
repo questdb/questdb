@@ -1490,6 +1490,94 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyWithSameOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string)");
+            execute("insert into test_table values (1, 'test')");
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                try {
+                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
+                    Assert.fail("Expected failure due to ongoing export to same directory");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                }
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_dir\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8" + File.separator + "\t1\tfinished\n",
+                                "SELECT export_dir, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\ty\n1\ttest\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + File.separator + "default.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithSameSql() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string)");
+            execute("insert into test_table values (1, 'test')");
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy (select x from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                try {
+                    runAndFetchCopyExportID("copy (select y from test_table) to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                    Assert.fail("Expected failure due to ongoing export to same directory");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "duplicate export path: output8");
+                }
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_dir\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8" + File.separator + "\t1\tfinished\n",
+                                "SELECT export_dir, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\n" +
+                                        "1\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + File.separator + "default.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyWithSameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x int, y string)");
+            execute("insert into test_table values (1, 'test')");
+
+            CopyExportRunnable stmt = () -> {
+                runAndFetchCopyExportID("copy test_table to 'output8' with format parquet statistics_enabled true", sqlExecutionContext);
+                try {
+                    runAndFetchCopyExportID("copy test_table to 'output9' with format parquet statistics_enabled true", sqlExecutionContext);
+                    Assert.fail("Expected failure due to ongoing export to same directory");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "duplicate sql statement: test_table");
+                }
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_dir\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output8" + File.separator + "\t1\tfinished\n",
+                                "SELECT export_dir, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        assertSql("x\ty\n1\ttest\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output8" + File.separator + "default.parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyWithSizeLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (x INT, y LONG)");
