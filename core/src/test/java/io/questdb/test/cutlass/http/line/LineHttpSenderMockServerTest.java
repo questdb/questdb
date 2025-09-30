@@ -47,6 +47,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -213,6 +214,48 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
                 .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
+    }
+
+    @Test
+    public void testBadSettings() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
+    }
+
+    @Test
+    public void testBadSettingsManyServers() throws Exception {
+        Assume.assumeTrue(Os.type != Os.DARWIN); // MacOs does not treat 127.0.0.2, 127.0.0.3, etc ... as 127.0.0.1
+
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> {
+                LineSenderBuilder builder = builder(Transport.HTTP);
+                for (int i = 0; i < 65; i++) {
+                    String ip = "127.0.0." + (i + 1); // fool duplicated address detection
+                    builder.address(ip + ':' + port);
+                }
+                builder.maxBackoffMillis(0);
+                return builder;
+            });
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
     }
 
     @Test
