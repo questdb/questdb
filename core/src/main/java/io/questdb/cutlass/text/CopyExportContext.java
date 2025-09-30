@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -131,9 +132,14 @@ public class CopyExportContext {
     public class ExportTaskEntry implements Mutable {
         AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
         SecurityContext context;
+        int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
         CharSequence path;
+        CopyExportRequestTask.Phase phase;
+        int populatedRowCount = 0;
         CharSequence sql;
+        long startTime = -1;
+        int workerId = -1;
 
         @Override
         public void clear() {
@@ -142,6 +148,13 @@ public class CopyExportContext {
                 circuitBreaker.clear();
                 releaseEntry(this);
                 this.id = INACTIVE_COPY_ID;
+                this.sql = null;
+                this.path = null;
+                this.phase = null;
+                this.startTime = -1;
+                this.workerId = -1;
+                this.populatedRowCount = 0;
+                this.finishedPartitionCount = 0;
             }
         }
 
@@ -163,7 +176,25 @@ public class CopyExportContext {
             this.sql = sql;
             this.path = path;
             circuitBreaker.reset();
+            this.phase = CopyExportRequestTask.Phase.WAITING;
             return this;
+        }
+
+        public void setFinishedPartitionCount(int finishedPartitionCount) {
+            this.finishedPartitionCount = finishedPartitionCount;
+        }
+
+        public void setPhase(CopyExportRequestTask.Phase phase) {
+            this.phase = phase;
+        }
+
+        public void setPopulatedRowCount(int populatedRowCount) {
+            this.populatedRowCount = populatedRowCount;
+        }
+
+        public void setStartTime(long startTime, int workerId) {
+            this.startTime = startTime;
+            this.workerId = workerId;
         }
     }
 }

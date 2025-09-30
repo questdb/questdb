@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -169,6 +170,8 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         CopyExportRequestTask task = queue.get(cursor);
+        CopyExportContext.ExportTaskEntry entry = task.getEntry();
+        entry.setStartTime(CLOCK.getTicks(), workerId);
         SqlExecutionCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
         boolean triggered = false;
@@ -188,6 +191,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
             if (task.getSuspendEvent() != null) {
                 phase = CopyExportRequestTask.Phase.SENDING_DATA;
+                entry.setPhase(phase);
                 utf8StringSink.clear();
                 utf8StringSink.put("sending signal to waiting thread [fd=").put(task.getSuspendEvent().getFd()).put(']');
                 triggered = true;
@@ -197,6 +201,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 updateStatus(phase, CopyExportRequestTask.Status.FINISHED, task,
                         null, Numbers.INT_NULL, "signal sent", 0);
             }
+            entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
             updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, serialExporter.getExportPath(), serialExporter.getNumOfFiles(), null, 0);
         } catch (CopyExportException e) {
             updateStatus(

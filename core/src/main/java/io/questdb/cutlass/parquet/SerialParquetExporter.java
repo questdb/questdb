@@ -32,6 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -120,11 +121,13 @@ public class SerialParquetExporter implements Closeable {
         TableToken tableToken = null;
         int tempBaseDirLen = 0;
         CopyExportResult exportResult = task.getResult();
+        CopyExportContext.ExportTaskEntry entry = task.getEntry();
         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
 
         try {
             if (task.getCreateOp() != null) {
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
+                entry.setPhase(phase);
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
                 LOG.info().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
                 task.getCreateOp().execute(sqlExecutionContext, null);
@@ -133,6 +136,7 @@ public class SerialParquetExporter implements Closeable {
             }
 
             phase = CopyExportRequestTask.Phase.CONVERTING_PARTITIONS;
+            entry.setPhase(phase);
             statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
             final String tableName = task.getTableName();
             final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
@@ -262,6 +266,7 @@ public class SerialParquetExporter implements Closeable {
             }
 
             if (exportResult == null) {
+                entry.setPhase(CopyExportRequestTask.Phase.MOVE_FILES);
                 moveExportFiles(tempBaseDirLen, fileName);
             }
             LOG.info().$("finished parquet conversion to temp [table=").$(tableToken).$(']').$();
@@ -281,6 +286,7 @@ public class SerialParquetExporter implements Closeable {
         } finally {
             if (tableToken != null && task.getCreateOp() != null) {
                 phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
+                entry.setPhase(phase);
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
                 try {
                     fromParquet.trimTo(0);

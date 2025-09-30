@@ -97,6 +97,10 @@ public class CopyExportRequestTask implements Mutable {
         return dataPageSize;
     }
 
+    public CopyExportContext.ExportTaskEntry getEntry() {
+        return entry;
+    }
+
     public String getFileName() {
         return fileName;
     }
@@ -181,6 +185,7 @@ public class CopyExportRequestTask implements Mutable {
         WAITING("wait_to_run"),
         POPULATING_TEMP_TABLE("populating_data_to_temp_table"),
         CONVERTING_PARTITIONS("converting_partitions"),
+        MOVE_FILES("move_files"),
         DROPPING_TEMP_TABLE("dropping_temp_table"),
         SENDING_DATA("sending_data"),
         SUCCESS("success");
