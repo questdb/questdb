@@ -3621,7 +3621,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (firstDot != -1) {
                 utf16Sink.clear();
                 utf16Sink.put(tmpDirectUtf8StringZ, 0, firstDot);
-                // all our column files have .d (or such) extensions
+                // all our column files have .d extensions
                 int columnIndex = metadata.getColumnIndexQuiet(utf16Sink);
                 if (columnIndex != -1) {
                     // not a random file, we have column by this name
@@ -3632,8 +3632,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             long nameTxn = Numbers.parseLong(tmpDirectUtf8StringZ, lastDot + 1, len);
                             if (nameTxn > 0) {
-                                // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                                // check that this is xxx.d.234
+                                if (tmpDirectUtf8StringZ.byteAt(lastDot - 1) == 'd') {
+                                    // column tops are not supported (this is to make sure "copy" command can attach partitions
+                                    columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                                }
                             }
                         } catch (NumericException ignore) {
                         }
