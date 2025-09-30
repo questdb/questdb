@@ -39,14 +39,14 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Nested Loop with filter join.
- * Iterates on master factory in outer loop and on slave factory in inner loop
- * and returns all row pairs matching filter plus all unmatched rows from master factory.
+ * Iterates on slave factory in outer loop and on master factory in inner loop
+ * and returns all row pairs matching filter plus all unmatched rows from slave factory.
  */
-public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final NestedLoopLeftRecordCursor cursor;
+public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final NestedLoopRightRecordCursor cursor;
     private final Function filter;
 
-    public NestedLoopLeftJoinRecordCursorFactory(
+    public NestedLoopRightJoinRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
@@ -56,12 +56,12 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.filter = filter;
-        this.cursor = new NestedLoopLeftRecordCursor(columnSplit, filter, nullRecord);
+        this.cursor = new NestedLoopRightRecordCursor(columnSplit, filter, nullRecord);
     }
 
     @Override
     public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
+        return slaveFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -98,7 +98,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Nested Loop Left Join");
+        sink.type("Nested Loop Right Join");
         sink.attr("filter").val(filter);
         sink.child(masterFactory);
         sink.child(slaveFactory);
@@ -113,17 +113,17 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(cursor);
     }
 
-    private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {
+    private static class NestedLoopRightRecordCursor extends AbstractJoinCursor {
         private final Function filter;
-        private final OuterJoinRecord record;
+        private final RightOuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean isMasterHasNextPending;
         private boolean isMatch;
-        private boolean masterHasNext;
+        private boolean isSlaveHasNextPending;
+        private boolean slaveHasNext;
 
-        public NestedLoopLeftRecordCursor(int columnSplit, Function filter, Record nullRecord) {
+        public NestedLoopRightRecordCursor(int columnSplit, Function filter, Record nullRecord) {
             super(columnSplit);
-            this.record = new OuterJoinRecord(columnSplit, nullRecord);
+            this.record = new RightOuterJoinRecord(columnSplit, nullRecord);
             this.filter = filter;
             this.isMatch = false;
         }
@@ -137,16 +137,16 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
         public boolean hasNext() {
             while (true) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                if (isMasterHasNextPending) {
-                    masterHasNext = masterCursor.hasNext();
-                    isMasterHasNextPending = false;
+                if (isSlaveHasNextPending) {
+                    slaveHasNext = slaveCursor.hasNext();
+                    isSlaveHasNextPending = false;
                 }
 
-                if (!masterHasNext) {
+                if (!slaveHasNext) {
                     return false;
                 }
 
-                while (slaveCursor.hasNext()) {
+                while (masterCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (filter.getBool(record)) {
                         isMatch = true;
@@ -156,14 +156,14 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
                 if (!isMatch) {
                     isMatch = true;
-                    record.hasSlave(false);
+                    record.hasMaster(false);
                     return true;
                 }
 
                 isMatch = false;
-                slaveCursor.toTop();
-                record.hasSlave(true);
-                isMasterHasNextPending = true;
+                masterCursor.toTop();
+                record.hasMaster(true);
+                isSlaveHasNextPending = true;
             }
         }
 
@@ -183,8 +183,8 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             slaveCursor.toTop();
             filter.toTop();
             isMatch = false;
-            isMasterHasNextPending = true;
-            record.hasSlave(true);
+            isSlaveHasNextPending = true;
+            record.hasMaster(true);
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -192,7 +192,7 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             this.slaveCursor = slaveCursor;
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
-            isMasterHasNextPending = true;
+            isSlaveHasNextPending = true;
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }
