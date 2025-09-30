@@ -52,6 +52,7 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
@@ -1715,6 +1716,17 @@ public class SqlParser {
 
         if (tok == null || tok.charAt(0) != ')') {
             throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+        }
+
+        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("invalid DECIMAL type, the precision must be between 1 and ")
+                    .put(Decimals.MAX_PRECISION);
+        }
+        if (scale < 0 || scale > precision) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("invalid DECIMAL type, the scale must be between 0 and ")
+                    .put(precision);
         }
 
         return ColumnType.getDecimalType(precision, scale);

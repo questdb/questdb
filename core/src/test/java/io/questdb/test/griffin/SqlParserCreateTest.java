@@ -60,4 +60,14 @@ public class SqlParserCreateTest extends AbstractSqlParserTest {
         assertSyntaxError("create table x (v decimal(5,))", 28, "invalid DECIMAL type, missing scale");
         assertSyntaxError("create table x (v decimal(5,", 27, "invalid DECIMAL type, missing scale");
     }
+
+    @Test
+    public void testCreatePrecisionTooBig() throws Exception {
+        assertSyntaxError("create table x (v decimal(80, 6))", 25, "invalid DECIMAL type, the precision must be between 1 and");
+    }
+
+    @Test
+    public void testCreateScalingGreaterPrecision() throws Exception {
+        assertSyntaxError("create table x (v decimal(5, 6))", 25, "invalid DECIMAL type, the scale must be between 0 and 5");
+    }
 }
