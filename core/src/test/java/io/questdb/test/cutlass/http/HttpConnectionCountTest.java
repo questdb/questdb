@@ -187,9 +187,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                                     public HttpRequestHandler newInstance() {
                                         return new LineHttpProcessorImpl(
                                                 cairoEngine,
-                                                configuration.getHttpServerConfiguration().getRecvBufferSize(),
-                                                configuration.getHttpServerConfiguration().getSendBufferSize(),
-                                                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration()
+                                                configuration.getHttpServerConfiguration()
                                         ) {
                                             @Override
                                             public void onRequestComplete(
