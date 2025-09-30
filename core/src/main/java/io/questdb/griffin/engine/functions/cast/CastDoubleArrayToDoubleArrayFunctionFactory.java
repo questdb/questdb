@@ -60,10 +60,6 @@ public final class CastDoubleArrayToDoubleArrayFunctionFactory implements Functi
         final int fromType = fromFunc.getType();
         final int toType = args.getQuick(1).getType();
 
-        assert ColumnType.isArray(fromType);
-        assert ColumnType.isArray(toType);
-        assert ColumnType.decodeArrayElementType(fromType) == ColumnType.decodeArrayElementType(toType);
-
         final int dimsTo = ColumnType.decodeWeakArrayDimensionality(toType);
         final int dimsFrom = ColumnType.decodeWeakArrayDimensionality(fromType);
         if (dimsTo == -1) {
