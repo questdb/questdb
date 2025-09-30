@@ -390,11 +390,6 @@ public class WalWriter implements TableWriterAPI {
     }
 
     @Override
-    public ColumnVersionReader columnVersionReader() {
-        return columnVersionReader;
-    }
-
-    @Override
     public TableRecordMetadata getMetadata() {
         return metadata;
     }

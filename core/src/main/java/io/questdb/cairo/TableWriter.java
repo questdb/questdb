@@ -1247,6 +1247,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeIndexers();
     }
 
+    public ColumnVersionReader columnVersionReader() {
+        return columnVersionWriter;
+    }
+
     @Override
     public void commit() {
         commit(0);
@@ -2267,11 +2271,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
-    }
-
-    @Override
-    public ColumnVersionReader columnVersionReader() {
-        return columnVersionWriter;
     }
 
     public long getDataAppendPageSize() {

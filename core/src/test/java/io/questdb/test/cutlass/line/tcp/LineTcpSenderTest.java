@@ -1056,7 +1056,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 // make sure to assert before closing the Sender
                 // since the Sender will always flush on close
-                assertTableSizeEventually(engine, "mytable", N*2);
+                assertTableSizeEventually(engine, "mytable", N * 2);
             }
         });
     }
