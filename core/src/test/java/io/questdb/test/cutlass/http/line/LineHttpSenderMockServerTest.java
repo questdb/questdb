@@ -47,6 +47,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -158,41 +159,25 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
-    public void testRetryingWhenGettingProtocolVersion() throws Exception {
-        // inject a bunch of failures on the server side recv
-        // this closes a connection while a client is trying to read protocol version (/settings)
-
-        // let's test the client retries reading the protocol version by default
-        REMAINING_SERVER_RECV_FAILURES.set(5);
+    public void testBufferIsNotResetAfterRetriableError() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithStatus(204);
+
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .stringColumn("str", "foo")
+                    .doubleColumn("x", 1.0)
                     .atNow();
-            sender.flush();
-        }, NO_PROTOCOL_VERSION_SET_FACTORY); // important - we dot set protocol version explicitly so this forces the client to fetch it from the server
-
-
-        // now let's test the same with retrying disabled - fetching the protocol version must fail
-        REMAINING_SERVER_RECV_FAILURES.set(5);
-        try {
-            mockHttpProcessor = new MockHttpProcessor()
-                    .withExpectedContent("test,sym=bol str=\"foo\"\n")
-                    .replyWithStatus(204);
-            testWithMock(mockHttpProcessor, sender -> {
-                sender.table("test")
-                        .symbol("sym", "bol")
-                        .stringColumn("str", "foo")
-                        .atNow();
+            try {
                 sender.flush();
                 Assert.fail("Exception expected");
-            }, NO_PROTOCOL_VERSION_SET_FACTORY.andThen(b -> b.retryTimeoutMillis(0))); // disable retries
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
-        }
+            } catch (LineSenderException e) {
+                sender.flush();
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.retryTimeoutMillis(0)));
     }
 
     @Test
@@ -229,6 +214,48 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
                 .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
+    }
+
+    @Test
+    public void testBadSettings() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";"));
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
+    }
+
+    @Test
+    public void testBadSettingsManyServers() throws Exception {
+        Assume.assumeTrue(Os.type != Os.DARWIN); // MacOs does not treat 127.0.0.2, 127.0.0.3, etc ... as 127.0.0.1
+
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        String error = "bad thing happened";
+        MockErrorSettingsProcessor settingsProcessor = new MockErrorSettingsProcessor(error);
+        try {
+            testWithMock(mockHttpProcessor, settingsProcessor, sender -> sender.table("test")
+                    .symbol("sym", "bol")
+                    .doubleColumn("x", 1.0)
+                    .atNow(), port -> {
+                LineSenderBuilder builder = builder(Transport.HTTP);
+                for (int i = 0; i < 65; i++) {
+                    String ip = "127.0.0." + (i + 1); // fool duplicated address detection
+                    builder.address(ip + ':' + port);
+                }
+                builder.maxBackoffMillis(0);
+                return builder;
+            });
+            Assert.fail("Exception expected");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), error);
+        }
     }
 
     @Test
@@ -377,6 +404,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 Assert.fail("Exception expected");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not flush buffer: http://127.0.0.1:1/write?precision=n Connection Failed");
+                sender.reset();
             }
         }
     }
@@ -451,6 +479,44 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testRetryingWhenGettingProtocolVersion() throws Exception {
+        // inject a bunch of failures on the server side recv
+        // this closes a connection while a client is trying to read protocol version (/settings)
+
+        // let's test the client retries reading the protocol version by default
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+            sender.table("test")
+                    .symbol("sym", "bol")
+                    .stringColumn("str", "foo")
+                    .atNow();
+            sender.flush();
+        }, NO_PROTOCOL_VERSION_SET_FACTORY); // important - we dot set protocol version explicitly so this forces the client to fetch it from the server
+
+
+        // now let's test the same with retrying disabled - fetching the protocol version must fail
+        REMAINING_SERVER_RECV_FAILURES.set(5);
+        try {
+            mockHttpProcessor = new MockHttpProcessor()
+                    .withExpectedContent("test,sym=bol str=\"foo\"\n")
+                    .replyWithStatus(204);
+            testWithMock(mockHttpProcessor, sender -> {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .stringColumn("str", "foo")
+                        .atNow();
+                sender.flush();
+                Assert.fail("Exception expected");
+            }, NO_PROTOCOL_VERSION_SET_FACTORY.andThen(b -> b.retryTimeoutMillis(0))); // disable retries
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "Failed to detect server line protocol version");
+        }
+    }
+
+    @Test
     public void testTextPlainError() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
@@ -478,6 +544,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 e.getMessage(),
                                 "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
                         );
+                        sender.reset();
                     } finally {
                         delayLatch.countDown();
                     }
@@ -490,6 +557,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         CountDownLatch delayLatch = new CountDownLatch(1);
         MockHttpProcessor mock = new MockHttpProcessor()
                 .delayedReplyWithStatus(204, delayLatch);
+
 
         testWithMock(mock, sender -> {
                     sender.table("test")
@@ -504,6 +572,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 e.getMessage(),
                                 "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
                         );
+                        sender.reset();
                     } finally {
                         delayLatch.countDown();
                     }

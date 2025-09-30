@@ -58,8 +58,12 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int arrType = args.getQuick(1).getType();
-        return new Func(args.getQuick(0), arrType);
+        final Function typeFunc = args.getQuick(1);
+        final int type = typeFunc.getType();
+        if (ColumnType.decodeWeakArrayDimensionality(type) == -1) {
+            throw SqlException.$(argPositions.getQuick(1), "cannot cast double to array with unknown number of dimensions");
+        }
+        return new Func(args.getQuick(0), type);
     }
 
     public static class Func extends ArrayFunction implements UnaryFunction {
@@ -69,7 +73,7 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
         public Func(Function arg, int arrType) {
             super.type = arrType;
             this.arg = arg;
-            this.array = new SingleElementDoubleArray(ColumnType.decodeArrayDimensionality(arrType));
+            this.array = new SingleElementDoubleArray(ColumnType.decodeWeakArrayDimensionality(arrType));
         }
 
         @Override

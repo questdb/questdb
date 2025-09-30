@@ -25,10 +25,22 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
 public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
     public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+
+    @Override
+    public CharSequence getMasterValue(Record masterRecord) {
+        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
+    }
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {

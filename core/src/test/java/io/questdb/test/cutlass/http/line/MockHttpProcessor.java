@@ -299,3 +299,30 @@ class MockSettingsProcessorOldServer implements HttpRequestProcessor, HttpReques
         r.sendChunk(true);
     }
 }
+
+class MockErrorSettingsProcessor implements HttpRequestProcessor, HttpRequestHandler {
+    private final String error;
+
+    public MockErrorSettingsProcessor(String error) {
+        this.error = error;
+    }
+
+    @Override
+    public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
+        return this;
+    }
+
+    @Override
+    public byte getRequiredAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponse r = context.getChunkedResponse();
+        r.status(HttpURLConnection.HTTP_UNAUTHORIZED, "text/plain");
+        r.sendHeader();
+        r.put("bad thing happened");
+        r.sendChunk(true);
+    }
+}
