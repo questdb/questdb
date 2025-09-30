@@ -22,41 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
+import io.questdb.cairo.sql.Record;
 
-public class ArrayColumnTypes implements ColumnTypes, Mutable {
-    public static final ArrayColumnTypes EMPTY = new ArrayColumnTypes();
-    private final IntList types = new IntList();
+public class FullOuterJoinRecord extends JoinRecord {
+    protected Record masterNullRecord;
+    protected Record slaveNullRecord;
+    private Record flappingMaster;
+    private Record flappingSlave;
 
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
+    public FullOuterJoinRecord(int split, Record masterNullRecord, Record slaveNullRecord) {
+        super(split);
+        this.masterNullRecord = masterNullRecord;
+        this.slaveNullRecord = slaveNullRecord;
     }
 
-    public ArrayColumnTypes add(int index, int type) {
-        types.extendAndSet(index, type);
-        return this;
+    public void of(Record master, Record slave) {
+        super.of(master, slave);
+        this.flappingMaster = master;
+        this.flappingSlave = slave;
     }
 
-    public ArrayColumnTypes addAll(ArrayColumnTypes that) {
-        types.addAll(that.types);
-        return this;
+    void hasMaster(boolean value) {
+        if (value) {
+            master = flappingMaster;
+        } else {
+            master = masterNullRecord;
+        }
     }
 
-    public void clear() {
-        types.clear();
+    boolean hasMaster() {
+        return master != masterNullRecord;
     }
 
-    @Override
-    public int getColumnCount() {
-        return types.size();
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
+    void hasSlave(boolean value) {
+        if (value) {
+            slave = flappingSlave;
+        } else {
+            slave = slaveNullRecord;
+        }
     }
 }
