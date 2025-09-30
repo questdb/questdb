@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -54,6 +53,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int masterSymbolColumnIndex;
     private final int slaveSymbolColumnIndex;
+    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinIndexedRecordCursorFactory(
@@ -64,10 +64,12 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int columnSplit,
             int masterSymbolColumnIndex,
             int slaveSymbolColumnIndex,
+            SymbolShortCircuit symbolShortCircuit,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.symbolShortCircuit = symbolShortCircuit;
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterSymbolColumnIndex = masterSymbolColumnIndex;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
@@ -135,8 +137,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
 
     private class AsOfJoinIndexedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
-        private StaticSymbolTable slaveSymbolTable;
-
         public AsOfJoinIndexedRecordCursor(
                 int columnSplit,
                 Record nullRecord,
@@ -155,14 +155,14 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            slaveSymbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
+            symbolShortCircuit.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
             // determine the integer key of the symbol to find in the slave table
-            CharSequence masterSymbolValue = masterRecord.getSymA(masterSymbolColumnIndex);
-            int symbolKey = TableUtils.toIndexKey(slaveSymbolTable.keyOf(masterSymbolValue));
+            CharSequence masterSymbolValue = symbolShortCircuit.getMasterValue(masterRecord);
+            int symbolKey = TableUtils.toIndexKey(symbolShortCircuit.getSlaveSymbolTable().keyOf(masterSymbolValue));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;
