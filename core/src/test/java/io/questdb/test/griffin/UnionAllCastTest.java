@@ -488,7 +488,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimalDecimal() throws Exception {
+    public void testDecimalDecimalMixedPrecisions() throws Exception {
         testUnionAll(
                 "a\n" +
                         "1.000\n" +
@@ -503,6 +503,26 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "8.000\n",
                 "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
                 "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
+                false
+        );
+    }
+
+    @Test
+    public void testDecimalDecimalMixedScales() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "1.00000\n" +
+                        "2.00000\n" +
+                        "3.00000\n" +
+                        "4.00000\n" +
+                        "5.00000\n" +
+                        "0.00000\n" +
+                        "3.00000\n" +
+                        "5.00000\n" +
+                        "9.00000\n" +
+                        "8.00000\n",
+                "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
+                "create table y as (select 0::decimal(8, 1) a union select 3::decimal(8, 2) union select 5::decimal(8, 3) union select 9::decimal(8, 4) union select 8::decimal(8, 5))",
                 false
         );
     }
