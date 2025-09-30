@@ -45,6 +45,7 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -247,7 +248,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             } else {
                 cli = HttpClientFactory.newPlainTextInstance(clientConfiguration);
             }
-            try {
+            try (JsonSettingsParser parser = new JsonSettingsParser()) {
                 if (hosts.size() < 1 || ports.size() < 1 || hosts.size() != ports.size()) {
                     throw new LineSenderException(
                             "addresses have been improperly configured [hostCount=").put(hosts.size())
@@ -282,15 +283,14 @@ public abstract class AbstractLineHttpSender implements Sender {
                         response.await();
                         DirectUtf8Sequence statusCode = response.getStatusCode();
                         if (isSuccessResponse(statusCode)) {
-                            try (JsonSettingsParser parser = new JsonSettingsParser()) {
-                                parser.parse(response.getResponse());
-                                protocolVersion = parser.getDefaultProtocolVersion();
-                                if (parser.getMaxNameLen() != 0) {
-                                    maxNameLength = parser.getMaxNameLen();
-                                }
-                                if (parser.isAcceptingWrites()) {
-                                    break;
-                                }
+                            parser.clear();
+                            parser.parse(response.getResponse());
+                            protocolVersion = parser.getDefaultProtocolVersion();
+                            if (parser.getMaxNameLen() != 0) {
+                                maxNameLength = parser.getMaxNameLen();
+                            }
+                            if (parser.isAcceptingWrites()) {
+                                break;
                             }
                         } else if (Utf8s.equalsNcAscii("404", statusCode)) {
                             // The client is unable to differentiate between a server shutdown and connecting to an older version.
@@ -1070,7 +1070,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
-    public static class JsonSettingsParser implements JsonParser, Closeable {
+    public static class JsonSettingsParser implements JsonParser, Closeable, Mutable {
         private final static byte ACCEPTING_WRITES = 3;
         private final static byte LINE_PROTO_SUPPORT_VERSIONS = 1;
         private final static byte MAX_NAME_LEN = 2;
@@ -1079,6 +1079,15 @@ public abstract class AbstractLineHttpSender implements Sender {
         private boolean acceptingWrites = true;
         private int maxNameLen = 0;
         private byte nextJsonValueFlag = 0;
+
+        @Override
+        public void clear() {
+            supportVersions.clear();
+            acceptingWrites = true;
+            maxNameLen = 0;
+            nextJsonValueFlag = 0;
+            lexer.clear();
+        }
 
         @Override
         public void close() {
