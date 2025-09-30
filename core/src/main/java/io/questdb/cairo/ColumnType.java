@@ -544,7 +544,7 @@ public final class ColumnType {
                 || isImplicitParsingCast(fromType, toType)
                 || isIPv4Cast(fromType, toType)
                 || isArrayCast(fromType, toType)
-                || (fromTag >= DECIMAL8 && fromTag <= DECIMAL256 && toTag >= DECIMAL8 && toTag <= DECIMAL256);
+                || (isDecimalType(toTag) && isDecimalType(fromTag));
     }
 
     public static boolean isUndefined(int columnType) {
