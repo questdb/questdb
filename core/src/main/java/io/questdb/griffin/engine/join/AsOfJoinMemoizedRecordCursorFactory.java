@@ -134,7 +134,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
-        public static final long NOT_REMEMBERED = Long.MIN_VALUE;
+        private static final long NOT_REMEMBERED = Long.MIN_VALUE;
 
         private final IntLongHashMap symKeyToRowId = new IntLongHashMap(8, NOT_REMEMBERED);
         private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
