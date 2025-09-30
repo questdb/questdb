@@ -5456,7 +5456,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void handleHousekeepingException(Throwable e) {
         // Log the exception stack.
-        // in some cases it is possible to left corrupted state of table writer behind, for example in
+        // In some cases it is possible to leave corrupted state of table writer behind, for example in
         // the case where we discovered we need to distress the writer - exception occurring trying to re-open
         // last partition can leave some columns in "closed" state, with "fd=-1" but that does not stop O3 logic
         // processing -1 as a correct fd leading to havoc.
