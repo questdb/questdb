@@ -38,7 +38,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class NullCaseFunction implements CaseFunction {
+public class NullCaseFunction implements CaseFunction {
     private final ObjList<Function> args;
 
     public NullCaseFunction(ObjList<Function> args) {
