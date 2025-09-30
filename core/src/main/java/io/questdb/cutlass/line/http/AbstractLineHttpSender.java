@@ -240,6 +240,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         int currentAddressIndex = 0;
 
         // if user does not set protocol version explicit, client will try to detect it from server
+        StringSink lastErrorSink = null;
         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
             if (tlsConfig != null) {
                 cli = HttpClientFactory.newTlsInstance(clientConfiguration, tlsConfig);
@@ -302,7 +303,19 @@ public abstract class AbstractLineHttpSender implements Sender {
                                 hostBlacklistBitmap |= (1L << currentAddressIndex);
                             }
                         }
+                        if (lastErrorSink == null) {
+                            lastErrorSink = new StringSink();
+                        } else {
+                            lastErrorSink.clear();
+                        }
+                        chunkedResponseToSink(response, lastErrorSink);
                     } catch (HttpClientException e) {
+                        if (lastErrorSink == null) {
+                            lastErrorSink = new StringSink();
+                        } else {
+                            lastErrorSink.clear();
+                        }
+                        lastErrorSink.put(e.getMessage());
                         // ignore, we will retry
                     }
                     long nowNanos = System.nanoTime();
@@ -326,6 +339,9 @@ public abstract class AbstractLineHttpSender implements Sender {
 
         if (protocolVersion == PROTOCOL_VERSION_NOT_SET_EXPLICIT) {
             Misc.free(cli);
+            if (lastErrorSink != null) {
+                throw new LineSenderException("Failed to detect server line protocol version: " + lastErrorSink);
+            }
             throw new LineSenderException("Failed to detect server line protocol version");
         }
 
