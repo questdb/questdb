@@ -84,6 +84,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
@@ -119,7 +120,6 @@ public class SqlOptimiser implements Mutable {
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
-    private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
@@ -571,7 +571,7 @@ public class SqlOptimiser implements Mutable {
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
         QueryModel jm = parent.getJoinModels().getQuick(context.slaveIndex);
-        JoinContext other = jm.getContext();
+        JoinContext other = jm.getJoinContext();
         if (other == null || other.slaveIndex == -1) {
             jm.setContext(context);
         } else {
@@ -670,7 +670,7 @@ public class SqlOptimiser implements Mutable {
 
     private void addOuterJoinExpression(QueryModel parent, QueryModel model, int joinIndex, ExpressionNode node) {
         model.setOuterJoinExpressionClause(concatFilters(model.getOuterJoinExpressionClause(), node));
-        // add dependency to prevent previous model reordering (left joins are not symmetric)
+        // add dependency to prevent previous model reordering (left/right outer joins are not symmetric)
         if (joinIndex > 0) {
             linkDependencies(parent, joinIndex - 1, joinIndex);
         }
@@ -796,7 +796,7 @@ public class SqlOptimiser implements Mutable {
     private void addTransitiveFilters(QueryModel model) {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(i).getContext();
+            JoinContext jc = joinModels.getQuick(i).getJoinContext();
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
@@ -828,7 +828,7 @@ public class SqlOptimiser implements Mutable {
     private void alignJoinClauses(QueryModel parent) {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
-            JoinContext jc = joinModels.getQuick(i).getContext();
+            JoinContext jc = joinModels.getQuick(i).getJoinContext();
             if (jc != null) {
                 int index = jc.slaveIndex;
                 for (int k = 0, kc = jc.aIndexes.size(); k < kc; k++) {
@@ -870,8 +870,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     //checks join equality condition and pushes it to optimal join contexts (could be a different join context)
-    //NOTE on LEFT JOIN :
-    // - left join condition MUST remain as is otherwise it'll produce wrong results
+    //NOTE on LEFT/RIGHT JOIN :
+    // - left/right join condition MUST remain as is otherwise it'll produce wrong results
     // - only predicates relating to LEFT table may be pushed down
     // - predicates on both or right table may be added to post join clause as long as they're marked properly (via ExpressionNode.isOuterJoinPredicate)
     private void analyseEquals(QueryModel parent, ExpressionNode node, boolean innerPredicate, QueryModel joinModel) throws SqlException {
@@ -929,7 +929,7 @@ public class SqlOptimiser implements Mutable {
                         // single table reference
                         jc.slaveIndex = lhi;
                         if (canMovePredicate) {
-                            // we can't push anything into another left join
+                            // we can't push anything into another left/right join
                             if (jc.slaveIndex != joinIndex &&
                                     joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                                 addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
@@ -962,7 +962,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     if (canMovePredicate || jc.slaveIndex == joinIndex) {
-                        //we can't push anything into another left join
+                        //we can't push anything into another left/right join
                         if (jc.slaveIndex != joinIndex && joinBarriers.contains(parent.getJoinModels().get(jc.slaveIndex).getJoinType())) {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
@@ -1459,7 +1459,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel m = models.getQuick(i);
             if (joinsRequiringTimestamp[m.getJoinType()]) {
                 linkDependencies(parent, 0, i);
-                if (m.getContext() == null) {
+                if (m.getJoinContext() == null) {
                     m.setContext(jc = contextPool.next());
                     jc.parents.add(0);
                     jc.slaveIndex = i;
@@ -1724,14 +1724,14 @@ public class SqlOptimiser implements Mutable {
 
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
-            if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getContext() == null || q.getContext().parents.size() == 0) {
+            if (q.getJoinType() == QueryModel.JOIN_CROSS || q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
                 if (q.getDependencies().size() > 0) {
                     orderingStack.add(i);
                 } else {
                     tempCrossIndexes.add(i);
                 }
             } else {
-                q.getContext().inCount = q.getContext().parents.size();
+                q.getJoinContext().inCount = q.getJoinContext().parents.size();
             }
         }
 
@@ -1754,7 +1754,7 @@ public class SqlOptimiser implements Mutable {
             //for each node m with an-edge e from n to m do
             for (int i = 0, k = dependencies.size(); i < k; i++) {
                 int depIndex = dependencies.get(i);
-                JoinContext jc = joinModels.getQuick(depIndex).getContext();
+                JoinContext jc = joinModels.getQuick(depIndex).getJoinContext();
                 if (jc != null && --jc.inCount == 0) {
                     orderingStack.add(depIndex);
                 }
@@ -1764,7 +1764,7 @@ public class SqlOptimiser implements Mutable {
         //Check to see if all edges are removed
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            if (m.getContext() != null && m.getContext().inCount > 0) {
+            if (m.getJoinContext() != null && m.getJoinContext().inCount > 0) {
                 return Integer.MAX_VALUE;
             }
         }
@@ -2502,16 +2502,24 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            JoinContext c = m.getContext();
+            JoinContext c = m.getJoinContext();
 
             if (m.getJoinType() == QueryModel.JOIN_CROSS) {
                 if (c != null && c.parents.size() > 0) {
                     m.setJoinType(QueryModel.JOIN_INNER);
                 }
-            } else if (m.getJoinType() == QueryModel.JOIN_OUTER &&
+            } else if (m.getJoinType() == QueryModel.JOIN_LEFT_OUTER &&
                     c == null &&
                     m.getJoinCriteria() != null) {
                 m.setJoinType(QueryModel.JOIN_CROSS_LEFT);
+            } else if (m.getJoinType() == QueryModel.JOIN_RIGHT_OUTER &&
+                    c == null &&
+                    m.getJoinCriteria() != null) {
+                m.setJoinType(QueryModel.JOIN_CROSS_RIGHT);
+            } else if (m.getJoinType() == QueryModel.JOIN_FULL_OUTER &&
+                    c == null &&
+                    m.getJoinCriteria() != null) {
+                m.setJoinType(QueryModel.JOIN_CROSS_FULL);
             } else if (m.getJoinType() != QueryModel.JOIN_ASOF &&
                     m.getJoinType() != QueryModel.JOIN_SPLICE &&
                     (c == null || c.parents.size() == 0)
@@ -3593,7 +3601,7 @@ public class SqlOptimiser implements Mutable {
         final ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             final QueryModel jm = joinModels.getQuick(i);
-            final JoinContext jc = jm.getContext();
+            final JoinContext jc = jm.getJoinContext();
             if (jc != null && jc.aIndexes.size() > 0) {
                 // join clause
                 for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
@@ -3919,7 +3927,7 @@ public class SqlOptimiser implements Mutable {
         // collect crosses
         for (int i = 0; i < n; i++) {
             QueryModel q = joinModels.getQuick(i);
-            if (q.getContext() == null || q.getContext().parents.size() == 0) {
+            if (q.getJoinContext() == null || q.getJoinContext().parents.size() == 0) {
                 tempCrosses.add(i);
             }
         }
@@ -3932,7 +3940,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0; i < zc; i++) {
                 if (z != i) {
                     int to = tempCrosses.getQuick(i);
-                    final JoinContext jc = joinModels.getQuick(to).getContext();
+                    final JoinContext jc = joinModels.getQuick(to).getJoinContext();
                     // look above i up to OUTER join
                     for (int k = i - 1; k > -1 && swapJoinOrder(model, to, k, jc); k--) ;
                     // look below i for up to OUTER join
@@ -6792,7 +6800,7 @@ public class SqlOptimiser implements Mutable {
             return false;
         }
 
-        final JoinContext that = jm.getContext();
+        final JoinContext that = jm.getJoinContext();
         if (that != null && that.parents.contains(to)) {
             swapJoinOrder0(parent, jm, to, context);
         }
@@ -6800,7 +6808,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void swapJoinOrder0(QueryModel parent, QueryModel jm, int to, JoinContext jc) {
-        final JoinContext that = jm.getContext();
+        final JoinContext that = jm.getJoinContext();
         clausesToSteal.clear();
         int zc = that.aIndexes.size();
         for (int z = 0; z < zc; z++) {
@@ -7470,8 +7478,12 @@ public class SqlOptimiser implements Mutable {
         notOps.put("<>", NOT_OP_NOT_EQ);
 
         joinBarriers = new IntHashSet();
-        joinBarriers.add(QueryModel.JOIN_OUTER);
+        joinBarriers.add(QueryModel.JOIN_LEFT_OUTER);
+        joinBarriers.add(QueryModel.JOIN_RIGHT_OUTER);
+        joinBarriers.add(QueryModel.JOIN_FULL_OUTER);
         joinBarriers.add(QueryModel.JOIN_CROSS_LEFT);
+        joinBarriers.add(QueryModel.JOIN_CROSS_RIGHT);
+        joinBarriers.add(QueryModel.JOIN_CROSS_FULL);
         joinBarriers.add(QueryModel.JOIN_ASOF);
         joinBarriers.add(QueryModel.JOIN_SPLICE);
         joinBarriers.add(QueryModel.JOIN_LT);

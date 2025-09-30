@@ -2051,6 +2051,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected void assertQueryNoLeakCheckWithFatJoin(String sql, String expected, String ts, boolean fullFatJoins, boolean randomAccess, boolean expectedSize) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            assertQueryNoLeakCheck(expected, sql, ts, randomAccess, expectedSize);
+        }
+    }
+
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         return assertSegmentExistence(expectExists, tableToken, walId, segmentId);
@@ -2133,13 +2140,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
-        }
-    }
-
-    protected void assertSql(CharSequence sql, CharSequence expected, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
         }
     }
 
