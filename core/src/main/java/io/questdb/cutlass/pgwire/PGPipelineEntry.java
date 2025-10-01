@@ -1237,6 +1237,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         case X_PG_ARR_FLOAT8:
                             setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
                             break;
+                        case X_PG_NUMERIC:
+                            setDecimalBindVariable(sqlExecutionContext, i, lo, valueSize, bindVariableService, nativeType);
+                            break;
                         default:
                             // before we bind a string, we need to define the type of the variable
                             // so the binding process can cast the string as required
@@ -1350,12 +1353,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_ARR_DATE:
                 bindVariableService.define(j, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DATE, false), 0);
                 break;
+            case X_PG_NUMERIC:
+                bindVariableService.define(j, DECIMAL_BIND_TYPE, 0);
+                break;
             case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives
                 // the compiler a chance to infer the best possible type
                 break;
-            case X_PG_NUMERIC:
-                throw CairoException.nonCritical().put("unsupported bind variable type NUMERIC (OID ").put(PG_NUMERIC).put(')');
             case X_PG_ARR_NUMERIC:
                 throw CairoException.nonCritical().put("unsupported bind variable type NUMERIC[] (OID ").put(PG_ARR_NUMERIC).put(')');
             case X_PG_ARR_TIME:
@@ -2935,6 +2939,78 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws PGMessageProcessingException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setTimestampWithType(variableIndex, ColumnType.TIMESTAMP_MICRO, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
+    private void setDecimalAddTenMultiple(int index, Decimal256 decimal, int weight, int multiplier) throws PGMessageProcessingException {
+        if (multiplier == 0) {
+            return;
+        }
+        if (weight > Decimals.MAX_PRECISION) {
+            throw kaput().put("numeric is too big for a decimal [precisionRequired=").put(weight)
+                    .put(", precisionActual=").put(Decimals.MAX_PRECISION)
+                    .put(", variableIndex=").put(index)
+                    .put(']');
+        }
+        if (weight < 0) {
+            throw kaput().put("numeric scale too big for a decimal");
+        }
+        decimal.addPowerOfTenMultiple(weight, multiplier);
+    }
+
+    private void setDecimalBindVariable(
+            SqlExecutionContext executionContext,
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService,
+            int type
+    ) throws PGMessageProcessingException, SqlException {
+        // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
+        // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
+        // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
+        // be encoded as an array of 2 shorts: [12, 3400].
+
+        if (valueSize < 4 * Short.BYTES) {
+            throw kaput()
+                    .put("bad parameter value length [sizeMinimumRequired=8")
+                    .put(", sizeActual=").put(valueSize)
+                    .put(", variableIndex=").put(variableIndex)
+                    .put(']');
+        }
+
+        short ndigits = getShortUnsafe(valueAddr);
+        short weight = getShortUnsafe(valueAddr + Short.BYTES);
+        short sign = getShortUnsafe(valueAddr + Short.BYTES * 2);
+        // short dscale = getShortUnsafe(valueAddr + Short.BYTES * 3); -- not needed for now
+
+        ensureValueLength(variableIndex, Short.BYTES * (4 + ndigits), valueSize);
+
+        final int scale = ColumnType.getDecimalScale(type);
+        var decimal = executionContext.getDecimal256();
+        decimal.of(0, 0, 0, 0, scale);
+
+        // The client sends the digits as block of 4 digits, we cannot go beyond this decimal precision or scale.
+        int appliedWeight = (weight + 1) * 4 + scale;
+        for (long p = valueAddr + Short.BYTES * 4, hi = p + Short.BYTES * ndigits; p < hi; p += Short.BYTES) {
+            short digit = getShortUnsafe(p);
+            setDecimalAddTenMultiple(variableIndex, decimal, --appliedWeight, digit / 1000);
+            setDecimalAddTenMultiple(variableIndex, decimal, --appliedWeight, digit / 100 % 10);
+            setDecimalAddTenMultiple(variableIndex, decimal, --appliedWeight, digit / 10 % 10);
+            setDecimalAddTenMultiple(variableIndex, decimal, --appliedWeight, digit % 10);
+        }
+
+        if (sign == NUMERIC_NEG) {
+            decimal.negate();
+        }
+
+        bindVariableService.setDecimal(
+                variableIndex,
+                decimal.getHh(),
+                decimal.getHl(),
+                decimal.getLh(),
+                decimal.getLl(),
+                type
+        );
     }
 
     private void setUuidBindVariable(

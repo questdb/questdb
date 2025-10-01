@@ -779,6 +779,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (len > 1 && (tok.charAt(len - 1) == 'm' || tok.charAt(len - 1) == 'M')) {
             return DecimalUtil.parseDecimalConstant(position, sqlExecutionContext.getDecimal256(), tok, -1, -1);
         }
+
+        if (isNumericKeyword(tok)) {
+            // We don't know the actual size of the decimal that will be sent,
+            // we assume it's going to be enough but cannot be sure.
+            return new DecimalTypeConstant(76, 38);
+        }
         //endregion
 
         // long256
@@ -922,6 +928,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         assignType = ColumnType.DOUBLE;
                         break;
                     case ColumnType.ARRAY:
+                        assignType = castToType;
+                        break;
+                    case ColumnType.DECIMAL8:
+                    case ColumnType.DECIMAL16:
+                    case ColumnType.DECIMAL32:
+                    case ColumnType.DECIMAL64:
+                    case ColumnType.DECIMAL128:
+                    case ColumnType.DECIMAL256:
                         assignType = castToType;
                         break;
                     default:

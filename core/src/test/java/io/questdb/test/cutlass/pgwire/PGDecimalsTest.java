@@ -28,6 +28,7 @@ import io.questdb.std.Decimal256;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -246,6 +247,46 @@ public class PGDecimalsTest extends BasePGTest {
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("dec[NUMERIC],ts[TIMESTAMP]\n" +
                                     "12,1970-01-01 00:00:00.0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalBindBinary() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
+                statement.setObject(1, new BigDecimal("1234567.890"));
+                statement.setTimestamp(2, new java.sql.Timestamp(0));
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            try (PreparedStatement stmt = connection.prepareStatement("tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("dec[NUMERIC],ts[TIMESTAMP]\n" +
+                                    "1234567.89000,1970-01-01 00:00:00.0\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE tango SET dec = ?")) {
+                statement.setObject(1, new BigDecimal("-456.123"));
+                statement.executeUpdate();
+            }
+            drainWalQueue();
+            try (PreparedStatement stmt = connection.prepareStatement("tango")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("dec[NUMERIC],ts[TIMESTAMP]\n" +
+                                    "-456.12300,1970-01-01 00:00:00.0\n",
                             sink,
                             rs
                     );

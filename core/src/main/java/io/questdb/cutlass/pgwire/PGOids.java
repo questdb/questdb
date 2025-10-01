@@ -56,6 +56,12 @@ public class PGOids {
     public static final int BINARY_TYPE_DECIMAL64 = (1 << 31) | ColumnType.DECIMAL64;
     public static final int BINARY_TYPE_DECIMAL128 = (1 << 31) | ColumnType.DECIMAL128;
     public static final int BINARY_TYPE_DECIMAL256 = (1 << 31) | ColumnType.DECIMAL256;
+    /**
+     * We cannot know in advance the actual type of the decimal, so we make a default one that
+     * should be large enough to hold decimals.
+     * Users should prefer using the text format when possible.
+     */
+    public static final int DECIMAL_BIND_TYPE = ColumnType.getDecimalType(76, 38);
     public static final int PG_ARR_BOOL = 1000;
     public static final int PG_ARR_BYTEA = 1001;
     public static final int PG_ARR_DATE = 1182;

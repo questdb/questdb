@@ -1668,6 +1668,26 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Add a specific multiplier of a power of ten to the current 256-bit value.
+     * This method modifies the value in-place by adding (multiplier * 10^pow).
+     *
+     * @param pow        the power of ten position
+     * @param multiplier the digit to add (1-9, or 0 for no-op)
+     */
+    public void addPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+
+        final int offset = (multiplier - 1) * 4;
+        final long bHH = Decimal256.POWERS_TEN_TABLE[pow][offset];
+        final long bHL = Decimal256.POWERS_TEN_TABLE[pow][offset + 1];
+        final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
+        final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
+        uncheckedAdd(this, bHH, bHL, bLH, bLL);
+    }
+
+    /**
      * Convert to BigDecimal.
      *
      * @return BigDecimal representation

@@ -1321,6 +1321,18 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.ARRAY:
                 ((ArrayBindVariable) function).parseArray(value);
                 break;
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                ((DecimalBindVariable) function).value.ofString(
+                        value,
+                        Decimals.MAX_PRECISION,
+                        Decimals.MAX_PRECISION / 2
+                );
+                break;
             default:
                 reportError(function, ColumnType.STRING, index, name);
                 break;
