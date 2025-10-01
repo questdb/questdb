@@ -113,7 +113,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Override
     public void tearDown() throws Exception {
-        System.out.println("DELETED: " + root2);
         TestUtils.removeTestPath(root2);
         super.tearDown();
     }
