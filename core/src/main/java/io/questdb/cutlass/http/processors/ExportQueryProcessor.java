@@ -727,6 +727,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Path path = state.getExportResult().getPath();
+        if (path.size() == 0) {
+            throw CairoException.nonCritical().put("empty table");
+        }
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         state.parquetFileFd = ff.openRO(path.$());
         if (state.parquetFileFd < 0) {

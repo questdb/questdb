@@ -387,6 +387,8 @@ public class ServerMain implements Closeable {
                                 exportWorkerPool.assign(i, copyExportRequestJob);
                                 exportWorkerPool.freeOnExit(copyExportRequestJob);
                             }
+
+                            log.info().$("export workers count: ").$(workerCount).$();
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())

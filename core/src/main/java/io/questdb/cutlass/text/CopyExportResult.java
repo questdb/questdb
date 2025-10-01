@@ -67,6 +67,7 @@ public class CopyExportResult implements Closeable {
         phase = CopyExportRequestTask.Phase.NONE;
         status = CopyExportRequestTask.Status.NONE;
         message = null;
+        path.trimTo(0);
     }
 
     @Override
