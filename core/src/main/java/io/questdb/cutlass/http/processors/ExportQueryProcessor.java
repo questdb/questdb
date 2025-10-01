@@ -118,7 +118,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         this.clock = configuration.getMillisecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
-        circuitBreaker.setTimeout(configuration.getExportTimeout());
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
@@ -339,12 +338,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         if (state.parquetFileFd != -1) {
             ff.close(state.parquetFileFd);
-            state.getExportResult().cleanUpTempPath(ff);
             state.parquetFileFd = -1;
+            state.getExportResult().cleanUpTempPath(ff);
         }
-        if (state.suspendEvent != null) {
-            state.suspendEvent = Misc.free(state.suspendEvent);
-        }
+        state.suspendEvent = Misc.free(state.suspendEvent);
         if (state.parquetFileAddress != 0) {
             ff.munmap(state.parquetFileAddress, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
             state.parquetFileAddress = 0;
@@ -873,7 +870,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
-        timeout = configuration.getExportTimeout();
+        if (copyModel.isParquetFormat()) {
+            timeout = configuration.getExportTimeout();
+        } else {
+            timeout = circuitBreaker.getDefaultMaxTime();
+        }
+
         DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
         if (timeoutSeq != null) {
             try {

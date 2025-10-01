@@ -30,8 +30,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.SqlException;
@@ -41,7 +43,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -85,7 +86,7 @@ public class SerialParquetExporter implements Closeable {
     public static void cleanupDir(FilesFacade ff, Path dir, int tempBaseDirLen) {
         try {
             dir.trimTo(tempBaseDirLen);
-            if (ff.exists(dir.slash().$())) {
+            if (ff.exists(dir.slash$())) {
                 ff.rmdir(dir);
             }
         } catch (Throwable e) {
@@ -100,12 +101,9 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
-    public SqlExecutionContextImpl getSqlExecutionContext() {
-        return sqlExecutionContext;
-    }
 
     public void of(CopyExportRequestTask task,
-                   ExecutionCircuitBreaker circuitBreaker,
+                   SqlExecutionCircuitBreaker circuitBreaker,
                    PhaseStatusReporter statusReporter) {
         this.copyExportRoot = configuration.getSqlCopyExportRoot();
         this.task = task;
@@ -114,6 +112,7 @@ public class SerialParquetExporter implements Closeable {
         this.exportPath.clear();
         this.exportPath.put(copyExportRoot).put(File.separator).put(task.getFileName()).put(File.separator);
         numOfFiles = 0;
+        sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
     }
 
     public CopyExportRequestTask.Phase process() {
@@ -148,15 +147,6 @@ public class SerialParquetExporter implements Closeable {
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
-            final int compressionCodec = task.getCompressionCodec();
-            final int compressionLevel = task.getCompressionLevel();
-            final int rowGroupSize = task.getRowGroupSize();
-            final int dataPageSize = task.getDataPageSize();
-            final boolean statisticsEnabled = task.isStatisticsEnabled();
-            final int parquetVersion = task.getParquetVersion();
-            final boolean rawArrayEncoding = task.isRawArrayEncoding();
-            final boolean userSpecifiedExportOptions = task.isUserSpecifiedExportOptions();
-
             if (circuitBreaker.checkIfTripped()) {
                 LOG.error().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
@@ -185,7 +175,7 @@ public class SerialParquetExporter implements Closeable {
                         // skip parquet conversion if the partition is already in parquet format
                         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                             numOfFiles++;
-                            if (userSpecifiedExportOptions) {
+                            if (task.isUserSpecifiedExportOptions()) {
                                 LOG.info().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
                                         .$(", partition=").$(partitionTimestamp)
                                         .$(", using direct file copy instead]").$();
@@ -195,14 +185,10 @@ public class SerialParquetExporter implements Closeable {
                             } else {
                                 fromParquet.trimTo(fromParquetBaseLen);
                             }
-                            fromParquet.concat(tableToken.getDirName());
 
-                            // Find the directory with highest version number
-                            nameSink.clear();
-                            PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
-                                    .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
-                            CharSequence actualPartitionDir = findHighestVersionedPartitionDir(ff, fromParquet, nameSink.toString());
-                            fromParquet.concat(actualPartitionDir).concat("data.parquet");
+                            fromParquet.concat(tableToken.getDirName());
+                            TableUtils.setPathForParquetPartition(
+                                    fromParquet, timestampType, partitionBy, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
                             if (exportResult != null) {
                                 exportResult.addFilePath(fromParquet, false, 0);
                                 continue;
@@ -217,7 +203,7 @@ public class SerialParquetExporter implements Closeable {
 
                             int copyResult = ff.copy(fromParquet.$(), tempPath.$());
                             if (copyResult < 0) {
-                                throw CopyExportException.instance(phase, copyResult)
+                                throw CopyExportException.instance(phase, ff.errno())
                                         .put("failed to copy parquet file [from=").put(fromParquet)
                                         .put(", to=").put(tempPath).put(']');
                             }
@@ -246,12 +232,12 @@ public class SerialParquetExporter implements Closeable {
                         PartitionEncoder.encodeWithOptions(
                                 partitionDescriptor,
                                 tempPath,
-                                ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                                statisticsEnabled,
-                                rawArrayEncoding,
-                                rowGroupSize,
-                                dataPageSize,
-                                parquetVersion
+                                ParquetCompression.packCompressionCodecLevel(task.getCompressionCodec(), task.getCompressionLevel()),
+                                task.isStatisticsEnabled(),
+                                task.isRawArrayEncoding(),
+                                task.getRowGroupSize(),
+                                task.getDataPageSize(),
+                                task.getParquetVersion()
                         );
                         long parquetFileSize = ff.length(tempPath.$());
                         LOG.info().$("converted partition to parquet temp [table=").$(tableToken)
@@ -314,48 +300,6 @@ public class SerialParquetExporter implements Closeable {
                 throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
             }
         }
-    }
-
-    private CharSequence findHighestVersionedPartitionDir(FilesFacade ff, Path basePath, CharSequence basePartitionName) {
-        long maxVersion = -1;
-        String bestMatch = null;
-        nameSink.clear();
-        int plimit = basePath.size();
-        long p = ff.findFirst(basePath.$());
-        if (p > 0) {
-            try {
-                do {
-                    if (ff.isDirOrSoftLinkDirNoDots(basePath, plimit, ff.findName(p), ff.findType(p), nameSink)) {
-                        CharSequence dirName = nameSink.asAsciiCharSequence();
-                        int dirLength = dirName.length();
-                        int partitionNameLength = basePartitionName.length();
-                        if (Chars.startsWith(dirName, basePartitionName) &&
-                                dirLength > partitionNameLength &&
-                                dirName.charAt(partitionNameLength) == '.') {
-                            try {
-                                CharSequence versionStr = dirName.subSequence(partitionNameLength + 1, dirLength);
-                                long version = Numbers.parseLong(versionStr);
-                                if (version > maxVersion) {
-                                    maxVersion = version;
-                                    bestMatch = dirName.toString();
-                                }
-                            } catch (NumberFormatException ignored) {
-                            }
-                        }
-                        nameSink.clear();
-                    }
-                } while (ff.findNext(p) > 0);
-            } finally {
-                basePath.trimTo(plimit).$();
-                ff.findClose(p);
-            }
-        }
-
-        if (bestMatch != null) {
-            return bestMatch;
-        }
-        throw CairoException.nonCritical().put("no versioned parquet partition directory found for [basePartitionName=")
-                .put(basePartitionName).put(']');
     }
 
     private void moveAndOverwriteFiles() {

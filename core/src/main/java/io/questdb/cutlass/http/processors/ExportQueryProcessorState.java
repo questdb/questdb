@@ -46,7 +46,6 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
-    private final CopyExportResult copyExportResult;
     private final CopyModel copyModel = new CopyModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -75,6 +74,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long stop;
     SuspendEvent suspendEvent;
     boolean waitingForCopy;
+    private CopyExportResult copyExportResult;
     private boolean queryCacheable = false;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CairoEngine engine) {
@@ -134,7 +134,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
         }
-        Misc.free(copyExportResult);
+        copyExportResult = Misc.free(copyExportResult);
     }
 
     public CopyModel getCopyModel() {

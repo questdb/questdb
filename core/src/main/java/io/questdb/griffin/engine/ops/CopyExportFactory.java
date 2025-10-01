@@ -160,8 +160,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
             final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
-            long processingCursor = copyRequestPubSeq.next();
-            if (processingCursor < 0) {
+            long processingCursor;
+            do {
+                processingCursor = copyRequestPubSeq.next();
+            } while (processingCursor == -2);
+
+            if (processingCursor == -1) {
                 throw SqlException.$(0, "unable to process the export request - export queue is full");
             }
             final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);

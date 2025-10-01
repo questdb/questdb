@@ -47,6 +47,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
+    private static final Object LOCK = new Object();
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private static MicrosecondClock CLOCK;
     private static CairoEngine ENGINE;
@@ -106,7 +107,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
     }
 
-    public void updateStatus(
+    private void updateStatus(
             CopyExportRequestTask.Phase phase,
             CopyExportRequestTask.Status status,
             CopyExportRequestTask task,
@@ -116,7 +117,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             long errors
     ) {
         // serial insert to copy_export_log table to avoid table busy
-        synchronized (CopyExportRequestJob.class) {
+        synchronized (LOCK) {
             if (WRITER == null) {
                 try {
                     WRITER = ENGINE.getWriter(TABLE_TOKEN, "QuestDB system");
@@ -159,6 +160,18 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                             .$(", error=`").$(th).$('`')
                             .I$();
                 }
+            } else {
+                LOG.error()
+                        .$("could not update status table, writer is null [exportId=").$hexPadded(task.getCopyID())
+                        .$(", statusTableName=").$(TABLE_TOKEN)
+                        .$(", tableName=").$(task.getTableName())
+                        .$(", exportDir=").$(exportDir)
+                        .$(", numOfFiles=").$(numOfFiles)
+                        .$(", phase=").$(phase.getName())
+                        .$(", status=").$(status.getName())
+                        .$(", msg=").$(msg)
+                        .$(", errors=").$(errors)
+                        .I$();
             }
 
             if (task.getResult() != null) {
@@ -181,7 +194,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             this.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, "", 0);
-            serialExporter.getSqlExecutionContext().with(task.getSecurityContext(), null, null, -1, circuitBreaker);
             serialExporter.of(
                     task,
                     circuitBreaker,
