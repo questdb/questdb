@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.PoolListener;
@@ -53,6 +54,7 @@ import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -377,6 +379,55 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     serverMain.assertSql("select * from line",
                             "sym1\tfield1\ttimestamp\n" +
                                     "123\t123\t2009-02-13T23:31:30.000000Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipBomb() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512",
+                    PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "5M"
+            )) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Create a gzip bomb: a small compressed payload that expands to a very large size
+                    // This creates a 10KB buffer of 'a's that compresses to ~10KB bytes but will attempt to decompress to 10MB
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    try (GZIPOutputStream gzip = new GZIPOutputStream(out)) {
+                        byte[] raw = new byte[10 * 1024]; // 10KB of 'a's
+                        Arrays.fill(raw, 0, raw.length, (byte) 'a');
+                        for (int i = 0; i < 1000; i++) { // Write 1000 times = 10MB uncompressed
+                            gzip.write(raw);
+                        }
+                    }
+                    byte[] gzipBomb = out.toByteArray();
+
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+
+                    for (byte b : gzipBomb) {
+                        request.put(b);
+                    }
+
+                    try (HttpClient.ResponseHeaders resp = request.send()) {
+                        resp.await();
+                        // Server should reject or handle the bomb gracefully
+                        // Expecting 413 (Payload Too Large)
+                        TestUtils.assertEquals("413", resp.getStatusCode());
+                    }
+                }
+
+                // Verify no data was committed
+                TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                if (tt != null) {
+                    Assert.assertEquals(0, getSeqTxn(serverMain, tt));
                 }
             }
         });
