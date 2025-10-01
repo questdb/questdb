@@ -78,7 +78,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                                     "ts TIMESTAMP, " + // 0
                                     "id VARCHAR, " + // 1
                                     "table_name SYMBOL, " + // 2
-                                    "export_dir SYMBOL, " + // 3
+                                    "export_path SYMBOL, " + // 3
                                     "num_exported_files INT, " + // 4
                                     "phase SYMBOL, " + // 5
                                     "status SYMBOL, " + // 6

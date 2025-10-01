@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -111,7 +112,6 @@ public class SerialParquetExporter implements Closeable {
         this.circuitBreaker = circuitBreaker;
         this.statusReporter = statusReporter;
         this.exportPath.clear();
-        this.exportPath.put(copyExportRoot).put(File.separator).put(task.getFileName()).put(File.separator);
         numOfFiles = 0;
         sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
     }
@@ -352,11 +352,16 @@ public class SerialParquetExporter implements Closeable {
     }
 
     private void moveExportFiles(int tempBaseDirLen, String fileName) {
-        tempPath.trimTo(tempBaseDirLen);
         if (!ff.exists(tempPath.$())) {
             return;
         }
+        if (numOfFiles == 1) {
+            moveFile(fileName);
+            return;
+        }
+        tempPath.trimTo(tempBaseDirLen);
         toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
+        this.exportPath.put(toParquet.$()).put(File.separator);
         createDirsOrFail(ff, toParquet.slash(), configuration.getMkDirMode());
         boolean destExists = ff.exists(toParquet.$());
         if (!destExists) {
@@ -370,7 +375,45 @@ public class SerialParquetExporter implements Closeable {
                         .put(", errno=").put(ff.errno()).put(']');
             }
         } else {
-            moveAndOverwriteFiles();
+            if (!ff.isDirOrSoftLinkDir(toParquet.$())) {
+                ff.removeQuiet(toParquet.$());
+                int moveResult = ff.rename(tempPath.$(), toParquet.$());
+                if (moveResult != Files.FILES_RENAME_OK) {
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+                            .put("could not rename export directory after file removal [from=")
+                            .put(tempPath)
+                            .put(", to=")
+                            .put(toParquet)
+                            .put(", errno=").put(ff.errno()).put(']');
+                }
+            } else {
+                moveAndOverwriteFiles();
+            }
+        }
+    }
+
+    private void moveFile(String fileName) {
+        if (!ff.exists(tempPath.$())) {
+            return;
+        }
+        toParquet.trimTo(0).concat(copyExportRoot).concat(fileName);
+        if (!Chars.endsWith(fileName, ".parquet")) {
+            toParquet.put(".parquet");
+        }
+        this.exportPath.put(toParquet.$());
+        createDirsOrFail(ff, toParquet, configuration.getMkDirMode());
+        boolean destExists = ff.exists(toParquet.$());
+        if (destExists) {
+            ff.removeQuiet(toParquet.$());
+        }
+        int moveResult = ff.rename(tempPath.$(), toParquet.$());
+        if (moveResult != Files.FILES_RENAME_OK) {
+            throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+                    .put("could not rename export file [from=")
+                    .put(tempPath)
+                    .put(", to=")
+                    .put(toParquet)
+                    .put(", errno=").put(ff.errno()).put(']');
         }
     }
 
