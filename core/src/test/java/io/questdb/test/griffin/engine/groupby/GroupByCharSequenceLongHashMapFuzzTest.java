@@ -50,6 +50,36 @@ public class GroupByCharSequenceLongHashMapFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncOperations() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByCharSequenceLongHashMap map = new GroupByCharSequenceLongHashMap(16, 0.7, -1, 0);
+                map.setAllocator(allocator);
+                map.of(0);
+
+                final int N = 1000;
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+
+                Map<String, Long> referenceMap = new java.util.HashMap<>();
+
+                for (int i = 0; i < N; i++) {
+                    String key = "fuzz_" + rnd.nextPositiveInt();
+                    long delta = rnd.nextPositiveLong() % 100 + 1;
+
+                    map.inc(key, delta);
+                    referenceMap.merge(key, delta, Long::sum);
+                }
+
+                Assert.assertEquals(referenceMap.size(), map.size());
+
+                for (Map.Entry<String, Long> entry : referenceMap.entrySet()) {
+                    Assert.assertEquals((long) entry.getValue(), map.get(entry.getKey()));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMerge() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
@@ -132,36 +162,6 @@ public class GroupByCharSequenceLongHashMapFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncOperations() throws Exception {
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByCharSequenceLongHashMap map = new GroupByCharSequenceLongHashMap(16, 0.7, -1, 0);
-                map.setAllocator(allocator);
-                map.of(0);
-
-                final int N = 1000;
-                final Rnd rnd = TestUtils.generateRandom(LOG);
-
-                Map<String, Long> referenceMap = new java.util.HashMap<>();
-
-                for (int i = 0; i < N; i++) {
-                    String key = "fuzz_" + rnd.nextPositiveInt();
-                    long delta = rnd.nextPositiveLong() % 100 + 1;
-
-                    map.inc(key, delta);
-                    referenceMap.merge(key, delta, Long::sum);
-                }
-
-                Assert.assertEquals(referenceMap.size(), map.size());
-
-                for (Map.Entry<String, Long> entry : referenceMap.entrySet()) {
-                    Assert.assertEquals((long) entry.getValue(), map.get(entry.getKey()));
-                }
-            }
-        });
-    }
-
-    @Test
     public void testWithSpecialCharacters() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
@@ -170,14 +170,14 @@ public class GroupByCharSequenceLongHashMapFuzzTest extends AbstractCairoTest {
                 map.of(0);
 
                 String[] specialKeys = {
-                    "key_with_emoji_🚀",
-                    "key_with_unicode_ñáéíóú",
-                    "key_with_chinese_中文",
-                    "key_with_spaces  ",
-                    "key\nwith\nnewlines",
-                    "key\twith\ttabs",
-                    "",  // empty string
-                    "key_with_special_!@#$%^&*()"
+                        "key_with_emoji_🚀",
+                        "key_with_unicode_ñáéíóú",
+                        "key_with_chinese_中文",
+                        "key_with_spaces  ",
+                        "key\nwith\nnewlines",
+                        "key\twith\ttabs",
+                        "",  // empty string
+                        "key_with_special_!@#$%^&*()"
                 };
 
                 for (int i = 0; i < specialKeys.length; i++) {
