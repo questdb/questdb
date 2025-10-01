@@ -52,7 +52,8 @@ import io.questdb.std.str.Utf8Sink;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.MESSAGE_TOO_LARGE;
 
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
@@ -73,6 +74,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private long errorId;
     private long fd = -1;
     private long inflateStream;
+    private boolean isGzipEncoded;
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
@@ -218,6 +220,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
+    public boolean isGzipEncoded() {
+        return isGzipEncoded;
+    }
+
     public boolean isOk() {
         return currentStatus == Status.OK;
     }
@@ -273,6 +279,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         error.put(errorText);
         this.fd = fd;
         logError();
+    }
+
+    public void setGzipEncoded(boolean gzipEncoded) {
+        isGzipEncoded = gzipEncoded;
     }
 
     public void setInflateStream(long streamAddr) {

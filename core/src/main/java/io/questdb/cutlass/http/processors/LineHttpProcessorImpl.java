@@ -61,7 +61,6 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     private final CairoEngine engine;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
-    private boolean isGzipEncoded;
     private LineHttpProcessorState state;
 
     public LineHttpProcessorImpl(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
@@ -93,7 +92,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
     @Override
     public void onChunk(long lo, long hi) {
-        if (isGzipEncoded) {
+        if (state.isGzipEncoded()) {
             this.state.inflateAndParse(lo, hi);
         } else {
             this.state.parse(lo, hi);
@@ -122,8 +121,8 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        isGzipEncoded = encoding != null && Utf8s.endsWithAscii(encoding, "gzip");
-        if (isGzipEncoded) {
+        state.setGzipEncoded(encoding != null && Utf8s.endsWithAscii(encoding, "gzip"));
+        if (state.isGzipEncoded()) {
             long inflateStream = Zip.inflateInitGzip();
             if (inflateStream == 0) {
                 state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
