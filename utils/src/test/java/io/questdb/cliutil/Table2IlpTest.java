@@ -506,9 +506,7 @@ public class Table2IlpTest {
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
-                httpServerConfiguration.getRecvBufferSize(),
-                httpServerConfiguration.getSendBufferSize(),
-                httpServerConfiguration.getLineHttpProcessorConfiguration()
+                httpServerConfiguration
         );
 
         HttpServer.addDefaultEndpoints(
