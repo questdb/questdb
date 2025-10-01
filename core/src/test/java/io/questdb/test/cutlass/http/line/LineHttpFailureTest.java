@@ -78,8 +78,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testChunkedDisconnect() throws Exception {
         assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
@@ -178,8 +177,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
 
                 serverMain.awaitTable("line");
-                serverMain.assertSql("select count() from line", "count\n" +
-                        "0\n");
+                serverMain.assertSql("select count() from line", "count\n0\n");
             }
         });
     }
@@ -379,6 +377,94 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     serverMain.assertSql("select * from line",
                             "sym1\tfield1\ttimestamp\n" +
                                     "123\t123\t2009-02-13T23:31:30.000000Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipCorruptedData() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Send corrupted gzip stream (valid header but corrupt data)
+                    final byte[] corruptGzip = new byte[]{
+                            0x1f, (byte) 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff
+                    };
+
+                    final HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort())
+                            .POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+                    for (byte b : corruptGzip) {
+                        request.put(b);
+                    }
+
+                    try (HttpClient.ResponseHeaders resp = request.send()) {
+                        resp.await();
+                        TestUtils.assertEquals("415", resp.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipDisconnectDuringDecompression() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    // Start a gzip header but disconnect mid-stream
+                    final byte[] partialGzip = new byte[]{0x1f, (byte) 0x8b, 0x08, 0x00};
+
+                    final HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort())
+                            .POST()
+                            .url("/write")
+                            .header("Content-Encoding", "gzip")
+                            .withContent();
+                    for (byte b : partialGzip) {
+                        request.put(b);
+                    }
+
+                    request.sendPartialContent(100, 500);
+                    Os.sleep(100);
+                    httpClient.disconnect();
+                }
+
+                // Verify no partial data was committed
+                TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
+                if (tt != null) {
+                    Assert.assertEquals(0, getSeqTxn(serverMain, tt));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGzipEmptyStream() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+
+                    try (
+                            HttpClient.ResponseHeaders resp = request.POST()
+                                    .url("/write")
+                                    .header("Content-Encoding", "gzip")
+                                    .withContent()
+                                    .send()
+                    ) {
+                        resp.await();
+                        TestUtils.assertEquals("400", resp.getStatusCode());
+                    }
                 }
             }
         });
