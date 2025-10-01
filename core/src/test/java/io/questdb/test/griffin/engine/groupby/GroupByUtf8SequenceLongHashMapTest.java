@@ -398,9 +398,6 @@ public class GroupByUtf8SequenceLongHashMapTest extends AbstractCairoTest {
             Assert.assertTrue("Map should not exceed key range", map.size() <= keyRange);
 
             long totalCount = 0;
-            GroupByUtf8Sink sink = new GroupByUtf8Sink();
-
-            sink.setAllocator(allocator);
             for (int i = 0, capacity = map.capacity(); i < capacity; i++) {
                 long keyPtr = map.keyAt(i);
                 if (keyPtr != Numbers.LONG_NULL) {

@@ -177,7 +177,7 @@ public class GroupByLongLongHashMapFuzzTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     long key = rnd.nextPositiveLong() + 1;
-                    long value = rnd.nextPositiveLong() + 1;
+                    rnd.nextPositiveLong();
                     Assert.assertEquals((long) referenceMap.get(key), map.get(key));
                 }
 

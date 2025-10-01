@@ -247,7 +247,7 @@ public class GroupByCharSequenceLongHashMapFuzzTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     String key = "random_" + rnd.nextPositiveInt() + "_" + rnd.nextPositiveLong();
-                    long value = rnd.nextPositiveLong() + 1;
+                    rnd.nextPositiveLong();
                     Assert.assertEquals((long) referenceMap.get(key), map.get(key));
                 }
 

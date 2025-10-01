@@ -66,8 +66,8 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean getBool(Record record) {
-        final long cumSum = record.getLong(0); // summed 1s for true and -1s for false. if 0, tiebreak and say true
-        return cumSum >= 0;
+        // summed 1s for true and -1s for false. if 0, tiebreak and say true
+        return record.getLong(0) >= 0;
     }
 
     @Override
@@ -93,7 +93,7 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // true/false cumulative sum
+        columnTypes.add(ColumnType.LONG); // true/false sum
     }
 
     @Override
