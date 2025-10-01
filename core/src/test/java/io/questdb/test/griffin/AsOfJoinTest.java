@@ -1801,7 +1801,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testJoinStringOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     "INSERT INTO x VALUES " +
@@ -1838,7 +1838,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // ASOF JOIN
-            query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String queryBody = "* FROM x ASOF JOIN y ON(sym)";
+            query = "SELECT " + queryBody;
             expected = "sym\tts\tsym1\tts1\n" +
                     "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
@@ -1848,8 +1849,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
-            execute("ALTER TABLE y ALTER COLUMN sym ADD INDEX");
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
+            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
 
@@ -1857,7 +1862,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testJoinVarcharOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     "INSERT INTO x VALUES " +
@@ -1894,7 +1899,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // ASOF JOIN
-            query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            String queryBody = "* FROM x ASOF JOIN y ON(sym)";
+            query = "SELECT " + queryBody;
             expected = "sym\tts\tsym1\tts1\n" +
                     "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
@@ -1904,8 +1910,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
-            execute("ALTER TABLE y ALTER COLUMN sym ADD INDEX");
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
+            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
 
