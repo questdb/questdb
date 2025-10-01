@@ -116,7 +116,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInitGzip
     }
 
     int ret;
-    switch (ret = inflateInit2(strm, MAX_WBITS+32)) {
+    // 16+MAX_WBITS => gzip-only (per zlib docs)
+    switch (ret = inflateInit2(strm, 16+MAX_WBITS)) {
         case Z_OK:
             return (jlong) strm;
         default:
