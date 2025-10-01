@@ -187,6 +187,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             long p = recvBuffer.getBufPos();
             int len = (int) (recvBuffer.getBufEnd() - p);
             int ret = Zip.inflate(inflateStream, p, len, false);
+            int newBytes = len - Zip.availOut(inflateStream);
+            if (newBytes > 0) {
+                recvBuffer.setBufPos(p + newBytes);
+            }
 
             if (ret < 0) {
                 if (ret != Zip.Z_BUF_ERROR) {
@@ -195,11 +199,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                     return;
                 }
 
-                if (recvBuffer.getBufPos() > pp) {
-                    // when inflate fails with Z_BUF_ERROR - this means either
-                    // have not processed buffer yet, or it is too small. Trigger buffer processing
-                    // to make space in the buffer
+                // inflate can return Z_BUF_ERROR after writing bytes once the recv buffer runs out of space
+                if (newBytes > 0) {
                     currentStatus = processLocalBuffer();
+                    pp = recvBuffer.getBufPos();
                     continue;
                 }
 
@@ -208,10 +211,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 return;
             }
 
-            recvBuffer.setBufPos(p + (len - Zip.availOut(inflateStream)));
+            if (newBytes > 0) {
+                currentStatus = processLocalBuffer();
+                pp = recvBuffer.getBufPos();
+            }
 
             if (ret == Zip.Z_STREAM_END) {
-                currentStatus = processLocalBuffer();
                 cleanupGzip();
                 break;
             }
