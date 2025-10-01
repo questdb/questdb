@@ -780,7 +780,5 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
-    boolean useFastAsOfJoin();
-
     boolean useWithinLatestByOptimisation();
 }

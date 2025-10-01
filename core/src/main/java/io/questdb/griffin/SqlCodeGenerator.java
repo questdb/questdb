@@ -391,7 +391,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final boolean enableJitDebug;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    private final boolean fastAsOfJoins;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
     private final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
@@ -455,7 +454,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             jitIRMem.truncate();
             this.expressionNodePool = expressionNodePool;
             this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
-            this.fastAsOfJoins = configuration.useFastAsOfJoin();
             this.validateSampleByFillType = configuration.isValidateSampleByFillType();
         } catch (Throwable th) {
             close();
@@ -2750,6 +2748,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
+                                boolean asOfLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean asOfIndexSearch = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2769,15 +2769,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeTimestampAsNanosA
                                         );
                                         boolean created = false;
-                                        if (!asOfAvoidBinarySearch) {
-                                            if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                        if (!asOfAvoidBinarySearch && !asOfLinearSearch) {
+                                            if (slave.supportsTimeFrameCursor()) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
                                                 boolean isOptimizable = symbolShortCircuit != DisabledSymbolShortCircuit.INSTANCE;
                                                 JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
                                                 JoinContext slaveContext = slaveModel.getJoinContext();
-                                                if (isOptimizable && isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                if (isOptimizable && asOfIndexSearch && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
                                                             metadata,
@@ -2911,7 +2911,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     } else {
                                         boolean created = false;
-                                        if (fastAsOfJoins && !asOfAvoidBinarySearch) {
+                                        if (!asOfAvoidBinarySearch) {
                                             // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(
@@ -3038,6 +3038,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
+                                boolean ltLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -3066,7 +3067,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ltToleranceInterval
                                         );
                                     } else {
-                                        if (slave.supportsTimeFrameCursor() && !ltAvoidBinarySearch) {
+                                        if (!ltAvoidBinarySearch && !ltLinearSearch && slave.supportsTimeFrameCursor()) {
                                             master = new LtJoinNoKeyFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
