@@ -77,7 +77,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedDisconnect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
             )) {
                 serverMain.start();
@@ -109,7 +109,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedEncodingMalformed() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
@@ -137,9 +137,8 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testChunkedRedundantBytes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+        assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
@@ -187,7 +186,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testClientDisconnectedBeforeCommitted() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
             SOCountDownLatch ping = new SOCountDownLatch(1);
             SOCountDownLatch pong = new SOCountDownLatch(1);
@@ -236,7 +235,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
 
                 assertEventually(() -> {
-                    // Assert no Wal Writers are left in ILP http TUD cache
+                    // Assert no WAL writers are left in ILP http TUD cache
                     Assert.assertEquals(0, walWriterTaken.get());
                 });
             }
@@ -245,13 +244,13 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testClientDisconnectedDuringCommit() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             AtomicReference<HttpClient> httpClientRef = new AtomicReference<>();
             SOCountDownLatch ping = new SOCountDownLatch(1);
             SOCountDownLatch pong = new SOCountDownLatch(1);
             AtomicInteger counter = new AtomicInteger(2);
-            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
+            final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 long addr = 0;
 
                 @Override
@@ -333,7 +332,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testClientDisconnectsMidRequest() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
@@ -387,12 +386,11 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testGzipEncoding() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
-                while (!serverMain.hasStarted()) {
-                    continue;
-                }
+                assertEventually(() -> Assert.assertTrue(serverMain.hasStarted()));
+
                 try (Sender sender = Sender.fromConfig("http::addr=127.0.0.1:" + serverMain.getHttpServerPort() + ";protocol_version=1;auto_flush=off;")) {
                     sender.table("m1")
                             .symbol("tag1", "value1")
@@ -419,8 +417,8 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                                 .header("Content-Encoding", "gzip");
                         request.withContent();
 
-                        for (int i = 0; i < outBytes.length; i++) {
-                            request.put(outBytes[i]);
+                        for (byte outByte : outBytes) {
+                            request.put(outByte);
                         }
 
                         try (HttpClient.ResponseHeaders response = request.send()) {
@@ -430,9 +428,11 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                     }
 
                     serverMain.awaitTable("m1");
-                    serverMain.assertSql("m1",
+                    serverMain.assertSql(
+                            "m1",
                             "tag1\tf1\tx\ttimestamp\n" +
-                                    "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n");
+                                    "value1\t1.0\t12\t1970-01-02T10:17:36.000000Z\n"
+                    );
                 }
             }
         });
@@ -440,7 +440,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
             }})) {
@@ -491,7 +491,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testSlowPeerHeaderErrors() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "20"
             )) {
@@ -515,7 +515,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
 
     @Test
     public void testUnsupportedPrecision() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
