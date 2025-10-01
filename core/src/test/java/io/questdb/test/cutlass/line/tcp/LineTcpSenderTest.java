@@ -983,7 +983,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 AtomicBoolean walRunning = new AtomicBoolean(true);
                 SOCountDownLatch doneAll = new SOCountDownLatch(3);
                 SOCountDownLatch doneILP = new SOCountDownLatch(2);
-                Rnd rnd = TestUtils.generateRandom(null,1425018208301L, 1759254348097L);
+                Rnd rnd = TestUtils.generateRandom(null);
                 long seed1a = rnd.nextLong();
                 long seed1b = rnd.nextLong();
                 long seed2a = rnd.nextLong();
