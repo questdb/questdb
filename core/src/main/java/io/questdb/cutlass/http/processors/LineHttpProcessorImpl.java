@@ -128,7 +128,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        state.setGzipEncoded(encoding != null && Utf8s.endsWithAscii(encoding, "gzip"));
+        state.setGzipEncoded(encoding != null && Utf8s.equalsIgnoreCaseAscii("gzip", encoding));
         if (state.isGzipEncoded()) {
             long inflateStream = Zip.inflateInitGzip();
             if (inflateStream < 0) {
