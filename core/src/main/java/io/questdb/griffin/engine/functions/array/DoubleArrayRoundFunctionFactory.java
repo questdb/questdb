@@ -28,11 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -65,24 +67,23 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
             int scaleValue = scale.getInt(null);
             if (scaleValue > -1) {
                 if (scaleValue + 2 < pow10max) {
-                    return new DoubleArrayRoundPositiveScaleFunction(arg, scaleValue, configuration);
+                    return new PositiveScaleFunc(configuration, arg, scaleValue, position);
                 }
-                return new DoubleArrayRoundDegenerateScaleFunction(arg, configuration);
+                return new DegenerateScaleFunc(configuration, arg, position);
             }
         }
-        return new DoubleArrayRoundVarScaleFunction(arg, scale, configuration);
+        return new VarScaleFunc(configuration, arg, scale, position);
     }
 
-    private static class DoubleArrayRoundDegenerateScaleFunction extends ArrayFunction implements UnaryFunction {
-        private final Function arrayArg;
+    private static class DegenerateScaleFunc extends WeakDimsArrayFunction implements UnaryFunction {
         private final DirectArray array;
-        private final String name;
+        private final Function arrayArg;
 
-        public DoubleArrayRoundDegenerateScaleFunction(Function arrayArg, CairoConfiguration configuration) {
-            this.name = "round";
+        public DegenerateScaleFunc(CairoConfiguration configuration, Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -113,7 +114,14 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override
@@ -127,18 +135,17 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundPositiveScaleFunction extends ArrayFunction implements UnaryFunction {
+    private static class PositiveScaleFunc extends WeakDimsArrayFunction implements UnaryFunction {
+        private final DirectArray array;
         private final Function arrayArg;
         private final int scale;
-        private final DirectArray array;
-        private final String name;
 
-        public DoubleArrayRoundPositiveScaleFunction(Function arrayArg, int scale, CairoConfiguration configuration) {
-            this.name = "round";
+        public PositiveScaleFunc(CairoConfiguration configuration, Function arrayArg, int scale, int position) {
             this.arrayArg = arrayArg;
             this.scale = scale;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -174,7 +181,14 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override
@@ -212,18 +226,17 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleArrayRoundVarScaleFunction extends ArrayFunction implements BinaryFunction {
+    private static class VarScaleFunc extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
-        private final String name;
         private final Function scalarArg;
 
-        public DoubleArrayRoundVarScaleFunction(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
-            this.name = "round";
+        public VarScaleFunc(CairoConfiguration configuration, Function arrayArg, Function scalarArg, int position) {
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -260,12 +273,19 @@ public class DoubleArrayRoundFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return name;
+            return "round";
         }
 
         @Override
         public Function getRight() {
             return scalarArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override

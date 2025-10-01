@@ -24,6 +24,7 @@
 
 package io.questdb.compat;
 
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -49,37 +50,67 @@ import java.io.OutputStreamWriter;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class HttpClientCompatTest {
-    private static final int SERVER_PORT = 8080;
+    private static final int DEFAULT_SERVER_PORT = 8080;
+
+    @Test
+    public void testRequestWithExplicitHostAndPort() throws Exception {
+        final String expectedResponseA = "{\"server\": \"A\"}";
+        final String expectedResponseB = "{\"server\": \"B\"}";
+
+        int portA = DEFAULT_SERVER_PORT;
+        int portB = portA + 1;
+        Server serverA = startWebServer(portA, HttpStatus.OK_200, expectedResponseA);
+        Server serverB = startWebServer(portB, HttpStatus.OK_200, "{\"server\": \"B\"}");
+
+        try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+            HttpClient.Request request = client.newRequest("localhost", portA).GET().url("/test");
+            HttpClient.ResponseHeaders respHeaders = request.send(); // send request to default host/port
+            respHeaders.await();
+            assertResponse(respHeaders, expectedResponseA);
+
+            respHeaders = request.send("localhost", portB, DefaultHttpClientConfiguration.INSTANCE.getTimeout());
+            respHeaders.await();
+            assertResponse(respHeaders, expectedResponseB);
+        } finally {
+            serverA.stop();
+            serverB.stop();
+        }
+    }
 
     @Test
     public void testSmoke() throws Exception {
         final String expectedResponse = "{\"foobar\": \"barbaz\"}";
         Server server = startWebServer(HttpStatus.OK_200, expectedResponse);
         try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
-            try (HttpClient.ResponseHeaders respHeaders = client.newRequest("localhost", SERVER_PORT).GET().url("/test").send()) {
+            try (HttpClient.ResponseHeaders respHeaders = client.newRequest("localhost", DEFAULT_SERVER_PORT).GET().url("/test").send()) {
                 respHeaders.await();
-                Assert.assertEquals("200", Utf8s.toString(respHeaders.getStatusCode()));
-                Assert.assertEquals(MimeTypes.Type.APPLICATION_JSON.toString(), Utf8s.toString(respHeaders.getContentType()));
-
-                Assert.assertFalse(respHeaders.isChunked());
-                Response resp = respHeaders.getResponse();
-
-                Utf8StringSink sink = new Utf8StringSink();
-
-                Fragment fragment;
-                while ((fragment = resp.recv()) != null) {
-                    Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
-                }
-
-                Assert.assertEquals(expectedResponse, sink.toString());
+                assertResponse(respHeaders, expectedResponse);
             }
         } finally {
             server.stop();
         }
     }
 
+    private static void assertResponse(HttpClient.ResponseHeaders respHeaders, String expectedResponseA) {
+        Assert.assertEquals("200", Utf8s.toString(respHeaders.getStatusCode()));
+        Assert.assertEquals(MimeTypes.Type.APPLICATION_JSON.toString(), Utf8s.toString(respHeaders.getContentType()));
+
+        Assert.assertFalse(respHeaders.isChunked());
+        Response resp = respHeaders.getResponse();
+        Utf8StringSink sink = new Utf8StringSink();
+        Fragment fragment;
+        while ((fragment = resp.recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+        }
+        Assert.assertEquals(expectedResponseA, sink.toString());
+    }
+
     private static Server startWebServer(int statusCode, String response) throws Exception {
-        Server server = new Server(SERVER_PORT);
+        return startWebServer(DEFAULT_SERVER_PORT, statusCode, response);
+    }
+
+    private static Server startWebServer(int port, int statusCode, String response) throws Exception {
+        Server server = new Server(port);
         server.setHandler(new TestHandler(statusCode, response));
         server.start();
         return server;

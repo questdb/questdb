@@ -28,6 +28,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 
 public class ArrayColumnTypes implements ColumnTypes, Mutable {
+    public static final ArrayColumnTypes EMPTY = new ArrayColumnTypes();
     private final IntList types = new IntList();
 
     public ArrayColumnTypes add(int type) {
