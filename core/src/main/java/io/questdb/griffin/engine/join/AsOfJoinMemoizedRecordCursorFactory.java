@@ -273,9 +273,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     }
                 }
 
-                slaveSinkTarget.clear();
-                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
-                if (masterSinkTarget.memeq(slaveSinkTarget)) {
+                if (slaveRecB.getInt(slaveSymbolColumnIndex) == slaveSymbolKey) {
                     record.hasSlave(true);
                     // We found the symbol that we don't remember. Memorize it now.
                     rememberSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, slaveRecB.getRowId());
