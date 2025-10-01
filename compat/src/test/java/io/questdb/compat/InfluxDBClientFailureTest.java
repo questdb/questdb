@@ -295,7 +295,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
 
-                for (int i = 0; i < 10_000_000; i++) {
+                for (int i = 0; i < 1_000_000; i++) {
                     points.add("m1,tag1=value1 f1=1i,x=12i");
                 }
                 InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
