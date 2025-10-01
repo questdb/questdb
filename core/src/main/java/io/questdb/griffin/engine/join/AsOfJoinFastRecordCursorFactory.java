@@ -43,10 +43,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinFastRecordCursorFactory(
@@ -57,7 +57,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
-            SymbolShortCircuit symbolShortCircuit,
+            AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
@@ -77,7 +77,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.symbolShortCircuit = symbolShortCircuit;
+        this.columnAccessHelper = columnAccessHelper;
         this.toleranceInterval = toleranceInterval;
     }
 
@@ -154,12 +154,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            columnAccessHelper.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+            if (columnAccessHelper.isShortCircuit(masterRecord)) {
                 // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
                 // and report no match.
                 record.hasSlave(false);

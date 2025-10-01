@@ -193,9 +193,9 @@ import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
+import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
+import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.DisabledSymbolShortCircuit;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -212,13 +212,13 @@ import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NoopColumnAccessHelper;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
-import io.questdb.griffin.engine.join.SingleStringSymbolShortCircuit;
-import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
-import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
+import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
+import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
+import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -1541,16 +1541,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private @NotNull SymbolShortCircuit createSymbolShortCircuit(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
-        SymbolShortCircuit symbolShortCircuit = DisabledSymbolShortCircuit.INSTANCE;
+    private @NotNull AsofJoinColumnAccessHelper createSymbolShortCircuit(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
+        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
         assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        SymbolShortCircuit[] symbolShortCircuits = null;
+        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
             int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
             int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
             if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
                 int masterColType = masterMetadata.getColumnType(masterIndex);
-                SymbolShortCircuit newSymbolShortCircuit;
+                AsofJoinColumnAccessHelper newSymbolShortCircuit;
                 switch (masterColType) {
                     case SYMBOL:
                         if (selfJoin && masterIndex == slaveIndex) {
@@ -1564,40 +1564,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             //       would require a more complex logic, which is not worth it for now
                             continue;
                         }
-                        newSymbolShortCircuit = new SingleSymbolSymbolShortCircuit(configuration, masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
                         break;
                     case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharSymbolShortCircuit(masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
                         break;
                     case STRING:
-                        newSymbolShortCircuit = new SingleStringSymbolShortCircuit(masterIndex, slaveIndex);
+                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
                         break;
                     default:
                         // unsupported type for short circuit
                         continue;
                 }
-                if (symbolShortCircuit == DisabledSymbolShortCircuit.INSTANCE) {
+                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
                     // ok, a single symbol short circuit
-                    symbolShortCircuit = newSymbolShortCircuit;
+                    columnAccessHelper = newSymbolShortCircuit;
                 } else if (symbolShortCircuits == null) {
                     // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new SymbolShortCircuit[2];
-                    symbolShortCircuits[0] = symbolShortCircuit;
+                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
+                    symbolShortCircuits[0] = columnAccessHelper;
                     symbolShortCircuits[1] = newSymbolShortCircuit;
-                    symbolShortCircuit = new ChainedSymbolShortCircuit(symbolShortCircuits);
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
                 } else {
                     // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
                     // this allocates arrays, but it should be very rare
                     int size = symbolShortCircuits.length;
-                    SymbolShortCircuit[] newSymbolShortCircuits = new SymbolShortCircuit[size + 1];
+                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
                     System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
                     newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    symbolShortCircuit = new ChainedSymbolShortCircuit(newSymbolShortCircuits);
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
                     symbolShortCircuits = newSymbolShortCircuits;
                 }
             }
         }
-        return symbolShortCircuit;
+        return columnAccessHelper;
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2772,8 +2772,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (!asOfAvoidBinarySearch && !asOfLinearSearch) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
-                                                boolean isOptimizable = symbolShortCircuit != DisabledSymbolShortCircuit.INSTANCE;
+                                                AsofJoinColumnAccessHelper columnAccessHelper = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
+                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
                                                 JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
                                                 JoinContext slaveContext = slaveModel.getJoinContext();
@@ -2785,7 +2785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slave,
                                                             joinColumnSplit,
                                                             slaveSymbolColumnIndex,
-                                                            symbolShortCircuit,
+                                                            columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
@@ -2797,7 +2797,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slave,
                                                             joinColumnSplit,
                                                             slaveSymbolColumnIndex,
-                                                            symbolShortCircuit,
+                                                            columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
@@ -2810,7 +2810,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slave,
                                                             slaveSink,
                                                             joinColumnSplit,
-                                                            symbolShortCircuit,
+                                                            columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );

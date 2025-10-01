@@ -50,9 +50,9 @@ import io.questdb.std.Rows;
  * instead of linear scanning through time-ordered records.
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinIndexedRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
-    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinIndexedRecordCursorFactory(
@@ -62,13 +62,13 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            SymbolShortCircuit symbolShortCircuit,
+            AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.symbolShortCircuit = symbolShortCircuit;
+        this.columnAccessHelper = columnAccessHelper;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         RecordMetadata masterMeta = masterFactory.getMetadata();
@@ -152,13 +152,13 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            columnAccessHelper.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            CharSequence masterSymbolValue = symbolShortCircuit.getMasterValue(masterRecord);
-            int symbolKey = TableUtils.toIndexKey(symbolShortCircuit.getSlaveSymbolTable().keyOf(masterSymbolValue));
+            CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
+            int symbolKey = TableUtils.toIndexKey(columnAccessHelper.getSlaveSymbolTable().keyOf(masterSymbolValue));
             if (symbolKey < 0) {
                 record.hasSlave(false);
                 return;

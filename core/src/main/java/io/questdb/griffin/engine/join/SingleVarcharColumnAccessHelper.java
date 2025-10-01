@@ -27,40 +27,56 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
+public final class SingleVarcharColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    private final int masterVarcharIndex;
+    private final int slaveSymbolIndex;
+    private final StringSink utf16Sink = new StringSink();
+    private StaticSymbolTable slaveSymbolTable;
 
-    private final SymbolShortCircuit[] shortCircuits;
-
-    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
+    public SingleVarcharColumnAccessHelper(int masterVarcharIndex, int slaveSymbolIndex) {
+        this.masterVarcharIndex = masterVarcharIndex;
+        this.slaveSymbolIndex = slaveSymbolIndex;
     }
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit can't be used to return the master value");
+        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
+        if (masterVarchar == null) {
+            return null;
+        }
+        if (masterVarchar.isAscii()) {
+            return masterVarchar.asAsciiCharSequence();
+        }
+        utf16Sink.clear();
+        utf16Sink.put(masterVarchar);
+        return utf16Sink;
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit doesn't have a symbol table");
+        return slaveSymbolTable;
     }
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
-                return true;
-            }
+        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
+        if (masterVarchar == null) {
+            return slaveSymbolTable.containsNullValue();
         }
-        return false;
+        if (masterVarchar.isAscii()) {
+            return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence()) == StaticSymbolTable.VALUE_NOT_FOUND;
+        }
+        utf16Sink.clear();
+        utf16Sink.put(masterVarchar);
+        return slaveSymbolTable.keyOf(utf16Sink) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
-        }
+        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }

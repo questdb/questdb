@@ -45,9 +45,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinMemoizedRecordCursor cursor;
     private final int slaveSymbolColumnIndex;
-    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinMemoizedRecordCursorFactory(
@@ -57,13 +57,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int slaveSymbolColumnIndex,
-            SymbolShortCircuit symbolShortCircuit,
+            AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.symbolShortCircuit = symbolShortCircuit;
+        this.columnAccessHelper = columnAccessHelper;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
@@ -159,7 +159,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            columnAccessHelper.of(slaveCursor);
         }
 
         private boolean isSlaveWithinToleranceInterval(long masterTimestamp, long slaveTimestamp) {
@@ -195,7 +195,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+            if (columnAccessHelper.isShortCircuit(masterRecord)) {
                 // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
                 // and report no match.
                 record.hasSlave(false);
@@ -210,7 +210,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
 
             StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            CharSequence masterSymbolValue = symbolShortCircuit.getMasterValue(masterRecord);
+            CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
             int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
             long rememberedRowId = symKeyToRowId.get(slaveSymbolKey);
             long validityPeriodStart, validityPeriodEnd;

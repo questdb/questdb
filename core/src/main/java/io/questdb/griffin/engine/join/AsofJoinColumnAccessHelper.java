@@ -27,28 +27,27 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
-    public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+/**
+ * When joining on a single symbol column, detects when the slave column doesn't have
+ * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
+ * in that case.
+ */
+public interface AsofJoinColumnAccessHelper {
+    @Transient
+    CharSequence getMasterValue(Record masterRecord);
 
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
-    }
+    @NotNull
+    StaticSymbolTable getSlaveSymbolTable();
 
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
-    }
+    /**
+     * When joining on a single symbol column, detects when the slave column doesn't have
+     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
+     * in that case.
+     */
+    boolean isShortCircuit(Record masterRecord);
 
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        return false;
-    }
-
-    @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
-
-    }
+    void of(TimeFrameRecordCursor slaveCursor);
 }
