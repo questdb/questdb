@@ -235,7 +235,7 @@ public class InfluxDBClientTest extends AbstractTest {
                 sendIlp(tableName, count, influxDB);
             }
 
-            serverMain.awaitTxn(tableName, 2);
+            serverMain.awaitTxn(tableName, 4);
             assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + (2 * count) + "\n");
             assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (2 * (count * (count - 1) / 2)) + "\n");
         }
