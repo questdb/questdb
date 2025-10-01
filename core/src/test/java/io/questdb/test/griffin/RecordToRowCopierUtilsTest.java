@@ -166,71 +166,6 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 9999), new RowAsserter());
     }
 
-    private static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
-        int fromTag = ColumnType.tagOf(fromType);
-        return new Record() {
-            @Override
-            public long getDecimal128Hi(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
-            }
-
-            @Override
-            public long getDecimal128Lo(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
-            }
-
-            @Override
-            public short getDecimal16(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL16, fromTag);
-                return value.isNull() ? Short.MIN_VALUE : (short) value.getLl();
-            }
-
-            @Override
-            public long getDecimal256HH(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHh();
-            }
-
-            @Override
-            public long getDecimal256HL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHl();
-            }
-
-            @Override
-            public long getDecimal256LH(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLh();
-            }
-
-            @Override
-            public long getDecimal256LL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLl();
-            }
-
-            @Override
-            public int getDecimal32(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL32, fromTag);
-                return value.isNull() ? Integer.MIN_VALUE : (int) value.getLl();
-            }
-
-            @Override
-            public long getDecimal64(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL64, fromTag);
-                return value.isNull() ? Long.MIN_VALUE : value.getLl();
-            }
-
-            @Override
-            public byte getDecimal8(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL8, fromTag);
-                return value.isNull() ? Byte.MIN_VALUE : (byte) value.getLl();
-            }
-        };
-    }
-
     private static @NotNull Record getLongRecord(int fromType, long value) {
         return new Record() {
             @Override
@@ -316,7 +251,7 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             expectedValue = null;
         }
 
-        Record rec = getDecimalRecord(fromType, value);
+        Record rec = DecimalUtilTest.getDecimalRecord(fromType, value);
         TableWriter.Row row = DecimalUtilTest.getRowAsserter(toType, -1, expectedValue);
         try {
             copier.copy(sqlExecutionContext, rec, row);

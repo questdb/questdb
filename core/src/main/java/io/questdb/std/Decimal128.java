@@ -849,6 +849,9 @@ public class Decimal128 implements Sinkable {
      */
     @Override
     public String toString() {
+        if (isNull()) {
+            return "";
+        }
         return toBigDecimal().toPlainString();
     }
 

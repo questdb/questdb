@@ -174,12 +174,13 @@ public final class DecimalUtil {
      * if the type is not supported.
      */
     public static int getTypePrecisionScale(int type) {
-        if (ColumnType.isDecimal(type)) {
+        int tag = ColumnType.tagOf(type);
+        if (ColumnType.isDecimalType(tag)) {
             short p = (short) ColumnType.getDecimalPrecision(type);
             short s = (short) ColumnType.getDecimalScale(type);
             return Numbers.encodeLowHighShorts(p, s);
         }
-        switch (ColumnType.tagOf(type)) {
+        switch (tag) {
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
             case ColumnType.LONG:
@@ -310,50 +311,47 @@ public final class DecimalUtil {
      * Load a decimal value from a Record into a Decimal256
      */
     public static void load(Decimal256 decimal, @NotNull Record rec, int col, int fromType) {
-        final int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        final int fromScale = ColumnType.getDecimalScale(fromType);
-
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8:
                 byte b = rec.getDecimal8(col);
                 if (b == Decimals.DECIMAL8_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(b, fromScale);
+                    decimal.ofLong(b, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 short s = rec.getDecimal16(col);
                 if (s == Decimals.DECIMAL16_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(s, fromScale);
+                    decimal.ofLong(s, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 int i = rec.getDecimal32(col);
                 if (i == Decimals.DECIMAL32_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(i, fromScale);
+                    decimal.ofLong(i, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 3:
+            case ColumnType.DECIMAL64:
                 long l = rec.getDecimal64(col);
                 if (l == Decimals.DECIMAL64_NULL) {
                     decimal.ofNull();
                 } else {
-                    decimal.ofLong(l, fromScale);
+                    decimal.ofLong(l, ColumnType.getDecimalScale(fromType));
                 }
                 break;
-            case 4:
+            case ColumnType.DECIMAL128:
                 long hi = rec.getDecimal128Hi(col);
                 long lo = rec.getDecimal128Lo(col);
                 if (Decimal128.isNull(hi, lo)) {
                     decimal.ofNull();
                 } else {
                     long v = hi < 0 ? -1 : 0;
-                    decimal.of(v, v, hi, lo, fromScale);
+                    decimal.of(v, v, hi, lo, ColumnType.getDecimalScale(fromType));
                 }
                 break;
             default:
@@ -361,7 +359,7 @@ public final class DecimalUtil {
                 long hl = rec.getDecimal256HL(col);
                 long lh = rec.getDecimal256LH(col);
                 long ll = rec.getDecimal256LL(col);
-                decimal.of(hh, hl, lh, ll, fromScale);
+                decimal.of(hh, hl, lh, ll, ColumnType.getDecimalScale(fromType));
                 break;
         }
     }

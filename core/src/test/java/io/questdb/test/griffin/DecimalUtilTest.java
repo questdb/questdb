@@ -28,18 +28,29 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.Decimal8Function;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal16Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -48,6 +59,71 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DecimalUtilTest extends AbstractTest {
+
+    public static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
+        int fromTag = ColumnType.tagOf(fromType);
+        return new Record() {
+            @Override
+            public long getDecimal128Hi(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
+                return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
+            }
+
+            @Override
+            public long getDecimal128Lo(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
+                return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL16, fromTag);
+                return value.isNull() ? Short.MIN_VALUE : (short) value.getLl();
+            }
+
+            @Override
+            public long getDecimal256HH(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getHh();
+            }
+
+            @Override
+            public long getDecimal256HL(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getHl();
+            }
+
+            @Override
+            public long getDecimal256LH(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getLh();
+            }
+
+            @Override
+            public long getDecimal256LL(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
+                return value.getLl();
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL32, fromTag);
+                return value.isNull() ? Integer.MIN_VALUE : (int) value.getLl();
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL64, fromTag);
+                return value.isNull() ? Long.MIN_VALUE : value.getLl();
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                Assert.assertEquals(ColumnType.DECIMAL8, fromTag);
+                return value.isNull() ? Byte.MIN_VALUE : (byte) value.getLl();
+            }
+        };
+    }
 
     public static @NotNull TableWriter.Row getRowAsserter(int columnType, int columnIndex, @Nullable Decimal256 expectedValue) {
         short toTag = ColumnType.tagOf(columnType);
@@ -361,6 +437,216 @@ public class DecimalUtilTest extends AbstractTest {
 
         // Test INTERVAL - should return 0
         Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.INTERVAL));
+    }
+
+    @Test
+    public void testLoadDecimal128Record() {
+        assertLoadNullDecimal(new Decimal256(0, 0, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0), ColumnType.getDecimalType(38, 0));
+        assertLoadDecimal(Decimal256.fromLong(123456789012345L, 1), ColumnType.getDecimalType(38, 1));
+        assertLoadDecimal(Decimal256.fromLong(-123456789012345L, 2), ColumnType.getDecimalType(38, 2));
+        assertLoadDecimal(new Decimal256(
+                        0,
+                        0,
+                        Decimal128.MAX_VALUE.getHigh(),
+                        Decimal128.MAX_VALUE.getLow(),
+                        3
+                ),
+                ColumnType.getDecimalType(38, 3)
+        );
+        assertLoadDecimal(new Decimal256(
+                        -1,
+                        -1,
+                        Decimal128.MIN_VALUE.getHigh(),
+                        Decimal128.MIN_VALUE.getLow(),
+                        3
+                ),
+                ColumnType.getDecimalType(38, 3)
+        );
+    }
+
+    @Test
+    public void testLoadDecimal16Record() {
+        assertLoadNullDecimal(Decimal256.fromLong(Decimals.DECIMAL16_NULL, 0), ColumnType.getDecimalType(4, 0));
+        assertLoadDecimal(Decimal256.fromLong(1234, 1), ColumnType.getDecimalType(4, 1));
+        assertLoadDecimal(Decimal256.fromLong(-1234, 1), ColumnType.getDecimalType(4, 1));
+        assertLoadDecimal(Decimal256.fromLong(9999, 1), ColumnType.getDecimalType(4, 1));
+        assertLoadDecimal(Decimal256.fromLong(-9999, 1), ColumnType.getDecimalType(4, 1));
+    }
+
+    @Test
+    public void testLoadDecimal256Record() {
+        assertLoadNullDecimal(Decimal256.NULL_VALUE, ColumnType.getDecimalType(76, 0));
+        assertLoadDecimal(Decimal256.fromLong(123456789012345L, 1), ColumnType.getDecimalType(76, 1));
+        assertLoadDecimal(Decimal256.fromLong(-123456789012345L, 2), ColumnType.getDecimalType(76, 2));
+        assertLoadDecimal(Decimal256.MIN_VALUE, ColumnType.getDecimalType(76, 0));
+        assertLoadDecimal(Decimal256.MAX_VALUE, ColumnType.getDecimalType(76, 0));
+    }
+
+    @Test
+    public void testLoadDecimal32Record() {
+        assertLoadNullDecimal(Decimal256.fromLong(Decimals.DECIMAL32_NULL, 0), ColumnType.getDecimalType(8, 0));
+        assertLoadDecimal(Decimal256.fromLong(12345678, 1), ColumnType.getDecimalType(8, 1));
+        assertLoadDecimal(Decimal256.fromLong(-12345678, 2), ColumnType.getDecimalType(8, 2));
+        assertLoadDecimal(Decimal256.fromLong(99999999, 3), ColumnType.getDecimalType(8, 3));
+        assertLoadDecimal(Decimal256.fromLong(-99999999, 4), ColumnType.getDecimalType(8, 4));
+    }
+
+    @Test
+    public void testLoadDecimal64Record() {
+        assertLoadNullDecimal(Decimal256.fromLong(Decimals.DECIMAL64_NULL, 0), ColumnType.getDecimalType(18, 0));
+        assertLoadDecimal(Decimal256.fromLong(123456789012345L, 1), ColumnType.getDecimalType(18, 1));
+        assertLoadDecimal(Decimal256.fromLong(-123456789012345L, 2), ColumnType.getDecimalType(18, 2));
+        assertLoadDecimal(Decimal256.fromLong(9999999999999999L, 3), ColumnType.getDecimalType(18, 3));
+        assertLoadDecimal(Decimal256.fromLong(-9999999999999999L, 4), ColumnType.getDecimalType(18, 4));
+    }
+
+    @Test
+    public void testLoadDecimal8Record() {
+        assertLoadNullDecimal(Decimal256.fromLong(Decimals.DECIMAL8_NULL, 0), ColumnType.getDecimalType(2, 0));
+        assertLoadDecimal(Decimal256.fromLong(12, 1), ColumnType.getDecimalType(2, 1));
+        assertLoadDecimal(Decimal256.fromLong(-12, 1), ColumnType.getDecimalType(2, 1));
+        assertLoadDecimal(Decimal256.fromLong(99, 1), ColumnType.getDecimalType(2, 1));
+        assertLoadDecimal(Decimal256.fromLong(-99, 1), ColumnType.getDecimalType(2, 1));
+    }
+
+    @Test
+    public void testLoadDecimalsFromByteConstant() {
+        assertLoadDecimals("0", ByteConstant.newInstance((byte) 0));
+        assertLoadDecimals("127", ByteConstant.newInstance((byte) 127));
+        assertLoadDecimals("-128", ByteConstant.newInstance((byte) -128));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDateConstant() {
+        assertLoadDecimals("0", DateConstant.newInstance(0));
+        assertLoadDecimals("1234567890", DateConstant.newInstance(1234567890));
+        assertLoadDecimals("9223372036854775807", DateConstant.newInstance(Long.MAX_VALUE));
+        assertLoadDecimals("-9223372036854775807", DateConstant.newInstance(Long.MIN_VALUE + 1));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDateConstantNull() {
+        assertLoadDecimals("", DateConstant.NULL);
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal128Constant() {
+        // Decimal128: 19-38 digit precision
+        assertLoadDecimals("0", new Decimal128Constant(0L, 0L, ColumnType.getDecimalType(38, 0)));
+        assertLoadDecimals("1234567890123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 0)));
+        assertLoadDecimals("-1234567890123456789", new Decimal128Constant(-1L, -1234567890123456789L, ColumnType.getDecimalType(20, 0)));
+        assertLoadDecimals("1234567890.123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 9)));
+        assertLoadDecimals("", new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(38, 0)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal16Constant() {
+        assertLoadDecimals("0", new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimals("9999", new Decimal16Constant((short) 9999, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimals("-9999", new Decimal16Constant((short) -9999, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimals("123.4", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 1)));
+        assertLoadDecimals("1.234", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 3)));
+        assertLoadDecimals("", new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(3, 0)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal256Constant() {
+        // Decimal256: 39-76 digit precision
+        assertLoadDecimals("0", new Decimal256Constant(0L, 0L, 0L, 0L, ColumnType.getDecimalType(76, 0)));
+        assertLoadDecimals("1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 0)));
+        assertLoadDecimals("-1234567890123456789", new Decimal256Constant(-1L, -1L, -1L, -1234567890123456789L, ColumnType.getDecimalType(40, 0)));
+        assertLoadDecimals("0.1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 19)));
+        assertLoadDecimals("", new Decimal256Constant(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, ColumnType.getDecimalType(76, 0)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal32Constant() {
+        assertLoadDecimals("0", new Decimal32Constant(0, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimals("123456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimals("-123456789", new Decimal32Constant(-123456789, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimals("12345.6789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 4)));
+        assertLoadDecimals("1.23456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 8)));
+        assertLoadDecimals("", new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal64Constant() {
+        assertLoadDecimals("0", new Decimal64Constant(0L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimals("123456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimals("-123456789012345678", new Decimal64Constant(-123456789012345678L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimals("12345678.9012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 10)));
+        assertLoadDecimals("1.23456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 17)));
+        assertLoadDecimals("", new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(18, 0)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromDecimal8Constant() {
+        assertLoadDecimals("0", new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimals("9", new Decimal8Constant((byte) 9, ColumnType.getDecimalType(1, 0)));
+        assertLoadDecimals("99", new Decimal8Constant((byte) 99, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimals("-99", new Decimal8Constant((byte) -99, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimals("1.2", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 1)));
+        assertLoadDecimals("0.12", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 2)));
+        assertLoadDecimals("", new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)));
+    }
+
+    @Test
+    public void testLoadDecimalsFromIntConstant() {
+        assertLoadDecimals("123", IntConstant.newInstance(123));
+        assertLoadDecimals("987654321", IntConstant.newInstance(987654321));
+        assertLoadDecimals("-3630", IntConstant.newInstance(-3630));
+    }
+
+    @Test
+    public void testLoadDecimalsFromIntConstantNull() {
+        assertLoadDecimals("", IntConstant.NULL);
+    }
+
+    @Test
+    public void testLoadDecimalsFromLongConstant() {
+        assertLoadDecimals("0", LongConstant.newInstance(0));
+        assertLoadDecimals("1234567890", LongConstant.newInstance(1234567890));
+        assertLoadDecimals("9223372036854775807", LongConstant.newInstance(Long.MAX_VALUE));
+        assertLoadDecimals("-9223372036854775807", LongConstant.newInstance(Long.MIN_VALUE + 1));
+    }
+
+    @Test
+    public void testLoadDecimalsFromLongConstantNull() {
+        assertLoadDecimals("", LongConstant.NULL);
+    }
+
+    @Test
+    public void testLoadDecimalsFromShortConstant() {
+        assertLoadDecimals("0", ShortConstant.newInstance((short) 0));
+        assertLoadDecimals("12345", ShortConstant.newInstance((short) 12345));
+        assertLoadDecimals("32767", ShortConstant.newInstance(Short.MAX_VALUE));
+        assertLoadDecimals("-32768", ShortConstant.newInstance(Short.MIN_VALUE));
+    }
+
+    @Test
+    public void testLoadDecimalsFromTimestampMicroConstant() {
+        assertLoadDecimals("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimals("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimals("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimals("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_MICRO));
+    }
+
+    @Test
+    public void testLoadDecimalsFromTimestampMicroConstantNull() {
+        assertLoadDecimals("", TimestampConstant.TIMESTAMP_MICRO_NULL);
+    }
+
+    @Test
+    public void testLoadDecimalsFromTimestampNanoConstant() {
+        assertLoadDecimals("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimals("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimals("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimals("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_NANO));
+    }
+
+    @Test
+    public void testLoadDecimalsFromTimestampNanoConstantNull() {
+        assertLoadDecimals("", TimestampConstant.TIMESTAMP_NANO_NULL);
     }
 
     @Test
@@ -858,6 +1144,74 @@ public class DecimalUtilTest extends AbstractTest {
     }
 
     @Test
+    public void testStoreDecimal128() {
+        assertStoreDecimal128(new Decimal128(0x90ABBA0990ABBA90L, 0xCDEFFEDCCDEFFEDCL, 0));
+        assertStoreDecimal128(new Decimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, 0));
+        assertStoreDecimal128(Decimal128.MIN_VALUE);
+        assertStoreDecimal128(Decimal128.MAX_VALUE);
+        assertStoreDecimal128(Decimal128.fromLong(123456, 0));
+        assertStoreDecimal128(Decimal128.fromLong(-123456, 0));
+    }
+
+    @Test
+    public void testStoreDecimal16() {
+        int type = ColumnType.getDecimalType(4, 0);
+        MemLongGetter getter = (mem) -> mem.getDecimal16(0);
+        assertStoreDecimal64(0x5678, Short.BYTES, type, getter);
+        assertStoreDecimal64Null(Decimals.DECIMAL16_NULL, Short.BYTES, type, getter);
+        assertStoreDecimal64(9999, Short.BYTES, type, getter);
+        assertStoreDecimal64(-9999, Short.BYTES, type, getter);
+        assertStoreDecimal64(1234, Short.BYTES, type, getter);
+        assertStoreDecimal64(-1234, Short.BYTES, type, getter);
+    }
+
+    @Test
+    public void testStoreDecimal256() {
+        assertStoreDecimal256(new Decimal256(0x1234432112344321L, 0x5678876556788765L, 0x90ABBA0990ABBA90L, 0xCDEFFEDCCDEFFEDCL, 0));
+        assertStoreDecimal256(Decimal256.NULL_VALUE);
+        assertStoreDecimal256(Decimal256.MIN_VALUE);
+        assertStoreDecimal256(Decimal256.MAX_VALUE);
+        assertStoreDecimal256(Decimal256.fromLong(123456, 0));
+        assertStoreDecimal256(Decimal256.fromLong(-123456, 0));
+    }
+
+    @Test
+    public void testStoreDecimal32() {
+        int type = ColumnType.getDecimalType(9, 0);
+        MemLongGetter getter = (mem) -> mem.getDecimal32(0);
+        assertStoreDecimal64(0x12345678, Integer.BYTES, type, getter);
+        assertStoreDecimal64Null(Decimals.DECIMAL32_NULL, Integer.BYTES, type, getter);
+        assertStoreDecimal64(999999999, Integer.BYTES, type, getter);
+        assertStoreDecimal64(-999999999, Integer.BYTES, type, getter);
+        assertStoreDecimal64(123456, Integer.BYTES, type, getter);
+        assertStoreDecimal64(-123456, Integer.BYTES, type, getter);
+    }
+
+    @Test
+    public void testStoreDecimal64() {
+        int type = ColumnType.getDecimalType(18, 0);
+        MemLongGetter getter = (mem) -> mem.getDecimal64(0);
+        assertStoreDecimal64(0xDEADBEEFL, Long.BYTES, type, getter);
+        assertStoreDecimal64Null(Decimals.DECIMAL64_NULL, Long.BYTES, type, getter);
+        assertStoreDecimal64(Decimal64.MIN_VALUE.getValue(), Long.BYTES, type, getter);
+        assertStoreDecimal64(Decimal64.MAX_VALUE.getValue(), Long.BYTES, type, getter);
+        assertStoreDecimal64(123456L, Long.BYTES, type, getter);
+        assertStoreDecimal64(-123456L, Long.BYTES, type, getter);
+    }
+
+    @Test
+    public void testStoreDecimal8() {
+        int type = ColumnType.getDecimalType(2, 0);
+        MemLongGetter getter = (mem) -> mem.getDecimal8(0);
+        assertStoreDecimal64(0x12, Byte.BYTES, type, getter);
+        assertStoreDecimal64Null(Decimals.DECIMAL8_NULL, Byte.BYTES, type, getter);
+        assertStoreDecimal64(99, Byte.BYTES, type, getter);
+        assertStoreDecimal64(-99, Byte.BYTES, type, getter);
+        assertStoreDecimal64(12, Byte.BYTES, type, getter);
+        assertStoreDecimal64(-12, Byte.BYTES, type, getter);
+    }
+
+    @Test
     public void testStoreRow() {
         Decimal256 value = new Decimal256();
         value.ofNull();
@@ -879,10 +1233,102 @@ public class DecimalUtilTest extends AbstractTest {
         assertStoreRow(value, 72);
     }
 
+    private static void assertLoadDecimal128(CharSequence expected, Function value) {
+        Decimal128 decimal128 = new Decimal128();
+        DecimalUtil.load(decimal128, value, null);
+        Assert.assertEquals(expected, decimal128.toString());
+    }
+
+    private static void assertLoadDecimal256(CharSequence expected, Function value) {
+        Decimal256 decimal256 = new Decimal256();
+        DecimalUtil.load(decimal256, value, null);
+        Assert.assertEquals(expected, decimal256.toString());
+    }
+
+    private static void assertLoadDecimal64(CharSequence expected, Function value) {
+        Decimal64 decimal64 = new Decimal64();
+        DecimalUtil.load(decimal64, value, null);
+        Assert.assertEquals(expected, decimal64.toString());
+    }
+
+    private static void assertLoadDecimals(CharSequence expected, Function value) {
+        assertLoadDecimal64(expected, value);
+        assertLoadDecimal128(expected, value);
+        assertLoadDecimal256(expected, value);
+    }
+
+    private void assertLoadDecimal(Decimal256 value, int type) {
+        var rec = getDecimalRecord(type, value);
+        Decimal256 actual = new Decimal256();
+        DecimalUtil.load(actual, rec, 0, type);
+        Assert.assertEquals(value, actual);
+    }
+
+    private void assertLoadNullDecimal(Decimal256 value, int type) {
+        var rec = getDecimalRecord(type, value);
+        Decimal256 actual = new Decimal256();
+        DecimalUtil.load(actual, rec, 0, type);
+        Assert.assertTrue(actual.isNull());
+    }
+
+    private void assertStoreDecimal128(Decimal128 decimal128) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(16, 1, MemoryTag.NATIVE_DEFAULT)) {
+            long s = 0xDEADBEEFCAFEBABEL;
+            Decimal256 d = new Decimal256(s, s, decimal128.getHigh(), decimal128.getLow(), 0);
+            if (decimal128.isNull()) {
+                d.ofNull();
+            }
+            DecimalUtil.store(d, mem, ColumnType.getDecimalType(38, 0));
+            Decimal128 result = new Decimal128(
+                    mem.getDecimal128Hi(0),
+                    mem.getDecimal128Lo(0),
+                    0
+            );
+            Assert.assertEquals(decimal128, result);
+        }
+    }
+
+    private void assertStoreDecimal256(Decimal256 decimal256) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
+            DecimalUtil.store(decimal256, mem, ColumnType.getDecimalType(76, 0));
+            Decimal256 result = new Decimal256(
+                    mem.getDecimal256HH(0),
+                    mem.getDecimal256HL(0),
+                    mem.getDecimal256LH(0),
+                    mem.getDecimal256LL(0),
+                    0
+            );
+            Assert.assertEquals(decimal256, result);
+        }
+    }
+
+    private void assertStoreDecimal64(long value, int size, int type, MemLongGetter getter) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+            long s = 0xDEADBEEFCAFEBABEL;
+            Decimal256 d = new Decimal256(s, s, s, value, 0);
+            DecimalUtil.store(d, mem, type);
+            long actual = getter.run(mem);
+            Assert.assertEquals(value, actual);
+        }
+    }
+
+    private void assertStoreDecimal64Null(long expected, int size, int type, MemLongGetter getter) {
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+            DecimalUtil.store(Decimal256.NULL_VALUE, mem, type);
+            long actual = getter.run(mem);
+            Assert.assertEquals(expected, actual);
+        }
+    }
+
     private void assertStoreRow(Decimal256 value, int precision) {
         int type = ColumnType.getDecimalType(precision, value.getScale());
         TableWriter.Row row = getRowAsserter(type, -1, value);
         DecimalUtil.store(value, row, -1, type);
+    }
+
+    @FunctionalInterface
+    public interface MemLongGetter {
+        long run(MemoryCR mem);
     }
 
     private static class TestNonConstantDecimalFunction extends Decimal8Function {

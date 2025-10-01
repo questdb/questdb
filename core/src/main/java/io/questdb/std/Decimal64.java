@@ -584,6 +584,9 @@ public class Decimal64 implements Sinkable {
      */
     @Override
     public String toString() {
+        if (isNull()) {
+            return "";
+        }
         return toBigDecimal().toString();
     }
 
