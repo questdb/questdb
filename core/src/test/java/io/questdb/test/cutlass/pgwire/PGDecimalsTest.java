@@ -25,8 +25,10 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.std.Decimal256;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
 
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
@@ -256,13 +258,13 @@ public class PGDecimalsTest extends BasePGTest {
     }
 
     @Test
-    public void testDecimalBindBinary() throws Exception {
+    public void testDecimalBindBigDecimal() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
             }
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
-                statement.setObject(1, new BigDecimal("1234567.890"));
+                statement.setObject(1, new BigDecimal("12345670.890"));
                 statement.setTimestamp(2, new java.sql.Timestamp(0));
                 statement.executeUpdate();
             }
@@ -271,7 +273,7 @@ public class PGDecimalsTest extends BasePGTest {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("dec[NUMERIC],ts[TIMESTAMP]\n" +
-                                    "1234567.89000,1970-01-01 00:00:00.0\n",
+                                    "12345670.89000,1970-01-01 00:00:00.0\n",
                             sink,
                             rs
                     );
@@ -289,6 +291,54 @@ public class PGDecimalsTest extends BasePGTest {
                                     "-456.12300,1970-01-01 00:00:00.0\n",
                             sink,
                             rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalBindOverflow() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
+                statement.setObject(1, new BigDecimal("10e80"));
+                statement.setTimestamp(2, new java.sql.Timestamp(0));
+                try {
+                    statement.executeUpdate();
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "inconvertible value",
+                            "numeric is too big for a decimal",
+                            "requires precision of"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalBindScaleOverflow() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(dec decimal(18, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO tango VALUES (?, ?)")) {
+                statement.setObject(1, new BigDecimal("1e-80"));
+                statement.setTimestamp(2, new java.sql.Timestamp(0));
+                try {
+                    statement.executeUpdate();
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "inconvertible value",
+                            "numeric scale too big for a decimal",
+                            "decimal places but scale is limited"
                     );
                 }
             }
