@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -225,7 +226,8 @@ public class TableWriterBenchmark {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
                 compiler.compile(ddl, sqlExecutionContext);
             } catch (SqlException e) {
-                e.printStackTrace();
+                Log logger = LogFactory.getLog(TableWriterBenchmark.class);
+                logger.error().$("Error executing DDL statement: ").$(ddl).$(" - ").$(e.getMessage()).$();
             }
         }
     }

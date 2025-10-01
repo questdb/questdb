@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
@@ -79,7 +80,8 @@ public class SqlJitCompilerBenchmark {
                         " timestamp_sequence(400000000000, 500000000) ts" +
                         " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
             } catch (SqlException e) {
-                e.printStackTrace();
+                Log logger = LogFactory.getLog(SqlJitCompilerBenchmark.class);
+                logger.error().$("Error creating test table: ").$(e.getMessage()).$();
             }
         }
 
