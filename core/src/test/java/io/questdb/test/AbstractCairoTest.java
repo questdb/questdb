@@ -639,7 +639,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     public void tearDown(boolean removeDir) {
@@ -665,7 +664,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         tearDown(true);
         super.tearDown();
         spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
@@ -1241,16 +1239,32 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final FilesFacade ffBefore = AbstractCairoTest.ff;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
+            Throwable th1 = null;
             try {
-                code.run();
+                try {
+                    code.run();
+                } catch (Throwable th) {
+                    th1 = th;
+                    LOG.error().$("Exception in test: ").$(th).$();
+                    throw th;
+                }
+
                 forEachNode(node -> releaseInactive(node.getEngine()));
-            } catch (Throwable th) {
-                LOG.error().$("Error in test: ").$(th).$();
-                throw th;
             } finally {
-                CLOSEABLES.forEach(Misc::free);
-                forEachNode(node -> node.getEngine().clear());
-                AbstractCairoTest.ff = ffBefore;
+                try {
+                    CLOSEABLES.forEach(Misc::free);
+                    forEachNode(node -> node.getEngine().clear());
+                    AbstractCairoTest.ff = ffBefore;
+                } catch (Throwable th) {
+                    LOG.error().$("Exception in assertMemoryLeak finally ").$(th).$();
+                    if (th1 == null) {
+                        th1 = th;
+                    }
+                }
+            }
+
+            if (th1 != null) {
+                throw new RuntimeException(th1);
             }
         });
     }
@@ -2024,6 +2038,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected void assertQueryNoLeakCheckWithFatJoin(String sql, String expected, String ts, boolean fullFatJoins, boolean randomAccess, boolean expectedSize) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            assertQueryNoLeakCheck(expected, sql, ts, randomAccess, expectedSize);
+        }
+    }
+
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         return assertSegmentExistence(expectExists, tableToken, walId, segmentId);
@@ -2106,13 +2127,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     }
                 }
             }
-        }
-    }
-
-    protected void assertSql(CharSequence sql, CharSequence expected, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
         }
     }
 

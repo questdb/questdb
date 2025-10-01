@@ -41,8 +41,10 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.bytes.DirectByteSlice;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -81,7 +83,20 @@ import java.util.concurrent.TimeUnit;
  * This client supports both HTTP and TCP protocols. In most cases you should prefer HTTP protocol as it provides
  * stronger transactional guarantees and better feedback in case of errors.
  * <p>
- * Error-handling: Most errors throw an instance of {@link LineSenderException}.
+ * Error handling: Most errors throw an instance of {@link LineSenderException}.
+ * <p>
+ * When an error occurs while sending data to a server, the Sender does NOT clear its internal buffers.
+ * This allows you to retry sending the same data by calling {@link #flush()} again.
+ * <br>
+ * Recovery strategies:
+ * - For transient errors (e.g., temporary network issues): Simply retry by calling {@link #flush()}
+ * - For permanent errors (e.g., invalid data format): You have two options:
+ *   1. Close the Sender and create a new instance, or
+ *   2. Call {@link #reset()} to clear the internal buffers and start building a new row
+ * <br>
+ * Note: If the underlying error is permanent, retrying {@link #flush()} will fail again.
+ * Use {@link #reset()} to discard the problematic data and continue with new data. See {@link LineSenderException#isRetryable()}
+ *
  */
 public interface Sender extends Closeable, ArraySender<Sender> {
 
@@ -301,6 +316,25 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      */
     Sender longColumn(CharSequence name, long value);
 
+
+    /**
+     * Clear the internal buffers, discarding any unsent data.
+     * <br>
+     * This method discards all buffered data that hasn't been sent to the server yet,
+     * allowing you to start fresh with new data. The auto-flush timer is reset and will
+     * restart based on the configured auto-flush interval when the next row is added.
+     * <br>
+     * This is useful for error recovery when you encounter a permanent error (e.g., invalid
+     * data format) and want to continue sending new data without retrying the problematic data.
+     * After calling this method, you can start building a new row by calling {@link #table(CharSequence)}.
+     * <br>
+     * Note: This method is only available for HTTP transport. TCP transport doesn't support
+     * this operation.
+     *
+     * @see #flush()
+     */
+    void reset();
+
     /**
      * Add a column with a string value.
      *
@@ -439,6 +473,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
+        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final int DEFAULT_MAX_NAME_LEN = 127;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
@@ -451,15 +486,17 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int PARAMETER_NOT_SET_EXPLICITLY = -1;
         private static final int PROTOCOL_HTTP = 1;
         private static final int PROTOCOL_TCP = 0;
+        private final ObjList<String> hosts = new ObjList<>();
+        private final IntList ports = new IntList();
         private int autoFlushIntervalMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int autoFlushRows = PARAMETER_NOT_SET_EXPLICITLY;
         private int bufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
-        private String host;
         private String httpPath;
         private String httpSettingsPath;
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
+        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
@@ -485,7 +522,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         };
         private long minRequestThroughput = PARAMETER_NOT_SET_EXPLICITLY;
         private String password;
-        private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
         private int protocol = PARAMETER_NOT_SET_EXPLICITLY;
         private int protocolVersion = PARAMETER_NOT_SET_EXPLICITLY;
@@ -512,16 +548,12 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          * Optionally, you can also include a port. In this can you separate a port from the address by using a colon.
          * Example: my.example.org:54321.
          * <p>
-         * If you can include a port then you must not call {@link LineSenderBuilder#port(int)}.
+         * If you include a port then you must not call {@link LineSenderBuilder#port(int)}.
          *
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
          */
         public LineSenderBuilder address(CharSequence address) {
-            if (this.host != null) {
-                throw new LineSenderException("server address is already configured ")
-                        .put("[address=").put(this.host).put("]");
-            }
             if (Chars.isBlank(address)) {
                 throw new LineSenderException("address cannot be empty nor null");
             }
@@ -529,22 +561,47 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(address).put("]");
             }
+            String hostSansPort;
+            int parsedPort = -1;
             if (portIndex != -1) {
-                if (port != PARAMETER_NOT_SET_EXPLICITLY) {
-                    throw new LineSenderException("address contains a port, but a port was already configured ")
-                            .put("[address=").put(address)
-                            .put(", port=").put(port)
-                            .put("]");
-                }
-                this.host = address.subSequence(0, portIndex).toString();
                 try {
-                    port(Numbers.parseInt(address, portIndex + 1, address.length()));
+                    parsedPort = Numbers.parseInt(address, portIndex + 1, address.length());
+                    if (parsedPort < 1 || parsedPort > 65535) {
+                        throw new LineSenderException("invalid port [port=").put(parsedPort).put("]");
+                    }
                 } catch (NumericException e) {
                     throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
                             .put(" [address=").put(address).put("]");
                 }
+                hostSansPort = address.subSequence(0, portIndex).toString();
             } else {
-                this.host = address.toString();
+                hostSansPort = address.toString();
+            }
+
+            // best effort dup detection, we might have incomplete information at this point,
+            // for example port or protocol might not be configured yet. so we are conservative
+            // and only detect dups when we have full information about the address
+            if (parsedPort != -1) {
+                // we have a port, so we can do a full dup check
+                for (int i = 0, n = hosts.size(); i < n; i++) {
+                    String storedHost = hosts.get(i);
+                    if (Chars.equals(storedHost, hostSansPort)) {
+                        // given host is already configured, let's see if the port is the same
+                        if (ports.size() > i) {
+                            // ok, the previous address had a port explicitly configured, let's see if it's the same
+                            if (ports.getQuick(i) == parsedPort) {
+                                throw new LineSenderException("duplicated addresses are not allowed ")
+                                        .put("[address=").put(address).put("]");
+                            }
+                        }
+                    }
+                }
+
+            }
+            this.hosts.add(hostSansPort);
+            if (parsedPort != -1) {
+                // port was specified in the address, so we use it
+                this.ports.add(parsedPort);
             }
             return this;
         }
@@ -694,16 +751,22 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return AbstractLineHttpSender.createLineSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
-                        username, password, maxNameLength, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
+                return AbstractLineHttpSender.createLineSender(hosts, ports, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken,
+                        username, password, maxNameLength, actualMaxRetriesNanos, maxBackoffMillis, actualMinRequestThroughput, actualAutoFlushIntervalMillis, protocolVersion);
             }
+
             assert protocol == PROTOCOL_TCP;
-            LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
+
+            if (hosts.size() != 1 || ports.size() != 1) {
+                throw new LineSenderException("only a single address (host:port) is supported for TCP transport");
+            }
+
+            LineChannel channel = new PlainTcpLineChannel(nf, hosts.getQuick(0), ports.getQuick(0), bufferCapacity * 2);
             AbstractLineTcpSender sender;
             if (tlsEnabled) {
                 DelegatingTlsChannel tlsChannel;
                 try {
-                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, hosts.getQuick(0));
                 } catch (Throwable t) {
                     channel.close();
                     throw rethrow(t);
@@ -849,6 +912,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          *             </ul>
          * @return this instance for method chaining
          */
+        @SuppressWarnings("unused")
         public LineSenderBuilder httpSettingPath(String path) {
             if (this.httpSettingsPath != null) {
                 throw new LineSenderException("the path was already configured");
@@ -941,6 +1005,46 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         /**
+         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
+         * <br>
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
+         * <p>
+         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
+         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
+         * the server during temporary outages while still providing quick recovery when the service becomes available again.
+         * <p>
+         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
+         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
+         * retry attempts.
+         * <p>
+         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
+         * delay (though some small jitter is still applied).
+         * <p>
+         * Default value: 1,000 milliseconds (1 second).
+         *
+         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
+         * @return this instance, enabling method chaining.
+         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
+         *                             or if maxBackoffMillis was already configured.
+         */
+        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
+            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max backoff was already configured ")
+                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
+            }
+            if (maxBackoffMillis < 0) {
+                throw new LineSenderException("max backoff cannot be negative ")
+                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
+            }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("max backoff is not supported for TCP protocol");
+            }
+            this.maxBackoffMillis = maxBackoffMillis;
+            return this;
+        }
+
+        /**
          * Set the maximum local buffer capacity in bytes.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
@@ -1020,14 +1124,10 @@ public interface Sender extends Closeable, ArraySender<Sender> {
          * @return this instance for method chaining
          */
         public LineSenderBuilder port(int port) {
-            if (this.port != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("post is already configured ")
-                        .put("[port=").put(port).put("]");
-            }
             if (port < 1 || port > 65535) {
                 throw new LineSenderException("invalid port [port=").put(port).put("]");
             }
-            this.port = port;
+            this.ports.add(port);
             return this;
         }
 
@@ -1129,8 +1229,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             if (maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
                 maximumBufferCapacity = protocol == PROTOCOL_HTTP ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : bufferCapacity;
             }
-            if (port == PARAMETER_NOT_SET_EXPLICITLY) {
-                port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
+            if (ports.size() == 0) {
+                ports.add(protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT);
             }
             if (tlsValidationMode == null) {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
@@ -1141,6 +1241,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             }
             if (maxNameLength == PARAMETER_NOT_SET_EXPLICITLY) {
                 maxNameLength = DEFAULT_MAX_NAME_LEN;
+            }
+            if (maxBackoffMillis == PARAMETER_NOT_SET_EXPLICITLY) {
+                maxBackoffMillis = DEFAULT_MAX_BACKOFF_MILLIS;
             }
         }
 
@@ -1169,14 +1272,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=")
                         .put(protocol == PROTOCOL_HTTP ? "http" : "tcp").put("]");
-            }
-            if (host != null) {
-                throw new LineSenderException("server address was already configured ")
-                        .put("[address=").put(host).put("]");
-            }
-            if (port != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("server port was already configured ")
-                        .put("[port=").put(port).put("]");
             }
             if (Chars.equals("http", sink)) {
                 if (tlsEnabled) {
@@ -1215,7 +1310,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 if (Chars.equals("addr", sink)) {
                     pos = getValue(configurationString, pos, sink, "address");
                     address(sink);
-                    if (port == PARAMETER_NOT_SET_EXPLICITLY) {
+                    if (ports.size() == hosts.size() - 1) {
+                        // not set
                         port(protocol == PROTOCOL_TCP ? DEFAULT_TCP_PORT : DEFAULT_HTTP_PORT);
                     }
                 } else if (Chars.equals("user", sink)) {
@@ -1369,7 +1465,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     }
                 }
             }
-            if (host == null) {
+            if (hosts.size() == 0) {
                 throw new LineSenderException("addr is missing");
             }
             if (trustStorePath != null) {
@@ -1417,15 +1513,18 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         private void validateParameters() {
-            if (host == null) {
+            if (hosts.size() == 0) {
                 throw new LineSenderException("questdb server address not set");
+            }
+            if (hosts.size() != ports.size()) {
+                throw new LineSenderException("mismatch between number of hosts and number of ports");
             }
             if (!tlsEnabled && trustStorePath != null) {
                 throw new LineSenderException("custom trust store configured, but TLS was not enabled ")
                         .put("[path=").put(LineSenderBuilder.this.trustStorePath).put("]");
             }
             if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
-                throw new LineSenderException("TSL validation disabled, but TLS was not enabled");
+                throw new LineSenderException("TLS validation disabled, but TLS was not enabled");
             }
             if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE) {
                 throw new LineSenderException("Requested buffer too small ")

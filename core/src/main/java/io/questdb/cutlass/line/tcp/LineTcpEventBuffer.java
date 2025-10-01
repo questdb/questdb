@@ -195,11 +195,6 @@ public class LineTcpEventBuffer {
             geohash = GeoHashes.NULL;
         }
         switch (Numbers.decodeHighShort(colTypeMeta)) {
-            default:
-                checkCapacity(address, Long.BYTES + Byte.BYTES);
-                Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
-                Unsafe.getUnsafe().putLong(address + Byte.BYTES, geohash);
-                return address + Long.BYTES + Byte.BYTES;
             case ColumnType.GEOINT:
                 checkCapacity(address, Integer.BYTES + Byte.BYTES);
                 Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOINT);
@@ -215,6 +210,11 @@ public class LineTcpEventBuffer {
                 Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOBYTE);
                 Unsafe.getUnsafe().putByte(address + Byte.BYTES, (byte) geohash);
                 return address + Byte.BYTES + Byte.BYTES;
+            default:
+                checkCapacity(address, Long.BYTES + Byte.BYTES);
+                Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_GEOLONG);
+                Unsafe.getUnsafe().putLong(address + Byte.BYTES, geohash);
+                return address + Long.BYTES + Byte.BYTES;
         }
     }
 
@@ -392,7 +392,10 @@ public class LineTcpEventBuffer {
         address += Integer.BYTES;
         int type = readInt(address);
         address += Integer.BYTES;
-        int dims = ColumnType.decodeArrayDimensionality(type);
+        int dims = ColumnType.decodeWeakArrayDimensionality(type);
+        if (dims < 1 || dims > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw CairoException.critical(0).put("unsupported array dimensionality [dims=").put(dims).put(']');
+        }
         borrowedDirectArrayView.of(
                 type,
                 address,

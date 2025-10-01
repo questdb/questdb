@@ -32,11 +32,14 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.std.Decimal256;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
+    @SuppressWarnings("unused")
     protected LineHttpSenderV1(String host,
                                int port,
                                String path,
@@ -49,6 +52,7 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                                String password,
                                int maxNameLength,
                                long maxRetriesNanos,
+                               int maxBackoffMillis,
                                long minRequestThroughput,
                                long flushIntervalNanos,
                                Rnd rnd) {
@@ -64,9 +68,57 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
                 password,
                 maxNameLength,
                 maxRetriesNanos,
+                maxBackoffMillis,
                 minRequestThroughput,
                 flushIntervalNanos,
                 rnd);
+    }
+
+    protected LineHttpSenderV1(ObjList<String> hosts,
+                               IntList ports,
+                               String path,
+                               HttpClientConfiguration clientConfiguration,
+                               ClientTlsConfiguration tlsConfig,
+                               HttpClient client,
+                               int autoFlushRows,
+                               String authToken,
+                               String username,
+                               String password,
+                               int maxNameLength,
+                               long maxRetriesNanos,
+                               int maxBackoffMillis,
+                               long minRequestThroughput,
+                               long flushIntervalNanos,
+                               int currentAddressIndex,
+                               Rnd rnd) {
+        super(hosts,
+                ports,
+                path,
+                clientConfiguration,
+                tlsConfig,
+                client,
+                autoFlushRows,
+                authToken,
+                username,
+                password,
+                maxNameLength,
+                maxRetriesNanos,
+                maxBackoffMillis,
+                minRequestThroughput,
+                flushIntervalNanos,
+                currentAddressIndex,
+                rnd);
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        var request = writeFieldName(name);
+        if (value.isNull()) {
+            request.put("NaNd");
+        } else {
+            request.put(value).putAscii('d');
+        }
+        return this;
     }
 
     @Override
@@ -93,17 +145,6 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name)
                 .put(value);
-        return this;
-    }
-
-    @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        var request = writeFieldName(name);
-        if (value.isNull()) {
-            request.put("NaNd");
-        } else {
-            request.put(value).putAscii('d');
-        }
         return this;
     }
 

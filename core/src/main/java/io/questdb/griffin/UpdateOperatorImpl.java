@@ -292,7 +292,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         } catch (TableReferenceOutOfDateException e) {
             throw e;
         } catch (SqlException e) {
-            throw CairoException.critical(0).put("could not apply update on SPI side [e=").put((CharSequence) e).put(']');
+            throw CairoException.nonCritical().put("could not apply update on SPI side [error=").put(e.getFlyweightMessage())
+                    .put(", position=").put(e.getPosition()).put(']');
         } catch (CairoException e) {
             if (e.isAuthorizationError() || e.isCancellation()) {
                 LOG.error().$safe(e.getFlyweightMessage()).$();

@@ -645,7 +645,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
             if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
-                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeWeakArrayDimensionality(columnType)).put(',');
                 response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
             } else {
                 response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
