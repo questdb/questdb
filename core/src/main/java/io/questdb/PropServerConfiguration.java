@@ -871,7 +871,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
         this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
         this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
-        if (cairoAutoScaleSymbolCapacityThreshold < 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
+        if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
             throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");
         }
 

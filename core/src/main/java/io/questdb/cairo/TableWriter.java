@@ -270,6 +270,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryCMR attachMetaMem;
     private TableWriterMetadata attachMetadata;
     private long attachMinTimestamp;
+    private long attachPartitionTimestamp;
     private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
     private TxReader attachTxReader;
     private long avgRecordSize;
@@ -910,6 +911,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // pin column versions
+                this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
 
                 checkPassed = true;
@@ -3634,7 +3636,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 // check that this is xxx.d.234
                                 if (tmpDirectUtf8StringZ.byteAt(lastDot - 1) == 'd') {
                                     // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                    columnVersionWriter.upsert(attachMinTimestamp, columnIndex, nameTxn, 0);
+                                    columnVersionWriter.upsert(attachPartitionTimestamp, columnIndex, nameTxn, 0);
                                 }
                             }
                         } catch (NumericException ignore) {
@@ -5646,7 +5648,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ff.copy(offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn), other.$()) < 0) {
                     throw CairoException.critical(ff.errno())
                             .put("Could not copy [from=").put(path)
-                            .put(", to=").put(path)
+                            .put(", to=").put(other)
                             .put(']');
 
                 }
@@ -6315,7 +6317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 && txWriter.getPartitionFloor(txWriter.getPartitionTimestampByIndex(partIndex - 1)) == txWriter.getPartitionFloor(partitionTimestamp);
 
                         // It is not easy to remove the split
-                        // the parent can become writable and we can overwrite / truncate data visible to the readers
+                        // the parent can become writable, and we can overwrite / truncate data visible to the readers
                         if (!isSplitPartition) {
                             LOG.info().$("partition is fully removed in range replace [table=").$(tableToken)
                                     .$(", ts=").$ts(timestampDriver, partitionTimestamp)
@@ -9627,7 +9629,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnIndex > -1) {
                     int symbolCount = w.getSymbolCount();
                     int symbolCapacity = w.getSymbolCapacity();
-                    if (symbolCount * configuration.autoScaleSymbolCapacityThreshold() > symbolCapacity) {
+                    if (symbolCount > symbolCapacity * configuration.autoScaleSymbolCapacityThreshold()) {
                         changeSymbolCapacity(
                                 metadata.getColumnName(w.getColumnIndex()),
                                 // scale capacity to symbol count, if that grows rapidly, and to capacity increments if

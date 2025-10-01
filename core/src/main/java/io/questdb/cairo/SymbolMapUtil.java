@@ -96,7 +96,7 @@ public class SymbolMapUtil {
 
             // open .c file
             long charFileLen = ff.length(charFileName(path.trimTo(plen), name, columnNameTxn));
-            if (charFileLen == 0) {
+            if (charFileLen <= 0) {
                 // .c file is empty, nothing to do
                 return;
             }

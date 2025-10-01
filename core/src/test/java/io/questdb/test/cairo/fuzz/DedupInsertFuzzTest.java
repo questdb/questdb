@@ -905,7 +905,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
                 }
                 String alterStatement = String.format(
-                        "alter table %s dedup upsert keys(%s))",
+                        "alter table %s dedup upsert keys(%s)",
                         tableNameDedup,
                         comaSeparatedUpsertCols
                 );
