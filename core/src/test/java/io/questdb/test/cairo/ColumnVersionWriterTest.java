@@ -29,14 +29,19 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -56,7 +61,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     Path path = new Path();
                     ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true)
             ) {
-                long partitionTimestamp = Timestamps.DAY_MICROS * 2;
+                long partitionTimestamp = Micros.DAY_MICROS * 2;
                 int columnIndex = 3;
 
                 // Add column
@@ -95,8 +100,8 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
-                    ColumnVersionReader r = new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path.$())
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
+                    ColumnVersionReader r = createColumnVersionReader(path)
             ) {
                 for (int i = 0; i < 100; i += 2) {
                     w.upsert(i, i % 10, -1, i * 10L);
@@ -120,11 +125,11 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true)
+                    ColumnVersionWriter w = createColumnVersionWriter(path)
             ) {
                 long day1 = 0;
-                long day2 = Timestamps.DAY_MICROS;
-                long day3 = Timestamps.DAY_MICROS * 2;
+                long day2 = Micros.DAY_MICROS;
+                long day3 = Micros.DAY_MICROS * 2;
                 int columnIndex = 3;
                 int columnIndex1 = 1;
 
@@ -164,14 +169,14 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
-                    ColumnVersionReader r = new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path.$())
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
+                    ColumnVersionReader r = createColumnVersionReader(path)
             ) {
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 int columnCount = 27;
                 for (int i = 0; i < columnCount; i++) {
-                    w.upsertDefaultTxnName(i, i, Timestamps.DAY_MICROS * i);
-                    w.upsertColumnTop(Timestamps.DAY_MICROS * i, i, i * 100);
+                    w.upsertDefaultTxnName(i, i, Micros.DAY_MICROS * i);
+                    w.upsertColumnTop(Micros.DAY_MICROS * i, i, i * 100);
                 }
 
                 w.commit();
@@ -195,7 +200,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(ff, path.$())
             ) {
                 for (int i = 0; i < 100; i += 2) {
@@ -233,7 +238,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             final int N = 100_000;
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path.$())
             ) {
                 w.upsert(1, 2, 3, -1);
@@ -293,7 +298,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path.$())
             ) {
                 CVStringTable.setupColumnVersionWriter(w,
@@ -334,21 +339,22 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
-                    ColumnVersionReader r = new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path.$())
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
+                    ColumnVersionReader r = createColumnVersionReader(path)
             ) {
                 for (int i = 0; i < 3; i += 2) {
                     w.upsert(i, i % 10, -1, i * 10L);
                 }
-                w.upsertDefaultTxnName(4, 123, IntervalUtils.parseFloorPartialTimestamp("2024-02-24"));
+                final long defaultTs = MicrosFormatUtils.parseTimestamp("2024-02-24T00:00:00.000000Z");
+                w.upsertDefaultTxnName(4, 123, defaultTs);
 
                 w.commit();
 
                 r.readSafe(configuration.getMillisecondClock(), 1);
                 Assert.assertEquals("{[\n" +
-                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: '2024-02-24T00:00:00.000Z'},\n" +
-                        "{columnIndex: 0, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 0},\n" +
-                        "{columnIndex: 2, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 20}\n" +
+                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: " + defaultTs + "},\n" +
+                        "{columnIndex: 0, nameTxn: -1, partition: 0, columnTop: 0},\n" +
+                        "{columnIndex: 2, nameTxn: -1, partition: 2, columnTop: 20}\n" +
                         "]}", r.toString());
             }
         });
@@ -452,7 +458,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     ColumnVersionWriter w1 = new ColumnVersionWriter(configuration, path.of(root).concat("_cv1").$(), true);
-                    ColumnVersionWriter w2 = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionWriter w2 = createColumnVersionWriter(path);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path.$())
             ) {
                 CVStringTable.setupColumnVersionWriter(w1, srcExpected);
@@ -468,12 +474,20 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
         });
     }
 
+    private static ColumnVersionReader createColumnVersionReader(Path path) {
+        return new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path.$());
+    }
+
+    private static @NotNull ColumnVersionWriter createColumnVersionWriter(Path path) {
+        return new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+    }
+
     private void testFuzzConcurrent(int spinLockTimeout) throws Exception {
         assertMemoryLeak(() -> {
             final int N = 10_000;
             try (
                     Path path = new Path();
-                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionWriter w = createColumnVersionWriter(path);
                     ColumnVersionReader r = new ColumnVersionReader().ofRO(configuration.getFilesFacade(), path.$())
             ) {
                 CyclicBarrier barrier = new CyclicBarrier(2);

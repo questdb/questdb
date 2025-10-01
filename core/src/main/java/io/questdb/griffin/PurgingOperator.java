@@ -85,6 +85,7 @@ public final class PurgingOperator {
     public void purge(
             Path path,
             TableToken tableToken,
+            int timestampType,
             int partitionBy,
             boolean asyncOnly,
             long truncateVersion,
@@ -123,7 +124,7 @@ public final class PurgingOperator {
                         if (!asyncOnly) {
                             if (partitionTimestamp != TABLE_ROOT_PARTITION) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                                 int pathPartitionLen = path.size();
                                 TableUtils.dFile(path, columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());
@@ -167,6 +168,7 @@ public final class PurgingOperator {
                             tableToken.getTableId(),
                             (int) truncateVersion,
                             columnType,
+                            timestampType,
                             partitionBy,
                             txn,
                             cleanupColumnVersions,
@@ -197,6 +199,7 @@ public final class PurgingOperator {
             int tableId,
             int tableTruncateVersion,
             int columnType,
+            int timestampType,
             int partitionBy,
             long updateTxn,
             @Transient LongList columnVersions,
@@ -208,7 +211,19 @@ public final class PurgingOperator {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                task.of(tableToken, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updateTxn, columnVersions, columnVersionsLo, columnVersionsHi);
+                task.of(
+                        tableToken,
+                        columnName,
+                        tableId,
+                        tableTruncateVersion,
+                        columnType,
+                        timestampType,
+                        partitionBy,
+                        updateTxn,
+                        columnVersions,
+                        columnVersionsLo,
+                        columnVersionsHi
+                );
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {

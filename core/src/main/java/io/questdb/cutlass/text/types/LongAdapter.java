@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -43,7 +44,7 @@ public final class LongAdapter extends AbstractTypeAdapter implements TimestampC
     }
 
     @Override
-    public long getTimestamp(DirectUtf8Sequence value) throws Exception {
+    public long getTimestamp(DirectUtf8Sequence value, TimestampDriver driver) throws Exception {
         return getLong(value);
     }
 

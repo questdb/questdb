@@ -33,18 +33,23 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+
+import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 
 public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
@@ -69,6 +74,33 @@ public class TypeManagerTest extends AbstractTest {
     @Before
     public void setUp2() {
         jsonLexer.clear();
+    }
+
+    @Test
+    public void testAdaptiveGetTimestampFormat_MicrosecondPrecision() {
+        assertMicrosFormat("yyyy-MM-dd HH:mm:ss");
+        assertMicrosFormat("yyyy-MM-dd HH:mm:ss.SSS");
+        assertMicrosFormat("yyyy-MM-ddTHH:mm:ss.SSSUUU");
+        assertMicrosFormat("dd/MM/yyyy HH:mm:ss.SSSUUU+z");
+        assertMicrosFormat("yyyy-MM-dd HH:mm:ss.U+");
+        assertMicrosFormat("");
+        assertMicrosFormat("yyyy-MM-dd");
+        assertMicrosFormat("HH:mm:ss");
+        assertMicrosFormat("yyyy-MM-dd HH:mm:ss.NN");
+    }
+
+    @Test
+    public void testAdaptiveGetTimestampFormat_NanosecondPrecision() {
+        assertNanosFormat("yyyy-MM-dd HH:mm:ss.N");
+        assertNanosFormat("yyyy-MM-dd HH:mm:ss.NNN");
+        assertNanosFormat("yyyy-MM-dd HH:mm:ss.N+");
+        assertNanosFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUNNN");
+        assertNanosFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUN");
+        assertNanosFormat("dd/MM/yyyy HH:mm:ss.N+z");
+
+        // Multiple N patterns in same format
+        assertNanosFormat("yyyy-MM-dd HH:mm:ss.NNN-N");
+        assertNanosFormat("N yyyy-MM-dd HH:mm:ss");
     }
 
     @Test
@@ -233,12 +265,21 @@ public class TypeManagerTest extends AbstractTest {
         }
     }
 
+    private void assertMicrosFormat(CharSequence pattern) {
+        DateFormat format = TypeManager.adaptiveGetTimestampFormat(pattern);
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, format.getColumnType());
+    }
+
+    private void assertNanosFormat(CharSequence pattern) {
+        DateFormat format = TypeManager.adaptiveGetTimestampFormat(pattern);
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, format.getColumnType());
+    }
+
     private TypeManager createTypeManager(String fileResource) throws JsonException {
         InputFormatConfiguration inputFormatConfiguration = new InputFormatConfiguration(
-                new DateFormatFactory(),
+                DateFormatFactory.INSTANCE,
                 DateLocaleFactory.INSTANCE,
-                new TimestampFormatFactory(),
-                DateFormatUtils.EN_LOCALE
+                EN_LOCALE
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);

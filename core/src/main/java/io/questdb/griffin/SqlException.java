@@ -90,11 +90,26 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
                 .put(", to=").put(toName).put(']');
     }
 
+    public static SqlException inconvertibleTypes(
+            int position,
+            int fromType,
+            int toType
+    ) {
+        return $(position, "inconvertible types: ")
+                .put(ColumnType.nameOf(fromType))
+                .put(" -> ")
+                .put(ColumnType.nameOf(toType));
+    }
+
     public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
     }
 
     public static SqlException invalidDate(CharSequence str, int position) {
+        return position(position).put("Invalid date [str=").put(str).put(']');
+    }
+
+    public static SqlException invalidDate(Utf8Sequence str, int position) {
         return position(position).put("Invalid date [str=").put(str).put(']');
     }
 

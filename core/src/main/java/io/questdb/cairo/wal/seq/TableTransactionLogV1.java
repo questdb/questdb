@@ -160,12 +160,12 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, txnLo, path);
+            cursor = new TransactionLogCursorImpl(configuration, txnLo, path);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
         try {
-            return cursor.of(ff, txnLo, path);
+            return cursor.of(ff, configuration.getBypassWalFdCache(), txnLo, path);
         } catch (Throwable th) {
             cursor.close();
             throw th;
@@ -217,9 +217,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         private long txnLo;
         private long txnOffset;
 
-        public TransactionLogCursorImpl(FilesFacade ff, long txnLo, final Path path) {
+        public TransactionLogCursorImpl(CairoConfiguration configuration, long txnLo, final Path path) {
             try {
-                of(ff, txnLo, path);
+                of(configuration.getFilesFacade(), configuration.getBypassWalFdCache(), txnLo, path);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -345,8 +345,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
 
-        private static long openFileRO(final FilesFacade ff, final Path path) {
-            return TableUtils.openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
+        private static long openFileRO(final FilesFacade ff, final Path path, boolean bypassFdCache) {
+            return bypassFdCache
+                    ? TableUtils.openRONoCache(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG)
+                    : TableUtils.openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
         }
 
         private long getMappedLen() {
@@ -363,10 +365,10 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @NotNull
-        private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
+        private TransactionLogCursorImpl of(FilesFacade ff, boolean bypassFdCache, long txnLo, Path path) {
             this.ff = ff;
             close();
-            this.fd = openFileRO(ff, path);
+            this.fd = openFileRO(ff, path, bypassFdCache);
             long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > -1L) {
                 this.txnCount = newTxnCount;

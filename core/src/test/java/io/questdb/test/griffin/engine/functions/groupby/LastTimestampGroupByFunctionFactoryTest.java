@@ -32,14 +32,33 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.TestTimestampType;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
+    private final TestTimestampType timestampType;
+
+    public LastTimestampGroupByFunctionFactoryTest(TestTimestampType timestampType) {
+        this.timestampType = timestampType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
 
     @Test
     public void testAllNull() throws SqlException {
-        execute("create table tab (f timestamp)");
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -61,7 +80,7 @@ public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        execute("create table tab (f timestamp)");
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -84,7 +103,7 @@ public class LastTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        execute("create table tab (f timestamp)");
+        executeWithRewriteTimestamp("create table tab (f #TIMESTAMP)", timestampType.getTypeName());
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

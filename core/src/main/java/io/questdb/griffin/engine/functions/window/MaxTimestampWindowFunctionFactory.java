@@ -449,6 +449,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return value;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Compute the next value for the current input record and write it to the window output slot.
          * <p>
@@ -469,7 +474,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // handles max() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
     static class MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private final TimestampComparator comparator;
         private final String name;
 
@@ -512,6 +516,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**
@@ -572,7 +581,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
     public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private static final int DEQUE_RECORD_SIZE = Long.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final TimestampComparator comparator;
@@ -900,6 +908,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
@@ -985,7 +998,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // handles max() over (partition by x {order by o} rows between y and z)
     // removable cumulative aggregation
     public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
@@ -1217,6 +1229,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return maxMin;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Compute the aggregate for the current input row and write the result to the output column.
          * <p>
@@ -1310,7 +1327,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
     public static class MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowTimestampFunction {
-
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final TimestampComparator comparator;
         private final boolean frameLoBounded;
@@ -1593,6 +1609,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
@@ -1699,7 +1720,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // Handles max() over ({order by o} rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
     public static class MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowTimestampFunction {
-
         private final MemoryARW buffer;
         private final int bufferSize;
         private final TimestampComparator comparator;
@@ -1889,6 +1909,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return maxMin;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Compute the aggregate for the current input row and write the result to the output column.
          * <p>
@@ -2004,7 +2029,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
-
         private final TimestampComparator comparator;
         private final String name;
         private long maxMin;
@@ -2104,6 +2128,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return maxMin;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Compute the aggregate for the current input row and write the result to the output column.
          * <p>
@@ -2139,7 +2168,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
     // Handles max() over (rows between unbounded preceding and current row); there's no partition by.
     public static class MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private final TimestampComparator comparator;
         private final String name;
         private long maxMin = Numbers.LONG_NULL;
@@ -2213,6 +2241,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             return maxMin;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Compute the aggregate for the current input row and write the result to the output column.
          * <p>
@@ -2267,7 +2300,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
 
     // max() over () - empty clause, no partition by no order by, no frame == default frame
     static class MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowTimestampFunction {
-
         private final TimestampComparator comparator;
         private final String name;
         private long maxMin = Numbers.LONG_NULL;
@@ -2303,6 +2335,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
         }
 
         /**

@@ -52,7 +52,7 @@ class PGUtils {
     private static final int MAX_LONG256_TEXT_LEN = 66; // "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     private static final int MAX_LONG_TEXT_LEN = String.valueOf(Long.MIN_VALUE).length();
     private static final int MAX_SHORT_TEXT_LEN = String.valueOf(Short.MIN_VALUE).length();
-    private static final int MAX_TIMESTAMP_TEXT_LEN = 28; // "294247-01-10 04:00:54.775807"
+    private static final int MAX_TIMESTAMP_TEXT_LEN = 31; // "294247-01-10 04:00:54.775807123"
     private static final int MAX_UUID_TEXT_LEN = 36;
 
     private PGUtils() {

@@ -30,7 +30,5 @@ public interface HttpRequestProcessorSelector extends Closeable {
     @Override
     void close();
 
-    HttpRequestProcessor getDefaultProcessor();
-
     HttpRequestProcessor select(HttpRequestHeader requestHeader);
 }

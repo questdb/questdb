@@ -39,6 +39,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -51,20 +52,27 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix;
+import static io.questdb.test.AbstractCairoTest.replaceTimestampSuffix1;
+
 @RunWith(Parameterized.class)
 public class ParallelLatestByTest extends AbstractTest {
     private final boolean convertToParquet;
     private final StringSink sink = new StringSink();
+    private final TestTimestampType timestampType;
 
-    public ParallelLatestByTest(boolean convertToParquet) {
+    public ParallelLatestByTest(boolean convertToParquet, TestTimestampType timestampType) {
         this.convertToParquet = convertToParquet;
+        this.timestampType = timestampType;
     }
 
-    @Parameterized.Parameters(name = "parquet={0}")
+    @Parameterized.Parameters(name = "parquet={0}, timestampType={1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {true},
-                {false},
+                {true, TestTimestampType.MICRO},
+                {true, TestTimestampType.NANO},
+                {false, TestTimestampType.MICRO},
+                {false, TestTimestampType.NANO}
         });
     }
 
@@ -136,7 +144,6 @@ public class ParallelLatestByTest extends AbstractTest {
 
     @Test
     public void testLatestByWithinParallel1() throws Exception {
-
         executeWithPool(4, 8, this::testLatestByWithin);
     }
 
@@ -250,19 +257,19 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = "a\tb\tk\n" +
+        final String expected = replaceTimestampSuffix1("a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
+                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
+                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k" +
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
@@ -278,16 +285,16 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = "a\tk\tb\n" +
+        final String expected = replaceTimestampSuffix("a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n", timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
-                " timestamp_sequence(0, 100000000000) k," +
+                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k," +
                 " rnd_double(0)*100 a1," +
                 " rnd_double(0)*100 a2," +
                 " rnd_double(0)*100 a3," +
@@ -307,16 +314,16 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = "a\tb\tk\n" +
+        final String expected = replaceTimestampSuffix("a\tb\tk\n" +
                 "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n";
+                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
+                " timestamp_sequence(0, 100000000000)::" + timestampType.getTypeName() + " k" +
                 " from" +
                 " long_sequence(20)" +
                 "), index(b) timestamp(k) partition by DAY";
@@ -332,14 +339,14 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = "ts\tsym\tlon\tlat\tgeo\n" +
+        final String expected = replaceTimestampSuffix("ts\tsym\tlon\tlat\tgeo\n" +
                 "1970-01-12T13:41:40.000000Z\tb\t74.35404787498278\t87.57691791453159\tgk1gj8\n" +
-                "1970-01-12T13:45:00.000000Z\tc\t96.30622421207782\t30.899377111184336\tmbx5c0\n";
+                "1970-01-12T13:45:00.000000Z\tc\t96.30622421207782\t30.899377111184336\tmbx5c0\n", timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
                 "select" +
-                " timestamp_sequence(0, 100000000) ts," +
+                " timestamp_sequence(0, 100000000)::" + timestampType.getTypeName() + " ts," +
                 " rnd_symbol('a','b','c') sym," +
                 " rnd_double(0)*100 lon," +
                 " rnd_double(0)*100 lat," +

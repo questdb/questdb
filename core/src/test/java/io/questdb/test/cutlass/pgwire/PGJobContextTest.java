@@ -65,9 +65,9 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -98,6 +98,7 @@ import org.postgresql.util.ServerErrorMessage;
 
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.sql.Array;
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -180,7 +181,7 @@ public class PGJobContextTest extends BasePGTest {
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
-    private static final long DAY_MICROS = Timestamps.HOUR_MICROS * 24L;
+    private static final long DAY_MICROS = Micros.HOUR_MICROS * 24L;
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
@@ -205,7 +206,7 @@ public class PGJobContextTest extends BasePGTest {
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
-                .map(i -> i * Timestamps.HOUR_MICROS / 1000L)
+                .map(i -> i * Micros.HOUR_MICROS / 1000L)
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
         stringTypeName = ColumnType.nameOf(ColumnType.STRING);
@@ -1349,6 +1350,176 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        // In simple mode bind vars are interpolated into the query text,
+        // and we don't have implicit cast from string to array, so test extended mode only.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final Array arr1 = connection.createArrayOf("float8", new Double[][]{{2d, 4d, 6d}, {8d, 10d, 12d}});
+            final Array arr2 = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 1);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{3.0,6.0,9.0},{12.0,15.0,18.0}}\n" +
+                                    "{{3.0,5.0,7.0},{9.0,11.0,13.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,3.0,5.0},{7.0,9.0,11.0}}\n" +
+                                    "{{2.0,8.0,18.0},{32.0,50.0,72.0}}\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}}\n" +
+                                    "{{2.0,2.0,2.0},{2.0,2.0,2.0}}\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    stmt.execute();
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 2);
+                    stmt.execute();
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testArrayBindingVarsWrongDimensions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            final Array arr1 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+            final Array arr2 = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d, 6d});
+
+            final String[] inserts = new String[]{
+                    "insert into x values (? + ?)",
+                    "insert into x values (? - ?)",
+                    "insert into x values (? * ?)",
+                    "insert into x values (? / ?)",
+            };
+            for (String insert : inserts) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 42);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+            }
+
+            final String[] updates = new String[]{
+                    "update x set al = ? + ?",
+                    "update x set al = ? - ?",
+                    "update x set al = ? * ?",
+                    "update x set al = ? / ?",
+            };
+            for (String update : updates) {
+                // array + array
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setArray(2, arr2);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+                // array + scalar
+                try (PreparedStatement stmt = connection.prepareStatement(update)) {
+                    stmt.setArray(1, arr1);
+                    stmt.setLong(2, 42);
+                    try {
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible types: DOUBLE[] -> DOUBLE[][]");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     /*
 import asyncio
 import asyncpg
@@ -2040,28 +2211,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableInFilter() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2190,6 +2339,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableIsNotNull() throws Exception {
@@ -4984,7 +5155,7 @@ if __name__ == "__main__":
 
 
             try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
                 for (int i = 0; i < 90; i++) {
                     insert.setInt(1, i);
                     // DATE as jdbc's DATE
@@ -5032,6 +5203,59 @@ if __name__ == "__main__":
 
             execSelectWithParam(select, 11);
             TestUtils.assertEquals("11\n", sink);
+        });
+    }
+
+    @Test
+    public void testInsert2dArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+                stmt.setArray(1, arr);
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "al[ARRAY]\n" +
+                                    "{{1.0,2.0,3.0},{4.0,5.0,6.0}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsert2dArrayBindingVarsWrongDimensions() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                final Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d});
+                stmt.setArray(1, arr);
+                try {
+                    stmt.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContainsEither(
+                            e.getMessage(),
+                            "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]",
+                            "inconvertible value: `{\"1.0\",\"2.0\",\"3.0\",\"4.0\",\"5.0\"}` [STRING -> DOUBLE[][]]"
+                    );
+                }
+            }
         });
     }
 
@@ -5347,7 +5571,7 @@ if __name__ == "__main__":
             String[] values = {"TrUE", null, "", "false", "true", "banana", "22"};
 
             try (PreparedStatement insert = connection.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
-                long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
+                long micros = MicrosFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
                 for (int i = 0; i < 30; i++) {
                     insert.setString(1, values[rand.nextInt(values.length)]);
                     insert.setTimestamp(2, new Timestamp(micros / 1000L));
@@ -5480,7 +5704,7 @@ if __name__ == "__main__":
                     "INSERT INTO x VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             String date = "2011-04-11";
             String time = "14:40:54.998821";
-            long micros = TimestampFormatUtils.parseTimestamp(date + "T" + time + "Z");
+            long micros = MicrosFormatUtils.parseTimestamp(date + "T" + time + "Z");
             for (int i = 0; i < 10_000; i++) {
                 insert.setInt(1, i);
                 // DATE as jdbc's DATE
@@ -6932,7 +7156,7 @@ nodejs code:
                     "2019-02-11 13:48:11.124016\n" +
                     "2019-02-11 13:48:11.124017\n";
 
-            long ts = TimestampFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
+            long ts = MicrosFormatUtils.parseUTCTimestamp("2019-02-11T13:48:11.123998Z");
             for (int i = 0; i < 20; i++) {
                 statement.setLong(1, ts + i);
                 statement.execute();
@@ -7973,7 +8197,7 @@ nodejs code:
                     statement.executeQuery();
                 } catch (PSQLException ex) {
                     caught = true;
-                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                    TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS");
                 }
             }
 
@@ -8008,7 +8232,7 @@ nodejs code:
                 statement.executeQuery();
             } catch (PSQLException ex) {
                 caught = true;
-                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
+                TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP_NS]");
             }
 
             if (isEnabledForWalRun()) {
@@ -8047,7 +8271,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -8071,7 +8295,7 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS) {
                     setCurrentMicros(micros);
                     statement.execute();
                 }
@@ -9226,6 +9450,51 @@ create table tab as (
         );
     }
 
+    @Test
+    public void testSelectArrayBindingVars() throws Exception {
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            final Array array1d = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d});
+            final Array array2d = connection.createArrayOf("float8", new Double[][]{{1d, 2d, 3d}, {4d, 5d, 6d}});
+
+            final int nVars = 12;
+            try (PreparedStatement stmt = connection.prepareStatement(
+                    "select ? + ? sum, ? - ? sub, ? * ? mul, ? / ? div, " +
+                            "? + 42 sum_scalar, ? - 42 sub_scalar, ? * 42 mul_scalar, ? / 42 div_scalar " +
+                            "from long_sequence(1)"
+            )) {
+                for (int i = 0; i < nVars; i++) {
+                    stmt.setArray(i + 1, array1d);
+                }
+
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "sum[ARRAY],sub[ARRAY],mul[ARRAY],div[ARRAY],sum_scalar[ARRAY],sub_scalar[ARRAY],mul_scalar[ARRAY],div_scalar[ARRAY]\n" +
+                                    "{2.0,4.0,6.0},{0.0,0.0,0.0},{1.0,4.0,9.0},{1.0,1.0,1.0},{43.0,44.0,45.0},{-41.0,-40.0,-39.0},{42.0,84.0,126.0},{0.023809523809523808,0.047619047619047616,0.07142857142857142}\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // Now, let's change the bind var array dimensionality - the query should succeed
+                for (int i = 0; i < nVars; i++) {
+                    stmt.setArray(i + 1, array2d);
+                }
+
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet(
+                            "sum[ARRAY],sub[ARRAY],mul[ARRAY],div[ARRAY],sum_scalar[ARRAY],sub_scalar[ARRAY],mul_scalar[ARRAY],div_scalar[ARRAY]\n" +
+                                    "{{2.0,4.0,6.0},{8.0,10.0,12.0}},{{0.0,0.0,0.0},{0.0,0.0,0.0}},{{1.0,4.0,9.0},{16.0,25.0,36.0}},{{1.0,1.0,1.0},{1.0,1.0,1.0}},{{43.0,44.0,45.0},{46.0,47.0,48.0}},{{-41.0,-40.0,-39.0},{-38.0,-37.0,-36.0}},{{42.0,84.0,126.0},{168.0,210.0,252.0}},{{0.023809523809523808,0.047619047619047616,0.07142857142857142},{0.09523809523809523,0.11904761904761904,0.14285714285714285}}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        }, () -> recvBufferSize = 4096); // all bind vars need to fit the buffer
+    }
+
     /* asyncqp.py - bind variable in where clause.
        Unlike jdbc driver, Asyncpg doesn't pass parameter types in Parse message and relies on types returned in ParameterDescription.
     import asyncio
@@ -9732,7 +10001,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9748,7 +10017,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9821,7 +10090,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] < Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] < Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -9837,7 +10106,7 @@ create table tab as (
                 statement.executeQuery();
                 try (ResultSet rs = statement.executeQuery()) {
                     String expected = datesArr.stream()
-                            .filter(arr -> (long) arr[0] >= Timestamps.HOUR_MICROS * 24)
+                            .filter(arr -> (long) arr[0] >= Micros.HOUR_MICROS * 24)
                             .map(arr -> arr[1] + "\n")
                             .collect(Collectors.joining());
 
@@ -10074,7 +10343,7 @@ create table tab as (
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1782]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1788]");
                         }
                     }
                 },
@@ -10602,7 +10871,7 @@ create table tab as (
                 // timestamp WITH microsecond precision, and we massage it to extract two
                 // numbers that can be used to create a java.sql.Timestamp.
                 // -> microsecond precision is kept
-                long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
+                long questdbTs = MicrosFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
                 long time = questdbTs / 1000;
                 int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
                 assertEquals(1632761103202345L, questdbTs);
@@ -11827,7 +12096,7 @@ create table tab as (
                 "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
         ) {
             ResultSet rs = null;
-            for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
+            for (long micros = 0; micros < count * Micros.HOUR_MICROS; micros += Micros.HOUR_MICROS * 7) {
                 sink.clear();
                 // constructor requires millis
                 Timestamp ts = new Timestamp(micros / 1000L);
@@ -12583,7 +12852,7 @@ create table tab as (
                             }
                         }).start();
 
-                        MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                        Clock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                         long startTimeMicro = microsecondClock.getTicks();
                         // Wait 1 min max for completion
                         while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {

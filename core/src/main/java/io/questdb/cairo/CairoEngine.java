@@ -113,7 +113,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -341,8 +341,8 @@ public class CairoEngine implements Closeable, WriterSource {
         try (
                 Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
-                WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
-                MemoryCMR txnMem = Vm.getCMRInstance()
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
@@ -355,6 +355,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (viewDefinition == null) {
                             viewDefinition = new MatViewDefinition();
                             MatViewDefinition.readFrom(
+                                    this,
                                     viewDefinition,
                                     reader,
                                     path,
@@ -1852,7 +1853,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private class EngineMaintenanceJob extends SynchronizedJob {
 
         private final long checkInterval;
-        private final MicrosecondClock clock;
+        private final Clock clock;
         private long last = 0;
 
         public EngineMaintenanceJob(CairoConfiguration configuration) {

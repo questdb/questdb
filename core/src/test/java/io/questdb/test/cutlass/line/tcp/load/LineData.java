@@ -25,8 +25,15 @@
 package io.questdb.test.cutlass.line.tcp.load;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.BoolList;
+import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.line.tcp.ColumnNameType;
 
@@ -46,7 +53,7 @@ public class LineData {
     public LineData(long timestampMicros) {
         timestampNanos = timestampMicros * 1000;
         final StringSink timestampSink = new StringSink();
-        TimestampFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
+        MicrosFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
         addColumn("timestamp", timestampSink);
     }
 
@@ -118,7 +125,7 @@ public class LineData {
 
     private String TimestampsToString(long uSecs) {
         StringSink sink = Misc.getThreadLocalSink();
-        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, TimestampFormatUtils.EN_LOCALE, null, sink);
+        MicrosFormatUtils.USEC_UTC_FORMAT.format(uSecs, DateLocaleFactory.EN_LOCALE, null, sink);
         return sink.toString();
     }
 

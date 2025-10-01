@@ -226,6 +226,30 @@ public class ExceptTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExceptAllWithTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades1 (trade_id int, ts_nano timestamp_ns, price double)");
+            execute("create table trades2 (trade_id int, ts_nano timestamp_ns, price double)");
+
+            long baseNanos = 1_609_459_200_000_000_000L; // 2021-01-01T00:00:00.000000000
+
+            execute("insert into trades1 values (1, " + baseNanos + ", 100.0)");
+            execute("insert into trades1 values (2, " + (baseNanos + 999_999_999L) + ", 200.0)"); // +999.999999ms
+            execute("insert into trades1 values (3, " + (baseNanos + 2_000_000_789L) + ", 300.0)"); // +2.000000789s
+            execute("insert into trades1 values (4, " + (baseNanos + 3_000_000_000L) + ", 400.0)"); // +3s
+
+            execute("insert into trades2 values (2, " + (baseNanos + 999_999_999L) + ", 200.0)");
+            execute("insert into trades2 values (3, " + (baseNanos + 2_000_000_789L) + ", 300.0)");
+
+            final String expected = "trade_id\tts_nano\tprice\n" +
+                    "1\t2021-01-01T00:00:00.000000000Z\t100.0\n" +
+                    "4\t2021-01-01T00:00:03.000000000Z\t400.0\n";
+
+            assertQueryNoLeakCheck(expected, "select * from trades1 except all select * from trades2", null, true);
+        });
+    }
+
+    @Test
     public void testExceptCastNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
@@ -239,6 +263,99 @@ public class ExceptTest extends AbstractCairoTest {
 
             snapshotMemoryUsage();
             try (RecordCursorFactory factory = select("(select i,s from x) except (select i,s from y)")) {
+                assertCursor(expected, factory, true, false);
+            }
+        });
+    }
+
+    @Test
+    public void testExceptMixedTimestampPrecisionExplicitCastToMicros() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table micro_events (id int, ts_micro timestamp, type symbol)");
+            execute("create table nano_events (id int, ts_nano timestamp_ns, type symbol)");
+
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000;
+
+            execute("insert into micro_events values (1, " + baseMicros + ", 'A')");
+            execute("insert into micro_events values (2, " + (baseMicros + 1000) + ", 'B')"); // +1ms
+            execute("insert into micro_events values (3, " + (baseMicros + 2000) + ", 'C')"); // +2ms
+
+            execute("insert into nano_events values (1, " + baseNanos + ", 'A')"); // exact match
+            execute("insert into nano_events values (2, " + ((baseMicros + 1000) * 1000 + 123) + ", 'B')"); // +1ms+123ns
+
+            final String expected = "id\tts_micro\ttype\n" +
+                    "3\t2020-01-01T00:00:00.125456Z\tC\n";
+
+            // note: nanos is truncated when casting to micros, so the 2nd row in nano_events becomes equivalent to the 2nd row in micro_events
+            // and is excluded from the result set
+            assertQueryNoLeakCheck(expected,
+                    "select id, ts_micro, type from micro_events " +
+                            "except " +
+                            "select id, CAST(ts_nano as timestamp) as ts_micro, type from nano_events",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testExceptMixedTimestampPrecisionImplicitCastToNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table micro_events (id int, ts_micro timestamp, type symbol)");
+            execute("create table nano_events (id int, ts_nano timestamp_ns, type symbol)");
+
+            long baseMicros = 1_577_836_800_123_456L; // 2020-01-01T00:00:00.123456
+            long baseNanos = baseMicros * 1000;
+
+            execute("insert into micro_events values (1, " + baseMicros + ", 'A')"); // excluded
+            execute("insert into micro_events values (2, " + (baseMicros + 1000) + ", 'B')"); // +1ms, stays
+            execute("insert into micro_events values (3, " + (baseMicros + 2000) + ", 'C')"); // +2ms, stays
+
+            execute("insert into nano_events values (1, " + baseNanos + ", 'A')"); // exact match
+            execute("insert into nano_events values (2, " + ((baseMicros + 1000) * 1000 + 123) + ", 'B')"); // +1ms+123ns
+
+            final String expected = "id\tts\ttype\n" +
+                    "2\t2020-01-01T00:00:00.124456000Z\tB\n" +
+                    "3\t2020-01-01T00:00:00.125456000Z\tC\n";
+
+            assertQueryNoLeakCheck(expected,
+                    "select id, ts_micro as ts, type from micro_events " +
+                            "except " +
+                            "select id, ts_nano as ts, type from nano_events",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testExceptMultipleTablesWithTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (id int, ts_nano timestamp_ns)");
+            execute("create table t2 (id int, ts_nano timestamp_ns)");
+            execute("create table t3 (id int, ts_nano timestamp_ns)");
+
+            long baseNanos = 1_672_531_200_000_000_000L; // 2023-01-01T00:00:00.000000000
+
+            // t1 - base set
+            for (int i = 1; i <= 5; i++) {
+                execute("insert into t1 values (" + i + ", " + (baseNanos + i * 100_000_000L) + ")");
+            }
+
+            // t2 - exclude these
+            execute("insert into t2 values (2, " + (baseNanos + 200_000_000L) + ")");
+            execute("insert into t2 values (4, " + (baseNanos + 400_000_000L) + ")");
+
+            // t3 - also exclude these
+            execute("insert into t3 values (3, " + (baseNanos + 300_000_000L) + ")");
+
+            final String expected = "id\tts_nano\n" +
+                    "1\t2023-01-01T00:00:00.100000000Z\n" +
+                    "5\t2023-01-01T00:00:00.500000000Z\n";
+
+            snapshotMemoryUsage();
+            try (RecordCursorFactory factory = select("select * from t1 except select * from t2 except select * from t3")) {
                 assertCursor(expected, factory, true, false);
             }
         });
@@ -362,6 +479,56 @@ public class ExceptTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select * from x except y")) {
                 assertCursor(expected2, factory, true, false);
             }
+        });
+    }
+
+    @Test
+    public void testExceptWithTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table events1 (event_id int, ts_nano timestamp_ns, type symbol)");
+            execute("create table events2 (event_id int, ts_nano timestamp_ns, type symbol)");
+
+            long baseNanos = 1_577_836_800_000_000_000L; // 2020-01-01T00:00:00.000000000
+
+            execute("insert into events1 values (1, " + baseNanos + ", 'click')"); // stays in the result set
+            execute("insert into events1 values (2, " + (baseNanos + 123_456_789L) + ", 'view')"); // +123.456789ms, excluded
+            execute("insert into events1 values (3, " + (baseNanos + 500_000_000L) + ", 'scroll')"); // +500ms, stays
+            execute("insert into events1 values (4, " + (baseNanos + 1_000_000_000L) + ", 'click')"); // +1s, excluded
+            execute("insert into events1 values (5, " + (baseNanos + 1_500_000_123L) + ", 'close')"); // +1.500000123s, stays
+
+            execute("insert into events2 values (2, " + (baseNanos + 123_456_789L) + ", 'view')"); // +123.456789ms
+            execute("insert into events2 values (4, " + (baseNanos + 1_000_000_000L) + ", 'click')"); // +1s
+
+            final String expected = "event_id\tts_nano\ttype\n" +
+                    "1\t2020-01-01T00:00:00.000000000Z\tclick\n" +
+                    "3\t2020-01-01T00:00:00.500000000Z\tscroll\n" +
+                    "5\t2020-01-01T00:00:01.500000123Z\tclose\n";
+
+            assertQueryNoLeakCheck(expected, "select * from events1 except events2", null, true);
+        });
+    }
+
+    @Test
+    public void testExceptWithTimestampNsAndNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sensors1 (sensor_id int, ts_nano timestamp_ns, reading double)");
+            execute("create table sensors2 (sensor_id int, ts_nano timestamp_ns, reading double)");
+
+            long baseNanos = 1_640_995_200_000_000_000L; // 2022-01-01T00:00:00.000000000
+
+            execute("insert into sensors1 values (1, " + baseNanos + ", 25.5)"); // excluded
+            execute("insert into sensors1 values (2, null, 30.0)"); // excluded
+            execute("insert into sensors1 values (3, " + (baseNanos + 1_111_111_111L) + ", null)"); // +1.111111111s, stays
+            execute("insert into sensors1 values (4, " + (baseNanos + 2_222_222_222L) + ", 35.5)"); // +2.222222222s, stays
+
+            execute("insert into sensors2 values (1, " + baseNanos + ", 25.5)");
+            execute("insert into sensors2 values (2, null, 30.0)");
+
+            final String expected = "sensor_id\tts_nano\treading\n" +
+                    "3\t2022-01-01T00:00:01.111111111Z\tnull\n" +
+                    "4\t2022-01-01T00:00:02.222222222Z\t35.5\n";
+
+            assertQueryNoLeakCheck(expected, "select * from sensors1 except sensors2", null, true);
         });
     }
 }

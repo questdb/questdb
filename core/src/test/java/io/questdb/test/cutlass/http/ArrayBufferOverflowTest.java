@@ -30,8 +30,8 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayWriteState;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayWriteState;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -52,12 +52,12 @@ public class ArrayBufferOverflowTest extends AbstractTest {
             @Override
             public @NotNull MicrosecondClock getMicrosecondClock() {
                 // this fixes the random seeds used by rnd_array()
-                return () -> 1234;
+                return () -> 1234L;
             }
 
             @Override
-            public @NotNull NanosecondClock getNanosecondClock() {
-                return () -> 5678;
+            public NanosecondClock getNanosecondClock() {
+                return () -> 5678L;
             }
         };
     }

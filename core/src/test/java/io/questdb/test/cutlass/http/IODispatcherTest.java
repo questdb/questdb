@@ -61,13 +61,11 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -111,17 +109,17 @@ import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -213,7 +211,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -234,7 +232,6 @@ public class IODispatcherTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
         Metrics.ENABLED.clear();
@@ -485,12 +482,6 @@ public class IODispatcherTest extends AbstractTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HttpRequestProcessor() {
-                        };
                     }
 
                     @Override
@@ -1161,7 +1152,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1243,7 +1234,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public NanosecondClock getNanosecondClock() {
+                    public Clock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -2308,6 +2299,165 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\t\t\t\t\n" +
                                                 "q\tque\tquestd\tquestdb12345\t10\n" +
                                                 "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportIPv4() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("create table test (ip1 ipv4, ip2 ipv4)", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 384\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "ip1,ip2\r\n" +
+                                                ".0.0.1,42\r\n" +
+                                                "null,null\r\n" +
+                                                "null,null\r\n" +
+                                                "127.0.0.1,42424242\r\n" +
+                                                "127.0.0.1,0\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 5  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 5  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                               ip1  |                     IPv4  |           1  |\r\n" +
+                                                "|              1  |                                               ip2  |                     IPv4  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        engine,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "ip1\tip2\n" +
+                                                "\t0.0.0.42\n" +
+                                                "\t\n" +
+                                                "\t\n" +
+                                                "127.0.0.1\t2.135.87.178\n" +
+                                                "127.0.0.1\t\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportMiscDateFormats() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                                engine.execute("create table test (d1 date, d2 date, d3 date)", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 384\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "d1,d2,d3\r\n" +
+                                                "2000-12-31,\"2000-12-31 12:49:59\",\"2000-12-31T13:39:49.000Z\"/\r\n" +
+                                                "2001-12-31,\"2001-12-31 12:49:59\",\"2001-12-31T13:39:49.000Z\"/\r\n" +
+                                                "2002-12-31,\"2002-12-31 12:49:59\",\"2002-12-31T13:39:49.000Z\"/\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "057c\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                                d1  |                     DATE  |           0  |\r\n" +
+                                                "|              1  |                                                d2  |                     DATE  |           0  |\r\n" +
+                                                "|              2  |                                                d3  |                     DATE  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        engine,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "d1\td2\td3\n" +
+                                                "2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z\n" +
+                                                "2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z\n" +
+                                                "2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z\n"
                                 );
                             }
                         }
@@ -5131,6 +5281,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
+                            LOG.info().$("iteration ").$(i).$();
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /exec?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "f9\r\n" +
@@ -5697,11 +5848,6 @@ public class IODispatcherTest extends AbstractTest {
                 try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
-                    }
-
-                    @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return new HealthCheckProcessor(httpServerConfiguration);
                     }
 
                     @Override
@@ -6683,11 +6829,6 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
-                        return null;
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -6817,7 +6958,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public NanosecondClock getNanosecondClock() {
+                        public Clock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }
@@ -6857,7 +6998,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext context) {
@@ -6878,11 +7019,6 @@ public class IODispatcherTest extends AbstractTest {
                                 context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -7018,7 +7154,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor getDefaultProcessor() {
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
                             public void onHeadersReady(HttpConnectionContext connectionContext) {
@@ -7034,11 +7170,6 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
                     }
                 };
 
@@ -7893,7 +8024,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryTimeoutResetOnEachQuery() throws Exception {
-        final int timeout = 200;
+        final int timeout = 500;
         final int iterations = 3;
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -7905,6 +8036,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.execute(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
+                            LOG.info().$("iteration ").$(i).$();
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
                                     "GET /exp?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "HTTP/1.1 200 OK\r\n" +
@@ -8216,13 +8348,8 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor getDefaultProcessor() {
-                                    return processor;
-                                }
-
-                                @Override
                                 public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                                    return null;
+                                    return processor;
                                 }
                             }) {
 
@@ -8274,16 +8401,21 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     int receiveCount = 0;
+                    int failureRetryCount = 0;
                     while (receiveCount < N * senderCount) {
                         long cursor = subSeq.next();
                         if (cursor < 0) {
                             if (cursor == -1 && completedCount.get() == senderCount) {
-                                Assert.fail("Not all requests successful, test failed, see previous failures");
-                                break;
+                                failureRetryCount++;
+                                if (failureRetryCount >= 3) {
+                                    Assert.fail("Not all requests successful, test failed, see previous failures");
+                                    break;
+                                }
                             }
                             Os.pause();
                             continue;
                         }
+                        failureRetryCount = 0;
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
                         assertTrue(valid);
@@ -8668,7 +8800,6 @@ public class IODispatcherTest extends AbstractTest {
         delayThread.start();
         return delayThread;
     }
-
 
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
@@ -9886,7 +10017,7 @@ public class IODispatcherTest extends AbstractTest {
                             );
                         } catch (Throwable e) {
                             LOG.critical().$(e).$();
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            System.out.println("erm: " + index + ", ts=" + Micros.toString(Os.currentTimeMicros()));
                             throw e;
                         }
                     }

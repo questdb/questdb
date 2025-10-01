@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public final class UuidColumn extends UuidFunction implements Function {
+public final class UuidColumn extends UuidFunction implements ColumnFunction {
     private static final ObjList<UuidColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
@@ -45,6 +43,11 @@ public final class UuidColumn extends UuidFunction implements Function {
             return COLUMNS.getQuick(columnIndex);
         }
         return new UuidColumn(columnIndex);
+    }
+
+    @Override
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
     @Override
@@ -64,11 +67,6 @@ public final class UuidColumn extends UuidFunction implements Function {
         // it's only when casting to string (=common operation) then it's not thread-safe
         // the CastUuidToStr function indicate it's not thread-safe
         return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.putColumnName(columnIndex);
     }
 
     static {

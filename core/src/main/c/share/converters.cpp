@@ -29,22 +29,66 @@
 // Used to clean up noise in the switch statement
 #define macro_dispatch_fixed_to_fixed(a, b) case pack_column_types(a, b): return convert_from_type_to_type<a, b>(src, dst, row_count)
 
-void convert_us_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
+void convert_us_to_ms(int64_t *dest, const int64_t *src, const int64_t count) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
     constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
     for(int64_t i = 0; i < count; i++) {
-        const bool isnull = (src[i] == dstSentinel);
+        const bool isnull = (src[i] == srcSentinel);
         dest[i] = (!isnull) * src[i] / 1000;
         dest[i] += (isnull) * dstSentinel;
     }
 }
 
-void convert_ns_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
-    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP>::null_value;
+void convert_us_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
+  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
+  constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+  for (int64_t i = 0; i < count; i++) {
+    const bool isnull = (src[i] == srcSentinel);
+    dest[i] = (!isnull) * src[i] * 1000;
+    dest[i] += (isnull)*dstSentinel;
+  }
+}
+
+void convert_ms_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
+    constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
+    constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
     for(int64_t i = 0; i < count; i++) {
-        const bool isnull = (src[i] == dstSentinel);
+        const bool isnull = (src[i] == srcSentinel);
         dest[i] = (!isnull) * src[i] * 1000;
         dest[i] += (isnull) * dstSentinel;
     }
+}
+
+void convert_ms_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
+  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::DATE>::null_value;
+  constexpr int64_t dstSentinel =
+      EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+  for (int64_t i = 0; i < count; i++) {
+    const bool isnull = (src[i] == srcSentinel);
+    dest[i] = (!isnull) * src[i] * 1000000;
+    dest[i] += (isnull)*dstSentinel;
+  }
+}
+
+void convert_ns_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
+  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+  constexpr int64_t dstSentinel = EnumTypeMap<ColumnType::TIMESTAMP_MICRO>::null_value;
+  for (int64_t i = 0; i < count; i++) {
+    const bool isnull = (src[i] == srcSentinel);
+    dest[i] = (!isnull) * src[i] / 1000;
+    dest[i] += (isnull)*dstSentinel;
+  }
+}
+
+void convert_ns_to_ms(int64_t *dest, const int64_t *src, const int64_t count) {
+  constexpr int64_t srcSentinel = EnumTypeMap<ColumnType::TIMESTAMP_NANO>::null_value;
+  constexpr int64_t dstSentinel =
+      EnumTypeMap<ColumnType::DATE>::null_value;
+  for (int64_t i = 0; i < count; i++) {
+    const bool isnull = (src[i] == srcSentinel);
+    dest[i] = (!isnull) * src[i] / 1000000;
+    dest[i] += (isnull)*dstSentinel;
+  }
 }
 
 // extern "C"
@@ -76,7 +120,8 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::FLOAT);
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::DATE);
         // BYTE
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::SHORT);
@@ -84,7 +129,10 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::FLOAT);
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::BYTE,
+                                      ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::BYTE,
+                                      ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::BOOLEAN);
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::DATE);
         // SHORT
@@ -93,7 +141,10 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::FLOAT);
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::SHORT,
+                                      ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::SHORT,
+                                      ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::BOOLEAN);
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::DATE);
         // INT
@@ -102,7 +153,10 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::FLOAT);
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::INT,
+                                      ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::INT,
+                                      ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::BOOLEAN);
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DATE);
         // LONG
@@ -118,7 +172,10 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::INT);
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::FLOAT,
+                                      ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::FLOAT,
+                                      ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::BOOLEAN);
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::DATE);
         // DOUBLE
@@ -127,16 +184,38 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::INT);
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::LONG);
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::FLOAT);
-        macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::TIMESTAMP);
+        macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE,
+                                      ColumnType::TIMESTAMP_MICRO);
+        macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE,
+                                      ColumnType::TIMESTAMP_NANO);
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::BOOLEAN);
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::DATE);
         // TIMESTAMP
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::BYTE);
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::SHORT);
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::INT);
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::FLOAT);
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::DOUBLE);
-        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::BOOLEAN);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::BYTE);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::SHORT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::INT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::FLOAT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::DOUBLE);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_MICRO,
+                                      ColumnType::BOOLEAN);
+        // TIMESTAMP_NANO
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::BYTE);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::SHORT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::INT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::FLOAT);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::DOUBLE);
+        macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP_NANO,
+                                      ColumnType::BOOLEAN);
         // DATE
         macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::BYTE);
         macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::SHORT);
@@ -145,19 +224,39 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::DOUBLE);
         macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::BOOLEAN);
 
-        case pack_column_types(ColumnType::TIMESTAMP, ColumnType::LONG):
-        case pack_column_types(ColumnType::LONG, ColumnType::TIMESTAMP):
+        case pack_column_types(ColumnType::TIMESTAMP_MICRO, ColumnType::LONG):
+        case pack_column_types(ColumnType::LONG, ColumnType::TIMESTAMP_MICRO):
+        case pack_column_types(ColumnType::TIMESTAMP_NANO, ColumnType::LONG):
+        case pack_column_types(ColumnType::LONG, ColumnType::TIMESTAMP_NANO):
         case pack_column_types(ColumnType::LONG, ColumnType::DATE):
         case pack_column_types(ColumnType::DATE, ColumnType::LONG):
             // It's same 64 bit values, same null constant, simply mem copy the values.
             __MEMCPY(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount * sizeof(int64_t));
             break;
-        case pack_column_types(ColumnType::TIMESTAMP, ColumnType::DATE):
-            convert_us_to_ns(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount);
-            break;
-        case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP):
-            convert_ns_to_us(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount);
-            break;
+        case pack_column_types(ColumnType::TIMESTAMP_MICRO, ColumnType::DATE):
+          convert_us_to_ms(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
+        case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP_MICRO):
+          convert_ms_to_us(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
+        case pack_column_types(ColumnType::TIMESTAMP_MICRO, ColumnType::TIMESTAMP_NANO):
+          convert_us_to_ns(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
+        case pack_column_types(ColumnType::TIMESTAMP_NANO, ColumnType::TIMESTAMP_MICRO):
+          convert_ns_to_us(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
+        case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP_NANO):
+          convert_ms_to_ns(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
+        case pack_column_types(ColumnType::TIMESTAMP_NANO, ColumnType::DATE):
+          convert_ns_to_ms(reinterpret_cast<int64_t *>(dstMem),
+                           reinterpret_cast<int64_t *>(srcMem), rowCount);
+          break;
         default:
             return static_cast<jlong>(ConversionError::UNSUPPORTED_CAST);
     }

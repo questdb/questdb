@@ -44,7 +44,7 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;

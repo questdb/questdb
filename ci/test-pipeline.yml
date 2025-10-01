@@ -4,6 +4,7 @@ pr:
   branches:
     include:
       - master
+      - master-ent-next
   drafts: false
 
 variables:

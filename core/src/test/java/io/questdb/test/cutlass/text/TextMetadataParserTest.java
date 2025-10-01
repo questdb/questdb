@@ -160,6 +160,25 @@ public class TextMetadataParserTest {
     }
 
     @Test
+    public void testTimestampNanosType() throws Exception {
+        String in = "[\n" +
+                "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-US\"},\n" +
+                "{\"name\": \"y\", \"type\": \"TIMESTAMP_NS\", \"pattern\":\"yyyy-MM-ddTHH:mm:ss.SSSSSSNNNZ\"}\n" +
+                "]";
+
+        long buf = TestUtils.toMemory(in);
+        try {
+            LEXER.parse(buf, buf + in.length(), textMetadataParser);
+            Assert.assertEquals(2, textMetadataParser.getColumnTypes().size());
+            Assert.assertEquals(2, textMetadataParser.getColumnNames().size());
+            Assert.assertEquals("[INT,TIMESTAMP_NS]", textMetadataParser.getColumnTypes().toString());
+            Assert.assertEquals("[x,y]", textMetadataParser.getColumnNames().toString());
+        } finally {
+            Unsafe.free(buf, in.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testWrongDateLocale() {
         assertFailure(
                 "[\n" +

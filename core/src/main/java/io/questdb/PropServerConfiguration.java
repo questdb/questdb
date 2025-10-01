@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
@@ -45,14 +46,6 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.LineHourTimestampAdapter;
-import io.questdb.cutlass.line.LineMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineSecondTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -86,8 +79,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -95,22 +86,24 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
+import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -134,6 +127,7 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
+    public static final String ACCEPTING_WRITES = "accepting.writes";
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
@@ -149,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
@@ -193,7 +188,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
-    private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+    private final MicrosFormatCompiler compiler = new MicrosFormatCompiler();
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final int createAsSelectRetryCount;
@@ -288,7 +283,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int lineUdpOwnThreadAffinity;
     private final int lineUdpReceiveBufferSize;
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
-    private final LineTimestampAdapter lineUdpTimestampAdapter;
+    private final byte lineUdpTimestampUnit;
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
@@ -564,6 +559,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
+    private int lineDefaultTimestampColumnType;
     private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
@@ -589,7 +585,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
     private int lineTcpRecvBufferSize;
-    private LineTcpTimestampAdapter lineTcpTimestampAdapter;
+    private byte lineTcpTimestampUnit;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
     private int lineTcpWriterWorkerCount;
@@ -747,10 +743,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (logTimestampLocale == null) {
             throw new ServerConfigurationException("Invalid log locale: '" + logTimestampLocaleStr + "'");
         }
-        TimestampFormatCompiler formatCompiler = new TimestampFormatCompiler();
-        this.logTimestampFormat = formatCompiler.compile(logTimestampFormatStr);
+        this.logTimestampFormat = MicrosTimestampDriver.INSTANCE.getTimestampDateFormatFactory().get(logTimestampFormatStr);
         try {
-            this.logTimestampTimezoneRules = Timestamps.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
+            this.logTimestampTimezoneRules = Micros.getTimezoneRules(logTimestampLocale, logTimestampTimezone);
         } catch (NumericException e) {
             throw new ServerConfigurationException("Invalid log timezone: '" + logTimestampTimezone + "'");
         }
@@ -1214,7 +1209,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
             // obsolete
-            this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Timestamps.SECOND_MILLIS);
+            this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Micros.SECOND_MILLIS);
             this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
 
             this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
@@ -1438,9 +1433,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
-                    new DateFormatFactory(),
+                    DateFormatFactory.INSTANCE,
                     DateLocaleFactory.INSTANCE,
-                    new TimestampFormatFactory(),
                     this.locale
             );
 
@@ -1511,7 +1505,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
-            this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
+            this.telemetryDbSizeEstimateTimeout = getMillis(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Micros.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -1534,7 +1528,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
             this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
-            this.lineUdpTimestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
+            this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
             if (this.lineUdpDefaultPartitionBy == -1) {
@@ -1632,8 +1626,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT, false);
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
-                LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
-                this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
+                this.lineTcpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
@@ -1646,6 +1639,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
                     log.info().$("invalid default column type for integer ").$safe(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
+                }
+
+                String timestampDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.TIMESTAMP_MICRO));
+                this.lineDefaultTimestampColumnType = ColumnType.typeOf(timestampDefaultColumnTypeName);
+                if (!ColumnType.isTimestamp(lineDefaultTimestampColumnType)) {
+                    log.info().$("invalid default column type for timestamp ").$(timestampDefaultColumnTypeName).$(", will use TIMESTAMP_MICRO").$();
+                    this.lineDefaultTimestampColumnType = ColumnType.TIMESTAMP_MICRO;
                 }
             }
 
@@ -1762,6 +1762,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
         this.ilpProtoTransports = initIlpTransport();
+        this.acceptingWrites = initAcceptingWrites();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -2005,21 +2006,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         return CommitMode.NOSYNC;
     }
 
-    private LineTimestampAdapter getLineTimestampAdaptor(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
+    private byte getLineTimestampUnit(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
         switch (lineUdpTimestampSwitch) {
             case "u":
-                return LineMicroTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MICROS;
             case "ms":
-                return LineMilliTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MILLIS;
             case "s":
-                return LineSecondTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_SECONDS;
             case "m":
-                return LineMinuteTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_MINUTES;
             case "h":
-                return LineHourTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_HOURS;
             default:
-                return LineNanoTimestampAdapter.INSTANCE;
+                return CommonUtils.TIMESTAMP_UNIT_NANOS;
         }
     }
 
@@ -2124,6 +2125,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log.advisory().$(validation.message).$();
             }
         }
+    }
+
+    protected String getAcceptingWrites() {
+        return acceptingWrites;
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
@@ -2306,6 +2311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
@@ -2320,6 +2326,39 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
             allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
         }
+    }
+
+    protected String initAcceptingWrites() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        if (instanceAcceptingWrites()) {
+            boolean addComma = false;
+            if (!httpContextConfiguration.readOnlySecurityContext()) {
+                sink.put("\"http\"");
+                addComma = true;
+            }
+            if (lineTcpReceiverConfiguration.isEnabled()) {
+                // tcp does not have read-only mode
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"tcp\"");
+                addComma = true;
+            }
+            if (pgConfiguration.isEnabled() && !pgConfiguration.readOnlySecurityContext()) {
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"pgwire\"");
+            }
+        }
+        sink.put(']');
+        return sink.toString();
+    }
+
+    protected boolean instanceAcceptingWrites() {
+        // overwritten in Enterprise
+        return !isReadOnlyInstance;
     }
 
     protected PropertyValidator newValidator() {
@@ -2803,6 +2842,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
+            arrayStr(ACCEPTING_WRITES, getAcceptingWrites(), sink);
             arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
             arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
             return true;
@@ -4585,6 +4625,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAcceptingWrites() {
+            return !isReadOnlyInstance
+                    && httpServerEnabled
+                    && lineHttpEnabled
+                    && !httpContextConfiguration.readOnlySecurityContext();
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpServerEnabled;
         }
@@ -4648,7 +4696,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public NanosecondClock getNanosecondClock() {
+        public Clock getNanosecondClock() {
             return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
@@ -4681,6 +4729,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return lineDefaultTimestampColumnType;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -4696,7 +4749,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public io.questdb.std.datetime.Clock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -4706,8 +4759,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return lineTcpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineTcpTimestampUnit;
         }
 
         @Override
@@ -4856,6 +4909,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultColumnTypeForTimestamp() {
+            return lineDefaultTimestampColumnType;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -4931,7 +4989,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getMicrosecondClock() {
+        public io.questdb.std.datetime.Clock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
@@ -4996,8 +5054,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTcpTimestampAdapter getTimestampAdapter() {
-            return lineTcpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineTcpTimestampUnit;
         }
 
         @Override
@@ -5160,8 +5218,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public LineTimestampAdapter getTimestampAdapter() {
-            return lineUdpTimestampAdapter;
+        public byte getTimestampUnit() {
+            return lineUdpTimestampUnit;
         }
 
         @Override

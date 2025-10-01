@@ -152,8 +152,7 @@ public class HttpServer implements Closeable {
     ) {
         final HttpFullFatServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
         final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
-        // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
-        if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled() && !httpServerConfiguration.getHttpContextConfiguration().readOnlySecurityContext()) {
+        if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled()) {
 
             server.bind(new HttpRequestHandlerFactory() {
                 @Override
@@ -389,15 +388,10 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public HttpRequestProcessor getDefaultProcessor() {
-            return defaultRequestProcessor;
-        }
-
-        @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
             final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
             final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
-            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : null;
+            return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }
 }

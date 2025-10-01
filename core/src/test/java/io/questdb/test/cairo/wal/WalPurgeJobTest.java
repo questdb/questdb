@@ -26,13 +26,13 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -238,7 +238,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 assertSegmentLockEngagement(true, tableName, 1, 0);
 
                 addColumn(walWriter1, "i1");
-                TableWriter.Row row2 = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+                TableWriter.Row row2 = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-25"));
                 row2.putLong(0, 2);
                 row2.putInt(2, 2);
                 row2.append();
@@ -258,14 +258,14 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     assertSegmentExistence(true, tableName, 2, 0);
                     assertSegmentExistence(false, tableName, 2, 1);
 
-                    TableWriter.Row row3 = walWriter2.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-26"));
+                    TableWriter.Row row3 = walWriter2.newRow(MicrosTimestampDriver.floor("2022-02-26"));
                     row3.putLong(0, 3);
                     row3.putInt(2, 3);
                     row3.append();
                     walWriter2.commit();
 
                     addColumn(walWriter2, "i2");
-                    TableWriter.Row row4 = walWriter2.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-27"));
+                    TableWriter.Row row4 = walWriter2.newRow(MicrosTimestampDriver.floor("2022-02-27"));
                     row4.putLong(0, 4);
                     row4.putInt(2, 4);
                     row4.putInt(3, 4);
@@ -718,7 +718,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             addColumn(walWriter1, "i1");
 
             // Row insert is rolled back.
-            TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+            TableWriter.Row row = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-25"));
             row.putLong(0, 2);
             row.putLong(2, 2);
             row.append();
@@ -830,7 +830,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (WalWriter walWriter1 = getWalWriter(tableName)) {
-                TableWriter.Row row = walWriter1.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-24"));
+                TableWriter.Row row = walWriter1.newRow(MicrosTimestampDriver.floor("2022-02-24"));
                 row.putLong(0, 11);
                 row.append();
 
@@ -1150,7 +1150,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     private static void addColumnAndRow(WalWriter writer, String columnName) {
         TestUtils.unchecked(() -> {
             addColumn(writer, columnName);
-            TableWriter.Row row = writer.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-02-25"));
+            TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2022-02-25"));
             row.putLong(0, 2);
             row.putInt(2, 2);
             row.append();

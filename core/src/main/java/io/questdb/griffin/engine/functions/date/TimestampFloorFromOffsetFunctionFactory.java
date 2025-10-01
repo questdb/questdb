@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,13 +44,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 
 /**
@@ -65,16 +66,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     private static final long MIN_GAP_SECONDS = MIN_GAP_MINUTES * 60;
     private static final long MIN_GAP_MILLIS = MIN_GAP_SECONDS * 1000;
     private static final long MIN_GAP_MICROS = MIN_GAP_MILLIS * 1000;
-
-    private static final TimestampFloorFunction floorDDFunc = Timestamps::floorDD;
-    private static final TimestampFloorFunction floorHHFunc = Timestamps::floorHH;
-    private static final TimestampFloorFunction floorMCFunc = Timestamps::floorMC;
-    private static final TimestampFloorFunction floorMIFunc = Timestamps::floorMI;
-    private static final TimestampFloorFunction floorMMFunc = Timestamps::floorMM;
-    private static final TimestampFloorFunction floorMSFunc = Timestamps::floorMS;
-    private static final TimestampFloorFunction floorSSFunc = Timestamps::floorSS;
-    private static final TimestampFloorFunction floorWWFunc = Timestamps::floorWW;
-    private static final TimestampFloorFunction floorYYYYFunc = Timestamps::floorYYYY;
+    private static final long MIN_GAP_NANOS = MIN_GAP_MICROS * 1000;
 
     @Override
     public String getSignature() {
@@ -90,32 +82,34 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence unitStr = args.getQuick(0).getStrA(null);
-        final int stride = Timestamps.getStrideMultiple(unitStr, argPositions.getQuick(0));
-        final char unit = Timestamps.getStrideUnit(unitStr, argPositions.getQuick(0));
+        final int stride = CommonUtils.getStrideMultiple(unitStr, argPositions.getQuick(0));
+        final char unit = CommonUtils.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
+        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
+        TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         long from = args.getQuick(2).getTimestamp(null);
         if (from == Numbers.LONG_NULL) {
             from = 0;
+        } else {
+            from = timestampDriver.from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
         }
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);
         final Function timezoneFunc = args.getQuick(4);
         final int timezonePos = argPositions.getQuick(4);
-
-        final TimestampFloorFunction floorFunc = getFloorFunction(unit, unitPos);
-
+        validateUnit(unit, unitPos);
         String offsetStr = null;
         long offset = 0;
         if (offsetFunc.isConstant()) {
             final CharSequence o = offsetFunc.getStrA(null);
             if (o != null) {
-                final long val = Timestamps.parseOffset(o);
+                final long val = Dates.parseOffset(o);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(o);
                 }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             }
             offsetStr = Chars.toString(o);
         }
@@ -126,11 +120,11 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             TimeZoneRules tzRules = null;
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                     } catch (NumericException e) {
                         Misc.free(timestampFunc);
@@ -142,7 +136,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                         tzRules = null;
                     }
                 } else {
-                    tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 }
             }
 
@@ -150,29 +144,29 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
             if (tzRules == null) { // no timezone or fixed offset rules case
                 if (offsetFunc.isConstant()) {
-                    return createAllConstFunc(timestampFunc, floorFunc, stride, unit, unitPos, from, offset, offsetStr, tzOffset, tzStr);
+                    return createAllConstFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr, timestampType);
                 }
                 if (offsetFunc.isRuntimeConstant()) {
-                    return new RuntimeConstOffsetFunction(timestampFunc, floorFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr);
+                    return new RuntimeConstOffsetFunction(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzOffset, tzStr, timestampType);
                 }
                 throw SqlException.$(offsetPos, "const or runtime const expected");
             }
 
             if (offsetFunc.isConstant()) {
-                return createAllConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
+                return createAllConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, timestampType, timestampDriver);
             }
             if (offsetFunc.isRuntimeConstant()) {
-                return new RuntimeConstOffsetDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr);
+                return new RuntimeConstOffsetDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, tzRules, tzStr, timestampType);
             }
             throw SqlException.$(offsetPos, "const or runtime const expected");
         }
 
         if (timezoneFunc.isRuntimeConstant()) {
             if (offsetFunc.isConstant()) {
-                return createRuntimeConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos);
+                return createRuntimeConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType, timestampDriver);
             }
             if (offsetFunc.isRuntimeConstant()) {
-                return new AllRuntimeConstDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos);
+                return new AllRuntimeConstDstGapAwareFunc(timestampFunc, stride, unit, from, offsetFunc, offsetPos, timezoneFunc, timezonePos, timestampType);
             }
             throw SqlException.$(offsetPos, "const or runtime const expected");
         }
@@ -180,10 +174,10 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         throw SqlException.$(timezonePos, "const or runtime const expected");
     }
 
-    private static boolean canSkipDstGapCorrection(int stride, char unit, long from, long offset) {
+    private static boolean canSkipDstGapCorrection(TimestampDriver timestampDriver, int stride, char unit, long from, long offset) {
         // require the effective offset to be aligned at day boundary;
         // we may relax this check in the future, if necessary
-        if ((from + offset) % Timestamps.DAY_MICROS != 0) {
+        if ((from + offset) % timestampDriver.fromDays(1) != 0) {
             return false;
         }
 
@@ -203,86 +197,68 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
                 return MIN_GAP_MILLIS % stride == 0 || stride % MIN_GAP_MILLIS == 0;
             case 'U':
                 return MIN_GAP_MICROS % stride == 0 || stride % MIN_GAP_MICROS == 0;
+            case 'n':
+                return MIN_GAP_NANOS % stride == 0 || stride % MIN_GAP_NANOS == 0;
         }
         return false;
     }
 
     private static @NotNull Function createAllConstFunc(
             @NotNull Function timestampFunc,
-            @NotNull TimestampFloorFunction floorFunc,
             int stride,
             char unit,
-            int unitPos,
             long from,
             long offset,
             @Nullable String offsetStr,
             long tzOffset,
-            @Nullable String tzStr
-    ) throws SqlException {
+            @Nullable String tzStr,
+            int timestampType
+    ) {
         if (tzOffset == 0) {
             final long effectiveOffset = from + offset;
-            switch (unit) {
-                case 'M':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestampFunc, stride, effectiveOffset);
-                case 'y':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestampFunc, stride, effectiveOffset);
-                case 'w':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestampFunc, stride, effectiveOffset);
-                case 'd':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestampFunc, stride, effectiveOffset);
-                case 'h':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestampFunc, stride, effectiveOffset);
-                case 'm':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestampFunc, stride, effectiveOffset);
-                case 's':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestampFunc, stride, effectiveOffset);
-                case 'T':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestampFunc, stride, effectiveOffset);
-                case 'U':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, effectiveOffset);
-                default:
-                    throw SqlException.position(unitPos).put("unexpected unit");
-            }
+            return new TimestampFloorOffsetFunction(timestampFunc, unit, stride, effectiveOffset, timestampType);
         }
 
-        return new AllConstFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr);
+        return new AllConstFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzOffset, tzStr, timestampType);
     }
 
     private static @NotNull Function createAllConstTzFunc(
             @NotNull Function timestampFunc,
-            @NotNull TimestampFloorFunction floorFunc,
             int stride,
             char unit,
             long from,
             long offset,
             @Nullable String offsetStr,
             @NotNull TimeZoneRules tzRules,
-            @NotNull String tzStr
+            @NotNull String tzStr,
+            int timestampType,
+            TimestampDriver timestampDriver
     ) {
-        if (canSkipDstGapCorrection(stride, unit, from, offset)) {
-            return new AllConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
+        if (canSkipDstGapCorrection(timestampDriver, stride, unit, from, offset)) {
+            return new AllConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, timestampType);
         }
-        return new AllConstDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
+        return new AllConstDstGapAwareFunc(timestampFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr, timestampType);
     }
 
     private static @NotNull Function createRuntimeConstTzFunc(
             Function timestampFunc,
-            TimestampFloorFunction floorFunc,
             int stride,
             char unit,
             long from,
             long offset,
             String offsetStr,
             Function timezoneFunc,
-            int timezonePos
+            int timezonePos,
+            int timestampType,
+            TimestampDriver timestampDriver
     ) {
-        if (canSkipDstGapCorrection(stride, unit, from, offset)) {
-            return new RuntimeConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos);
+        if (canSkipDstGapCorrection(timestampDriver, stride, unit, from, offset)) {
+            return new RuntimeConstTzFunc(timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType);
         }
-        return new RuntimeConstDstGapAwareFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos);
+        return new RuntimeConstDstGapAwareFunc(timestampFunc, stride, unit, from, offset, offsetStr, timezoneFunc, timezonePos, timestampType);
     }
 
-    private static long floorWithDstGapCorrection(long timestamp, TimestampFloorFunction floorFunc, int stride, long offset, TimeZoneRules tzRules) {
+    private static long floorWithDstGapCorrection(long timestamp, TimestampDriver.TimestampFloorWithOffsetMethod floorFunc, int stride, long offset, TimeZoneRules tzRules) {
         final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
         long flooredTimestamp = floorFunc.floor(localTimestamp, stride, offset);
         // Move the timestamp to the bucket if it belongs to a DST gap, i.e. non-existing
@@ -296,39 +272,27 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         return floorFunc.floor(flooredTimestamp - gapDuration, stride, offset);
     }
 
-    private static TimestampFloorFunction getFloorFunction(char unit, int unitPos) throws SqlException {
+    private static void validateUnit(char unit, int unitPos) throws SqlException {
         switch (unit) {
             case 'M':
-                return floorMMFunc;
             case 'y':
-                return floorYYYYFunc;
             case 'w':
-                return floorWWFunc;
             case 'd':
-                return floorDDFunc;
             case 'h':
-                return floorHHFunc;
             case 'm':
-                return floorMIFunc;
             case 's':
-                return floorSSFunc;
             case 'T':
-                return floorMSFunc;
             case 'U':
-                return floorMCFunc;
+            case 'n':
+                return;
         }
         throw SqlException.position(unitPos).put("unexpected unit");
-    }
-
-    @FunctionalInterface
-    private interface TimestampFloorFunction {
-        long floor(long micros, int stride, long offset);
     }
 
     // both offset and time zone are consts
     private static class AllConstDstGapAwareFunc extends TimestampFunction implements UnaryFunction {
         private final long effectiveOffset; // from + offset
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final String offsetStr;
         private final int stride;
@@ -339,17 +303,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public AllConstDstGapAwareFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 long offset,
                 String offsetStr,
                 TimeZoneRules tzRules,
-                String tzStr
+                String tzStr,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -380,7 +345,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -396,7 +361,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     private static class AllConstFunc extends TimestampFunction implements UnaryFunction {
         private final long effectiveOffset; // from + offset
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final String offsetStr;
         private final int stride;
@@ -407,17 +372,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public AllConstFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 long offset,
                 String offsetStr,
                 long tzOffset,
-                String tzStr
+                String tzStr,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -449,7 +415,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -465,7 +431,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction {
         private final long effectiveOffset; // from + offset
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final String offsetStr;
         private final int stride;
@@ -476,17 +442,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public AllConstTzFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 long offset,
                 String offsetStr,
                 TimeZoneRules tzRules,
-                String tzStr
+                String tzStr,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -518,7 +485,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -534,7 +501,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     // both offset and time zone are runtime consts
     private static class AllRuntimeConstDstGapAwareFunc extends TimestampFunction implements TernaryFunction {
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final Function offsetFunc;
         private final int offsetPos;
@@ -549,17 +516,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public AllRuntimeConstDstGapAwareFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 Function offsetFunc,
                 int offsetPos,
                 Function timezoneFunc,
-                int timezonePos
+                int timezonePos,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -604,12 +572,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
                 }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             } else {
                 offset = 0;
             }
@@ -618,18 +586,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
                         throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                     }
                 } else {
-                    tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                     tzRules = null;
                 }
             } else {
@@ -645,7 +613,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -658,7 +626,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     // offset is const and time zone is runtime const
     private static class RuntimeConstDstGapAwareFunc extends TimestampFunction implements BinaryFunction {
         private final long effectiveOffset; // from + offset
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final String offsetStr;
         private final int stride;
@@ -671,17 +639,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public RuntimeConstDstGapAwareFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 long offset,
                 String offsetStr,
                 Function timezoneFunc,
-                int timezonePos
+                int timezonePos,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -721,18 +690,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
                         throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                     }
                 } else {
-                    tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                     tzRules = null;
                 }
             } else {
@@ -748,7 +717,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -764,7 +733,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     // offset is runtime const and time zone is const
     private static class RuntimeConstOffsetDstGapAwareFunc extends TimestampFunction implements BinaryFunction {
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final Function offsetFunc;
         private final int offsetPos;
@@ -777,17 +746,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public RuntimeConstOffsetDstGapAwareFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 Function offsetFunc,
                 int offsetPos,
                 TimeZoneRules tzRules,
-                String tzStr
+                String tzStr,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -823,12 +793,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
                 }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             } else {
                 offset = 0;
             }
@@ -842,7 +812,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -853,7 +823,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     }
 
     private static class RuntimeConstOffsetFunction extends TimestampFunction implements BinaryFunction {
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final Function offsetFunc;
         private final int offsetPos;
@@ -866,17 +836,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public RuntimeConstOffsetFunction(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 Function offsetFunc,
                 int offsetPos,
                 long tzOffset,
-                String tzStr
+                String tzStr,
+                int timestampType
         ) {
+            super(timestampType);
+            floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -913,12 +884,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence offsetStr = offsetFunc.getStrA(null);
             long offset;
             if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
+                final long val = Dates.parseOffset(offsetStr);
                 if (val == Numbers.LONG_NULL) {
                     // bad value for offset
                     throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
                 }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
+                offset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             } else {
                 offset = 0;
             }
@@ -932,7 +903,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }
@@ -949,7 +920,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     // offset is const and time zone is runtime const
     private static class RuntimeConstTzFunc extends TimestampFunction implements BinaryFunction {
         private final long effectiveOffset; // from + offset
-        private final TimestampFloorFunction floorFunc;
+        private final TimestampDriver.TimestampFloorWithOffsetMethod floorFunc;
         private final long from;
         private final String offsetStr;
         private final int stride;
@@ -962,17 +933,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         public RuntimeConstTzFunc(
                 Function tsFunc,
-                TimestampFloorFunction floorFunc,
                 int stride,
                 char unit,
                 long from,
                 long offset,
                 String offsetStr,
                 Function timezoneFunc,
-                int timezonePos
+                int timezonePos,
+                int timestampType
         ) {
+            super(timestampType);
             this.tsFunc = tsFunc;
-            this.floorFunc = floorFunc;
+            this.floorFunc = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
             this.stride = stride;
             this.unit = unit;
             this.from = from;
@@ -1011,18 +983,18 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final CharSequence tz = timezoneFunc.getStrA(null);
             if (tz != null) {
                 final int hi = tz.length();
-                final long l = Timestamps.parseOffset(tz, 0, hi);
+                final long l = Dates.parseOffset(tz, 0, hi);
                 if (l == Long.MIN_VALUE) {
                     try {
-                        tzRules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                        tzRules = DateLocaleFactory.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, hi)), timestampDriver.getTZRuleResolution()
                         );
                         tzOffset = 0;
                     } catch (NumericException e) {
                         throw SqlException.$(timezonePos, "invalid timezone: ").put(tz);
                     }
                 } else {
-                    tzOffset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
+                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                     tzRules = null;
                 }
             } else {
@@ -1038,7 +1010,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             sink.val(unit).val("',");
             sink.val(tsFunc).val(',');
             if (from != 0) {
-                sink.val('\'').val(Timestamps.toString(from)).val("',");
+                sink.val('\'').val(timestampDriver.toMSecString(from)).val("',");
             } else {
                 sink.val("null,");
             }

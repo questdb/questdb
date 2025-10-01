@@ -75,7 +75,13 @@ public class PartitionOverwriteControl {
         this.enabled = true;
     }
 
-    public void notifyPartitionMutates(TableToken tableToken, long partitionTimestamp, long partitionNameTxn, long mutateFromRow) {
+    public void notifyPartitionMutates(
+            TableToken tableToken,
+            int timestampType,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long mutateFromRow
+    ) {
         if (enabled) {
             ObjList<ReaderPartitionUsage> usages = readerPartitionUsageMap.get(tableToken.getDirName());
             if (usages != null) {
@@ -89,7 +95,7 @@ public class PartitionOverwriteControl {
 
                             if (usedPartitionNameTxn == partitionNameTxn && visibleRows > mutateFromRow) {
                                 throw CairoException.critical(0).put("partition is overwritten while being in use by a reader [table=").put(tableToken.getTableName())
-                                        .put(", partition=").ts(partitionTimestamp)
+                                        .put(", partition=").ts(timestampType, partitionTimestamp)
                                         .put(", partitionNameTxn=").put(partitionNameTxn)
                                         .put(", readerTxn=").put(readerPartitionUsage.ownerTxn)
                                         .put(", mutateFromRow=").put(mutateFromRow)

@@ -143,7 +143,7 @@ public class SymbolMapUtil {
         }
 
         if (mem == null) {
-            mem = Vm.getMemoryCMOR();
+            mem = Vm.getMemoryCMOR(false);
         }
         mem.of(
                 ff,

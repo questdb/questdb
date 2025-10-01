@@ -24,12 +24,16 @@
 
 package io.questdb.cutlass.text.types;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable {
     private TimestampCompatibleAdapter compatibleAdapter;
+    private TimestampDriver timestampDriver;
+    private int timestampType;
 
     @Override
     public void clear() {
@@ -37,11 +41,18 @@ public class OtherToTimestampAdapter extends TimestampAdapter implements Mutable
     }
 
     public long getTimestamp(DirectUtf8Sequence value) throws Exception {
-        return compatibleAdapter.getTimestamp(value);
+        return compatibleAdapter.getTimestamp(value, timestampDriver);
     }
 
-    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter) {
+    @Override
+    public int getType() {
+        return timestampType;
+    }
+
+    public OtherToTimestampAdapter of(TimestampCompatibleAdapter compatibleAdapter, int timestampType) {
         this.compatibleAdapter = compatibleAdapter;
+        this.timestampType = timestampType;
+        this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         return this;
     }
 

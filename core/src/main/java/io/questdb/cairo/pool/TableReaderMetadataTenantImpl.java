@@ -26,6 +26,7 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -154,8 +155,12 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
     private void initialize(CairoConfiguration configuration, TableToken tableToken) {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken);
-            this.txFile = new TxReader(configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(), getPartitionBy());
-            load();
+            loadMetadata();
+            this.txFile = new TxReader(
+                    configuration.getFilesFacade()).ofRO(path.concat(TXN_FILE_NAME).$(),
+                    this.getTimestampType(),
+                    getPartitionBy()
+            );
             initialized = true;
         } catch (Throwable e) {
             close();
@@ -178,7 +183,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                             .$("new transaction [txn=").$(txn)
                             .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", maxTimestamp=").$ts(ColumnType.getTimestampDriver(getTimestampType()), txFile.getMaxTimestamp())
                             .$(", attempts=").$(count)
                             .$(", thread=").$(Thread.currentThread().getName())
                             .$(']').$();

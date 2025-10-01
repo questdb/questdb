@@ -46,7 +46,6 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.Chars;
@@ -56,6 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -1327,7 +1327,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     walWriter1.addColumn("C", ColumnType.INT);
                     walWriter1.commit();
 
-                    TableWriter.Row row = walWriter1.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:00:00.000000Z"));
+                    TableWriter.Row row = walWriter1.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));
 
                     row.putLong(0, 777L);
                     row.putSym(1, "XXX");
@@ -1340,7 +1340,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     row.append();
                     walWriter1.commit();
 
-                    TableWriter.Row row2 = walWriter2.newRow(SqlUtil.implicitCastStrAsTimestamp("2022-02-24T06:01:00.000000Z"));
+                    TableWriter.Row row2 = walWriter2.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:01:00.000000Z"));
                     row2.putLong(0, 999L);
                     row2.putSym(1, "AAA");
                     row2.putSym(3, "BBB");
@@ -1494,7 +1494,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                            metadata.load(path.$());
+                            metadata.loadMetadata(path.$());
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
@@ -1518,7 +1518,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             // Assert _txn contents.
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getPartitionBy())) {
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy())) {
                                     TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());

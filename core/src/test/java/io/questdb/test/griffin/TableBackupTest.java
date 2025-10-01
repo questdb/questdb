@@ -39,7 +39,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
@@ -191,7 +191,7 @@ public class TableBackupTest extends AbstractTest {
         mainConfiguration = new DefaultTestCairoConfiguration(root) {
             @Override
             public DateFormat getBackupDirTimestampFormat() {
-                return new TimestampFormatCompiler().compile("ddMMMyyyy");
+                return new MicrosFormatCompiler().compile("ddMMMyyyy");
             }
 
             @Override

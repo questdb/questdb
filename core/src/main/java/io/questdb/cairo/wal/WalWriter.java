@@ -44,6 +44,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -98,7 +99,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -131,6 +131,7 @@ public class WalWriter implements TableWriterAPI {
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
+    private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
     private final Uuid uuid = new Uuid();
@@ -200,8 +201,8 @@ public class WalWriter implements TableWriterAPI {
             mkWalDir();
 
             metadata = new WalWriterMetadata(ff);
-
             tableSequencerAPI.getTableMetadata(tableToken, metadata);
+            this.timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
             this.tableToken = metadata.getTableToken();
 
             columnCount = metadata.getColumnCount();
@@ -481,7 +482,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        validateDesignatedTimestampBounds(timestamp);
+        timestampDriver.validateBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
@@ -1044,9 +1045,9 @@ public class WalWriter implements TableWriterAPI {
                             .$(", segTxn=").$(lastSegmentTxn)
                             .$(", seqTxn=").$(seqTxn)
                             .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                            .$(", minTs=").$ts(timestampDriver, txnMinTimestamp).$(", maxTs=").$ts(timestampDriver, txnMaxTimestamp);
                     if (replaceRangeHiTs > replaceRangeLowTs) {
-                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                        logLine.$(", replaceRangeLo=").$ts(timestampDriver, replaceRangeLowTs).$(", replaceRangeHi=").$ts(timestampDriver, replaceRangeHiTs);
                     }
                 } finally {
                     logLine.I$();
@@ -1223,7 +1224,7 @@ public class WalWriter implements TableWriterAPI {
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
-                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        txReader.ofRO(path.$(), metadata.getTimestampType(), PartitionBy.DAY);
                         path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(ff, path.$());
 
@@ -1989,6 +1990,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
+        }
+
+        @Override
         public void removeColumn(@NotNull CharSequence columnName) {
             validateExistingColumnName(columnName, "cannot remove");
             structureVersion++;
@@ -2226,6 +2232,11 @@ public class WalWriter implements TableWriterAPI {
         @Override
         public TableToken getTableToken() {
             return tableToken;
+        }
+
+        @Override
+        public int getTimestampType() {
+            return metadata.getTimestampType();
         }
 
         @Override

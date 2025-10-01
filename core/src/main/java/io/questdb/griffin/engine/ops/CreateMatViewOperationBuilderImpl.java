@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.griffin.SqlCompiler;
@@ -57,7 +58,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private String timeZone;
     private String timeZoneOffset;
     private int timerInterval;
-    private long timerStart = Numbers.LONG_NULL;
+    private long timerStartUs = Numbers.LONG_NULL;
     private String timerTimeZone;
     private char timerUnit;
 
@@ -75,7 +76,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 timeZoneOffset,
                 timerInterval,
                 timerUnit,
-                timerStart,
+                timerStartUs,
                 timerTimeZone,
                 periodLength,
                 periodLengthUnit,
@@ -95,7 +96,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         timeZoneOffset = null;
         timerInterval = 0;
         timerUnit = 0;
-        timerStart = Numbers.LONG_NULL;
+        timerStartUs = Numbers.LONG_NULL;
         timerTimeZone = null;
         periodLength = 0;
         periodLengthUnit = 0;
@@ -158,9 +159,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.timeZoneOffset = timeZoneOffset;
     }
 
-    public void setTimer(@Nullable String timeZone, long start, int interval, char unit) {
+    public void setTimer(@Nullable String timeZone, long startUs, int interval, char unit) {
         this.timerTimeZone = timeZone;
-        this.timerStart = start;
+        // timerStart always use microSecond precision.
+        this.timerStartUs = startUs;
         this.timerInterval = interval;
         this.timerUnit = unit;
     }
@@ -183,7 +185,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             }
             if (periodLength == 0) {
                 sink.putAscii(" start '");
-                sink.putISODate(timerStart);
+                sink.putISODate(MicrosTimestampDriver.INSTANCE, timerStartUs);
                 if (timerTimeZone != null) {
                     sink.putAscii("' time zone '");
                     sink.put(timerTimeZone);

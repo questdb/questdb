@@ -37,6 +37,7 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
             CairoConfiguration configuration,
             ObjList<Function> recordFunctions,
             int timestampIndex, // index of timestamp column in base cursor
+            int timestampType,
             TimestampSampler timestampSampler,
             ObjList<GroupByFunction> groupByFunctions,
             GroupByFunctionsUpdater groupByFunctionsUpdater,
@@ -54,6 +55,7 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
                 configuration,
                 recordFunctions,
                 timestampIndex,
+                timestampType,
                 timestampSampler,
                 groupByFunctions,
                 groupByFunctionsUpdater,
@@ -68,7 +70,7 @@ public abstract class AbstractSampleByFillRecordCursor extends AbstractNoRecordS
         );
         record = new SampleByFillRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();
-        final TimestampFunc timestampFunc = new TimestampFunc();
+        final TimestampFunc timestampFunc = new TimestampFunc(timestampType);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {

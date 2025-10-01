@@ -27,19 +27,19 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -474,7 +474,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
             }
             execute("insert into " + tableName + " " +
-                    "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
+                    "select timestamp_sequence('2020-01-01', " + Micros.HOUR_MICROS + "L) " +
                     "from long_sequence(50)");
 
             assertPartitionResult("count\n44\n", "2020-01-01");
@@ -510,13 +510,13 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
                 TableWriter.Row row;
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:55"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T11:55"));
                 row.putInt(0, 1);
                 row.append();
                 tw.commit();
 
                 Assert.assertEquals(2, tw.size());
-                tw.removePartition(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T10:00"));
+                tw.removePartition(MicrosTimestampDriver.floor("2022-12-12T10:00"));
                 Assert.assertEquals(1, tw.size());
 
                 // Reader refresh after table partition remove.
@@ -524,30 +524,30 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 assertReader("x\tts\n" +
                         "1\t2022-12-12T11:55:00.000000Z\n", "x");
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:56"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T11:56"));
                 row.putInt(0, 2);
                 row.append();
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:00"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T12:00"));
                 row.putInt(0, 3);
                 row.append();
                 tw.commit();
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:55"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T12:55"));
                 row.putInt(0, 4);
                 row.append();
 
-                tw.removePartition(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T11:00"));
+                tw.removePartition(MicrosTimestampDriver.floor("2022-12-12T11:00"));
                 Assert.assertEquals(2, tw.size());
                 assertReader("x\tts\n" +
                         "3\t2022-12-12T12:00:00.000000Z\n" +
                         "4\t2022-12-12T12:55:00.000000Z\n", "x");
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T12:56"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T12:56"));
                 row.putInt(0, 5);
                 row.append();
 
-                row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("2022-12-12T13:00"));
+                row = tw.newRow(MicrosTimestampDriver.floor("2022-12-12T13:00"));
                 row.putInt(0, 6);
                 row.append();
                 tw.commit();
@@ -668,7 +668,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropSplitMidPartition() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    createXSplit(Timestamps.DAY_MICROS / 300, 299); // 300 records per day
+                    createXSplit(Micros.DAY_MICROS / 300, 299); // 300 records per day
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -691,7 +691,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff,
                 () -> {
-                    createXSplit(Timestamps.DAY_MICROS / 300, 290);
+                    createXSplit(Micros.DAY_MICROS / 300, 290);
                     assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
 
                     try {
@@ -986,8 +986,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
         try (TableReader ignore = engine.getReader(engine.verifyTableName("x"))) {
             try {
-                long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * splitAfter + 1;
-                String nextTsStr = Timestamps.toUSecString(nextTimestamp);
+                long nextTimestamp = MicrosTimestampDriver.floor("2018-01-01") + increment * splitAfter + 1;
+                String nextTsStr = Micros.toUSecString(nextTimestamp);
                 execute("insert into x " +
                         "select" +
                         " cast(x as int) i," +

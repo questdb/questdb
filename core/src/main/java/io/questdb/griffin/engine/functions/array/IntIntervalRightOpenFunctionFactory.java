@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -60,6 +61,7 @@ public class IntIntervalRightOpenFunctionFactory implements FunctionFactory {
         private final Interval interval = new Interval();
 
         public IntIntervalFunction(Function arg) {
+            super(ColumnType.INTERVAL_RAW);
             this.arg = arg;
         }
 

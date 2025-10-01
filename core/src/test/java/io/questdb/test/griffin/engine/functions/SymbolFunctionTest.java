@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -244,7 +244,7 @@ public class SymbolFunctionTest {
                 throw new UnsupportedOperationException();
             }
         }) {
-            Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
+            Assert.assertEquals("2024-04-09T00:00:00.000Z", NanosTimestampDriver.INSTANCE.toMSecString(symbolFunction.getTimestamp(null)));
         }
     }
 }

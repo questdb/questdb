@@ -24,15 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.LongList;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 
 public class GriffinParserTestUtils {
     private static final StringSink sink = new StringSink();
 
-    public static CharSequence intervalToString(LongList intervals) {
+    public static CharSequence intervalToString(TimestampDriver driver, LongList intervals) {
         sink.clear();
         sink.put('[');
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
@@ -41,10 +41,10 @@ public class GriffinParserTestUtils {
             }
             sink.put('{');
             sink.put("lo=");
-            TimestampFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i));
+            driver.append(sink, intervals.getQuick(i));
             sink.put(", ");
             sink.put("hi=");
-            TimestampFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i + 1));
+            driver.append(sink, intervals.getQuick(i + 1));
             sink.put('}');
         }
         sink.put(']');

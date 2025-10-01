@@ -73,7 +73,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1")
         ) {
             serverMain.start();
-            serverMain.ddl("create table " + tn +
+            serverMain.execute("create table " + tn +
                     "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL");
 
@@ -100,7 +100,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .doubleColumn("f", rnd.nextFloat())
                                 .doubleColumn("d", rnd.nextDouble())
                                 .stringColumn("v", rnd.nextString(50))
-                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
+                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong() / 1000))
                                 .at(rnd.nextLong(numPartitions * hourAsMillis), ChronoUnit.MILLIS);
                     }
                     sender.flush();

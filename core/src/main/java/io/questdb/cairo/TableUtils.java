@@ -26,16 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -761,11 +755,10 @@ public final class TableUtils {
                 return Numbers.IPv4_NULL;
             case ColumnType.VARCHAR:
             case ColumnType.BINARY:
+            case ColumnType.ARRAY:
                 return NULL_LEN;
             case ColumnType.STRING:
                 return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            case ColumnType.ARRAY:
-                return NULL_LEN;
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -845,6 +838,14 @@ public final class TableUtils {
             throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
         }
         return timestampIndex;
+    }
+
+    public static int getTimestampType(TableStructure structure) {
+        int timestampIndex = structure.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return ColumnType.NULL;
+        }
+        return structure.getColumnType(timestampIndex);
     }
 
     public static void handleMetadataLoadException(
@@ -1291,6 +1292,16 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
+    public static long openRONoCache(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+        final int rootLen = path.size();
+        path.concat(fileName);
+        try {
+            return TableUtils.openRONoCache(ff, path.$(), log);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
@@ -1331,32 +1342,6 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    public static void populateRecordHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map map,
-            RecordSink recordSink,
-            RecordChain chain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                long offset = chain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, chain.put(record, value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
@@ -1573,13 +1558,13 @@ public final class TableUtils {
         }
     }
 
-    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int partitionBy) {
+    public static boolean schedulePurgeO3Partitions(MessageBus messageBus, TableToken tableName, int timestampType, int partitionBy) {
         final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
         while (true) {
             long cursor = seq.next();
             if (cursor > -1) {
                 O3PartitionPurgeTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
-                task.of(tableName, partitionBy);
+                task.of(tableName, timestampType, partitionBy);
                 seq.done(cursor);
                 return true;
             } else if (cursor == -1) {
@@ -1650,26 +1635,28 @@ public final class TableUtils {
      * Sets the path to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
-     * @param nameTxn     Partition txn suffix
+     * @param path          Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
      */
-    public static void setPathForNativePartition(Path path, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+    public static void setPathForNativePartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
     }
 
     /**
      * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param path        Set to the root directory for a table, this will be updated to the file of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
-     * @param nameTxn     Partition txn suffix
+     * @param path          Set to the root directory for a table, this will be updated to the file of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
      */
-    public static void setPathForParquetPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+    public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
         path.concat(PARQUET_PARTITION_NAME);
     }
 
@@ -1677,20 +1664,21 @@ public final class TableUtils {
      * Sets the sink to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
-     * @param sink        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
-     * @param nameTxn     Partition txn suffix
+     * @param sink          Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
      */
-    public static void setSinkForNativePartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
-        PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
+    public static void setSinkForNativePartition(CharSink<?> sink, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
     }
 
-    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {
-        reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int timestampType, int partitionBy) {
+        reader.ofRO(path.concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
     }
 
     public static int toIndexKey(int symbolKey) {
@@ -1835,7 +1823,7 @@ public final class TableUtils {
         mem.putInt(tableStruct.getPartitionBy());
         int timestampIndex = tableStruct.getTimestampIndex();
         assert timestampIndex == -1 ||
-                (timestampIndex >= 0 && timestampIndex < count && tableStruct.getColumnType(timestampIndex) == ColumnType.TIMESTAMP)
+                (timestampIndex >= 0 && timestampIndex < count && ColumnType.isTimestamp(tableStruct.getColumnType(timestampIndex)))
                 : String.format("timestampIndex %d count %d columnType %d", timestampIndex, count, tableStruct.getColumnType(timestampIndex));
         mem.putInt(timestampIndex);
         mem.putInt(tableVersion);

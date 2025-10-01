@@ -255,6 +255,11 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             return zeroValue;
         }
 
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
         /**
          * Writes the configured zero timestamp value into the window buffer for the given record offset.
          *

@@ -144,11 +144,6 @@ public class WaitProcessorTest {
             }
 
             @Override
-            public HttpRequestProcessor getDefaultProcessor() {
-                return null;
-            }
-
-            @Override
             public HttpRequestProcessor select(HttpRequestHeader header) {
                 return null;
             }

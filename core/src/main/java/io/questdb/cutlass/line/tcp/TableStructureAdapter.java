@@ -92,7 +92,7 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
-            return ColumnType.TIMESTAMP;
+            return defaultColumnTypes.DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
         }
         int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
         if (columnType == ColumnType.ARRAY) {

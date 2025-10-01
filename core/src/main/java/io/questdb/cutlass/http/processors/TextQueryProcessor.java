@@ -277,10 +277,11 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
     }
 
-    private static void putInterval(HttpChunkedResponse response, Record rec, int col) {
+    private static void putInterval(HttpChunkedResponse response, Record rec, int col, int intervalType) {
         final Interval interval = rec.getInterval(col);
         if (!Interval.NULL.equals(interval)) {
-            response.putQuote().put(interval).putQuote();
+            interval.toSink(response.putQuote(), intervalType);
+            response.putQuote();
         }
     }
 
@@ -628,7 +629,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
-                    response.putAscii('"').putISODate(l).putAscii('"');
+                    response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
                 }
                 break;
             case ColumnType.SHORT:
@@ -677,7 +678,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 putIPv4Value(response, rec, columnIndex);
                 break;
             case ColumnType.INTERVAL:
-                putInterval(response, rec, columnIndex);
+                putInterval(response, rec, columnIndex, columnType);
                 break;
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);

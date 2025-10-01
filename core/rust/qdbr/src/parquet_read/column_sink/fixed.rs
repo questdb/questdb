@@ -172,7 +172,7 @@ impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
         let x = self.slicer.next();
-        Self::push_int96_as_epoch_microseconds(&mut self.buffers.data_vec, x)?;
+        Self::push_int96_as_epoch_nanos(&mut self.buffers.data_vec, x)?;
         Ok(())
     }
 
@@ -217,17 +217,14 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
         Self { slicer, buffers, null_value }
     }
 
-    fn push_int96_as_epoch_microseconds(
-        data_vec: &mut AcVec<u8>,
-        bytes: &[u8],
-    ) -> ParquetResult<()> {
+    fn push_int96_as_epoch_nanos(data_vec: &mut AcVec<u8>, bytes: &[u8]) -> ParquetResult<()> {
         // INT96 layout:
         // - bytes[0..8]: nanoseconds within the day (8 bytes)
         // - bytes[8..12]: Julian date (4 bytes)
 
         // Extract nanoseconds within the day (little-endian)
-        let nanoseconds_bytes = &bytes[0..8];
-        let nanoseconds = u64::from_le_bytes(nanoseconds_bytes.try_into().unwrap());
+        let nanos_bytes = &bytes[0..8];
+        let nanos = u64::from_le_bytes(nanos_bytes.try_into().unwrap());
 
         // Extract Julian date (little-endian)
         let julian_date_bytes = &bytes[8..12];
@@ -236,11 +233,10 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
         // Convert Julian date to days since Unix epoch
         let days_since_epoch = julian_date as i64 - 2440588; // Julian date epoch to Unix epoch offset
 
-        // Calculate total microseconds since Unix epoch
-        let microseconds_since_epoch =
-            days_since_epoch * 86400i64 * 1_000_000i64 + nanoseconds as i64 / 1_000;
+        // Calculate total nanoseconds since Unix epoch
+        let nanos_since_epoch = days_since_epoch * 86400i64 * 1_000_000_000i64 + nanos as i64;
 
-        data_vec.extend_from_slice(microseconds_since_epoch.to_le_bytes().as_ref())?;
+        data_vec.extend_from_slice(nanos_since_epoch.to_le_bytes().as_ref())?;
         Ok(())
     }
 }
