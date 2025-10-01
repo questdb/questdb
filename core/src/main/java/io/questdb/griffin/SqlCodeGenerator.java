@@ -2714,11 +2714,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
-                                                boolean isNonTrivialJoin = symbolShortCircuit != DisabledSymbolShortCircuit.INSTANCE;
+                                                boolean isOptimizable = symbolShortCircuit != DisabledSymbolShortCircuit.INSTANCE;
                                                 JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
                                                 JoinContext slaveContext = slaveModel.getContext();
-                                                if (isNonTrivialJoin && isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                if (isOptimizable && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
                                                             metadata,
@@ -2730,7 +2730,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
-                                                } else if (isNonTrivialJoin && isSingleSymbolJoin(slaveMetadata)) {
+                                                } else if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
                                                     master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
                                                             metadata,
