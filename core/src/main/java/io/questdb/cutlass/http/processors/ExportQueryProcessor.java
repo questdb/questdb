@@ -501,7 +501,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         CopyExportResult result = state.getExportResult();
 
                         if (!result.isFinished()) {
-                            throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker(), timeout);
+                            throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker(), Long.MAX_VALUE);
                         }
 
                         // Handle non-pending completion statuses
