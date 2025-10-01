@@ -446,13 +446,6 @@ public class SqlParser {
         }
     }
 
-    // prevent full/right from being used as table aliases
-    private void checkSupportedJoinType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (tok != null && (isFullKeyword(tok) || isRightKeyword(tok))) {
-            throw SqlException.$((lexer.lastTokenPosition()), "unsupported join type");
-        }
-    }
-
     private CharSequence createColumnAlias(
             CharSequence token,
             int type,
@@ -2083,6 +2076,12 @@ public class SqlParser {
             return parseWith(lexer, sqlParserCallback, null);
         }
 
+        if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put(
+                    "'create', 'format', 'insert', 'update', 'select' or 'with'"
+            ).put(" expected");
+        }
+
         return parseSelect(lexer, sqlParserCallback, null);
     }
 
@@ -2193,8 +2192,6 @@ public class SqlParser {
             model.addJoinModel(parseJoin(lexer, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
-
-        checkSupportedJoinType(lexer, tok);
 
         // expect [where]
 
@@ -2603,10 +2600,22 @@ public class SqlParser {
 
         if (isNotJoinKeyword(tok) && !Chars.equals(tok, ',')) {
             // not already a join?
-            // was it "left" ?
+            // was it "left", "right" or "full"?
             if (isLeftKeyword(tok)) {
                 tok = tok(lexer, "join");
-                joinType = QueryModel.JOIN_OUTER;
+                joinType = QueryModel.JOIN_LEFT_OUTER;
+                if (isOuterKeyword(tok)) {
+                    tok = tok(lexer, "join");
+                }
+            } else if (isRightKeyword(tok)) {
+                tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_RIGHT_OUTER;
+                if (isOuterKeyword(tok)) {
+                    tok = tok(lexer, "join");
+                }
+            } else if (isFullKeyword(tok)) {
+                tok = tok(lexer, "join");
+                joinType = QueryModel.JOIN_FULL_OUTER;
                 if (isOuterKeyword(tok)) {
                     tok = tok(lexer, "join");
                 }
@@ -2647,7 +2656,9 @@ public class SqlParser {
                 }
                 // intentional fall through
             case QueryModel.JOIN_INNER:
-            case QueryModel.JOIN_OUTER:
+            case QueryModel.JOIN_LEFT_OUTER:
+            case QueryModel.JOIN_RIGHT_OUTER:
+            case QueryModel.JOIN_FULL_OUTER:
                 expectTok(lexer, tok, "on");
                 onClauseObserved = true;
                 try {
@@ -3858,7 +3869,6 @@ public class SqlParser {
     private CharSequence setModelAliasAndGetOptTok(GenericLexer lexer, QueryModel joinModel) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null && tableAliasStop.excludes(tok)) {
-            checkSupportedJoinType(lexer, tok);
             if (isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
             }
@@ -3939,7 +3949,7 @@ public class SqlParser {
                         .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
                         .put(']');
             }
-            return ColumnType.encodeArrayType(columnType, nDims);
+            return ColumnType.encodeArrayType(ColumnType.tagOf(columnType), nDims);
         }
 
         if (ColumnType.tagOf(columnType) == ColumnType.GEOHASH) {
@@ -4252,6 +4262,8 @@ public class SqlParser {
         tableAliasStop.add("intersect");
         tableAliasStop.add("from");
         tableAliasStop.add("tolerance");
+        tableAliasStop.add("right");
+        tableAliasStop.add("full");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
@@ -4267,9 +4279,13 @@ public class SqlParser {
         groupByStopSet.add(",");
 
         joinStartSet.put("left", QueryModel.JOIN_INNER);
+        joinStartSet.put("right", QueryModel.JOIN_INNER);
+        joinStartSet.put("full", QueryModel.JOIN_INNER);
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("left", QueryModel.JOIN_OUTER);//only left join is supported currently
+        joinStartSet.put("left", QueryModel.JOIN_LEFT_OUTER);
+        joinStartSet.put("right", QueryModel.JOIN_RIGHT_OUTER);
+        joinStartSet.put("full", QueryModel.JOIN_FULL_OUTER);
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);

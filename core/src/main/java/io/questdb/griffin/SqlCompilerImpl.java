@@ -724,7 +724,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .put(ColumnType.nameOf(columnType))
                         .put(']');
             }
-            columnType = ColumnType.encodeArrayType(columnType, dim);
+            columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -2435,6 +2435,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // directly compiled into a factory, so we need to optimize it before proceeding.
         switch (model.getModelType()) {
             case ExecutionModel.CREATE_TABLE:
+                executionContext.getSecurityContext().authorizeTableCreate();
                 final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
                 if (createTableBuilder.getQueryModel() != null) {
                     final QueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
@@ -2442,6 +2443,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 return model;
             case ExecutionModel.CREATE_MAT_VIEW:
+                executionContext.getSecurityContext().authorizeMatViewCreate();
                 final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
                 if (createMatViewBuilder.getQueryModel() != null) {
                     final QueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
@@ -3937,7 +3939,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (ColumnType.isUnderdefined(function.getType())) {
+        if (ColumnType.isUndefined(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 

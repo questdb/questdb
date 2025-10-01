@@ -28,9 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -49,8 +50,14 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), args.getQuick(1), configuration);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), args.getQuick(1), position);
     }
 
     @Override
@@ -58,16 +65,17 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         return true;
     }
 
-    private static class Func extends ArrayFunction implements BinaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
         private final Function scalarArg;
 
-        public Func(Function arrayArg, Function scalarArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, Function scalarArg, int position) {
             this.arrayArg = arrayArg;
             this.scalarArg = scalarArg;
             this.type = arrayArg.getType();
             this.array = new DirectArray(configuration);
+            this.position = position;
         }
 
         @Override
@@ -110,6 +118,13 @@ public class DoubleArrayMultiplyScalarFunctionFactory implements FunctionFactory
         @Override
         public Function getRight() {
             return scalarArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override

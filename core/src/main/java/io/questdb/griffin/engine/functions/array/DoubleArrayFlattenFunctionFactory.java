@@ -57,8 +57,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        return new Func(arrayArg);
+        return new Func(args.getQuick(0));
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
