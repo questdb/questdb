@@ -780,14 +780,5 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
-    /**
-     * Deprecated and ignored. We always default to using Fast ASOF algorithms that involve
-     * a binary search for the RHS row with the latest timestamp &lt;= LHS row's timestamp.
-     * The original, simple algorithm using a linear scan can still be requested using the
-     * query hint {@value io.questdb.griffin.SqlHints#ASOF_LINEAR_SEARCH_HINT}.
-     */
-    @Deprecated
-    boolean useFastAsOfJoin();
-
     boolean useWithinLatestByOptimisation();
 }

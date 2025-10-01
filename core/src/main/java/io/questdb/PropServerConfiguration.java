@@ -475,7 +475,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
-    private final boolean useFastAsOfJoin;
     private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
@@ -1348,7 +1347,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
-            this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -2475,6 +2473,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     "cairo.sql.append.page.size",
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
+            registerObsolete("cairo.sql.asof.join.fast");
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
@@ -4107,11 +4106,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int maxArrayElementCount() {
             return sqlMaxArrayElementCount;
-        }
-
-        @Override
-        public boolean useFastAsOfJoin() {
-            return useFastAsOfJoin;
         }
 
         @Override
