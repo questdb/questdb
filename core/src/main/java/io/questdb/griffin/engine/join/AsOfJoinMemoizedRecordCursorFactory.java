@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,8 +46,6 @@ import io.questdb.std.Rows;
 
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinMemoizedRecordCursor cursor;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
     private final int slaveSymbolColumnIndex;
     private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
@@ -57,9 +54,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveKeySink,
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolShortCircuit symbolShortCircuit,
@@ -68,8 +63,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
         this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
@@ -211,8 +204,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
-            masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
 
             long rowLo = slaveTimeFrame.getRowLo();
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
