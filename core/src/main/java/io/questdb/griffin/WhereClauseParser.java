@@ -880,10 +880,14 @@ public final class WhereClauseParser implements Mutable {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
 
+        // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
+        // Moreover, it is only populated when "latest on" has a single column.
+        // Q: Why are we checking if we have multi-column latest by here?
+        // A: When using multi-column LATEST BY, we cannot use index-based scans because the indexed column
+        //    alone doesn't provide enough information to determine the "latest" record. The "latest" determination
+        //    requires all columns in the LATEST BY clause, so we must disable index usage in such cases.
         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, meta, latestByMultiColumn)) {
             // check if we already have indexed column, and it is of worse selectivity
-            // "preferred" is an unfortunate name, this column is from "latest on" clause,
-            // I should name it better
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, meta, reader, columnIndex)) {
