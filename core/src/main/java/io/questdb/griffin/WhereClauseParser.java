@@ -936,6 +936,9 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
+                    // Reject if the value is not a constant/bind variable/function.
+                    // Also reject bind variables when merging with existing keys (!newColumn && tempKeyValues.size() > 0),
+                    // since we can't merge bind variables with already collected key values.
                     if ((c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.BIND_VARIABLE && c.type != ExpressionNode.FUNCTION) ||
                             (!newColumn && c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
                         return false;
