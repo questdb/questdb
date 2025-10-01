@@ -78,7 +78,6 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private int line = 0;
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
 
     public LineHttpProcessorState(
             int initRecvBufSize,
@@ -350,8 +349,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         final Status status;
         final LogRecord errorRec;
         error.put("commit error for table: ").put(parser.getMeasurementName());
-        if (ex instanceof CairoException) {
-            CairoException exception = (CairoException) ex;
+        if (ex instanceof CairoException exception) {
             error.put(", errno: ").put(exception.getErrno()).put(", error: ").put(exception.getFlyweightMessage());
             if (exception.isAuthorizationError()) {
                 errorRec = LOG.error();
