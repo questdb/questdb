@@ -131,7 +131,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
         state.setGzipEncoded(encoding != null && Utf8s.endsWithAscii(encoding, "gzip"));
         if (state.isGzipEncoded()) {
             long inflateStream = Zip.inflateInitGzip();
-            if (inflateStream == 0) {
+            if (inflateStream < 0) {
                 state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
                 return;
             }
