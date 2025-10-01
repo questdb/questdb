@@ -228,6 +228,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
     private final ObjList<String> httpContextPathWarnings = new ObjList<>();
     private final String httpContextWebConsole;
+    private final long httpExportTimeout;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -1007,6 +1008,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
+            this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, 300_000);
 
             this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
@@ -4773,6 +4775,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
+        }
+
+        @Override
+        public long getExportTimeout() {
+            return httpExportTimeout;
         }
 
         @Override

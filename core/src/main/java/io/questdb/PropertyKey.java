@@ -236,6 +236,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
     CONFIG_RELOAD_ENABLED("config.reload.enabled"),
+    HTTP_EXPORT_TIMEOUT("http.export.timeout"),
     HTTP_MIN_ENABLED("http.min.enabled"),
     HTTP_USER("http.user"),
     HTTP_PASSWORD("http.password", true),

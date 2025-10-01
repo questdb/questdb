@@ -174,13 +174,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         Os.sleep(1000);
                         client.disconnect();
 
-                        long timeoutMs = 10000; // 10 seconds
-                        long startTime = System.currentTimeMillis();
-                        while (engine.getCopyExportContext().getActiveExportId() != -1) {
-                            if (System.currentTimeMillis() - startTime > timeoutMs) {
+                        int count = 100;
+                        for (int i = 0; i < count; i++) {
+                            if (engine.getCopyExportContext().getActiveExportId() == -1) {
+                                break;
+                            }
+                            if (i == count - 1) {
                                 Assert.fail("Failed to cancel export");
                             }
-                            Os.sleep(10);
+                            Os.sleep(100);
                         }
                     });
         });
@@ -594,6 +596,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     params.put("statistics_enabled", "false");
                     testHttpClient.assertGetParquet("/exp", 287, params, "SELECT * FROM statistics_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportTimeout() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    params.clear();
+                    params.put("query", "generate_series(0, '9999-01-01', '1U')");
+                    params.put("fmt", "parquet");
+                    params.put("timeout", "1");
+                    String expectedError = "{\"query\":\"generate_series(0, '9999-01-01', '1U')\",\"error\":\"copy task failed [id=0, phase=populating_data_to_temp_table, status=cancelled, message=timeout, query aborted";
+                    testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
                 });
     }
 

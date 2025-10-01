@@ -410,6 +410,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.connection.pool.initial.capacity\tQDB_HTTP_CONNECTION_POOL_INITIAL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "http.connection.string.pool.capacity\tQDB_HTTP_CONNECTION_STRING_POOL_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "http.net.accept.loop.timeout\tQDB_HTTP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
+                                    "http.export.timeout\tQDB_HTTP_EXPORT_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.enabled\tQDB_HTTP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.frozen.clock\tQDB_HTTP_FROZEN_CLOCK\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.health.check.authentication.required\tQDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED\ttrue\tdefault\tfalse\tfalse\n" +

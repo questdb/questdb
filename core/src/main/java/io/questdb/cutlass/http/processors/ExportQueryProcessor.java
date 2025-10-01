@@ -40,7 +40,6 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -108,6 +107,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final Metrics metrics;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
+    private long timeout;
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
@@ -118,6 +118,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         this.clock = configuration.getMillisecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
+        circuitBreaker.setTimeout(configuration.getExportTimeout());
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
@@ -136,6 +137,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         try {
             boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
 
+            circuitBreaker.setTimeout(timeout);
             circuitBreaker.resetTimer();
             state.recordCursorFactory = context.getSelectCache().poll(state.query);
             state.setQueryCacheable(true);
@@ -488,7 +490,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
-                            initParquetExport(context, state, sqlExecutionContext.getCircuitBreaker());
+                            initParquetExport(context, state);
                         } catch (SqlException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
@@ -696,7 +698,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
 
-    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state, SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker) throws SqlException {
+    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
         if (state.copyID == null) {
             state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
             CopyExportFactory factory = new CopyExportFactory(
@@ -707,7 +709,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     context.getSecurityContext(),
                     state.suspendEvent,
                     state.query,
-                    sqlExecutionCircuitBreaker
+                    sqlExecutionContext.getCircuitBreaker()
             );
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -868,6 +870,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (copyModel.isParquetFormat()) {
             if (!configureParquetOptions(request, response, state)) {
                 return false;
+            }
+        }
+
+        timeout = configuration.getExportTimeout();
+        DirectUtf8Sequence timeoutSeq = request.getUrlParam(URL_PARAM_TIMEOUT);
+        if (timeoutSeq != null) {
+            try {
+                timeout = Numbers.parseLong(timeoutSeq) * 1000;
+                if (timeout <= 0) {
+                    timeout = configuration.getExportTimeout();
+                }
+            } catch (NumericException ex) {
+                // Skip or stop will have default value.
             }
         }
 
