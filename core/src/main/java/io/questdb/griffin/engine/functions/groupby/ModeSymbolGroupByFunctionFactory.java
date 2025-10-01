@@ -58,6 +58,6 @@ public class ModeSymbolGroupByFunctionFactory implements FunctionFactory {
         if (arg.getType() != ColumnType.SYMBOL) {
             throw SqlException.$(argPositions.getQuick(0), "argument must be of type SYMBOL");
         }
-        return new ModeSymbolGroupByFunction((SymbolFunction) arg);
+        return new ModeSymbolGroupByFunction(configuration, (SymbolFunction) arg);
     }
 }

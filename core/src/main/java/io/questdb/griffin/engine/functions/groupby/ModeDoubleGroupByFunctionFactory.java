@@ -51,6 +51,6 @@ public class ModeDoubleGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new ModeDoubleGroupByFunction(args.getQuick(0));
+        return new ModeDoubleGroupByFunction(configuration, args.getQuick(0));
     }
 }

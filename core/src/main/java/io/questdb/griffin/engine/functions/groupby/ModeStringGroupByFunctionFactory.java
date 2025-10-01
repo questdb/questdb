@@ -51,6 +51,6 @@ public class ModeStringGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new ModeStringGroupByFunction(args.getQuick(0));
+        return new ModeStringGroupByFunction(configuration, args.getQuick(0));
     }
 }

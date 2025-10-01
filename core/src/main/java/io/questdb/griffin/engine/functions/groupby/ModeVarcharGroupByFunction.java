@@ -26,6 +26,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -44,16 +45,18 @@ import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeVarcharGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final int initialCapacity = 4;
-    private final double loadFactor = 0.7d;
-    private final GroupByUtf8SequenceLongHashMap mapA = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
-    private final GroupByUtf8SequenceLongHashMap mapB = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+    private final GroupByUtf8SequenceLongHashMap mapA;
+    private final GroupByUtf8SequenceLongHashMap mapB;
     private final GroupByUtf8Sink sinkA = new GroupByUtf8Sink();
     private final GroupByUtf8Sink sinkB = new GroupByUtf8Sink();
     private int valueIndex;
 
-    public ModeVarcharGroupByFunction(@NotNull Function arg) {
+    public ModeVarcharGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg) {
         this.arg = arg;
+        int initialCapacity = 4;
+        double loadFactor = configuration.getSqlFastMapLoadFactor();
+        mapA = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
+        mapB = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
     }
 
     @Override

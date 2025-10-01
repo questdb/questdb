@@ -51,6 +51,6 @@ public class ModeLongGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new ModeLongGroupByFunction(args.getQuick(0));
+        return new ModeLongGroupByFunction(configuration, args.getQuick(0));
     }
 }
