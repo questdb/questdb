@@ -38,6 +38,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -122,15 +123,35 @@ public class SerialParquetExporter implements Closeable {
         CopyExportResult exportResult = task.getResult();
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        CreateTableOperation createOp = task.getCreateOp();
 
         try {
-            if (task.getCreateOp() != null) {
+            if (createOp != null) {
+                createOp.setInsertSelectProgressReporter((stage, rows) -> {
+                    switch (stage) {
+                        case Start:
+                            entry.setTotalRowCount(rows);
+                            break;
+                        case InsertIng:
+                            entry.setPopulatedRowCount(rows);
+                            LOG.info().$("populating temporary table progress [id=").$hexPadded(task.getCopyID())
+                                    .$(", table=")
+                                    .$(task.getTableName())
+                                    .$(", rows=")
+                                    .$(rows).$(']')
+                                    .$();
+                            break;
+                        case Finish:
+                            entry.setPopulatedRowCount(rows);
+                            break;
+                    }
+                });
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 entry.setPhase(phase);
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
-                LOG.info().$("starting to create temporary table and populate with data [table=").$(task.getTableName()).$(']').$();
-                task.getCreateOp().execute(sqlExecutionContext, null);
-                LOG.info().$("completed creating temporary table and populating with data [table=").$(task.getTableName()).$(']').$();
+                LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
+                createOp.execute(sqlExecutionContext, null);
+                LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
                 statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, null, 0);
             }
 
@@ -143,18 +164,19 @@ public class SerialParquetExporter implements Closeable {
             if (tableToken == null) {
                 throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
             }
-            if (task.getCreateOp() == null) {
+            if (createOp == null) {
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
             if (circuitBreaker.checkIfTripped()) {
-                LOG.error().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
+                entry.setTotalPartitionCount(partitionCount);
 
                 int fromParquetBaseLen = 0;
                 // temporary directory path
@@ -165,18 +187,19 @@ public class SerialParquetExporter implements Closeable {
                 try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                         if (circuitBreaker.checkIfTripped()) {
-                            LOG.error().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
+                            LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                             throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                         }
                         final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                         if (reader.openPartition(partitionIndex) <= 0) {
+                            entry.setFinishedPartitionCount(partitionIndex + 1);
                             continue;
                         }
                         // skip parquet conversion if the partition is already in parquet format
                         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                             numOfFiles++;
                             if (task.isUserSpecifiedExportOptions()) {
-                                LOG.info().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [table=").$(tableToken)
+                                LOG.info().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                         .$(", partition=").$(partitionTimestamp)
                                         .$(", using direct file copy instead]").$();
                             }
@@ -191,6 +214,7 @@ public class SerialParquetExporter implements Closeable {
                                     fromParquet, timestampType, partitionBy, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
                             if (exportResult != null) {
                                 exportResult.addFilePath(fromParquet, false, 0);
+                                entry.setFinishedPartitionCount(partitionIndex + 1);
                                 continue;
                             }
 
@@ -209,10 +233,10 @@ public class SerialParquetExporter implements Closeable {
                             }
 
                             long parquetFileSize = ff.length(tempPath.$());
-                            LOG.info().$("copied parquet partition directly to temp [table=").$(tableToken)
+                            LOG.info().$("copied parquet partition directly to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                     .$(", partition=").$(nameSink)
                                     .$(", size=").$(parquetFileSize).$(']').$();
-
+                            entry.setFinishedPartitionCount(partitionIndex + 1);
                             continue;
                         }
 
@@ -225,7 +249,7 @@ public class SerialParquetExporter implements Closeable {
                         tempPath.trimTo(tempBaseDirLen);
                         tempPath.concat(nameSink).put(".parquet");
                         // log start
-                        LOG.info().$("converting partition to parquet temp [table=").$(tableToken)
+                        LOG.info().$("converting partition to parquet temp file [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                 .$(", partition=").$(nameSink).$();
                         createDirsOrFail(ff, tempPath, configuration.getMkDirMode());
 
@@ -240,13 +264,14 @@ public class SerialParquetExporter implements Closeable {
                                 task.getParquetVersion()
                         );
                         long parquetFileSize = ff.length(tempPath.$());
-                        LOG.info().$("converted partition to parquet temp [table=").$(tableToken)
+                        LOG.info().$("converted partition to parquet temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                 .$(", partition=").$(nameSink)
                                 .$(", size=").$(parquetFileSize).$(']')
                                 .$();
                         if (exportResult != null) {
                             exportResult.addFilePath(tempPath, true, tempBaseDirLen);
                         }
+                        entry.setFinishedPartitionCount(partitionIndex + 1);
                     }
                 }
             }
@@ -255,22 +280,22 @@ public class SerialParquetExporter implements Closeable {
                 entry.setPhase(CopyExportRequestTask.Phase.MOVE_FILES);
                 moveExportFiles(tempBaseDirLen, fileName);
             }
-            LOG.info().$("finished parquet conversion to temp [table=").$(tableToken).$(']').$();
+            LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
             statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, null, 0);
         } catch (CopyExportException e) {
-            LOG.error().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw e;
         } catch (SqlException e) {
-            LOG.error().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrorCode());
         } catch (CairoException e) {
-            LOG.error().$("parquet export failed [msg=").$(e.getFlyweightMessage()).$(']').$();
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw CopyExportException.instance(phase, e.getFlyweightMessage(), e.getErrno());
         } catch (Throwable e) {
-            LOG.error().$("parquet export failed [msg=").$(e.getMessage()).$(']').$();
+            LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getMessage()).$(']').$();
             throw CopyExportException.instance(phase, e.getMessage(), -1);
         } finally {
-            if (tableToken != null && task.getCreateOp() != null) {
+            if (tableToken != null && createOp != null) {
                 phase = CopyExportRequestTask.Phase.DROPPING_TEMP_TABLE;
                 entry.setPhase(phase);
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
@@ -280,10 +305,10 @@ public class SerialParquetExporter implements Closeable {
                     statusReporter.report(phase, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, null, 0);
                 } catch (CairoException e) {
                     // drop failure doesn't affect task continuation - log and proceed
-                    LOG.error().$("fail to drop temporary table [table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
                     statusReporter.report(phase, CopyExportRequestTask.Status.FAILED, task, null, Numbers.INT_NULL, null, 0);
                 } catch (Throwable e) {
-                    LOG.error().$("fail to drop temporary table [table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
+                    LOG.error().$("fail to drop temporary table [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(", msg=").$(e.getMessage()).$(']').$();
                     statusReporter.report(phase, CopyExportRequestTask.Status.FAILED, task, null, Numbers.INT_NULL, null, 0);
                 }
             }

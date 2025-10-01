@@ -33,9 +33,12 @@ import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.ReadWriteLock;
@@ -60,12 +63,16 @@ public class CopyExportContext {
         try {
             ExportTaskEntry entry = exportSql.get(sql);
             if (entry != null) {
-                throw SqlException.$(0, "duplicate sql statement: ").put(sql).put(" [id=").put(entry.id).put(']');
+                StringSink sink = Misc.getThreadLocalSink();
+                Numbers.appendHex(sink, entry.id, true);
+                throw SqlException.$(0, "duplicate sql statement: ").put(sql).put(" [id=").put(sink).put(']');
             }
             if (path != null) {
                 entry = exportPath.get(path);
                 if (entry != null) {
-                    throw SqlException.$(0, "duplicate export path: ").put(path).put(" [id=").put(entry.id).put(']');
+                    StringSink sink = Misc.getThreadLocalSink();
+                    Numbers.appendHex(sink, entry.id, true);
+                    throw SqlException.$(0, "duplicate export path: ").put(path).put(" [id=").put(sink).put(']');
                 }
             }
             long id;
@@ -156,10 +163,12 @@ public class CopyExportContext {
         long id = INACTIVE_COPY_ID;
         CharSequence path;
         CopyExportRequestTask.Phase phase;
-        int populatedRowCount = 0;
+        long populatedRowCount = 0;
         SqlExecutionCircuitBreaker realCircuitBreaker;
         CharSequence sql;
         long startTime = -1;
+        int totalPartitionCount = 0;
+        long totalRowCount = 0;
         int workerId = -1;
 
         @Override
@@ -177,6 +186,8 @@ public class CopyExportContext {
                 this.populatedRowCount = 0;
                 this.finishedPartitionCount = 0;
                 realCircuitBreaker = null;
+                this.totalPartitionCount = 0;
+                this.totalRowCount = 0;
             }
         }
 
@@ -215,13 +226,21 @@ public class CopyExportContext {
             this.phase = phase;
         }
 
-        public void setPopulatedRowCount(int populatedRowCount) {
+        public void setPopulatedRowCount(long populatedRowCount) {
             this.populatedRowCount = populatedRowCount;
         }
 
         public void setStartTime(long startTime, int workerId) {
             this.startTime = startTime;
             this.workerId = workerId;
+        }
+
+        public void setTotalPartitionCount(int totalPartitionCount) {
+            this.totalPartitionCount = totalPartitionCount;
+        }
+
+        public void setTotalRowCount(long totalRowCount) {
+            this.totalRowCount = totalRowCount;
         }
     }
 }

@@ -97,13 +97,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     public CopyExportFactory(
             MessageBus messageBus,
-            CopyExportContext copyContext,
+            CopyExportContext exportContext,
             CopyModel model,
             SecurityContext securityContext,
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
-        this.of(messageBus, copyContext, model, null, securityContext, sqlText, null);
+        this.of(messageBus, exportContext, model, null, securityContext, sqlText, null);
     }
 
     public CopyExportFactory(

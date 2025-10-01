@@ -870,9 +870,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
-        if (copyModel.isParquetFormat()) {
+        if (copyModel.isParquetFormat()) { // parquet use export timeout
             timeout = configuration.getExportTimeout();
-        } else {
+        } else { // csv use query timeout
             timeout = circuitBreaker.getDefaultMaxTime();
         }
 
