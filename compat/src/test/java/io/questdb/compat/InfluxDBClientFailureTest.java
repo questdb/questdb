@@ -53,6 +53,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
 public class InfluxDBClientFailureTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
@@ -294,7 +295,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
 
-                for (int i = 0; i < 100_000_00; i++) {
+                for (int i = 0; i < 10_000_000; i++) {
                     points.add("m1,tag1=value1 f1=1i,x=12i");
                 }
                 InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,x=12i");
