@@ -905,7 +905,7 @@ public final class WhereClauseParser implements Mutable {
             if (i == 1) {
                 if (node.rhs == null ||
                         (node.rhs.type != ExpressionNode.CONSTANT && node.rhs.type != ExpressionNode.BIND_VARIABLE && node.rhs.type != ExpressionNode.FUNCTION) ||
-                        (node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                        (!newColumn && node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
                     return false;
                 }
 
