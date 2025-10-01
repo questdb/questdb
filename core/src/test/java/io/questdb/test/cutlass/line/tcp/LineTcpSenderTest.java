@@ -980,6 +980,15 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     Sender sender1 = Sender.fromConfig(confString);
                     Sender sender2 = Sender.fromConfig(confString)
             ) {
+                SOCountDownLatch writerIsBack = new SOCountDownLatch(1);
+                engine.setPoolListener(
+                        (factoryType, thread, tableToken, event, segment, position) -> {
+                            if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                                writerIsBack.countDown();
+                            }
+                        }
+                );
+
                 AtomicBoolean walRunning = new AtomicBoolean(true);
                 SOCountDownLatch doneAll = new SOCountDownLatch(3);
                 SOCountDownLatch doneILP = new SOCountDownLatch(2);
@@ -1047,7 +1056,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     }
                 }).start();
 
-
                 doneILP.await();
                 walRunning.set(false);
                 doneAll.await();
@@ -1056,7 +1064,15 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
                 // make sure to assert before closing the Sender
                 // since the Sender will always flush on close
-                assertTableSizeEventually(engine, "mytable", N * 2);
+                writerIsBack.await();
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "select count() from mytable",
+                        sink,
+                        "count\n" +
+                                N * 2 + "\n"
+                );
             }
         });
     }
