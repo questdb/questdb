@@ -32,6 +32,7 @@ import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -125,6 +126,44 @@ public class CopyExportContext {
         }
     }
 
+    public void getActiveExportIds(LongList entryIds) {
+        lock.readLock().lock();
+        try {
+            entryIds.clear();
+            long[] keys = activeExports.keys();
+            for (int i = 0; i < keys.length; i++) {
+                if (keys[i] >= 0) {
+                    entryIds.add(keys[i]);
+                }
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public boolean getAndCopyEntry(long id, ExportTaskEntry entry) {
+        lock.readLock().lock();
+        try {
+            ExportTaskEntry e = activeExports.get(id);
+            if (e != null) {
+                entry.id = e.id;
+                entry.path = e.path;
+                entry.phase = e.phase;
+                entry.populatedRowCount = e.populatedRowCount;
+                entry.startTime = e.startTime;
+                entry.workerId = e.workerId;
+                entry.finishedPartitionCount = e.finishedPartitionCount;
+                entry.totalPartitionCount = e.totalPartitionCount;
+                entry.totalRowCount = e.totalRowCount;
+                entry.context = e.context;
+                return true;
+            }
+            return false;
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
     public ExportTaskEntry getEntry(long id) {
         lock.readLock().lock();
         try {
@@ -166,7 +205,7 @@ public class CopyExportContext {
         long populatedRowCount = 0;
         SqlExecutionCircuitBreaker realCircuitBreaker;
         CharSequence sql;
-        long startTime = -1;
+        long startTime = Numbers.LONG_NULL;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
         int workerId = -1;
@@ -181,7 +220,7 @@ public class CopyExportContext {
                 this.sql = null;
                 this.path = null;
                 this.phase = null;
-                this.startTime = -1;
+                this.startTime = Numbers.LONG_NULL;
                 this.workerId = -1;
                 this.populatedRowCount = 0;
                 this.finishedPartitionCount = 0;
@@ -195,15 +234,55 @@ public class CopyExportContext {
             return realCircuitBreaker;
         }
 
+        public int getFinishedPartitionCount() {
+            return finishedPartitionCount;
+        }
+
         public long getId() {
             return id;
+        }
+
+        public CharSequence getPath() {
+            return path;
+        }
+
+        public CopyExportRequestTask.Phase getPhase() {
+            return phase;
+        }
+
+        public long getPopulatedRowCount() {
+            return populatedRowCount;
         }
 
         public SecurityContext getSecurityContext() {
             return context;
         }
 
-        public ExportTaskEntry of(long id, SecurityContext context, CharSequence sql, CharSequence path, SqlExecutionCircuitBreaker circuitBreaker) {
+        public CharSequence getSql() {
+            return sql;
+        }
+
+        public long getStartTime() {
+            return startTime;
+        }
+
+        public int getTotalPartitionCount() {
+            return totalPartitionCount;
+        }
+
+        public long getTotalRowCount() {
+            return totalRowCount;
+        }
+
+        public int getWorkerId() {
+            return workerId;
+        }
+
+        public ExportTaskEntry of(long id,
+                                  SecurityContext context,
+                                  CharSequence sql,
+                                  CharSequence path,
+                                  SqlExecutionCircuitBreaker circuitBreaker) {
             this.id = id;
             this.context = context;
             this.sql = sql;

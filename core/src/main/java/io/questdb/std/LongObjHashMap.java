@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import org.jetbrains.annotations.TestOnly;
-
 import java.util.Arrays;
 
 public class LongObjHashMap<V> extends AbstractLongHashSet {
@@ -65,7 +63,6 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
         return valueAt(keyIndex(key));
     }
 
-    @TestOnly
     public long[] keys() {
         return keys;
     }
