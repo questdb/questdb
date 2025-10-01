@@ -911,6 +911,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // pin column versions
+                // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
+                // of the attached partition
                 this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
 
@@ -3635,8 +3637,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (nameTxn > 0) {
                                 // check that this is xxx.d.234
                                 if (tmpDirectUtf8StringZ.byteAt(lastDot - 1) == 'd') {
-                                    // column tops are not supported (this is to make sure "copy" command can attach partitions
-                                    columnVersionWriter.upsert(attachPartitionTimestamp, columnIndex, nameTxn, 0);
+                                    columnVersionWriter.upsert(
+                                            attachPartitionTimestamp,
+                                            columnIndex,
+                                            nameTxn,
+                                            // column tops will have been already read from the "cv" file, we just need
+                                            // to upsert the nameTxn and keep the columnTop unchanged
+                                            getColumnTop(attachPartitionTimestamp, columnIndex, 0)
+                                    );
                                 }
                             }
                         } catch (NumericException ignore) {
