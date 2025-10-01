@@ -93,7 +93,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInit
     z_streamp strm = calloc(1, sizeof(z_stream));
 
     if (strm == 0) {
-        return -1;
+        return -42; // avoid clashes with Z_*_ERROR consts
     }
 
     int ret;
