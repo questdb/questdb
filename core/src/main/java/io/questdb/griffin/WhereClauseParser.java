@@ -896,7 +896,7 @@ public final class WhereClauseParser implements Mutable {
 
             // if key values contain bind variable then we can't merge it with any other set and have to push this list to filter,
             // we can only create a new list of keys (=newColumn)
-            if (!allKeyValuesAreKnown & !newColumn) {
+            if (!allKeyValuesAreKnown && !newColumn) {
                 return false;
             }
 
