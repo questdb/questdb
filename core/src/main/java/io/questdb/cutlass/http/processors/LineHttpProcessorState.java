@@ -129,6 +129,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         errorLine = 0;
         line = 0;
         sendStatus = SendStatus.NONE;
+        cleanupGzip();
     }
 
     @Override
@@ -138,6 +139,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         Misc.free(symbolCachePool);
         Misc.free(parser);
         Misc.free(utf8Sink);
+        cleanupGzip();
     }
 
     public void commit() {
