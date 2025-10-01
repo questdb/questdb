@@ -1252,7 +1252,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 forEachNode(node -> releaseInactive(node.getEngine()));
             } finally {
                 try {
-                    CLOSEABLES.forEach(Misc::free);
+                    CLOSEABLE.forEach(Misc::free);
                     forEachNode(node -> node.getEngine().clear());
                     AbstractCairoTest.ff = ffBefore;
                 } catch (Throwable th) {

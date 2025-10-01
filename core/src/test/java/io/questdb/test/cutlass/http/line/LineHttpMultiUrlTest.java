@@ -34,17 +34,17 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     private static final int PORT1 = 9070;
     private static final int PORT2 = 9080;
     private static Rnd rnd;
+    private static String root2;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
         rnd = TestUtils.generateRandom(LOG);
+        root2 = temp.newFolder("dbRoot2").getAbsolutePath();
+        AbstractBootstrapTest.setUpStatic();
     }
 
     @Test
     public void fuzzServersStartingAndStopping() throws Exception {
-        String root1 = "server1" + System.currentTimeMillis();
-        String root2 = "server2" + System.currentTimeMillis();
         Path.clearThreadLocals();
         TestUtils.assertMemoryLeak(() -> {
             int senderDurationMillis = 5_000;
@@ -59,19 +59,19 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
             Thread t1 = new Thread(() -> {
                 try {
-                    createAServerAndOccasionallyBlipIt(root1, PORT1, false, serversRunning, upMillis, downMillis, jitterMillis, t1Count);
+                    createAServerAndOccasionallyBlipIt(root, PORT1, serversRunning, upMillis, downMillis, jitterMillis, t1Count);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
             Thread t2 = new Thread(() -> {
                 try {
-                    createAServerAndOccasionallyBlipIt(root2, PORT2, false, serversRunning, upMillis, downMillis, jitterMillis, t2Count);
+                    createAServerAndOccasionallyBlipIt(root2, PORT2, serversRunning, upMillis, downMillis, jitterMillis, t2Count);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
-            Thread t3 = new Thread(() -> sendToTwoPossibleServers(HOST, PORT1, HOST, PORT2, senderDurationMillis, t3Count));
+            Thread t3 = new Thread(() -> sendToTwoPossibleServers(senderDurationMillis, t3Count));
             t1.start();
             t2.start();
             t3.start();
@@ -94,28 +94,34 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
+        TestUtils.createTestPath(root2);
         TestUtils.unchecked(() -> createDummyConfiguration());
     }
 
-    public TestServerMain startInstance(String rootName, String host, int port, boolean readOnly, String name) {
+    public TestServerMain startInstance(CharSequence root, String host, int port, boolean readOnly, String name) {
         return startWithEnvVariables(
+                root,
                 PropertyKey.HTTP_BIND_TO.getEnvVarName(), host + ":" + port,
                 PropertyKey.HTTP_MIN_NET_BIND_TO.getEnvVarName(), host + ":" + port + 1,
                 PropertyKey.PG_NET_BIND_TO.getEnvVarName(), host + ":" + port + 2,
                 PropertyKey.LINE_TCP_NET_BIND_TO.getEnvVarName(), host + ":" + port + 3,
-                PropertyKey.CAIRO_ROOT.getEnvVarName(), dbPath + rootName,
                 PropertyKey.LINE_HTTP_ENABLED.getEnvVarName(), "true",
                 PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), String.valueOf(readOnly),
                 PropertyKey.DEBUG_DB_LOG_NAME.getEnvVarName(), name
         );
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        System.out.println("DELETED: " + root2);
+        TestUtils.removeTestPath(root2);
+        super.tearDown();
+    }
+
     @Test
     public void testFirstInstanceReadOnly() throws Exception {
-        String root1 = "server1" + System.currentTimeMillis();
-        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain1 = startInstance(root1, HOST, PORT1, true, null)) {
+            try (final TestServerMain serverMain1 = startInstance(root, HOST, PORT1, true, null)) {
                 serverMain1.start();
                 try (final TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false, null)) {
                     serverMain2.start();
@@ -133,9 +139,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                         sender.flush();
 
                         TestUtils.drainWalQueue(serverMain2.getEngine());
-                        TestUtils.assertEventually(() -> {
-                            serverMain2.assertSql("select count() FROM line;", "count\n2\n");
-                        });
+                        TestUtils.assertEventually(() -> serverMain2.assertSql("select count() FROM line;", "count\n2\n"));
                     }
                 }
             }
@@ -144,9 +148,8 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testFirstServerIsDown() throws Exception {
-        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false, null)) {
+            try (final TestServerMain serverMain2 = startInstance(root, HOST, PORT2, false, null)) {
                 serverMain2.start();
                 try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";")) {
                     sender.table("line").longColumn("foo", 123).atNow();
@@ -181,16 +184,11 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
 
     @Test
     public void testServersStartAndStop() throws Exception {
-        String root1 = "server1" + System.currentTimeMillis();
-        String root2 = "server2" + System.currentTimeMillis();
         TestUtils.assertMemoryLeak(() -> {
-            TestServerMain serverMain1 = startInstance(root1, HOST, PORT1, false, null);
+            TestServerMain serverMain1 = startInstance(root, HOST, PORT1, false, null);
             serverMain1.start();
             TestServerMain serverMain2 = startInstance(root2, HOST, PORT2, false, null);
             serverMain2.start();
-
-            final @Nullable TxReader[] r1 = {null};
-            final @Nullable TxReader[] r2 = {null};
 
             long expectedTotalRows = 100_000;
             try (Sender sender = Sender.fromConfig("http::addr=" + HOST + ":" + PORT1 + ";addr=" + HOST + ":" + PORT2 + ";" + "auto_flush=off;")) {
@@ -200,7 +198,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                     if (i == 10_000) {
                         serverMain2.close();
                         if (serverMain1.hasBeenClosed()) {
-                            serverMain1 = startInstance(root1, HOST, PORT1, false, null);
+                            serverMain1 = startInstance(root, HOST, PORT1, false, null);
                             serverMain1.start();
                         }
                     }
@@ -221,7 +219,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 sender.flush();
 
                 if (serverMain1.hasBeenClosed()) {
-                    serverMain1 = startInstance(root1, HOST, PORT1, false, null);
+                    serverMain1 = startInstance(root, HOST, PORT1, false, null);
                     serverMain1.start();
                 }
 
@@ -256,17 +254,14 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 TableToken finalTt1 = tt1;
                 TableToken finalTt2 = tt2;
                 TestUtils.assertEventually(() -> {
-                    r1[0] = new TxReader(finalServerMain1.getEngine().getConfiguration().getFilesFacade());
-                    r2[0] = new TxReader(finalServerMain2.getEngine().getConfiguration().getFilesFacade());
-
-                    long rows1 = getRowCount(finalServerMain1.getEngine(), finalTt1, r1[0]);
-                    long rows2 = getRowCount(finalServerMain2.getEngine(), finalTt2, r2[0]);
-
-                    r1[0].close();
-                    r2[0].close();
-
-                    System.out.println("Expected: " + expectedTotalRows + ", actual1: " + rows1 + ", actual2: " + rows2);
-                    Assert.assertEquals(expectedTotalRows, rows1 + rows2);
+                    try (
+                            var r1 = new TxReader(finalServerMain1.getEngine().getConfiguration().getFilesFacade());
+                            var r2 = new TxReader(finalServerMain2.getEngine().getConfiguration().getFilesFacade())
+                    ) {
+                        long rows1 = getRowCount(finalServerMain1.getEngine(), finalTt1, r1);
+                        long rows2 = getRowCount(finalServerMain2.getEngine(), finalTt2, r2);
+                        Assert.assertEquals(expectedTotalRows, rows1 + rows2);
+                    }
                 });
             } finally {
                 if (!serverMain1.hasBeenClosed()) {
@@ -275,8 +270,6 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
                 if (!serverMain2.hasBeenClosed()) {
                     serverMain2.close();
                 }
-                Misc.free(r1);
-                Misc.free(r2);
             }
         });
     }
@@ -295,13 +288,21 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
     /**
      * Creates and destroys a server based on a delay and jitter.
      */
-    private void createAServerAndOccasionallyBlipIt(String rootName, int port, boolean readOnly, AtomicBoolean running, int upMillis, int downMillis, int jitterMillis, AtomicLong count) throws Exception {
+    private void createAServerAndOccasionallyBlipIt(
+            CharSequence root,
+            int port,
+            AtomicBoolean running,
+            int upMillis,
+            int downMillis,
+            int jitterMillis,
+            AtomicLong count
+    ) throws Exception {
         @Nullable TestServerMain serverMain = null;
 
         assert upMillis > jitterMillis;
         try {
             while (running.get()) {
-                serverMain = startInstance(rootName, HOST, port, readOnly, "port=" + port);
+                serverMain = startInstance(root, HOST, port, false, "port=" + port);
                 assert serverMain.hasStarted();
 
                 int jitter = rnd.nextInt(jitterMillis) - jitterMillis / 2;
@@ -314,7 +315,7 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
             }
         } finally {
             if (serverMain == null || serverMain.hasBeenClosed()) {
-                serverMain = startInstance(rootName, HOST, port, readOnly, "port=" + port);
+                serverMain = startInstance(root, HOST, port, false, "port=" + port);
             }
             TestUtils.drainWalQueue(serverMain.getEngine());
             TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
@@ -344,11 +345,11 @@ public class LineHttpMultiUrlTest extends AbstractBootstrapTest {
         }
     }
 
-    private void sendToTwoPossibleServers(String host1, int port1, String host2, int port2, int durationMillis, AtomicLong count) {
+    private void sendToTwoPossibleServers(int durationMillis, AtomicLong count) {
         long deadline = System.currentTimeMillis() + durationMillis;
         try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                .address(host1).port(port1)
-                .address(host2).port(port2)
+                .address(LineHttpMultiUrlTest.HOST).port(LineHttpMultiUrlTest.PORT1)
+                .address(LineHttpMultiUrlTest.HOST).port(LineHttpMultiUrlTest.PORT2)
                 .disableAutoFlush()
                 .maxBackoffMillis(1)
                 .build()) {
