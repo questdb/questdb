@@ -56,8 +56,6 @@ public final class Zip {
     // Inflate
     public static native int inflate(long z_streamp, long address, int available, boolean flush);
 
-    public static native int getAvailOut(long z_streamp);
-
     public static native void inflateEnd(long z_streamp);
 
     public static native long inflateInit(boolean nowrap);

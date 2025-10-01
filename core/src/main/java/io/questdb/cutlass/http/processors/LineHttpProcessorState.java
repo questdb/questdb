@@ -206,7 +206,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 return;
             }
 
-            recvBuffer.setBufPos(p + (len - Zip.getAvailOut(inflateStream)));
+            recvBuffer.setBufPos(p + (len - Zip.availOut(inflateStream)));
 
             if (ret == Zip.Z_STREAM_END) {
                 currentStatus = processLocalBuffer();
