@@ -94,20 +94,26 @@ public class CopyExportContext {
     }
 
     public boolean cancel(long id, SecurityContext securityContext) {
+        SecurityContext owner = null;
+        SqlExecutionCircuitBreaker cb = null;
         lock.readLock().lock();
         try {
             ExportTaskEntry e = activeExports.get(id);
-            if (e != null) {
-                if (securityContext != null) {
-                    e.getSecurityContext().authorizeCopyCancel(securityContext);
-                }
-                e.getCircuitBreaker().cancel();
-                return true;
+            if (e == null) {
+                return false;
             }
-            return false;
+            owner = e.getSecurityContext();
+            cb = e.getCircuitBreaker();
         } finally {
             lock.readLock().unlock();
         }
+        if (securityContext != null && owner != null) {
+            owner.authorizeCopyCancel(securityContext);
+        }
+        if (cb != null) {
+            cb.cancel();
+        }
+        return true;
     }
 
     @TestOnly
@@ -181,20 +187,6 @@ public class CopyExportContext {
         this.reporter = reporter;
     }
 
-    private void releaseEntry(ExportTaskEntry entry) {
-        lock.writeLock().lock();
-        try {
-            activeExports.remove(entry.id);
-            exportSql.remove(entry.sql);
-            if (entry.path != null) {
-                exportPath.remove(entry.path);
-            }
-            exportTaskEntryPools.release(entry);
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
     public class ExportTaskEntry implements Mutable {
         AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
         SecurityContext context;
@@ -212,21 +204,32 @@ public class CopyExportContext {
 
         @Override
         public void clear() {
-            if (id != INACTIVE_COPY_ID) {
-                this.context = null;
+            if (id == INACTIVE_COPY_ID) {
+                return;
+            }
+            lock.writeLock().lock();
+            try {
+                activeExports.remove(id);
+                exportSql.remove(sql);
+                if (path != null) {
+                    exportPath.remove(path);
+                }
                 atomicBooleanCircuitBreaker.clear();
-                releaseEntry(this);
-                this.id = INACTIVE_COPY_ID;
-                this.sql = null;
-                this.path = null;
-                this.phase = null;
-                this.startTime = Numbers.LONG_NULL;
-                this.workerId = -1;
-                this.populatedRowCount = 0;
-                this.finishedPartitionCount = 0;
+                context = null;
                 realCircuitBreaker = null;
-                this.totalPartitionCount = 0;
-                this.totalRowCount = 0;
+                sql = null;
+                path = null;
+                phase = null;
+                startTime = Numbers.LONG_NULL;
+                workerId = -1;
+                populatedRowCount = 0;
+                finishedPartitionCount = 0;
+                totalPartitionCount = 0;
+                totalRowCount = 0;
+                id = INACTIVE_COPY_ID;
+                exportTaskEntryPools.release(this);
+            } finally {
+                lock.writeLock().unlock();
             }
         }
 

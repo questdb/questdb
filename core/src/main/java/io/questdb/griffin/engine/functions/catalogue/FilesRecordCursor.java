@@ -235,7 +235,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public int getStrLen(int col) {
-            return TableUtils.lengthOf(getStrA(col));
+            return TableUtils.NULL_LEN;
         }
 
         @Override

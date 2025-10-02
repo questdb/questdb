@@ -509,7 +509,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
 
         Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
-        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertTrue(configuration.getExportPoolConfiguration().getWorkerCount() > 0);
         Assert.assertFalse(configuration.getExportPoolConfiguration().haltOnError());
         Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
         Assert.assertEquals(10, configuration.getExportPoolConfiguration().getSleepTimeout());

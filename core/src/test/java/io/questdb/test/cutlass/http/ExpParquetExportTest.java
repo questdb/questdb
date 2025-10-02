@@ -171,7 +171,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         req.GET().url("/exp").query("query", "generate_series(0, '9999-01-01', '1U');");
                         req.query("fmt", "parquet");
                         req.send();
-                        Os.sleep(1000);
+                        for (int i = 0; i < 50; i++) {
+                            if (engine.getCopyExportContext().getActiveExportId() != -1) {
+                                break;
+                            }
+                            Os.sleep(100);
+                        }
                         client.disconnect();
 
                         int count = 100;

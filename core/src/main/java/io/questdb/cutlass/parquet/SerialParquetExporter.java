@@ -183,6 +183,7 @@ public class SerialParquetExporter implements Closeable {
                 tempPath.trimTo(0).concat(copyExportRoot).concat("tmp_");
                 Numbers.appendHex(tempPath, task.getCopyID(), true);
                 tempBaseDirLen = tempPath.size();
+                createDirsOrFail(ff, tempPath.slash(), configuration.getMkDirMode());
 
                 try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
@@ -223,7 +224,6 @@ public class SerialParquetExporter implements Closeable {
                             PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
                             tempPath.concat(nameSink).put(".parquet");
-                            createDirsOrFail(ff, tempPath, configuration.getMkDirMode());
 
                             int copyResult = ff.copy(fromParquet.$(), tempPath.$());
                             if (copyResult < 0) {
@@ -251,7 +251,6 @@ public class SerialParquetExporter implements Closeable {
                         // log start
                         LOG.info().$("converting partition to parquet temp file [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                                 .$(", partition=").$(nameSink).$();
-                        createDirsOrFail(ff, tempPath, configuration.getMkDirMode());
 
                         PartitionEncoder.encodeWithOptions(
                                 partitionDescriptor,
@@ -352,7 +351,7 @@ public class SerialParquetExporter implements Closeable {
     }
 
     private void moveExportFiles(int tempBaseDirLen, String fileName) {
-        if (!ff.exists(tempPath.$())) {
+        if (numOfFiles == 0) {
             return;
         }
         if (numOfFiles == 1) {

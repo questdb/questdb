@@ -105,10 +105,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 Misc.free(popInsertOperation());
                 break;
             case CompiledQuery.UPDATE:
-                Misc.free(getUpdateOperation());
+                Misc.free(updateOp);
                 break;
             case CompiledQuery.ALTER:
-                Misc.free(getAlterOperation());
+                Misc.free(alterOp);
                 break;
             default:
                 break;

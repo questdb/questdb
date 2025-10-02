@@ -865,6 +865,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 errSink.clear();
                 errSink.put("unrecognised format [format=").put(format).put("]");
                 sendException(response, 0, errSink, state);
+                return false;
             }
         }
         if (copyModel.isParquetFormat()) {

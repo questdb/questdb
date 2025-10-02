@@ -139,9 +139,13 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     row.putInt(4, numOfFiles);
                     row.putSym(5, phase.getName());
                     row.putSym(6, status.getName());
-                    utf8StringSink.clear();
-                    utf8StringSink.put(msg);
-                    row.putVarchar(7, utf8StringSink);
+                    if (msg != null) {
+                        utf8StringSink.clear();
+                        utf8StringSink.put(msg);
+                        row.putVarchar(7, utf8StringSink);
+                    } else {
+                        row.putVarchar(7, null);
+                    }
                     row.putLong(8, errors);
                     row.append();
                     WRITER.commit();

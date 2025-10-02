@@ -1205,7 +1205,7 @@ public class CopyExportTest extends AbstractCairoTest {
             execute("insert into test_table values (1, 'hello', 1.5), (2, 'world', 2.5)");
 
             CopyExportRunnable stmt = () -> runAndFetchCopyExportID("copy test_table to 'output13' with format parquet " +
-                    "compression_codec gzip compression_level 6 " +
+                    "compression_codec gzip compression_level 10 " +
                     "row_group_size 5000 data_page_size 8192 " +
                     "statistics_enabled true parquet_version 2", sqlExecutionContext);
 

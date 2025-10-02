@@ -886,72 +886,77 @@ public class SqlParser {
             }
 
             tok = optTok(lexer);
-            if (tok != null && isWithKeyword(tok)) {
-                tok = tok(lexer, "copy option");
-                while (tok != null && !isSemicolon(tok)) {
-                    final int optionCode = CopyModel.getExportOption(tok);
-                    switch (optionCode) {
-                        case CopyModel.COPY_OPTION_FORMAT:
-                            // only support parquet for now
-                            tok = tok(lexer, "'parquet'");
-                            if (isParquetKeyword(tok)) {
-                                model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
-                                model.setParquetDefaults(configuration);
-                            } else {
-                                throw SqlException.$(lexer.lastTokenPosition(), "unsupported format, only 'parquet' is supported");
-                            }
-                            break;
-                        case CopyModel.COPY_OPTION_PARTITION_BY:
-                            final ExpressionNode partitionByExpr = expectLiteral(lexer);
-                            final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
-                            if (partitionBy < 0) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid partition by option: ").put(partitionByExpr.token);
-                            }
-                            model.setPartitionBy(partitionBy);
-                            break;
-                        case CopyModel.COPY_OPTION_SIZE_LIMIT:
-                            // todo: add this when table writer has appropriate support for it
-                            throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
-                        case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
-                            ExpressionNode codecExpr = expectLiteral(lexer);
-                            int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
-                            if (codec < 0) {
-                                SqlException e = SqlException.$(codecExpr.position, "invalid compression codec[").put(codecExpr.token).put("], expected one of: ");
-                                ParquetCompression.addCodecNamesToException(e);
-                                throw e;
-                            }
-                            model.setCompressionCodec(codec);
-                            break;
-                        case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
-                            model.setCompressionLevel(expectInt(lexer), lexer.lastTokenPosition());
-                            break;
-                        case CopyModel.COPY_OPTION_ROW_GROUP_SIZE:
-                            model.setRowGroupSize(expectInt(lexer));
-                            break;
-                        case CopyModel.COPY_OPTION_DATA_PAGE_SIZE:
-                            model.setDataPageSize(expectInt(lexer));
-                            break;
-                        case CopyModel.COPY_OPTION_RAW_ARRAY_ENCODING:
-                            model.setRawArrayEncoding(expectBoolean(lexer));
-                        case CopyModel.COPY_OPTION_STATISTICS_ENABLED:
-                            model.setStatisticsEnabled(expectBoolean(lexer));
-                            break;
-                        case CopyModel.COPY_OPTION_PARQUET_VERSION:
-                            int parquetVersion = expectInt(lexer);
-                            if (parquetVersion != CopyModel.PARQUET_VERSION_V1 && parquetVersion != CopyModel.PARQUET_VERSION_V2) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
-                            }
-                            model.setParquetVersion(parquetVersion);
-                            break;
-                        case CopyModel.COPY_OPTION_UNKNOWN:
-                            throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
-                                    .put(tok).put(']');
-                    }
-                    tok = optTok(lexer);
-                }
-                model.setType(CopyModel.COPY_TYPE_TO);
+            model.setType(CopyModel.COPY_TYPE_TO);
+            if (tok == null || isSemicolon(tok)) {
                 return model;
             }
+            if (!isWithKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+            }
+            tok = tok(lexer, "copy option");
+            while (tok != null && !isSemicolon(tok)) {
+                final int optionCode = CopyModel.getExportOption(tok);
+                switch (optionCode) {
+                    case CopyModel.COPY_OPTION_FORMAT:
+                        // only support parquet for now
+                        tok = tok(lexer, "'parquet'");
+                        if (isParquetKeyword(tok)) {
+                            model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+                            model.setParquetDefaults(configuration);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "unsupported format, only 'parquet' is supported");
+                        }
+                        break;
+                    case CopyModel.COPY_OPTION_PARTITION_BY:
+                        final ExpressionNode partitionByExpr = expectLiteral(lexer);
+                        final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+                        if (partitionBy < 0) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "invalid partition by option: ").put(partitionByExpr.token);
+                        }
+                        model.setPartitionBy(partitionBy);
+                        break;
+                    case CopyModel.COPY_OPTION_SIZE_LIMIT:
+                        // todo: add this when table writer has appropriate support for it
+                        throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
+                    case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
+                        ExpressionNode codecExpr = expectLiteral(lexer);
+                        int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
+                        if (codec < 0) {
+                            SqlException e = SqlException.$(codecExpr.position, "invalid compression codec[").put(codecExpr.token).put("], expected one of: ");
+                            ParquetCompression.addCodecNamesToException(e);
+                            throw e;
+                        }
+                        model.setCompressionCodec(codec);
+                        break;
+                    case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
+                        model.setCompressionLevel(expectInt(lexer), lexer.lastTokenPosition());
+                        break;
+                    case CopyModel.COPY_OPTION_ROW_GROUP_SIZE:
+                        model.setRowGroupSize(expectInt(lexer));
+                        break;
+                    case CopyModel.COPY_OPTION_DATA_PAGE_SIZE:
+                        model.setDataPageSize(expectInt(lexer));
+                        break;
+                    case CopyModel.COPY_OPTION_RAW_ARRAY_ENCODING:
+                        model.setRawArrayEncoding(expectBoolean(lexer));
+                        break;
+                    case CopyModel.COPY_OPTION_STATISTICS_ENABLED:
+                        model.setStatisticsEnabled(expectBoolean(lexer));
+                        break;
+                    case CopyModel.COPY_OPTION_PARQUET_VERSION:
+                        int parquetVersion = expectInt(lexer);
+                        if (parquetVersion != CopyModel.PARQUET_VERSION_V1 && parquetVersion != CopyModel.PARQUET_VERSION_V2) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
+                        }
+                        model.setParquetVersion(parquetVersion);
+                        break;
+                    case CopyModel.COPY_OPTION_UNKNOWN:
+                        throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
+                                .put(tok).put(']');
+                }
+                tok = optTok(lexer);
+            }
+            return model;
         }
         throw errUnexpected(lexer, tok);
     }

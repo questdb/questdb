@@ -166,6 +166,9 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                 } else if (col == 6) { // export sql
                     return entry.getSql();
                 } else if (col == 7) { // message
+                    if (entry.getPhase() == null) {
+                        return null;
+                    }
                     switch (entry.getPhase()) {
                         case POPULATING_TEMP_TABLE:
                             msgSink.clear();
