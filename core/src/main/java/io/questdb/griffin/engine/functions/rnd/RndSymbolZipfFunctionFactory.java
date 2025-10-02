@@ -35,11 +35,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Sinkable;
+
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class RndSymbolZipfFunctionFactory implements FunctionFactory {
     @Override
@@ -92,8 +95,8 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
 
     private static final class Func extends SymbolFunction implements Function {
         private final double alpha;
-        private final double[] cumulativeProbabilities;
         private final int count;
+        private final DoubleList cumulativeProbabilities;
         private final ObjList<String> symbols;
         private Rnd rnd;
 
@@ -101,7 +104,8 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
             this.symbols = symbols;
             this.count = symbols.size();
             this.alpha = alpha;
-            this.cumulativeProbabilities = new double[count];
+            this.cumulativeProbabilities = new DoubleList(count);
+            this.cumulativeProbabilities.setPos(count);
 
             // Calculate Zipf distribution
             // p(k) = (1/k^alpha) / sum(1/i^alpha for i=1..n)
@@ -115,7 +119,7 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
             for (int i = 0; i < count; i++) {
                 double probability = (1.0 / Math.pow(i + 1, alpha)) / sum;
                 cumulative += probability;
-                cumulativeProbabilities[i] = cumulative;
+                cumulativeProbabilities.setQuick(i, cumulative);
             }
         }
 
@@ -179,16 +183,12 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
         private int next() {
             // Generate random value between 0 and 1
             double u = rnd.nextDouble();
-
-            // Binary search to find the index where u falls in cumulative distribution
-            for (int i = 0; i < count; i++) {
-                if (u <= cumulativeProbabilities[i]) {
-                    return i;
-                }
+            int idx = cumulativeProbabilities.binarySearch(u, BIN_SEARCH_SCAN_UP);
+            if (idx >= 0) {
+                return idx;
             }
-
-            // Fallback to last element (should not happen due to cumulative[count-1] == 1.0)
-            return count - 1;
+            idx = -idx - 1;
+            return idx < count ? idx : count - 1;
         }
     }
 }
