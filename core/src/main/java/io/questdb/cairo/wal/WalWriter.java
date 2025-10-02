@@ -385,6 +385,7 @@ public class WalWriter implements TableWriterAPI {
                 Misc.free(path);
                 LOG.info().$("closed [table=").$(tableToken).I$();
             }
+            columnVersionReader = Misc.free(columnVersionReader);
         }
     }
 
@@ -1243,8 +1244,8 @@ public class WalWriter implements TableWriterAPI {
 
                     if (initialized) {
                         int symbolValueCount = txReader.getSymbolValueCount(denseSymbolIndex);
-                        long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(i);
-                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, columnNameTxn);
+                        long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(i);
+                        configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
                     } else {
                         // table on disk structure version does not match the structure version of the WalWriter
                         // it is not possible to re-use table symbol table because the column name may not match.
@@ -1260,7 +1261,6 @@ public class WalWriter implements TableWriterAPI {
                 }
             }
         } finally {
-            Misc.free(columnVersionReader);
             Misc.free(txReader);
         }
     }
