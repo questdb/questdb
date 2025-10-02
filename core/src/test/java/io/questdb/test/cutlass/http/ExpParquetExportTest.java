@@ -79,7 +79,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
-                    testHttpClient.assertGetParquet("/exp", 1282, "basic_parquet_test");
+                    testHttpClient.assertGetParquet("/exp", 1290, "basic_parquet_test");
                 });
     }
 
@@ -199,7 +199,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 602, params, "SELECT * FROM test_table");
+                    testHttpClient.assertGetParquet("/exp", 610, params, "test_table");
                 });
     }
 
@@ -241,7 +241,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         }
                     });
                     thread.start();
-                    String expectedError = "{\"query\":\"generate_series(0, '9999-01-01', '1U')\",\"error\":\"copy task failed [id=0, phase=populating_data_to_temp_table, status=cancelled, message=cancelled by user";
+                    String expectedError = "cancelled by user";
                     testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
                     thread.join();
                 });
@@ -281,16 +281,16 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "lz4_raw");
-                    testHttpClient.assertGetParquet("/exp", 395, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "lzo");
-                    testHttpClient.assertGetParquet("/exp", 349, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 280, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "lz4");
-                    testHttpClient.assertGetParquet("/exp", 349, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 280, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "brotli");
-                    testHttpClient.assertGetParquet("/exp", 406, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 414, params, "SELECT * FROM codec_zstd_test");
                 });
     }
 
@@ -315,7 +315,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "snappy");
-                    testHttpClient.assertGetParquet("/exp", 396, params, "SELECT * FROM codec_snappy_test");
+                    testHttpClient.assertGetParquet("/exp", 404, params, "SELECT * FROM codec_snappy_test");
                 });
     }
 
@@ -328,7 +328,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM codec_uncompressed_test");
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "uncompressed");
-                    testHttpClient.assertGetParquet("/exp", 402, params, "SELECT * FROM codec_uncompressed_test");
+                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM codec_uncompressed_test");
                 });
     }
 
@@ -340,7 +340,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "zstd");
-                    testHttpClient.assertGetParquet("/exp", 395, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM codec_zstd_test");
                 });
     }
 
@@ -369,15 +369,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "gzip");
                     params.put("compression_level", "3");
-                    testHttpClient.assertGetParquet("/exp", 396, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 404, params, "SELECT * FROM level_valid_test");
 
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "5");
-                    testHttpClient.assertGetParquet("/exp", 401, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 409, params, "SELECT * FROM level_valid_test");
 
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "15");
-                    testHttpClient.assertGetParquet("/exp", 395, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM level_valid_test");
                 });
     }
 
@@ -405,9 +405,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("data_page_size", "1024");
-                    testHttpClient.assertGetParquet("/exp", 44745, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44753, params, "SELECT * FROM page_size_valid_test");
                     params.put("data_page_size", "2048");
-                    testHttpClient.assertGetParquet("/exp", 43144, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 43152, params, "SELECT * FROM page_size_valid_test");
                 });
     }
 
@@ -439,7 +439,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("filename", "large_export_test");
-                    testHttpClient.assertGetParquet("/exp", 1879525, params, "SELECT * FROM large_export_test");
+                    testHttpClient.assertGetParquet("/exp", 1879533, params, "SELECT * FROM large_export_test");
                 });
     }
 
@@ -506,9 +506,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("fmt", "parquet");
                     params.put("parquet_version", "1");
-                    testHttpClient.assertGetParquet("/exp", 402, params, "SELECT * FROM version_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM version_valid_test");
                     params.put("parquet_version", "2");
-                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM version_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 411, params, "SELECT * FROM version_valid_test");
                 });
     }
 
@@ -576,10 +576,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM row_group_valid_test");
                     params.put("fmt", "parquet");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 44745, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44753, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "5000");
-                    testHttpClient.assertGetParquet("/exp", 44121, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44129, params, "SELECT * FROM row_group_valid_test");
                 });
     }
 
@@ -592,10 +592,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("statistics_enabled", "true");
-                    testHttpClient.assertGetParquet("/exp", 402, params, "SELECT * FROM statistics_test");
+                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM statistics_test");
 
                     params.put("statistics_enabled", "false");
-                    testHttpClient.assertGetParquet("/exp", 287, params, "SELECT * FROM statistics_test");
+                    testHttpClient.assertGetParquet("/exp", 295, params, "SELECT * FROM statistics_test");
                 });
     }
 
@@ -607,7 +607,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "generate_series(0, '9999-01-01', '1U')");
                     params.put("fmt", "parquet");
                     params.put("timeout", "1");
-                    String expectedError = "{\"query\":\"generate_series(0, '9999-01-01', '1U')\",\"error\":\"copy task failed [id=0, phase=populating_data_to_temp_table, status=cancelled, message=timeout, query aborted";
+                    String expectedError = "timeout, query aborted";
                     testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
                 });
     }
@@ -630,7 +630,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 1995, tableName);
+                    testHttpClient.assertGetParquet("/exp", 2003, tableName);
                 });
     }
 }

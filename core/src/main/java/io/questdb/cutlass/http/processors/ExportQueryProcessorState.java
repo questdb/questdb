@@ -72,7 +72,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
-    SuspendEvent suspendEvent;
     boolean waitingForCopy;
     private CopyExportResult copyExportResult;
     private boolean queryCacheable = false;
@@ -113,7 +112,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         copyID = null;
         waitingForCopy = false;
-        suspendEvent = Misc.free(suspendEvent);
         parquetFileFd = -1;
         parquetFileSize = 0;
         parquetFileOffset = 0;

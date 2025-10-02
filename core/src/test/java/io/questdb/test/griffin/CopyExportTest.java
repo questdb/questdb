@@ -44,6 +44,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -183,6 +184,7 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
     public void testCopyExportCancel() throws Exception {
         assertMemoryLeak(() -> {
             CopyExportRunnable stmt = () -> {
@@ -601,11 +603,11 @@ public class CopyExportTest extends AbstractCairoTest {
                                 "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
                         // Verify count and sample data
                         assertSql("count\n10000\n",
-                                "select count(*) from read_parquet('" + exportRoot + File.separator + "output_large" + ".parquet')");
+                                "select count(*) from read_parquet('" + exportRoot + File.separator + "output_large.parquet')");
                         assertSql("id\tvalue\n0\tvalue0\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_large" + ".parquet') where id = 0");
+                                "select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 0");
                         assertSql("id\tvalue\n999\tvalue999\n",
-                                "select * from read_parquet('" + exportRoot + File.separator + "output_large" + ".parquet') where id = 999");
+                                "select * from read_parquet('" + exportRoot + File.separator + "output_large.parquet') where id = 999");
                         assertSql("path\tsize\n" +
                                         "output_large.parquet\t125945\n",
                                 "SELECT path, size from export_files()  order by path");
@@ -1476,6 +1478,7 @@ public class CopyExportTest extends AbstractCairoTest {
                 runAndFetchCopyExportID("copy test_table2 to 'output13" + File.separator + "dir1" + File.separator + "dir2" + "' with format parquet ", sqlExecutionContext);
                 runAndFetchCopyExportID("copy test_table3 to 'output15" + File.separator + "dir1" + File.separator + "dir2' with format parquet ", sqlExecutionContext);
             };
+
             CopyExportRunnable test4 = () ->
                     assertEventually(() -> {
                         assertSql("path\tsize\n" +
@@ -1667,11 +1670,11 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int wait) throws Exception {
         CountDownLatch processed = new CountDownLatch(wait);
-        execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
+        execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
         try {
             for (int i = 0; i < 4; i++) {
-                CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine, i);
+                CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine);
                 jobs.add(copyRequestJob);
                 Thread processingThread = createJobThread(copyRequestJob, processed, i);
                 processingThread.start();

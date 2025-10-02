@@ -99,13 +99,15 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int volumePosition;
     private boolean walEnabled;
 
-    protected CreateTableOperationImpl(CharSequence selectText,
-                                       String tableName,
-                                       int partitionBy,
-                                       boolean walEnabled,
-                                       int defaultSymbolCapacity,
-                                       String sqlText,
-                                       boolean needRegister) {
+    public CreateTableOperationImpl(
+            CharSequence selectText,
+            String tableName,
+            int partitionBy,
+            boolean walEnabled,
+            int defaultSymbolCapacity,
+            String sqlText,
+            boolean needRegister
+    ) {
         this.selectText = selectText;
         this.tableName = tableName;
         this.partitionBy = partitionBy;

@@ -30,10 +30,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import org.jetbrains.annotations.Nullable;
 
 public class CopyExportRequestTask implements Mutable {
     private int compressionCodec;
@@ -46,18 +44,13 @@ public class CopyExportRequestTask implements Mutable {
     private boolean rawArrayEncoding;
     private CopyExportResult result;
     private int rowGroupSize;
-    private int sizeLimit;
     private boolean statisticsEnabled;
-    private @Nullable SuspendEvent suspendEvent;
     private String tableName;
     private boolean userSpecifiedExportOptions;
 
     @Override
     public void clear() {
-        if (this.entry != null) {
-            this.entry.clear();
-            this.entry = null;
-        }
+        this.entry = null;
         this.tableName = null;
         this.fileName = null;
         this.compressionCodec = -1;
@@ -65,9 +58,7 @@ public class CopyExportRequestTask implements Mutable {
         this.dataPageSize = -1;
         this.parquetVersion = -1;
         this.rowGroupSize = -1;
-        this.sizeLimit = -1;
         this.statisticsEnabled = true;
-        this.suspendEvent = null;
         this.createOp = Misc.free(createOp);
         userSpecifiedExportOptions = false;
         result = null;
@@ -121,14 +112,6 @@ public class CopyExportRequestTask implements Mutable {
         return entry.getSecurityContext();
     }
 
-    public int getSizeLimit() {
-        return sizeLimit;
-    }
-
-    public @Nullable SuspendEvent getSuspendEvent() {
-        return suspendEvent;
-    }
-
     public String getTableName() {
         return tableName;
     }
@@ -151,23 +134,19 @@ public class CopyExportRequestTask implements Mutable {
             CopyExportResult result,
             String tableName,
             String fileName,
-            int sizeLimit,
             int compressionCodec,
             int compressionLevel,
             int rowGroupSize,
             int dataPageSize,
             boolean statisticsEnabled,
             int parquetVersion,
-            @Nullable SuspendEvent suspendEvent,
             boolean rawArrayEncoding,
             boolean userSpecifiedExportOptions
     ) {
-        this.clear();
         this.entry = entry;
         this.result = result;
         this.tableName = tableName;
         this.fileName = fileName;
-        this.sizeLimit = sizeLimit;
         this.compressionCodec = compressionCodec;
         this.compressionLevel = compressionLevel;
         this.rowGroupSize = rowGroupSize;
@@ -175,7 +154,6 @@ public class CopyExportRequestTask implements Mutable {
         this.statisticsEnabled = statisticsEnabled;
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
-        this.suspendEvent = suspendEvent;
         this.createOp = createOp;
         this.userSpecifiedExportOptions = userSpecifiedExportOptions;
     }
@@ -218,6 +196,4 @@ public class CopyExportRequestTask implements Mutable {
             return name;
         }
     }
-
-
 }

@@ -198,9 +198,7 @@ public class HttpQueryTestBuilder {
             }
 
             if (cairoConfiguration.getSqlCopyExportRoot() != null) {
-                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
-                        engine, 0
-                );
+                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
                 workerPool.assign(copyExportRequestJob);
                 workerPool.freeOnExit(copyExportRequestJob);
             }
@@ -260,6 +258,7 @@ public class HttpQueryTestBuilder {
                 public HttpRequestHandler newInstance() {
                     return new ExportQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            httpServer.getParquetExporterPool(),
                             engine,
                             workerPool.getWorkerCount()
                     );

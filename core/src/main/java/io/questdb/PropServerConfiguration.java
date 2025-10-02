@@ -905,7 +905,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuWalApplyWorkers = 2;
         int cpuSpare = 0;
-        int exportWorker = 1;
+        int exportWorker = 5;
 
         if (cpuAvailable > 32) {
             cpuWalApplyWorkers = 4;
