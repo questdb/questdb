@@ -152,6 +152,45 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
         );
     }
 
+    @Test
+    public void testExplainPlan() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([AAPL,MSFT,GOOGL],1.5)]
+                            long_sequence count: 10
+                        """,
+                "explain select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testExplainPlanTwoSymbols() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([A,B],2.0)]
+                            long_sequence count: 5
+                        """,
+                "explain select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)"
+        );
+    }
+
+    @Test
+    public void testExplainPlanLowAlpha() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([X,Y,Z],0.5)]
+                            long_sequence count: 3
+                        """,
+                "explain select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)"
+        );
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new RndSymbolZipfFunctionFactory();
