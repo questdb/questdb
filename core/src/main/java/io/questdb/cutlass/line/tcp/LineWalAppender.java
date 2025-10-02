@@ -61,7 +61,6 @@ public class LineWalAppender {
     private final Long256Impl long256;
     private final int maxFileNameLength;
     private final DirectUtf8Sink sink;
-    private final StringSink stringSink;
     private final boolean stringToCharCastAllowed;
     private byte timestampUnit;
 
@@ -70,7 +69,6 @@ public class LineWalAppender {
             boolean stringToCharCastAllowed,
             byte timestampUnit,
             DirectUtf8Sink sink,
-            StringSink stringSink,
             int maxFileNameLength
     ) {
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -80,7 +78,6 @@ public class LineWalAppender {
         this.long256 = new Long256Impl();
         this.decimal256 = new Decimal256();
         this.sink = sink;
-        this.stringSink = stringSink;
     }
 
     public void appendToWal(
@@ -331,9 +328,9 @@ public class LineWalAppender {
                                             DecimalUtil.storeNull(r, columnIndex, colType);
                                             break;
                                         } else {
-                                            stringSink.clear();
-                                            Numbers.append(stringSink, ent.getFloatValue());
-                                            decimal256.ofString(stringSink, precision, scale);
+                                            sink.clear();
+                                            Numbers.append(sink, ent.getFloatValue());
+                                            decimal256.ofString(sink.asAsciiCharSequence(), precision, scale);
                                             DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
                                         }
                                     } else {
