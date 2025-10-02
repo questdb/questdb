@@ -333,6 +333,8 @@ public class FuzzRunner {
                 }
             }
         } finally {
+            // Don't mess simulating failures anymore, we are done here.
+            ff.clearFailures();
             Misc.free(rdr1);
             Misc.free(rdr2);
             Misc.free(writer);

@@ -123,7 +123,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
         doReindex(
                 ff,
-                tableWriter.getColumnVersionReader(),
+                tableWriter.columnVersionReader(),
                 // this may not be needed, because table writer's column index is the same
                 // as metadata writers' index.
                 columnIndex,
