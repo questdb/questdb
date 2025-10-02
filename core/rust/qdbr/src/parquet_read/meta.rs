@@ -2,6 +2,7 @@ use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
+use nonmax::NonMaxU32;
 use parquet2::metadata::{ColumnDescriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
@@ -37,7 +38,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let metadata = read_metadata_with_size(&mut reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
-        let mut row_group_sizes: AcVec<i32> =
+        let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
@@ -47,13 +48,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         for row_group in metadata.row_groups.iter() {
             row_group_sizes_acc.push(accumulated_size)?;
             let row_group_size = row_group.num_rows();
-            row_group_sizes.push(row_group_size as i32)?;
+            row_group_sizes.push(row_group_size as u32)?;
             accumulated_size += row_group_size;
         }
 
         assert_eq!(accumulated_size, metadata.num_rows);
 
-        let mut timestamp_index = -1_i32;
+        let mut timestamp_index: Option<NonMaxU32> = None;
 
         for (index, column) in metadata.schema_descr.columns().iter().enumerate() {
             // Arrays have column name and id stored in the base group type.
@@ -69,7 +70,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
                 if column_type.is_designated() {
-                    timestamp_index = index as i32;
+                    timestamp_index = NonMaxU32::new(index as u32);
                     // Clear the bit as designated timestamp is reported in timestamp_index.
                     column_type = column_type.into_non_designated()?;
                 }
@@ -92,7 +93,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             }
         }
 
-        if timestamp_index == -1 {
+        if timestamp_index.is_none() {
             // There was no designated timestamp flag in the metadata, so let's detect it.
             // First, find the first ASC order column, if it's the same across all row groups.
             let mut asc_column_index = -1_i32;
@@ -124,7 +125,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                                 && column_descr.descriptor.primitive_type.field_info.repetition
                                     == Repetition::Required
                             {
-                                timestamp_index = asc_column_index
+                                timestamp_index = NonMaxU32::new(asc_column_index as u32);
                             }
                         }
                     }
