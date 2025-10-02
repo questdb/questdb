@@ -11,6 +11,7 @@ extern "C" {
 #define com_questdb_std_Zip_gzipHeaderLen 10L
 #undef com_questdb_std_Zip_GZIP_MAGIC
 #define com_questdb_std_Zip_GZIP_MAGIC 35615L
+
 /*
  * Class:     com_questdb_std_Zip
  * Method:    crc32
@@ -66,6 +67,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Zip_inflate
  */
 JNIEXPORT void JNICALL Java_io_questdb_std_Zip_inflateEnd
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Zip
+ * Method:    inflateInitGzip
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_inflateInitGzip
+        (JNIEnv *, jclass);
 
 /*
  * Class:     com_questdb_std_Zip

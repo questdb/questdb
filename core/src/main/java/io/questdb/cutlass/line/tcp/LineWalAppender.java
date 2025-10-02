@@ -45,9 +45,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
@@ -60,17 +60,17 @@ public class LineWalAppender {
     private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final DirectUtf8Sink sink;
-    private final StringSink stringSink;
     private final boolean stringToCharCastAllowed;
+    private final DirectUtf16Sink utf16Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
+    private final DirectUtf8Sink utf8Sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private byte timestampUnit;
 
     public LineWalAppender(
             boolean autoCreateNewColumns,
             boolean stringToCharCastAllowed,
             byte timestampUnit,
-            DirectUtf8Sink sink,
-            StringSink stringSink,
+            DirectUtf8Sink utf8Sink,
+            DirectUtf16Sink utf16Sink,
             int maxFileNameLength
     ) {
         this.autoCreateNewColumns = autoCreateNewColumns;
@@ -79,8 +79,8 @@ public class LineWalAppender {
         this.timestampUnit = timestampUnit;
         this.long256 = new Long256Impl();
         this.decimal256 = new Decimal256();
-        this.sink = sink;
-        this.stringSink = stringSink;
+        this.utf8Sink = utf8Sink;
+        this.utf16Sink = utf16Sink;
     }
 
     public void appendToWal(
@@ -296,9 +296,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -331,9 +331,9 @@ public class LineWalAppender {
                                             DecimalUtil.storeNull(r, columnIndex, colType);
                                             break;
                                         } else {
-                                            stringSink.clear();
-                                            Numbers.append(stringSink, ent.getFloatValue());
-                                            decimal256.ofString(stringSink, precision, scale);
+                                            utf16Sink.clear();
+                                            Numbers.append(utf16Sink, ent.getFloatValue());
+                                            decimal256.ofString(utf16Sink, precision, scale);
                                             DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
                                         }
                                     } else {
@@ -346,9 +346,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getFloatValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getFloatValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -479,9 +479,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    sink.put(ent.getBooleanValue() ? 't' : 'f');
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    utf8Sink.put(ent.getBooleanValue() ? 't' : 'f');
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -504,9 +504,9 @@ public class LineWalAppender {
                                 break;
                             case ColumnType.SYMBOL:
                                 if (ent.isBinaryFormat()) {
-                                    sink.clear();
-                                    Numbers.append(sink, ent.getLongValue());
-                                    r.putSymUtf8(columnIndex, sink);
+                                    utf8Sink.clear();
+                                    Numbers.append(utf8Sink, ent.getLongValue());
+                                    r.putSymUtf8(columnIndex, utf8Sink);
                                 } else {
                                     r.putSymUtf8(columnIndex, ent.getValue());
                                 }
@@ -560,7 +560,7 @@ public class LineWalAppender {
             throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$((Throwable) th).I$();
+                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
             if (r != null) {
                 r.cancel();
             }

@@ -54,6 +54,7 @@ import io.questdb.std.Os;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
@@ -84,14 +85,14 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
-    private final StringSink stringSink = new StringSink(16);
-    private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final long spinLockTimeoutMs;
     private final StringSink[] tableNameSinks;
     private final TableStructureAdapter tableStructureAdapter;
     private final ReadWriteLock tableUpdateDetailsLock = new SimpleReadWriteLock();
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> tableUpdateDetailsUtf16;
     private final Telemetry<TelemetryTask> telemetry;
+    private final DirectUtf16Sink utf16Sink = new DirectUtf16Sink(16);
+    private final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16);
     private final long writerIdleTimeout;
 
     public LineTcpMeasurementScheduler(
@@ -182,8 +183,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     autoCreateNewColumns,
                     configuration.isStringToCharCastAllowed(),
                     configuration.getTimestampUnit(),
-                    sink,
-                    stringSink,
+                    utf8Sink,
+                    utf16Sink,
                     cairoConfiguration.getMaxFileNameLength()
             );
         } catch (Throwable t) {
@@ -215,7 +216,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
         for (int i = 0, n = netIoJobs.length; i < n; i++) {
             netIoJobs[i].close();
         }
-        Misc.free(sink);
+        Misc.free(utf8Sink);
+        Misc.free(utf16Sink);
     }
 
     public boolean doMaintenance(
