@@ -156,7 +156,13 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
         this.pathToTableDir = new Utf8StringSink();
         this.pathToTableDir.put(pathToTableDir);
 
-        symbolMapReader.of(configuration, pathToTableDir, columnName, symbolTableNameTxn, symCount);
+        symbolMapReader.of(
+                configuration,
+                this.pathToTableDir,
+                columnName,
+                symbolTableNameTxn,
+                symCount
+        );
         symbolValueToKeyMap.clear();
     }
 
