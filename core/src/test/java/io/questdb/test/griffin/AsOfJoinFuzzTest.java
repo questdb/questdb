@@ -108,7 +108,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
-                {true, false}, // AVOID_BINARY_SEARCH hint
+                {true, false}, // ASOF_LINEAR_SEARCH hint
         };
 
         final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
@@ -130,7 +130,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
-            boolean avoidBinarySearchHint = (boolean) params[7];
+            boolean linearSearchHint = (boolean) params[7];
 
             String paramsMsg = "joinType=" + joinType +
                     ", numIntervals=" + numIntervals +
@@ -139,12 +139,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ", projectionType=" + projectionType +
                     ", applyOuterProjection = " + applyOuterProjection +
                     ", maxTolerance=" + maxTolerance +
-                    ", avoidBinarySearchHint=" + avoidBinarySearchHint +
+                    ", linearSearchHint=" + linearSearchHint +
                     ", useSymbolIndex=" + symbolIndexCreated;
             LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
                 assertResultSetsMatch0(joinType, numIntervals, limitType, exerciseFilters, projectionType,
-                        applyOuterProjection, maxTolerance, avoidBinarySearchHint, symbolIndexCreated, rnd);
+                        applyOuterProjection, maxTolerance, linearSearchHint, symbolIndexCreated, rnd);
             } catch (Throwable e) {
                 throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
@@ -159,7 +159,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType,
             boolean applyOuterProjection,
             long maxTolerance,
-            boolean avoidBinarySearchHint,
+            boolean linearSearchHint,
             boolean symbolIndexCreated,
             Rnd rnd
     ) throws Exception {
@@ -268,20 +268,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = "";
-        if (avoidBinarySearchHint) {
-            switch (joinType) {
-                case ASOF:
-                case ASOF_NONKEYED:
-                    hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
-                    break;
-                case LT:
-                    // intentional fallthrough
-                case LT_NONKEYED:
-                    hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unexpected join type: " + joinType);
-            }
+        if (linearSearchHint) {
+            hint = " /*+ ASOF_LINEAR_SEARCH(t1 t2) */ ";
         } else if (symbolIndexCreated) {
             hint = " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
         }
@@ -307,7 +295,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         sink.clear();
         printSql("EXPLAIN " + query, false);
-        if (avoidBinarySearchHint) {
+        if (linearSearchHint) {
             TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
