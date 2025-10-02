@@ -46,8 +46,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private final GroupByCharSink sinkA = new GroupByCharSink();
     private final GroupByCharSink sinkB = new GroupByCharSink();
 
-    private int valueIndex;
     private int totalMemoryUsed;
+    private int valueIndex;
 
     public StringAggGroupByFunction(Function arg, int functionPosition, char delimiter, int maxBytes) {
         this.arg = arg;
@@ -71,7 +71,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final var str = arg.getStrA(record);
+        final CharSequence str = arg.getStrA(record);
 
         if (str != null) {
             //Non-null value: initialize a new sink
@@ -94,16 +94,16 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final var str = arg.getStrA(record);
+        final CharSequence str = arg.getStrA(record);
 
         if (str == null) {
             return;
         }
 
-        final var ptr = mapValue.getLong(valueIndex);
-        final var wasNull = mapValue.getBool(valueIndex + 1);
+        final long ptr = mapValue.getLong(valueIndex);
+        final boolean isNull = mapValue.getBool(valueIndex + 1);
 
-        if (wasNull || ptr == 0) {
+        if (isNull || ptr == 0) {
             // First non-null value for this group
             sinkA.of(0);
             sinkA.put(str);
@@ -123,8 +123,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             sinkA.put(str);
 
             int newLen = sinkA.length();
-            int addedChars = newLen - oldLen;
-            totalMemoryUsed += addedChars * 2;
+            int chars = newLen - oldLen;
+            totalMemoryUsed += chars * 2;
             assertSizeCompliance();
 
             mapValue.putLong(valueIndex, sinkA.ptr());
