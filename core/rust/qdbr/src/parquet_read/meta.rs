@@ -74,7 +74,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     column_type = column_type.into_non_designated()?;
                 }
                 columns.push(ColumnMeta {
-                    column_type,
+                    column_type: Some(column_type),
                     id: base_field.id.unwrap_or(-1_i32),
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
@@ -83,7 +83,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             } else {
                 // The column is not supported, Java code will have to skip it.
                 columns.push(ColumnMeta {
-                    column_type: ColumnType::new(ColumnTypeTag::Undefined, 0),
+                    column_type: None,
                     id: -1,
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
@@ -119,11 +119,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                         .columns()
                         .get(asc_column_index as usize)
                     {
-                        if column.column_type.tag() == ColumnTypeTag::Timestamp
-                            && column_descr.descriptor.primitive_type.field_info.repetition
-                                == Repetition::Required
-                        {
-                            timestamp_index = asc_column_index
+                        if let Some(column_type) = column.column_type {
+                            if column_type.tag() == ColumnTypeTag::Timestamp
+                                && column_descr.descriptor.primitive_type.field_info.repetition
+                                    == Repetition::Required
+                            {
+                                timestamp_index = asc_column_index
+                            }
                         }
                     }
                 }
@@ -383,7 +385,8 @@ mod tests {
 
         for (i, col) in meta.columns.iter().enumerate() {
             let (col_type, _, name) = cols[i];
-            assert_eq!(col.column_type, col_type);
+            assert!(col.column_type.is_some());
+            assert_eq!(col.column_type.unwrap(), col_type);
             let actual_name: String = String::from_utf16(&col.name_vec).unwrap();
             assert_eq!(actual_name, name);
         }

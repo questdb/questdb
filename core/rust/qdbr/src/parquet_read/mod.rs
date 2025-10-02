@@ -35,7 +35,7 @@ where
 #[repr(C)]
 #[derive(Debug)]
 pub struct ColumnMeta {
-    pub column_type: ColumnType,
+    pub column_type: Option<ColumnType>, // None (zero) means unsupported column type
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
