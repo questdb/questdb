@@ -2741,13 +2741,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 // note: the self-join is imperfect and might generate false negatives when using subqueries
-                                // rules: 1. when it returns `true` it means that the join is self-join for sure
-                                //        2. when it returns `false` it means that the join may or may not be self-join
+                                // rules: 1. when it returns `true`, the join is a self-join for sure
+                                //        2. when it returns `false`, the join may or may not be self-join
                                 boolean selfJoin = isSameTable(master, slave);
                                 processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean hasAvoidBinaryHint = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 boolean hasIndexHint = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
                                 boolean hasLinearHint = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 boolean hasMemoizedHint = SqlHints.hasAsofMemoizedSearchHint(model, masterAlias, slaveModel.getName());
@@ -2770,7 +2769,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeTimestampAsNanosA
                                         );
                                         boolean created = false;
-                                        if (!hasAvoidBinaryHint && !hasLinearHint) {
+                                        if (!hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 AsofJoinColumnAccessHelper columnAccessHelper = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
@@ -2817,9 +2816,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     );
                                                 }
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
 
@@ -2851,9 +2848,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.isProjection()) {
+                                            } else if (slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
                                                 // Projections forward this call to its base factory and if we are in this branch
@@ -2912,8 +2907,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     } else {
                                         boolean created = false;
-                                        if (!hasAvoidBinaryHint) {
-                                            // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
+                                        if (!hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
@@ -2924,19 +2918,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            // if we have a hint, we can try to steal the filter from the slave.
-                                            // this downgrades to single-threaded Java-level filtering, so it's only worth it if
-                                            // the filter selectivity is low. we don't have statistics to tell selectivity, so
-                                            // we rely on the user to provide an explicit hint.
-                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                // Try to steal the filter from the slave. This downgrades to
+                                                // single-threaded Java-level filtering, so it's only worth it if the filter
+                                                // selectivity is low. We don't have statistics to tell selectivity, so
+                                                // we allow the user to disable this with the asof_linear_search hint.
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
 
                                                 // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter, then it must have the same metadata as its base,
-                                                // that includes the timestamp index.
+                                                // If slave is just a filter, it must have the same metadata as its base,
+                                                // which includes the timestamp index.
                                                 assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
 
                                                 Function stolenFilter = slave.getFilter();
@@ -2960,17 +2952,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asOfToleranceInterval
                                                 );
                                                 created = true;
-                                            }
-
-                                            if (!created && slave.isProjection()) {
+                                            } else if (slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
-                                                // Projections forward this call to its base factory and if we are in this branch
-                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // projections forward this call to its base factory, and if we are in this branch,
+                                                // slave.supportsTimeFrameCursor() returned false in a previous branch.
                                                 // There is still chance that projectionBase is just a filter
-                                                // and its own base supports timeFrameCursor. let's see.
+                                                // and its own base supports timeFrameCursor. Let's see.
                                                 if (projectionBase.supportsFilterStealing()) {
-                                                    // ok, cool, is used only as a filter.
+                                                    // ok, cool, it's used only as a filter
                                                     RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                                                     if (filterStealingBase.supportsTimeFrameCursor()) {
                                                         IntList stolenCrossIndex = slave.getColumnCrossIndex();
@@ -3005,7 +2995,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         }
 
-                                        // slow path: this always works, but can be quite slow, especially with large slave tables
+                                        // slow path: this always works but can be quite slow, especially with large slave tables
                                         if (!created) {
                                             master = new AsOfJoinLightNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -3038,7 +3028,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
                                 boolean ltLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
@@ -3068,7 +3057,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 ltToleranceInterval
                                         );
                                     } else {
-                                        if (!ltAvoidBinarySearch && !ltLinearSearch && slave.supportsTimeFrameCursor()) {
+                                        if (!ltLinearSearch && slave.supportsTimeFrameCursor()) {
                                             master = new LtJoinNoKeyFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
