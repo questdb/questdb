@@ -70,7 +70,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     };
     private static final ThreadLocal<DirectArray> tlArray = new ThreadLocal<>(() -> {
         DirectArray array = new DirectArray();
-        AbstractTest.CLOSEABLES.add(array);
+        AbstractTest.CLOSEABLE.add(array);
         return array;
     });
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);

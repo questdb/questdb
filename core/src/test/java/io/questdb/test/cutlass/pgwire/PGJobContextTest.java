@@ -2241,28 +2241,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableInVarArg() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2516,6 +2494,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableIsNull() throws Exception {
@@ -7614,6 +7614,115 @@ nodejs code:
                 StringSink sink = new StringSink();
                 ResultSet result = s.executeQuery();
                 assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
+            }
+        });
+    }
+
+    @Test
+    public void testPlanWithIndexAndBindingVariables() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            // columns:
+            // hc = high-cardinality column - must be preferred for index-scans
+            // lc = low-cardinality column
+            execute("CREATE TABLE 'idx' ( " +
+                    "hc SYMBOL CAPACITY 256 INDEX," +
+                    "lc SYMBOL CAPACITY 256 INDEX," +
+                    "ts TIMESTAMP " +
+                    ") timestamp(ts) PARTITION BY DAY BYPASS WAL");
+            execute("insert into idx select concat('hc', x%10) as hc, concat('lc', x%2) as lc, x::timestamp from long_sequence(100);");
+
+            try (PreparedStatement ps = connection.prepareStatement("explain\n" +
+                    "select * from idx\n" +
+                    "where hc in (?, ?) and lc in (?, ?)\n" +
+                    "and ts >= '1970-01-01T00:00:00.000077Z' and ts <= '1970-01-01T00:00:00.279828Z'\n" +
+                    "order by ts asc;\n")) {
+                ps.setString(1, "hc_1");
+                ps.setString(2, "hc_2");
+                ps.setString(3, "lc_1");
+                ps.setString(4, "lc_2");
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet("QUERY PLAN[VARCHAR]\n" +
+                            "FilterOnValues\n" +
+                            "    Table-order scan\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$0::string\n" +
+                            "          filter: lc in [$2::string,$3::string]\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$1::string\n" +
+                            "          filter: lc in [$2::string,$3::string]\n" +
+                            "    Interval forward scan on: idx\n" +
+                            "      intervals: [(\"1970-01-01T00:00:00.000077Z\",\"1970-01-01T00:00:00.279828Z\")]\n", new StringSink(), rs);
+                }
+            }
+
+            // swap the order of the predicates - the plan must still do index-scan on the high-cardinality column
+            try (PreparedStatement ps = connection.prepareStatement("explain\n" +
+                    "select * from idx\n" +
+                    "where lc in (?, ?) and hc in (?, ?)\n" +
+                    "and ts >= '1970-01-01T00:00:00.000077Z' and ts <= '1970-01-01T00:00:00.279828Z'\n" +
+                    "order by ts asc;\n")) {
+                ps.setString(1, "lc_1");
+                ps.setString(2, "lc_2");
+                ps.setString(3, "hc_1");
+                ps.setString(4, "hc_2");
+
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet("QUERY PLAN[VARCHAR]\n" +
+                            "FilterOnValues\n" +
+                            "    Table-order scan\n" +
+                            "        Index forward scan on: hc deferred: true\n" + // still scanning on the high-cardinality column
+                            "          symbolFilter: hc=$2::string\n" +
+                            "          filter: lc in [$0::string,$1::string]\n" +
+                            "        Index forward scan on: hc deferred: true\n" +
+                            "          symbolFilter: hc=$3::string\n" +
+                            "          filter: lc in [$0::string,$1::string]\n" +
+                            "    Interval forward scan on: idx\n" +
+                            "      intervals: [(\"1970-01-01T00:00:00.000077Z\",\"1970-01-01T00:00:00.279828Z\")]\n", new StringSink(), rs);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPlanWithIndexAndSingleBindingVariable() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            execute(
+                    "CREATE TABLE x ( " +
+                            "hc SYMBOL INDEX," +
+                            "lc SYMBOL INDEX," +
+                            "ts TIMESTAMP " +
+                            ") timestamp(ts) PARTITION BY DAY BYPASS WAL"
+            );
+            execute("insert into x select concat('sym', x%20), concat('sym', x%10), x::timestamp from long_sequence(100);");
+
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "explain\n" +
+                            "select * from x\n" +
+                            "where hc in (?) and lc in ('sym0')\n" +
+                            "and ts >= '1970-01-01T00:00:00.000077Z' and ts <= '1970-01-01T00:00:00.279828Z'\n" +
+                            "order by ts asc;\n"
+            )) {
+                ps.setString(1, "sym0");
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "QUERY PLAN[VARCHAR]\n" +
+                                    "PageFrame\n" +
+                                    "    Index forward scan on: hc deferred: true\n" + // verify we are scanning on the high-cardinality column
+                                    "      symbolFilter: hc=$0::string\n" +
+                                    "      filter: lc in [sym0]\n" +
+                                    "    Interval forward scan on: x\n" +
+                                    "      intervals: [(\"1970-01-01T00:00:00.000077Z\",\"1970-01-01T00:00:00.279828Z\")]\n",
+                            sink,
+                            rs
+                    );
+                }
             }
         });
     }
