@@ -311,7 +311,7 @@ public class SerialParquetExporter implements Closeable {
                     statusReporter.report(phase, CopyExportRequestTask.Status.FAILED, task, null, Numbers.INT_NULL, null, 0);
                 }
             }
-            if (exportResult == null) {
+            if (exportResult == null || numOfFiles == 0) {
                 cleanupDir(ff, tempPath, tempBaseDirLen);
             }
         }
