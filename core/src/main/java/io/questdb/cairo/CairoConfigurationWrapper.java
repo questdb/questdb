@@ -1395,11 +1395,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean useFastAsOfJoin() {
-        return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
     public boolean useWithinLatestByOptimisation() {
         return getDelegate().useWithinLatestByOptimisation();
     }

@@ -1411,11 +1411,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean useFastAsOfJoin() {
-        return true;
-    }
-
-    @Override
     public boolean useWithinLatestByOptimisation() {
         return false;
     }
