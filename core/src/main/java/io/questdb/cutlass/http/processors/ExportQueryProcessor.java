@@ -486,17 +486,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var selectText = state.query;
                 var fileName = state.fileName;
                 var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
-                var executionContext = sqlExecutionContext;
-                var partitionBy = state.getCopyModel().getPartitionBy();
-                var model = state.getCopyModel();
-                var compressionCodec = model.getCompressionCodec();
-                var compressionLevel = model.getCompressionLevel();
-                var rowGroupSize = model.getRowGroupSize();
-                var dataPageSize = model.getDataPageSize();
-                var statisticsEnabled = model.isStatisticsEnabled();
-                var parquetVersion = model.getParquetVersion();
-                var rawArrayEncoding = model.isRawArrayEncoding();
-                var userSpecifiedExportOptions = model.isUserSpecifiedExportOptions();
                 var copyContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
 
@@ -505,14 +494,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 exportResult.setCopyID(copyID);
 
                 var sink = Misc.getThreadLocalSink();
-                sink.put("sys._parquet_");
+                sink.put(engine.getConfiguration().getParquetExportTableNamePrefix());
                 Numbers.appendHex(sink, copyID, true);
                 String tableName = sink.toString();
 
                 var createOp = copyContext.validateAndCreateTableOp(
-                        executionContext,
+                        sqlExecutionContext,
                         selectText,
-                        partitionBy,
+                        state.getCopyModel().getPartitionBy(),
                         tableName,
                         "",
                         0
@@ -524,14 +513,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         exportResult,
                         tableName,
                         fileName,
-                        compressionCodec,
-                        compressionLevel,
-                        rowGroupSize,
-                        dataPageSize,
-                        statisticsEnabled,
-                        parquetVersion,
-                        rawArrayEncoding,
-                        userSpecifiedExportOptions
+                        state.getCopyModel().getCompressionCodec(),
+                        state.getCopyModel().getCompressionLevel(),
+                        state.getCopyModel().getRowGroupSize(),
+                        state.getCopyModel().getDataPageSize(),
+                        state.getCopyModel().isStatisticsEnabled(),
+                        state.getCopyModel().getParquetVersion(),
+                        state.getCopyModel().isRawArrayEncoding(),
+                        state.getCopyModel().isUserSpecifiedExportOptions()
                 );
 
                 parquetExporter.of(task, sqlExecutionCircuitBreaker);

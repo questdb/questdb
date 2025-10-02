@@ -622,6 +622,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return getDelegate().getParquetExportTableNamePrefix();
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return getDelegate().getPartitionEncoderParquetCompressionCodec();
     }

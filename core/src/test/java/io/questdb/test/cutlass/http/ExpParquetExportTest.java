@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -42,6 +43,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertSql;
 
@@ -79,7 +83,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
-                    testHttpClient.assertGetParquet("/exp", 1290, "basic_parquet_test");
+                    testHttpClient.assertGetParquet("/exp", 1294, "basic_parquet_test");
                 });
     }
 
@@ -92,6 +96,220 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "PAR1\u0015\u0000\u0015",
                             "generate_series(0, '1971-01-01', '5s');"
                     );
+                });
+    }
+
+    @Test
+    public void testConcurrentParquetExports() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create test table
+                    engine.execute("CREATE TABLE concurrent_export_test AS (" +
+                            "SELECT x as id, 'data_' || x as content, x * 1.5 as value " +
+                            "FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext);
+
+                    int threadCount = 15;
+                    CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    AtomicInteger successCount = new AtomicInteger(0);
+                    AtomicInteger errorCount = new AtomicInteger(0);
+                    Thread[] threads = new Thread[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", "SELECT * FROM concurrent_export_test limit " + (10 * (threadId + 1)))
+                                        .query("fmt", "parquet")
+                                        .query("filename", "concurrent_test_" + threadId);
+                                try (var respHeaders = req.send()) {
+                                    respHeaders.await();
+                                    TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                }
+                                successCount.incrementAndGet();
+                            } catch (Exception e) {
+                                errorCount.incrementAndGet();
+                                e.printStackTrace();
+                            } finally {
+                                client = Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected all concurrent exports to succeed", threadCount, successCount.get());
+                    Assert.assertEquals("Expected no errors", 0, errorCount.get());
+                });
+    }
+
+    @Test
+    public void testConcurrentParquetExportsLargeData() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create larger test table
+                    engine.execute("CREATE TABLE concurrent_large_test AS (" +
+                            "SELECT x as id, 'data_string_' || x as content, x * 2.5 as value, " +
+                            "timestamp_sequence(0, 100000L) as ts " +
+                            "FROM long_sequence(5000)" +
+                            ")", sqlExecutionContext);
+
+                    int threadCount = 4;
+                    CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    AtomicInteger successCount = new AtomicInteger(0);
+                    Thread[] threads = new Thread[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", "SELECT * FROM concurrent_large_test")
+                                        .query("fmt", "parquet")
+                                        .query("compression_codec", "gzip")
+                                        .query("row_group_size", "1000")
+                                        .query("filename", "concurrent_large_" + threadId);
+                                req.send();
+                                client.getResponseHeaders();
+                                successCount.incrementAndGet();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected all concurrent large exports to succeed",
+                            threadCount, successCount.get());
+                });
+    }
+
+    @Test
+    public void testConcurrentParquetExportsWithCancel() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    int threadCount = 3;
+                    CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    AtomicInteger completedCount = new AtomicInteger(0);
+                    Thread[] threads = new Thread[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", "generate_series(0, '9999-01-01', '1U')")
+                                        .query("fmt", "parquet")
+                                        .query("filename", "concurrent_cancel_" + threadId)
+                                        .query("row_group_size", "1000");
+                                req.send();
+
+                                // Let the export start
+                                Os.sleep(100);
+
+                                completedCount.incrementAndGet();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    // Wait for all exports to be cancelled
+                    int maxWait = 100;
+                    for (int i = 0; i < maxWait; i++) {
+                        if (engine.getCopyExportContext().getActiveExportId() == -1) {
+                            break;
+                        }
+                        Os.sleep(100);
+                    }
+
+                    Assert.assertEquals("Expected all threads to complete", threadCount, completedCount.get());
+                    Assert.assertEquals("Expected no active exports after cancellation",
+                            -1, engine.getCopyExportContext().getActiveExportId());
+                });
+    }
+
+    @Test
+    public void testConcurrentParquetExportsWithDifferentCompression() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    // Create test table
+                    engine.execute("CREATE TABLE concurrent_compression_test AS (" +
+                            "SELECT x as id, 'data_' || x as content " +
+                            "FROM long_sequence(500)" +
+                            ")", sqlExecutionContext);
+
+                    String[] codecs = {"gzip", "snappy", "uncompressed", "zstd"};
+                    int threadCount = codecs.length;
+                    CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    AtomicInteger successCount = new AtomicInteger(0);
+                    Thread[] threads = new Thread[threadCount];
+
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        final String codec = codecs[i];
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", "SELECT * FROM concurrent_compression_test")
+                                        .query("fmt", "parquet")
+                                        .query("compression_codec", codec)
+                                        .query("filename", "concurrent_codec_" + threadId);
+                                req.send();
+                                client.getResponseHeaders();
+                                successCount.incrementAndGet();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected all concurrent exports with different codecs to succeed",
+                            threadCount, successCount.get());
                 });
     }
 
@@ -199,7 +417,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 610, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 614, params, "test_table");
                 });
     }
 
@@ -281,16 +499,16 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "lz4_raw");
-                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 407, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "lzo");
-                    testHttpClient.assertGetParquet("/exp", 280, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 284, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "lz4");
-                    testHttpClient.assertGetParquet("/exp", 280, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 284, params, "SELECT * FROM codec_zstd_test");
 
                     params.put("compression_codec", "brotli");
-                    testHttpClient.assertGetParquet("/exp", 414, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 418, params, "SELECT * FROM codec_zstd_test");
                 });
     }
 
@@ -315,7 +533,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "snappy");
-                    testHttpClient.assertGetParquet("/exp", 404, params, "SELECT * FROM codec_snappy_test");
+                    testHttpClient.assertGetParquet("/exp", 408, params, "SELECT * FROM codec_snappy_test");
                 });
     }
 
@@ -328,7 +546,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM codec_uncompressed_test");
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "uncompressed");
-                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM codec_uncompressed_test");
+                    testHttpClient.assertGetParquet("/exp", 414, params, "SELECT * FROM codec_uncompressed_test");
                 });
     }
 
@@ -340,7 +558,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "zstd");
-                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGetParquet("/exp", 407, params, "SELECT * FROM codec_zstd_test");
                 });
     }
 
@@ -369,15 +587,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "gzip");
                     params.put("compression_level", "3");
-                    testHttpClient.assertGetParquet("/exp", 404, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 408, params, "SELECT * FROM level_valid_test");
 
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "5");
-                    testHttpClient.assertGetParquet("/exp", 409, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 413, params, "SELECT * FROM level_valid_test");
 
                     params.put("compression_codec", "zstd");
                     params.put("compression_level", "15");
-                    testHttpClient.assertGetParquet("/exp", 403, params, "SELECT * FROM level_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 407, params, "SELECT * FROM level_valid_test");
                 });
     }
 
@@ -405,9 +623,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("data_page_size", "1024");
-                    testHttpClient.assertGetParquet("/exp", 44753, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44757, params, "SELECT * FROM page_size_valid_test");
                     params.put("data_page_size", "2048");
-                    testHttpClient.assertGetParquet("/exp", 43152, params, "SELECT * FROM page_size_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 43156, params, "SELECT * FROM page_size_valid_test");
                 });
     }
 
@@ -439,7 +657,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("filename", "large_export_test");
-                    testHttpClient.assertGetParquet("/exp", 1879533, params, "SELECT * FROM large_export_test");
+                    testHttpClient.assertGetParquet("/exp", 1879537, params, "SELECT * FROM large_export_test");
                 });
     }
 
@@ -506,9 +724,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("fmt", "parquet");
                     params.put("parquet_version", "1");
-                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM version_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 414, params, "SELECT * FROM version_valid_test");
                     params.put("parquet_version", "2");
-                    testHttpClient.assertGetParquet("/exp", 411, params, "SELECT * FROM version_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 415, params, "SELECT * FROM version_valid_test");
                 });
     }
 
@@ -576,10 +794,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM row_group_valid_test");
                     params.put("fmt", "parquet");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 44753, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44757, params, "SELECT * FROM row_group_valid_test");
 
                     params.put("row_group_size", "5000");
-                    testHttpClient.assertGetParquet("/exp", 44129, params, "SELECT * FROM row_group_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 44133, params, "SELECT * FROM row_group_valid_test");
                 });
     }
 
@@ -592,10 +810,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("statistics_enabled", "true");
-                    testHttpClient.assertGetParquet("/exp", 410, params, "SELECT * FROM statistics_test");
+                    testHttpClient.assertGetParquet("/exp", 414, params, "SELECT * FROM statistics_test");
 
                     params.put("statistics_enabled", "false");
-                    testHttpClient.assertGetParquet("/exp", 295, params, "SELECT * FROM statistics_test");
+                    testHttpClient.assertGetParquet("/exp", 299, params, "SELECT * FROM statistics_test");
                 });
     }
 
@@ -630,7 +848,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 2003, tableName);
+                    testHttpClient.assertGetParquet("/exp", 2007, tableName);
                 });
     }
 }
