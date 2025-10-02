@@ -67,13 +67,13 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
 
         // The first symbol should have significantly more occurrences
         assertSql("""
-                testCol\tcnt
-                A\t666
-                B\t185
-                C\t76
-                D\t49
-                E\t24
-                """,
+                        testCol\tcnt
+                        A\t666
+                        B\t185
+                        C\t76
+                        D\t49
+                        E\t24
+                        """,
                 "select testCol, count() as cnt from abc order by 1"
         );
     }
