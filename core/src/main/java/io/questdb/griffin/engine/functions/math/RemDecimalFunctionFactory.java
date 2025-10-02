@@ -60,17 +60,18 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
                 Math.max(ColumnType.getDecimalPrecision(leftType) - leftScale, ColumnType.getDecimalPrecision(rightType) - rightScale) + scale,
                 Decimals.MAX_PRECISION
         );
+        final int type = ColumnType.getDecimalType(precision, scale);
 
-        switch (Decimals.getStorageSizePow2(precision)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale), position);
-            case 4:
-                return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+                return new Decimal64Func(left, right, type, position);
+            case ColumnType.DECIMAL128:
+                return new Decimal128Func(left, right, type, position);
             default:
-                return new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+                return new Decimal256Func(left, right, type, position);
         }
     }
 

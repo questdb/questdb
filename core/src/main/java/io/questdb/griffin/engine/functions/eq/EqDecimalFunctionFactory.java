@@ -85,16 +85,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         final int rightScale = ColumnType.getDecimalScale(rightType);
 
         if (leftPrecision == rightPrecision && leftScale == rightScale) {
-            switch (Decimals.getStorageSizePow2(leftPrecision)) {
-                case 0:
+            switch (ColumnType.tagOf(leftType)) {
+                case ColumnType.DECIMAL8:
                     return new UnscaledDecimal8Func(left, right);
-                case 1:
+                case ColumnType.DECIMAL16:
                     return new UnscaledDecimal16Func(left, right);
-                case 2:
+                case ColumnType.DECIMAL32:
                     return new UnscaledDecimal32Func(left, right);
-                case 3:
+                case ColumnType.DECIMAL64:
                     return new UnscaledDecimal64Func(left, right);
-                case 4:
+                case ColumnType.DECIMAL128:
                     return new UnscaledDecimal128Func(left, right);
                 default:
                     return new UnscaledDecimal256Func(left, right);
