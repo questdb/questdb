@@ -386,6 +386,20 @@ public class PGDecimalsTest extends BasePGTest {
         assertNull(64, 32);
     }
 
+    @Test
+    public void testNullBothWays() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (var select = connection.prepareStatement("select cast(? as decimal(15, 3))")) {
+                select.setBigDecimal(1, null);
+                try (var resultSet = select.executeQuery()) {
+                    Assert.assertTrue(resultSet.next());
+                    var bigDecimal = resultSet.getBigDecimal(1);
+                    Assert.assertNull(bigDecimal);
+                }
+            }
+        });
+    }
+
     // Test scientific notation numbers converted to decimal
     @Test
     public void testScientificNotationValues() throws Exception {
