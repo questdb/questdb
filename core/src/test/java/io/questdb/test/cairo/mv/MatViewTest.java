@@ -1235,18 +1235,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "asof join (select * from prices where valid) prices\n" +
                     "sample by 1d\n" +
                     ");";
-            final String mvWithUseHint = "create materialized view daily_summary \n" +
-                    "WITH BASE trades\n" +
-                    "as (\n" +
-                    "select /*+ USE_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
-                    "FROM trades\n" +
-                    "asof join (select * from prices where valid) prices\n" +
-                    "sample by 1d\n" +
-                    ");";
             final String mvWithAvoidHint = "create materialized view daily_summary \n" +
                     "WITH BASE trades\n" +
                     "as (\n" +
-                    "select /*+ AVOID_ASOF_BINARY_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
+                    "select /*+ ASOF_LINEAR_SEARCH(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)\n" +
                     "FROM trades\n" +
                     "asof join (select * from prices where valid) prices\n" +
                     "sample by 1d\n" +
@@ -1262,11 +1254,6 @@ public class MatViewTest extends AbstractCairoTest {
             printSql("EXPLAIN " + mvWithAvoidHint);
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Fast Scan");
-
-            // use hint -> does use binary search
-            sink.clear();
-            printSql("EXPLAIN " + mvWithUseHint);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
 
             // ok, now the real data: first try the view without the hint
             execute(mvWithoutHint);
