@@ -376,6 +376,16 @@ public class PGDecimalsTest extends BasePGTest {
         assertDecimalConversion("12345678901234567890.123456789", 30, 9);
     }
 
+    @Test
+    public void testNull() throws Exception {
+        assertNull(2, 1);
+        assertNull(4, 2);
+        assertNull(8, 4);
+        assertNull(16, 8);
+        assertNull(32, 16);
+        assertNull(64, 32);
+    }
+
     // Test scientific notation numbers converted to decimal
     @Test
     public void testScientificNotationValues() throws Exception {
@@ -412,6 +422,18 @@ public class PGDecimalsTest extends BasePGTest {
                     Assert.assertTrue(resultSet.next());
                     var bigDecimal = resultSet.getBigDecimal(1);
                     Assert.assertEquals(decimal256, Decimal256.fromBigDecimal(bigDecimal));
+                }
+            }
+        });
+    }
+
+    private void assertNull(int precision, int scale) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (var select = connection.prepareStatement(String.format("select cast(null as decimal(%d, %d))", precision, scale))) {
+                try (var resultSet = select.executeQuery()) {
+                    Assert.assertTrue(resultSet.next());
+                    var bigDecimal = resultSet.getBigDecimal(1);
+                    Assert.assertNull(bigDecimal);
                 }
             }
         });

@@ -1834,6 +1834,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColBinDecimal(PGResponseSink utf8Sink, Decimal256 decimal256, int type) {
+        if (decimal256.isNull()) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
         final int precision = ColumnType.getDecimalPrecision(type);
         final int scale = ColumnType.getDecimalScale(type);
 
@@ -2965,18 +2970,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             BindVariableService bindVariableService,
             int type
     ) throws PGMessageProcessingException, SqlException {
+        assert valueSize >= 4 * Short.BYTES;
+
         // Based on https://github.com/postgres/postgres/blob/4246a977bad6e76c4276a0d52def8a3dced154bb/src/backend/utils/adt/numeric.c#L1142-L1165
         // Postgres binary format serialize decimals into an array of unsigned 4 digits (stored in 16-bit) integers.
         // Each array member encode the digit between 10^x and 10^(x+3), x being a multiple of 4. For example, 12.34 must
         // be encoded as an array of 2 shorts: [12, 3400].
-
-        if (valueSize < 4 * Short.BYTES) {
-            throw kaput()
-                    .put("bad parameter value length [sizeMinimumRequired=8")
-                    .put(", sizeActual=").put(valueSize)
-                    .put(", variableIndex=").put(variableIndex)
-                    .put(']');
-        }
 
         short ndigits = getShortUnsafe(valueAddr);
         short weight = getShortUnsafe(valueAddr + Short.BYTES);
@@ -2988,6 +2987,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         final int scale = ColumnType.getDecimalScale(type);
         var decimal = executionContext.getDecimal256();
         decimal.of(0, 0, 0, 0, scale);
+
+        if (sign != NUMERIC_POS && sign != NUMERIC_NEG) {
+            return;
+        }
 
         // The client sends the digits as block of 4 digits, we cannot go beyond this decimal precision or scale.
         int appliedWeight = (weight + 1) * 4 + scale;
