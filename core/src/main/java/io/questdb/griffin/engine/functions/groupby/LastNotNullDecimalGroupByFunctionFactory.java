@@ -154,10 +154,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long hh = mapValue.getDecimal256HH(valueIndex + 1);
-            final long hl = mapValue.getDecimal256HL(valueIndex + 1);
-            final long lh = mapValue.getDecimal256LH(valueIndex + 1);
-            final long ll = mapValue.getDecimal256LL(valueIndex + 1);
+            final long hh = arg.getDecimal256HH(record);
+            final long hl = arg.getDecimal256HL(record);
+            final long lh = arg.getDecimal256LH(record);
+            final long ll = arg.getDecimal256LL(record);
             if (!Decimal256.isNull(hh, hl, lh, ll)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putDecimal256(valueIndex + 1, hh, hl, lh, ll);
@@ -194,7 +194,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final int value = mapValue.getDecimal32(valueIndex + 1);
+            final int value = arg.getDecimal32(record);
             if (value != Decimals.DECIMAL32_NULL) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putInt(valueIndex + 1, value);
@@ -228,7 +228,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long value = mapValue.getDecimal64(valueIndex + 1);
+            final long value = arg.getDecimal64(record);
             if (!Decimal64.isNull(value)) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putLong(valueIndex + 1, value);
@@ -262,7 +262,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final byte value = mapValue.getDecimal8(valueIndex + 1);
+            final byte value = arg.getDecimal8(record);
             if (value != Decimals.DECIMAL8_NULL) {
                 mapValue.putLong(valueIndex, rowId);
                 mapValue.putByte(valueIndex + 1, value);
