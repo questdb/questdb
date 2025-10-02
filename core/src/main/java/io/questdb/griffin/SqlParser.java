@@ -881,10 +881,6 @@ public class SqlParser {
         }
 
         if (isToKeyword(tok)) {
-            if (Chars.isBlank(configuration.getSqlCopyExportRoot())) {
-                throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.export.root' is not set?]");
-            }
-
             tok = optTok(lexer);
             model.setType(CopyModel.COPY_TYPE_TO);
             if (tok == null || isSemicolon(tok)) {

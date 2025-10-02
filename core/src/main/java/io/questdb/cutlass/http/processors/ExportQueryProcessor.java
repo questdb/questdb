@@ -699,8 +699,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state.copyID == null) {
             state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
             CopyExportFactory factory = new CopyExportFactory(
-                    engine.getMessageBus(),
-                    engine.getCopyExportContext(),
+                    engine,
                     state.getCopyModel(),
                     state.getExportResult(),
                     context.getSecurityContext(),

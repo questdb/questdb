@@ -2306,7 +2306,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
 
-        if (configuration.getSqlCopyExportRoot() != null) {
+        if (configuration.getSqlCopyExportRoot() != null && !configuration.isReadOnlyInstance()) {
             try {
                 _export = query()
                         .$("select * from '")
@@ -2371,8 +2371,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         model.validCompressOptions();
         return new CopyExportFactory(
-                messageBus,
-                engine.getCopyExportContext(),
+                engine,
                 model,
                 securityContext,
                 sqlText

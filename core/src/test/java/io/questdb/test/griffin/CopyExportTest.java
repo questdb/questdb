@@ -1637,6 +1637,18 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testExportDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "");
+            assertException(
+                    "copy test_table to 'output' with format parquet",
+                    0,
+                    "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]"
+            );
+        });
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch latch, int workerId) {
         return new Thread(() -> {
             try {

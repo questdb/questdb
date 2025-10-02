@@ -372,8 +372,8 @@ public class ServerMain implements Closeable {
                         }
                     }
 
-                    // export
-                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot())) {
+                    // export - current export implementation requires creating temporary table, can only enable on the primary instance
+                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot()) && !isReadOnly) {
                         int workerCount = config.getExportPoolConfiguration().getWorkerCount();
                         if (workerCount > 0) {
                             WorkerPool exportWorkerPool = getWorkerPool(

@@ -54,6 +54,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.network.SuspendEvent;
+import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -75,9 +76,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
     private int compressionCodec;
     private int compressionLevel;
-    private CopyExportContext copyContext;
     private CopyExportResult copyExportResult;
     private int dataPageSize;
+    private CopyExportContext exportContext;
     private String fileName;
     private MessageBus messageBus;
     private int parquetVersion;
@@ -96,19 +97,17 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean userSpecifiedExportOptions;
 
     public CopyExportFactory(
-            MessageBus messageBus,
-            CopyExportContext exportContext,
+            CairoEngine engine,
             CopyModel model,
             SecurityContext securityContext,
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
-        this.of(messageBus, exportContext, model, null, securityContext, sqlText, null);
+        this.of(engine, model, null, securityContext, sqlText, null);
     }
 
     public CopyExportFactory(
-            MessageBus messageBus,
-            CopyExportContext exportContext,
+            CairoEngine engine,
             CopyModel model,
             CopyExportResult copyExportResult,
             SecurityContext securityContext,
@@ -118,12 +117,12 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     ) throws SqlException {
         super(METADATA);
         this.suspendEvent = suspendEvent;
-        this.of(messageBus, exportContext, model, copyExportResult, securityContext, sqlText, circuitBreaker);
+        this.of(engine, model, copyExportResult, securityContext, sqlText, circuitBreaker);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText, this.fileName, sqlExecutionCircuitBreaker);
+        CopyExportContext.ExportTaskEntry entry = exportContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText, this.fileName, sqlExecutionCircuitBreaker);
         long copyID = entry.getId();
         try {
             CreateTableOperationImpl createOp = null;
@@ -186,8 +185,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     rawArrayEncoding,
                     userSpecifiedExportOptions
             );
-            if (copyContext.getReporter() != null) {
-                copyContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
+            if (exportContext.getReporter() != null) {
+                exportContext.getReporter().report(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
             }
             cursor.toTop();
             copyRequestPubSeq.done(processingCursor);
@@ -217,15 +216,22 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
-    private void of(MessageBus messageBus,
-                    CopyExportContext exportContext,
+    private void of(CairoEngine engine,
                     CopyModel model,
                     CopyExportResult result,
                     SecurityContext securityContext,
                     CharSequence sqlText,
                     SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        this.messageBus = messageBus;
-        this.copyContext = exportContext;
+        if (engine.getConfiguration().isReadOnlyInstance()) {
+            throw SqlException.$(0, "COPY TO is not supported on read-only instance");
+        }
+
+        if (Chars.isBlank(engine.getConfiguration().getSqlCopyExportRoot())) {
+            throw SqlException.$(0, "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
+        }
+
+        this.messageBus = engine.getMessageBus();
+        this.exportContext = engine.getCopyExportContext();
         if (model.getTableName() != null) {
             this.tableName = unquote(model.getTableName()).toString();
             this.tableOrSelectTextPos = model.getTableNameExpr().position;
