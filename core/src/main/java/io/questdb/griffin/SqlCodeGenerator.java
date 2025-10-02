@@ -2747,9 +2747,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfIndexSearch = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasAvoidBinaryHint = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasIndexHint = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasLinearHint = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasMemoizedHint = SqlHints.hasAsofMemoizedSearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2769,7 +2770,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeTimestampAsNanosA
                                         );
                                         boolean created = false;
-                                        if (!asOfAvoidBinarySearch && !asOfLinearSearch) {
+                                        if (!hasAvoidBinaryHint && !hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 AsofJoinColumnAccessHelper columnAccessHelper = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
@@ -2777,7 +2778,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
                                                 JoinContext slaveContext = slaveModel.getJoinContext();
-                                                if (isOptimizable && asOfIndexSearch && isSingleSymbolJoinWithIndex(slaveMetadata)) {
+                                                if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
                                                             metadata,
@@ -2789,7 +2790,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
-                                                } else if (isOptimizable && isSingleSymbolJoin(slaveMetadata)) {
+                                                } else if (isOptimizable && hasMemoizedHint && isSingleSymbolJoin(slaveMetadata)) {
                                                     master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
                                                             metadata,
@@ -2911,7 +2912,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
                                     } else {
                                         boolean created = false;
-                                        if (!asOfAvoidBinarySearch) {
+                                        if (!hasAvoidBinaryHint) {
                                             // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint
                                             if (slave.supportsTimeFrameCursor()) {
                                                 master = new AsOfJoinNoKeyFastRecordCursorFactory(

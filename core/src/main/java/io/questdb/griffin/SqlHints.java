@@ -38,6 +38,7 @@ public final class SqlHints {
     @Deprecated(forRemoval = true)
     public static final String ASOF_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_asof_binary_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
+    public static final String ASOF_MEMOIZED_SEARCH_HINT = "asof_memoized_search";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     /**
      * Deprecated for removal, in favor of `asof_linear_search`.
@@ -58,6 +59,14 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsofMemoizedSearchHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_MEMOIZED_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     /**
