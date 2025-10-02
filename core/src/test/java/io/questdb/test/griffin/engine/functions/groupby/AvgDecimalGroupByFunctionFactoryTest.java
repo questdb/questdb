@@ -32,6 +32,40 @@ public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAvg() throws Exception {
         assertQuery(
+                "a8\ta16\ta32\ta64\ta128\ta256\n" +
+                        "0\t1.0\t1.5\t4.50\t49.500\t50.500000\n",
+                "select avg(d8) a8, avg(d16) a16, avg(d32) a32, avg(d64) a64, avg(d128) a128, avg(d256) a256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAvgAllNull() throws Exception {
+        assertQuery(
+                "avg\n\n",
+                "select avg(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAvgKeyed() throws Exception {
+        assertQuery(
                 "key\ta8\ta16\ta32\ta64\ta128\ta256\n" +
                         "4\t48\t502.6\t494244.3\t4981441046664.13\t9060521021983552060173214255.211\t31304833156629889693497042595209754441918805445080974369080014084.85358\n" +
                         "3\t49\t485.3\t492251.2\t4997580785107.12\t9052893851427734152001930119.428\t30416293450185336623817302560742325189774224037945935861577153935.39918\n" +
@@ -56,17 +90,6 @@ public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testAvgAllNull() throws Exception {
-        assertQuery(
-                "avg\n\n",
-                "select avg(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }

@@ -32,6 +32,40 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMin() throws Exception {
         assertQuery(
+                "m8\tm16\tm32\tm64\tm128\tm256\n" +
+                        "0\t0.0\t0.0\t0.00\t0.000\t1.000000\n",
+                "select min(d8) m8, min(d16) m16, min(d32) m32, min(d64) m64, min(d128) m128, min(d256) m256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testMinAllNull() throws Exception {
+        assertQuery(
+                "min\n\n",
+                "select min(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testMinKeyed() throws Exception {
+        assertQuery(
                 "key\tm8\tm16\tm32\tm64\tm128\tm256\n" +
                         "4\t0\t0.7\t45.6\t9516116412.42\t1249700766257304067881104.715\t26569896652744545227258357538980448808375418037382703146739545.53411\n" +
                         "3\t0\t1.0\t764.3\t14413140006.68\t14009899734713494655243293.977\t18424786054828937641371486332303834735549581809675825882017721.24503\n" +
@@ -56,17 +90,6 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testMinAllNull() throws Exception {
-        assertQuery(
-                "min\n\n",
-                "select min(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }

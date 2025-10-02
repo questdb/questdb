@@ -32,6 +32,40 @@ public class LastDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLast() throws Exception {
         assertQuery(
+                "l8\tl16\tl32\tl64\tl128\tl256\n" +
+                        "1\t0.0\t1.0\t5.00\t5.000\t5.000000\n",
+                "select last(d8) l8, last(d16) l16, last(d32) l32, last(d64) l64, last(d128) l128, last(d256) l256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(1005)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testLastAllNull() throws Exception {
+        assertQuery(
+                "last\n\n",
+                "select last(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testLastKeyed() throws Exception {
+        assertQuery(
                 "key\tl8\tl16\tl32\tl64\tl128\tl256\n" +
                         "4\t22\t\t467658.0\t6250284030125.65\t\t31755846307251943477637882574691843024105350218826634181201381995.88860\n" +
                         "3\t91\t649.8\t995117.6\t9097895466409.14\t5212883105641932213650896752.227\t\n" +
@@ -56,17 +90,6 @@ public class LastDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testLastAllNull() throws Exception {
-        assertQuery(
-                "last\n\n",
-                "select last(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }

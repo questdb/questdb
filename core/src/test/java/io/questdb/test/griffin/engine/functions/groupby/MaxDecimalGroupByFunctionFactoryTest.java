@@ -32,6 +32,40 @@ public class MaxDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMax() throws Exception {
         assertQuery(
+                "m8\tm16\tm32\tm64\tm128\tm256\n" +
+                        "1\t2.0\t3.0\t9.00\t99.000\t100.000000\n",
+                "select max(d8) m8, max(d16) m16, max(d32) m32, max(d64) m64, max(d128) m128, max(d256) m256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testMaxAllNull() throws Exception {
+        assertQuery(
+                "max\n\n",
+                "select max(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testMaxKeyed() throws Exception {
+        assertQuery(
                 "key\tm8\tm16\tm32\tm64\tm128\tm256\n" +
                         "4\t98\t999.6\t996519.1\t9996706980009.09\t18438116870105300071299057341.748\t62768662572617782789411637750252540600463143391413031101720390843.02695\n" +
                         "3\t98\t999.4\t999293.4\t9995304091750.47\t18445907049965428836184027650.544\t62695361596829930762746263372106158875223197903912027699958711281.60863\n" +
@@ -56,17 +90,6 @@ public class MaxDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testMaxAllNull() throws Exception {
-        assertQuery(
-                "max\n\n",
-                "select max(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }

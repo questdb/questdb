@@ -117,6 +117,29 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalWithRescale() throws Exception {
         assertQuery(
+                "a8\ta16\ta32\ta64\ta128\ta256\n" +
+                        "0.5\t1.00\t1.50\t4.500\t49.5000\t50.50000000\n",
+                "select avg_decimal(d8,1) a8, avg_decimal(d16,2) a16, avg_decimal(d32,2) a32, avg_decimal(d64,3) a64, avg_decimal(d128,4) a128, avg_decimal(d256,8) a256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(68,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAvgDecimalWithRescaleKeyed() throws Exception {
+        assertQuery(
                 "key\ta8\ta16\ta32\ta64\ta128\ta256\n" +
                         "4\t48.2\t502.56\t494244.35\t4981441046664.129\t9060521021983552060173214255.2114\t31304833156629889693497042595209754441918805445080974369080014084.85358136\n" +
                         "3\t49.0\t485.28\t492251.19\t4997580785107.124\t9052893851427734152001930119.4278\t30416293450185336623817302560742325189774224037945935861577153935.39918013\n" +

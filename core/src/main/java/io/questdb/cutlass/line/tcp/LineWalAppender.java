@@ -47,7 +47,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
@@ -60,17 +59,11 @@ public class LineWalAppender {
     private final Decimal256 decimal256;
     private final Long256Impl long256;
     private final int maxFileNameLength;
-    private final DirectUtf8Sink sink;
+    private final DirectUtf8Sink sink; // owned by LineHttpProcessorState or LineTcpMeasurementScheduler
     private final boolean stringToCharCastAllowed;
     private byte timestampUnit;
 
-    public LineWalAppender(
-            boolean autoCreateNewColumns,
-            boolean stringToCharCastAllowed,
-            byte timestampUnit,
-            DirectUtf8Sink sink,
-            int maxFileNameLength
-    ) {
+    public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, byte timestampUnit, DirectUtf8Sink sink, int maxFileNameLength) {
         this.autoCreateNewColumns = autoCreateNewColumns;
         this.stringToCharCastAllowed = stringToCharCastAllowed;
         this.maxFileNameLength = maxFileNameLength;
@@ -80,11 +73,7 @@ public class LineWalAppender {
         this.sink = sink;
     }
 
-    public void appendToWal(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException {
+    public void appendToWal(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException {
         while (!tud.isDropped()) {
             try {
                 appendToWal0(securityContext, parser, tud);
@@ -100,11 +89,7 @@ public class LineWalAppender {
         this.timestampUnit = precision;
     }
 
-    private void appendToWal0(
-            SecurityContext securityContext,
-            LineTcpParser parser,
-            TableUpdateDetails tud
-    ) throws CommitFailedException, MetadataChangedException {
+    private void appendToWal0(SecurityContext securityContext, LineTcpParser parser, TableUpdateDetails tud) throws CommitFailedException, MetadataChangedException {
 
         // pass 1: create all columns that do not exist
         final TableUpdateDetails.ThreadLocalDetails ld = tud.getThreadLocalDetails(0); // IO thread id is irrelevant
@@ -230,13 +215,11 @@ public class LineWalAppender {
                                     try {
                                         decimal256.rescale(scale);
                                     } catch (NumericException ignored) {
-                                        throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(),
-                                                writer.getMetadata().getColumnName(columnIndex));
+                                        throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                     }
                                 }
                                 if (!decimal256.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
-                                    throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(ent.getLongValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 DecimalUtil.storeNonNull(decimal256, r, columnIndex, colType);
                                 break;
@@ -250,8 +233,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putInt(columnIndex, Numbers.INT_NULL);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.INT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -262,8 +244,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putShort(columnIndex, (short) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.SHORT, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -274,8 +255,7 @@ public class LineWalAppender {
                                 } else if (entityValue == Numbers.LONG_NULL) {
                                     r.putByte(columnIndex, (byte) 0);
                                 } else {
-                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(),
-                                            writer.getMetadata().getColumnName(columnIndex));
+                                    throw boundsError(entityValue, ColumnType.BYTE, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                                 }
                                 break;
                             }
@@ -535,8 +515,7 @@ public class LineWalAppender {
                             }
                         }
                         if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(colType))) {
-                            throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(),
-                                    writer.getMetadata().getColumnName(columnIndex));
+                            throw boundsError(ent.getDecimalValue(), colType, tud.getTableNameUtf16(), writer.getMetadata().getColumnName(columnIndex));
                         }
                         DecimalUtil.store(decimal, r, columnIndex, colType);
                         break;
@@ -549,15 +528,13 @@ public class LineWalAppender {
         } catch (CommitFailedException commitFailedException) {
             throw commitFailedException;
         } catch (CairoException th) {
-            LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
             }
             throw th;
         } catch (Throwable th) {
-            LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$((Throwable) th).I$();
+            LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
             if (r != null) {
                 r.cancel();
             }
