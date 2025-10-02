@@ -59,23 +59,14 @@ public abstract class AbstractLineTcpSender extends AbstractLineSender {
     @Override
     public final void at(long timestamp, ChronoUnit unit) {
         putAsciiInternal(' ');
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
-        }
-
+        putTimestamp(timestamp, unit);
         atNow();
     }
 
     @Override
     public final void at(Instant timestamp) {
         putAsciiInternal(' ');
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('t');
-        }
+        putTimestamp(timestamp);
         atNow();
     }
 
@@ -91,25 +82,42 @@ public abstract class AbstractLineTcpSender extends AbstractLineSender {
     }
 
     @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         writeFieldName(name);
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
-        }
+        putTimestamp(value, unit);
         return this;
     }
 
     @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
         writeFieldName(name);
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
-        }
+        putTimestamp(value);
         return this;
+    }
+
+    private void putTimestamp(long timestamp, ChronoUnit unit) {
+        // nanos sent as nanos, everything else is sent as micros
+        switch (unit) {
+            case NANOS:
+                put(timestamp).putAsciiInternal('n');
+                break;
+            case MICROS:
+                put(timestamp).putAsciiInternal('t');
+                break;
+            default:
+                // unit needs conversion to micros
+                put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
+        }
+    }
+
+    private void putTimestamp(Instant timestamp) {
+        // always send as nanos as long as it fits in a long 
+        try {
+            put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
+        } catch (ArithmeticException e) {
+            // value does not fit in a long, sending as micros
+            put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('t');
+        }
     }
 
     @Override

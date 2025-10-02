@@ -75,12 +75,12 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final ObjList<String> hosts;
+    private final int initialBackoffMillis;
     private final boolean isTls;
+    private final int maxBackoffMillis;
     private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
-    private final int maxBackoffMillis;
-    private final int initialBackoffMillis;
     private final String password;
     private final String path;
     private final IntList ports;
@@ -404,26 +404,24 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
+    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3) {
+            return false;
+        }
+        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
+    }
+
     @Override
     public void at(long timestamp, ChronoUnit unit) {
         request.putAscii(' ');
-        // todo. Not efficient for timestamp > Long.MAX_VALUE, consider introduce a conf like 'timestamp_transmit_use_nanos' ?
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).put('t');
-        }
+        putTimestamp(timestamp, unit);
         atNow();
     }
 
     @Override
     public void at(Instant timestamp) {
         request.putAscii(' ');
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).put('t');
-        }
+        putTimestamp(timestamp);
         atNow();
     }
 
@@ -491,13 +489,6 @@ public abstract class AbstractLineHttpSender implements Sender {
             return false;
         }
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
-    }
-
-    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
-        if (statusCode == null || statusCode.size() != 3) {
-            return false;
-        }
-        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
     @Override
@@ -576,22 +567,14 @@ public abstract class AbstractLineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
-        }
+        putTimestamp(value, unit);
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
-        }
+        putTimestamp(value);
         return this;
     }
 
@@ -788,6 +771,31 @@ public abstract class AbstractLineHttpSender implements Sender {
         r.withContent();
         rowBookmark = r.getContentLength();
         return r;
+    }
+
+    private void putTimestamp(long timestamp, ChronoUnit unit) {
+        // nanos sent as nanos, everything else is sent as micros
+        switch (unit) {
+            case NANOS:
+                request.put(timestamp).putAscii('n');
+                break;
+            case MICROS:
+                request.put(timestamp).putAscii('t');
+                break;
+            default:
+                // unit needs conversion to micros
+                request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAscii('t');
+        }
+    }
+
+    private void putTimestamp(Instant timestamp) {
+        // always send as nanos as long as it fits in a long 
+        try {
+            request.put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAscii('n');
+        } catch (ArithmeticException e) {
+            // timestamp does not fit in a long, sending as micros
+            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAscii('t');
+        }
     }
 
     private void reset(long newFlushAfterNanos) {
