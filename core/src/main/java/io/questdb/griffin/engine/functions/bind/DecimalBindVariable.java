@@ -36,7 +36,7 @@ class DecimalBindVariable extends DecimalFunction implements Mutable {
     final Decimal256 value = new Decimal256();
 
     public DecimalBindVariable() {
-        super(ColumnType.DECIMAL256);
+        super(ColumnType.getDecimalType(76, 38));
     }
 
     @Override

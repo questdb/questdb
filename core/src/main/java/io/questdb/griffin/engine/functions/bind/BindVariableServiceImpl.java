@@ -195,6 +195,11 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.ARRAY:
                 setArrayType(index, type);
                 return type;
+            case ColumnType.DECIMAL:
+                // We need a concrete type to store this binding variable.
+                // By default, we use one large enough to store most decimals.
+                type = ColumnType.getDecimalType(76, 38);
+                // fall through
             case ColumnType.DECIMAL8:
             case ColumnType.DECIMAL16:
             case ColumnType.DECIMAL32:
