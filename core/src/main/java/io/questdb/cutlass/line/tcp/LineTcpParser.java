@@ -881,10 +881,10 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 }
                 case 'd': {
-                    // We are in strict mode, hint the parser by using the proper 'm' suffix
-                    Unsafe.getUnsafe().putByte(value.hi() - 1, (byte) 'm');
                     try {
-                        decimal.ofString(value.asAsciiCharSequence());
+                        CharSequence cs = value.asAsciiCharSequence();
+                        // Users don't have another way to force strict mode, so we enable it manually
+                        decimal.ofString(cs, 0, cs.length() - 1, -1, -1, true, false);
                         type = ENTITY_TYPE_DECIMAL;
                     } catch (NumericException ignored) {
                         type = ENTITY_TYPE_SYMBOL;
