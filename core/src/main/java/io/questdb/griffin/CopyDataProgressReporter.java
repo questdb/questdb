@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 @FunctionalInterface
-public interface InsertSelectProgressReporter {
+public interface CopyDataProgressReporter {
     void onProgress(Stage stage, long rows);
 
     enum Stage {

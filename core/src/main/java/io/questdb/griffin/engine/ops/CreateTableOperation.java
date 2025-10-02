@@ -29,7 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.InsertSelectProgressReporter;
+import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlException;
 import org.jetbrains.annotations.Nullable;
 
@@ -39,7 +39,7 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     long getBatchSize();
 
-    InsertSelectProgressReporter getInsertSelectProgressReporter();
+    CopyDataProgressReporter getCopyDataProgressReporter();
 
     @Nullable
     CharSequence getLikeTableName();
@@ -64,7 +64,7 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     boolean needRegister();
 
-    void setInsertSelectProgressReporter(InsertSelectProgressReporter reporter);
+    void setCopyDataProgressReporter(CopyDataProgressReporter reporter);
 
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
 

@@ -285,7 +285,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         long rowCount;
         int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
@@ -302,11 +302,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Returns number of copied rows.
      */
-    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker, InsertSelectProgressReporter reporter) {
+    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker, CopyDataProgressReporter reporter) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Start, cursor.size());
+            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         }
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -315,11 +315,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             row.append();
             rowCount++;
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(InsertSelectProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
             }
         }
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Finish, rowCount);
+            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         }
         return rowCount;
     }
@@ -590,13 +590,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Start, cursor.size());
+            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         }
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
@@ -610,7 +610,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     commitTarget = rowCount + batchSize;
                 }
                 if (rowCount % 50000 == 0 && reporter != null) {
-                    reporter.onProgress(InsertSelectProgressReporter.Stage.InsertIng, rowCount);
+                    reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
                 }
             }
         } else {
@@ -624,12 +624,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     commitTarget = rowCount + batchSize;
                 }
                 if (rowCount % 50000 == 0 && reporter != null) {
-                    reporter.onProgress(InsertSelectProgressReporter.Stage.InsertIng, rowCount);
+                    reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
                 }
             }
         }
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Finish, rowCount);
+            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         }
 
         return rowCount;
@@ -644,14 +644,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Start, cursor.size());
+            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         }
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -664,11 +664,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(InsertSelectProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
             }
         }
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Finish, rowCount);
+            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         }
 
         return rowCount;
@@ -683,14 +683,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Start, cursor.size());
+            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         }
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
@@ -703,11 +703,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(InsertSelectProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
             }
         }
         if (reporter != null) {
-            reporter.onProgress(InsertSelectProgressReporter.Stage.Finish, rowCount);
+            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         }
         return rowCount;
     }
@@ -3382,7 +3382,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         long rowCount;
@@ -3409,7 +3409,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            InsertSelectProgressReporter reporter
+            CopyDataProgressReporter reporter
     ) {
         TableWriterAPI writerAPI = null;
         TableWriter writer = null;
@@ -3668,7 +3668,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.getBatchSize(),
                                     createTableOp.getBatchO3MaxLag(),
                                     executionContext.getCircuitBreaker(),
-                                    createTableOp.getInsertSelectProgressReporter()
+                                    createTableOp.getCopyDataProgressReporter()
                             );
                         } catch (CairoException e) {
                             e.position(position);

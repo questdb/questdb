@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
+import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -66,6 +67,7 @@ public class SerialParquetExporter implements Closeable {
     private final StringSink exportPath = new StringSink(128);
     private final FilesFacade ff;
     private final Path fromParquet;
+    private final ProgressReporter insertSelectReporter = new ProgressReporter();
     private final Utf8StringSink nameSink = new Utf8StringSink();
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path tempPath;
@@ -127,25 +129,8 @@ public class SerialParquetExporter implements Closeable {
 
         try {
             if (createOp != null) {
-                createOp.setInsertSelectProgressReporter((stage, rows) -> {
-                    switch (stage) {
-                        case Start:
-                            entry.setTotalRowCount(rows);
-                            break;
-                        case InsertIng:
-                            entry.setPopulatedRowCount(rows);
-                            LOG.info().$("populating temporary table progress [id=").$hexPadded(task.getCopyID())
-                                    .$(", table=")
-                                    .$(task.getTableName())
-                                    .$(", rows=")
-                                    .$(rows).$(']')
-                                    .$();
-                            break;
-                        case Finish:
-                            entry.setPopulatedRowCount(rows);
-                            break;
-                    }
-                });
+                insertSelectReporter.of(entry, task.getCopyID(), task.getTableName());
+                createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 entry.setPhase(phase);
                 statusReporter.report(phase, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, null, 0);
@@ -433,5 +418,40 @@ public class SerialParquetExporter implements Closeable {
                     int numOfFiles,
                     CharSequence msg,
                     long errors);
+    }
+
+    private static class ProgressReporter implements CopyDataProgressReporter {
+        private final StringSink copyIdHex = new StringSink();
+        private CopyExportContext.ExportTaskEntry entry;
+        private CharSequence tableName;
+
+        public void of(CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
+            this.entry = entry;
+            this.copyIdHex.clear();
+            Numbers.appendHex(copyIdHex, copyId, true);
+            this.tableName = name;
+        }
+
+        @Override
+        public void onProgress(CopyDataProgressReporter.Stage stage, long rows) {
+            switch (stage) {
+                case Start:
+                    entry.setTotalRowCount(rows);
+                    break;
+                case InsertIng:
+                    entry.setPopulatedRowCount(rows);
+                    LOG.info().$("populating temporary table progress [id=")
+                            .$(copyIdHex)
+                            .$(", table=")
+                            .$(tableName)
+                            .$(", rows=")
+                            .$(rows).$(']')
+                            .$();
+                    break;
+                case Finish:
+                    entry.setPopulatedRowCount(rows);
+                    break;
+            }
+        }
     }
 }

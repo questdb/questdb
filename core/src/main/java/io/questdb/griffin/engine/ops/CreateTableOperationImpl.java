@@ -33,7 +33,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.griffin.InsertSelectProgressReporter;
+import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -83,7 +83,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
-    private InsertSelectProgressReporter reporter;
+    private CopyDataProgressReporter reporter;
     private CharSequence selectText;
     private int selectTextPosition;
     private String sqlText;
@@ -324,13 +324,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public int getIndexBlockCapacity(int index) {
-        return getHighAt(index * 2 + 1);
+    public CopyDataProgressReporter getCopyDataProgressReporter() {
+        return reporter;
     }
 
     @Override
-    public InsertSelectProgressReporter getInsertSelectProgressReporter() {
-        return reporter;
+    public int getIndexBlockCapacity(int index) {
+        return getHighAt(index * 2 + 1);
     }
 
     @Override
@@ -498,7 +498,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public void setInsertSelectProgressReporter(InsertSelectProgressReporter reporter) {
+    public void setCopyDataProgressReporter(CopyDataProgressReporter reporter) {
         this.reporter = reporter;
     }
 
