@@ -314,7 +314,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
-            TestUtils.assertContains(sink, "AsOf Join " + (symbolIndexCreated ? "Indexed" : "Memoized") + " Scan");
+            TestUtils.assertContains(sink, "AsOf Join " + (symbolIndexCreated ? "Indexed" : "Fast") + " Scan");
         }
 
         final StringSink actualSink = new StringSink();

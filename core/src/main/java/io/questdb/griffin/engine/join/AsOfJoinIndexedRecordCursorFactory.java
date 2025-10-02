@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,7 +38,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -70,7 +68,6 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         assert slaveFactory.supportsTimeFrameCursor();
         this.columnAccessHelper = columnAccessHelper;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-        long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
         this.cursor = new AsOfJoinIndexedRecordCursor(
@@ -78,10 +75,8 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 NullRecordFactory.getInstance(slaveMeta),
                 masterMeta.getTimestampIndex(),
                 masterMeta.getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveMeta.getTimestampIndex(),
                 slaveMeta.getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.toleranceInterval = toleranceInterval;
@@ -139,14 +134,11 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
-                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget,
-                    slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
         }
 
         @Override
