@@ -472,7 +472,7 @@ public class LineWalAppender {
             throw th;
         } catch (Throwable th) {
             LOG.error().$("could not write line protocol measurement [tableName=")
-                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$((Throwable) th).I$();
+                    .$(tud.getTableNameUtf16()).$(", message=").$safe(th.getMessage()).$(", trace: ").$(th).I$();
             if (r != null) {
                 r.cancel();
             }
