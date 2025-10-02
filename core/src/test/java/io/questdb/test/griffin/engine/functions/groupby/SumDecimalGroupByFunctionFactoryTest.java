@@ -32,6 +32,40 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSum() throws Exception {
         assertQuery(
+                "s8\ts16\ts32\ts64\ts128\ts256\n" +
+                        "10\t10.0\t10.0\t100.00\t1000.000\t10000.000000\n",
+                "select sum(d8) s8, sum(d16) s16, sum(d32) s32, sum(d64) s64, sum(d128) s128, sum(d256) s256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(1 as decimal(2,0)) d8, " +
+                        " cast(1 as decimal(4,1)) d16, " +
+                        " cast(1 as decimal(7,1)) d32, " +
+                        " cast(10 as decimal(15,2)) d64, " +
+                        " cast(100 as decimal(32,3)) d128, " +
+                        " cast(1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSumAllNull() throws Exception {
+        assertQuery(
+                "sum\n\n",
+                "select sum(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSumKeyed() throws Exception {
+        assertQuery(
                 "key\ts8\ts16\ts32\ts64\ts128\ts256\n" +
                         "4\t80386\t845311.7\t821434105.2\t8348895194209079.96\t15013283333426745763707016020885.282\t52779948702077994023236013815523645989075105980406522786268903747063.13817\n" +
                         "3\t80052\t796832.5\t827966494.9\t8345959911128896.35\t15154544307290026970451231019922.168\t51251454463562292211132154814850817944769567503938901926757504381147.61852\n" +
@@ -56,17 +90,6 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testSumAllNull() throws Exception {
-        assertQuery(
-                "sum\n\n",
-                "select sum(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }

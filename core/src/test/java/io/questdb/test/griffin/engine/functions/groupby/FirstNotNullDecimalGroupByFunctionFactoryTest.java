@@ -32,6 +32,40 @@ public class FirstNotNullDecimalGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testFirstNotNull() throws Exception {
         assertQuery(
+                "f8\tf16\tf32\tf64\tf128\tf256\n" +
+                        "1\t1.0\t1.0\t1.00\t1.000\t1.000000\n",
+                "select first_not_null(d8) f8, first_not_null(d16) f16, first_not_null(d32) f32, first_not_null(d64) f64, first_not_null(d128) f128, first_not_null(d256) f256 from x",
+                "create table x as (" +
+                        "select" +
+                        " cast(x%2 as decimal(2,0)) d8, " +
+                        " cast(x%3 as decimal(4,1)) d16, " +
+                        " cast(x%4 as decimal(7,1)) d32, " +
+                        " cast(x%10 as decimal(15,2)) d64, " +
+                        " cast(x%100 as decimal(32,3)) d128, " +
+                        " cast(x%1000 as decimal(76,6)) d256, " +
+                        " timestamp_sequence(0, 1000) ts" +
+                        " from long_sequence(100)" +
+                        ") timestamp(ts) partition by month",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testFirstNotNullAllNull() throws Exception {
+        assertQuery(
+                "first_not_null\n\n",
+                "select first_not_null(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testFirstNotNullKeyed() throws Exception {
+        assertQuery(
                 "key\tf8\tf16\tf32\tf64\tf128\tf256\n" +
                         "4\t70\t772.6\t389048.8\t6408249039051.17\t12216318151301496245897961419.405\t31850478184631552508628555493605333879162869053463378487178070639.48857\n" +
                         "3\t4\t827.4\t87232.3\t3390459539777.63\t15645909974661302225752806082.585\t14683348116686869687524623962248136479924840218878560502313730441.12723\n" +
@@ -56,17 +90,6 @@ public class FirstNotNullDecimalGroupByFunctionFactoryTest extends AbstractCairo
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testFirstNotNullAllNull() throws Exception {
-        assertQuery(
-                "first_not_null\n\n",
-                "select first_not_null(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
                 true
         );
     }
