@@ -147,7 +147,7 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
                 boolean closeWriter = false;
                 if (event.getWriterWorkerId() == workerId) {
                     try {
-                        if (tud.isWriterInError()) {
+                        if (tud.isWriterInError() || tud.getWriter() == null) {
                             closeWriter = true;
                         } else {
                             if (!tud.isAssignedToJob()) {

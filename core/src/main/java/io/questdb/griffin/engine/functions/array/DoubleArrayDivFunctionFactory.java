@@ -29,9 +29,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -43,10 +44,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayDivFunctionFactory implements FunctionFactory {
+    private static final String OPERATOR_NAME = "/";
 
     @Override
     public String getSignature() {
-        return "/(D[]D[])";
+        return OPERATOR_NAME + "(D[]D[])";
     }
 
     @Override
@@ -61,34 +63,39 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
-                argPositions.getQuick(0)
+                argPositions.getQuick(0),
+                position
         );
     }
 
-    private static class Func extends ArrayFunction implements BinaryFunction {
-
+    private static class Func extends WeakDimsArrayFunction implements BinaryFunction {
         private final DirectArray arrayOut;
         private final Function leftArg;
         private final int leftArgPos;
         private final DerivedArrayView leftArgView = new DerivedArrayView();
-        private final String opName;
         private final Function rightArg;
         private final DerivedArrayView rightArgView = new DerivedArrayView();
 
-        private Func(
+        public Func(
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
-                int leftArgPos
+                int leftArgPos,
+                int position
         ) {
-            this.opName = "/";
             this.leftArg = leftArg;
             this.rightArg = rightArg;
             this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(nDimsLeft, nDimsRight));
+            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
+            if (dimsLeft > 0 && dimsRight > 0) {
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+                arrayOut.setType(type);
+            } else {
+                this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
+            }
+            this.position = position;
         }
 
         @Override
@@ -105,7 +112,7 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            arrayOut.setType(type);
+
             if (left.shapeDiffers(right)) {
                 DerivedArrayView.computeBroadcastShape(left, right, arrayOut.getShape(), leftArgPos);
                 if (left.shapeDiffers(arrayOut)) {
@@ -140,12 +147,26 @@ public class DoubleArrayDivFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return opName;
+            return OPERATOR_NAME;
         }
 
         @Override
         public Function getRight() {
             return rightArg;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+
+            // left/right argument may be a bind var, i.e. have weak dimensionality,
+            // so that the number of dimensions is only available at init() time
+            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+            arrayOut.setType(type);
+
+            validateAssignedType();
         }
 
         @Override

@@ -62,6 +62,20 @@ public class CharSequenceLongHashMap extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
+    public void inc(@NotNull CharSequence key) {
+        int index = keyIndex(key);
+        long value = valueAt(index);
+        if (value != noEntryValue) {
+            values[-index - 1]++;
+        } else {
+            putAt(index, key, 1);
+        }
+    }
+
+    public void inc(int index) {
+        values[-index - 1]++;
+    }
+
     public void increment(@NotNull CharSequence key) {
         final int index = keyIndex(key);
         if (index < 0) {

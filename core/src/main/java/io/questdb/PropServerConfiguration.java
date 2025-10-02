@@ -127,6 +127,7 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
+    public static final String ACCEPTING_WRITES = "accepting.writes";
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
@@ -142,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
@@ -475,7 +477,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
-    private final boolean useFastAsOfJoin;
     private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
@@ -1348,7 +1349,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
-            this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -1760,6 +1760,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
         this.ilpProtoTransports = initIlpTransport();
+        this.acceptingWrites = initAcceptingWrites();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -2124,6 +2125,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    protected String getAcceptingWrites() {
+        return acceptingWrites;
+    }
+
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
         return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
     }
@@ -2304,6 +2309,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
@@ -2318,6 +2324,39 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
             allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
         }
+    }
+
+    protected String initAcceptingWrites() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        if (instanceAcceptingWrites()) {
+            boolean addComma = false;
+            if (!httpContextConfiguration.readOnlySecurityContext()) {
+                sink.put("\"http\"");
+                addComma = true;
+            }
+            if (lineTcpReceiverConfiguration.isEnabled()) {
+                // tcp does not have read-only mode
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"tcp\"");
+                addComma = true;
+            }
+            if (pgConfiguration.isEnabled() && !pgConfiguration.readOnlySecurityContext()) {
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"pgwire\"");
+            }
+        }
+        sink.put(']');
+        return sink.toString();
+    }
+
+    protected boolean instanceAcceptingWrites() {
+        // overwritten in Enterprise
+        return !isReadOnlyInstance;
     }
 
     protected PropertyValidator newValidator() {
@@ -2475,6 +2514,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     "cairo.sql.append.page.size",
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
+            registerObsolete("cairo.sql.asof.join.fast");
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
@@ -2801,6 +2841,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
+            arrayStr(ACCEPTING_WRITES, getAcceptingWrites(), sink);
             arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
             arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
             return true;
@@ -4110,11 +4151,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean useFastAsOfJoin() {
-            return useFastAsOfJoin;
-        }
-
-        @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
         }
@@ -4580,6 +4616,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isAcceptingWrites() {
+            return !isReadOnlyInstance
+                    && httpServerEnabled
+                    && lineHttpEnabled
+                    && !httpContextConfiguration.readOnlySecurityContext();
         }
 
         @Override

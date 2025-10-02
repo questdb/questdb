@@ -151,6 +151,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                     null,
                     127,
                     0,
+                    1_000,
                     0,
                     Long.MAX_VALUE
             )) {

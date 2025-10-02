@@ -135,6 +135,7 @@ public final class ColumnType {
     private static final int ARRAY_NDIMS_FIELD_POS = 14;
     private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
+    private static final int TYPE_FLAG_ARRAY_WEAK_DIMS = (1 << 19);
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final IntHashSet arrayTypeSet = new IntHashSet();
@@ -177,11 +178,9 @@ public final class ColumnType {
     }
 
     public static int decodeArrayDimensionality(int encodedType) {
-        if (ColumnType.isNull(encodedType)) {
-            return 0;
-        }
-        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
-        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+        final int dims = ColumnType.decodeWeakArrayDimensionality(encodedType);
+        assert dims > 0;
+        return dims;
     }
 
     /**
@@ -195,8 +194,27 @@ public final class ColumnType {
         return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
     }
 
+    /**
+     * Returns the number of dimensions for the given array type or -1 in case of an array with weak dimensionality,
+     * e.g. array type of bind variable.
+     */
+    public static int decodeWeakArrayDimensionality(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return 0;
+        }
+        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        if ((encodedType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0) {
+            return -1;
+        }
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+    }
+
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
+    }
+
+    public static int encodeArrayType(short elemType, int nDims) {
+        return encodeArrayType(elemType, nDims, true);
     }
 
     /**
@@ -204,26 +222,43 @@ public final class ColumnType {
      * <br>
      * The encoded type is laid out as follows:
      * <pre>
-     *     31~19      18~14       13~8           7~0
-     * +----------+----------+-----------+------------------+
-     * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
-     * +----------+----------+-----------+------------------+
-     * |          |  5 bits  |  6 bits   |      8 bits      |
-     * +----------+----------+-----------+------------------+
+     *     31~20      19        18~14       13~8           7~0
+     * +----------+----------+----------+-----------+------------------+
+     * | Reserved | WeakDims |  nDims   | elemType  | ColumnType.ARRAY |
+     * +----------+----------+----------+-----------+------------------+
+     * |          |  1 bit   |  5 bits  |  6 bits   |      8 bits      |
+     * +----------+----------+----------+-----------+------------------+
      * </pre>
+     * <p>
+     * WeakDims bit (19): When set, indicates the dimensionality is tentative and
+     * can be updated based on actual data. This is useful for PostgreSQL wire
+     * protocol where type information doesn't include array dimensions.
      *
      * @param elemType one of the supported array element type tags.
      * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
      */
-    public static int encodeArrayType(int elemType, int nDims) {
+    public static int encodeArrayType(int elemType, int nDims, boolean checkSupportedElementTypes) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
-        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+        assert !checkSupportedElementTypes || (isSupportedArrayElementType(elemType) || elemType == UNDEFINED)
                 : "not supported as array element type: " + nameOf(elemType);
 
         nDims--; // 0 == one dimension
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
                 | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
                 | ARRAY;
+    }
+
+    /**
+     * Encodes an array type with weak dimensionality. The dimensionality is still
+     * encoded but marked as tentative and can be updated based on actual data.
+     * This is useful for PostgreSQL wire protocol where type information doesn't
+     * include array dimensions.
+     * <p>
+     * The number of dimensions of this type is undefined, so the decoded number on
+     * dimensions for the returned column type will be -1.
+     */
+    public static int encodeArrayTypeWithWeakDims(short elemType, boolean checkSupportedElementTypes) {
+        return encodeArrayType(elemType, 1, checkSupportedElementTypes) | TYPE_FLAG_ARRAY_WEAK_DIMS;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
@@ -322,6 +357,14 @@ public final class ColumnType {
      */
     public static boolean isArray(int columnType) {
         return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
+    }
+
+    /**
+     * Checks if an array type has weak dimensionality, meaning the dimensionality
+     * is tentative and can be updated based on actual data.
+     */
+    public static boolean isArrayWithWeakDims(int columnType) {
+        return isArray(columnType) && (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0;
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -490,18 +533,14 @@ public final class ColumnType {
     }
 
     public static boolean isUndefined(int columnType) {
-        return columnType == UNDEFINED;
-    }
-
-    public static boolean isUnderdefined(int columnType) {
         return columnType == UNDEFINED || isUndefinedArray(columnType);
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING ||
-                columnType == BINARY ||
-                columnType == VARCHAR ||
-                tagOf(columnType) == ARRAY;
+        return columnType == STRING
+                || columnType == BINARY
+                || columnType == VARCHAR
+                || tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
@@ -591,6 +630,18 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
+    private static void addArrayTypeName(StringSink sink, short type) {
+        sink.clear();
+        sink.put(nameOf(type));
+        for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
+            sink.put("[]");
+            int arrayType = encodeArrayType(type, d, false);
+            String name = sink.toString();
+            typeNameMap.put(arrayType, name);
+            nameTypeMap.put(name, arrayType);
+        }
+    }
+
     private static int getTimestampTypePriority(int timestampType) {
         assert tagOf(timestampType) == TIMESTAMP || timestampType == UNDEFINED;
         switch (timestampType) {
@@ -608,7 +659,8 @@ public final class ColumnType {
     private static boolean isArrayCast(int fromType, int toType) {
         return isArray(fromType) && isArray(toType)
                 && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
-                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
+                && !isArrayWithWeakDims(fromType) && !isArrayWithWeakDims(toType)
+                && decodeWeakArrayDimensionality(fromType) == decodeWeakArrayDimensionality(toType);
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
@@ -685,8 +737,10 @@ public final class ColumnType {
                 || (fromType == UUID && toType == STRING);
     }
 
+    // Both arrays with undefined element types and arrays with weak dimensionality are considered undefined.
     private static boolean isUndefinedArray(int columnType) {
-        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
+        return tagOf(columnType) == ARRAY
+                && (decodeArrayElementType(columnType) == UNDEFINED || (columnType & TYPE_FLAG_ARRAY_WEAK_DIMS) != 0);
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {
@@ -944,20 +998,20 @@ public final class ColumnType {
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
 
-        // add array type names up to dimension limit
-        // this has to be done after we configured type bit widths
-        for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
-            short type = (short) arrayTypeSet.get(i);
-            sink.clear();
-            sink.put(nameOf(type));
-            for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
-                sink.put("[]");
-                int arrayType = encodeArrayType(type, d);
-                String name = sink.toString();
-                typeNameMap.put(arrayType, name);
-                nameTypeMap.put(name, arrayType);
-            }
-        }
+        addArrayTypeName(sink, ColumnType.BOOLEAN);
+        addArrayTypeName(sink, ColumnType.BYTE);
+        addArrayTypeName(sink, ColumnType.SHORT);
+        addArrayTypeName(sink, ColumnType.INT);
+        addArrayTypeName(sink, ColumnType.LONG);
+        addArrayTypeName(sink, ColumnType.FLOAT);
+        addArrayTypeName(sink, ColumnType.DOUBLE);
+        addArrayTypeName(sink, ColumnType.LONG256);
+        addArrayTypeName(sink, ColumnType.VARCHAR);
+        addArrayTypeName(sink, ColumnType.STRING);
+        addArrayTypeName(sink, ColumnType.IPv4);
+        addArrayTypeName(sink, ColumnType.TIMESTAMP);
+        addArrayTypeName(sink, ColumnType.UUID);
+        addArrayTypeName(sink, ColumnType.DATE);
 
         sink.clear();
         for (int i = 0, n = ARRAY_NDIMS_LIMIT + 1; i < n; i++) {
