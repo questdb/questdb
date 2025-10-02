@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -161,13 +160,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 int periodStartKeyIndex = symKeyToValidityPeriodStart.keyIndex(slaveSymbolKey);
                 int periodEndKeyIndex = symKeyToValidityPeriodEnd.keyIndex(slaveSymbolKey);
                 long periodStart = symKeyToValidityPeriodStart.valueAt(periodStartKeyIndex);
-                long periodEnd = symKeyToValidityPeriodStart.valueAt(periodEndKeyIndex);
+                long periodEnd = symKeyToValidityPeriodEnd.valueAt(periodEndKeyIndex);
                 if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
                     // Period to remember overlaps existing remembered period -> merge them.
 
                     // Remembered period start indicates where we previously found the symbol, and we must not
                     // move it back. But we can move back if we remembered a period where we DIDN'T find the symbol.
-                    if (slaveTimestamp < periodStart && slaveSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    if (slaveTimestamp < periodStart && slaveRowId < 0) {
                         symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
                     }
                     if (masterTimestamp > periodEnd) {
