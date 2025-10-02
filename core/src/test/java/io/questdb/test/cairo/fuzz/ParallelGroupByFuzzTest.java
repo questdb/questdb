@@ -90,7 +90,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             boolean flag = rnd.nextBoolean();
             return Arrays.asList(new Object[][]{{flag, flag, flag}});
         }
-        return Arrays.asList(new Object[][]{{rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean()}});
+        return Arrays.asList(new Object[][]{
+                {true, false, false},
+                {rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean()}
+        });
         // uncomment to run all combinations
 //        return Arrays.asList(new Object[][]{
 //                {true, true, true},
