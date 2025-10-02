@@ -113,17 +113,16 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
     }
 
     private static Function newUnscaledInstance(int valuePosition, int fromType, Function value) {
-        int fromPrecision = ColumnType.getDecimalPrecision(fromType);
-        switch (Decimals.getStorageSizePow2(fromPrecision)) {
-            case 0:
+        switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8:
                 return new UnscaledDecimal8Func(value);
-            case 1:
+            case ColumnType.DECIMAL16:
                 return new UnscaledDecimal16Func(value);
-            case 2:
+            case ColumnType.DECIMAL32:
                 return new UnscaledDecimal32Func(value);
-            case 3:
+            case ColumnType.DECIMAL64:
                 return new UnscaledDecimal64Func(value);
-            case 4:
+            case ColumnType.DECIMAL128:
                 return new UnscaledDecimal128Func(value, valuePosition);
             default:
                 return new UnscaledDecimal256Func(value, valuePosition);

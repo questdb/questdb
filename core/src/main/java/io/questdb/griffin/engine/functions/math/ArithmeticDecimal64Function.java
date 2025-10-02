@@ -44,7 +44,7 @@ abstract class ArithmeticDecimal64Function extends Decimal64Function implements 
     protected final int scale;
     private final int position;
     private final int rightScale;
-    private final int rightStorageSizePow2;
+    private final int rightTag;
 
     public ArithmeticDecimal64Function(Function left, Function right, int targetType, int position) {
         super(targetType);
@@ -54,7 +54,7 @@ abstract class ArithmeticDecimal64Function extends Decimal64Function implements 
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(right.getType()));
+        this.rightTag = ColumnType.tagOf(right.getType());
     }
 
     @Override
@@ -119,20 +119,20 @@ abstract class ArithmeticDecimal64Function extends Decimal64Function implements 
         }
 
         final long rightValue;
-        switch (rightStorageSizePow2) {
-            case 0:
+        switch (rightTag) {
+            case ColumnType.DECIMAL8:
                 rightValue = right.getDecimal8(rec);
                 if (rightValue == Decimals.DECIMAL8_NULL) {
                     return false;
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 rightValue = right.getDecimal16(rec);
                 if (rightValue == Decimals.DECIMAL16_NULL) {
                     return false;
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 rightValue = right.getDecimal32(rec);
                 if (rightValue == Decimals.DECIMAL32_NULL) {
                     return false;

@@ -45,7 +45,7 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
     protected final int scale;
     private final int position;
     private final int rightScale;
-    private final int rightStorageSizePow2;
+    private final int rightTag;
     private boolean isNull;
 
     public ArithmeticDecimal256Function(Function left, Function right, int targetType, int position) {
@@ -56,7 +56,7 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(right.getType()));
+        this.rightTag = ColumnType.tagOf(right.getType());
     }
 
     @Override
@@ -173,36 +173,36 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
         }
 
         final long rightHH, rightHL, rightLH, rightLL;
-        switch (rightStorageSizePow2) {
-            case 0:
+        switch (rightTag) {
+            case ColumnType.DECIMAL8:
                 rightLL = right.getDecimal8(rec);
                 rightLH = rightHL = rightHH = rightLL < 0 ? -1 : 0;
                 if (rightLL == Decimals.DECIMAL8_NULL) {
                     return false;
                 }
                 break;
-            case 1:
+            case ColumnType.DECIMAL16:
                 rightLL = right.getDecimal16(rec);
                 rightLH = rightHL = rightHH = rightLL < 0 ? -1 : 0;
                 if (rightLL == Decimals.DECIMAL16_NULL) {
                     return false;
                 }
                 break;
-            case 2:
+            case ColumnType.DECIMAL32:
                 rightLL = right.getDecimal32(rec);
                 rightLH = rightHL = rightHH = rightLL < 0 ? -1 : 0;
                 if (rightLL == Decimals.DECIMAL32_NULL) {
                     return false;
                 }
                 break;
-            case 3:
+            case ColumnType.DECIMAL64:
                 rightLL = right.getDecimal64(rec);
                 rightLH = rightHL = rightHH = rightLL < 0 ? -1 : 0;
                 if (Decimal64.isNull(rightLL)) {
                     return false;
                 }
                 break;
-            case 4:
+            case ColumnType.DECIMAL128:
                 rightLH = right.getDecimal128Hi(rec);
                 rightLL = right.getDecimal128Lo(rec);
                 rightHL = rightHH = rightLH < 0 ? -1 : 0;

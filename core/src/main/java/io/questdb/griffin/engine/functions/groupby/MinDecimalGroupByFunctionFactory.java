@@ -65,16 +65,16 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         final Function func = args.getQuick(0);
-        switch (Decimals.getStorageSizePow2(ColumnType.getDecimalPrecision(func.getType()))) {
-            case 0:
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.DECIMAL8:
                 return new Decimal8Func(func);
-            case 1:
+            case ColumnType.DECIMAL16:
                 return new Decimal16Func(func);
-            case 2:
+            case ColumnType.DECIMAL32:
                 return new Decimal32Func(func);
-            case 3:
+            case ColumnType.DECIMAL64:
                 return new Decimal64Func(func);
-            case 4:
+            case ColumnType.DECIMAL128:
                 return new Decimal128Func(func);
             default:
                 return new Decimal256Func(func);
