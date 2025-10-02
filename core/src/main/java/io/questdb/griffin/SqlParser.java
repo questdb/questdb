@@ -110,6 +110,7 @@ public class SqlParser {
     private final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
+    private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -166,6 +167,60 @@ public class SqlParser {
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
+    /**
+     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
+     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
+     * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
+     *
+     * @return the concrete DECIMAL type with proper precision/scale set.
+     */
+    public static int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
+        previousToken = GenericLexer.immutableOf(previousToken);
+        int previousTokenPosition = lexer.lastTokenPosition();
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) != '(') {
+            lexer.backTo(previousTokenPosition, previousToken);
+            return ColumnType.DECIMAL_DEFAULT_TYPE;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || tok.charAt(0) == ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
+        }
+        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
+        int scale = precision < 8 ? 0 : 3;
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // The user may provide a scale value
+        if (tok != null && tok.charAt(0) == ',') {
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || tok.charAt(0) == ')') {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
+            }
+            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        if (tok == null || tok.charAt(0) != ')') {
+            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
+        }
+
+        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("invalid DECIMAL type, the precision must be between 1 and ")
+                    .put(Decimals.MAX_PRECISION);
+        }
+        if (scale < 0 || scale > precision) {
+            throw SqlException.position(previousTokenPosition)
+                    .put("invalid DECIMAL type, the scale must be between 0 and ")
+                    .put(precision);
+        }
+
+        return ColumnType.getDecimalType(precision, scale);
     }
 
     /**
@@ -1669,60 +1724,6 @@ public class SqlParser {
             return expectLiteral(lexer);
         }
         return null;
-    }
-
-    /**
-     * Parses a DECIMAL[(precision[, scale])] type from the lexer.
-     * The user may specify the precision and scale of the underlying DECIMAL type, if not provided, we use a default
-     * precision of 18 and a scale of 3 (or 0 if precision &lt; 8) so that the underlying type will be a DECIMAL64.
-     *
-     * @return the concrete DECIMAL type with proper precision/scale set.
-     */
-    public static int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
-        previousToken = GenericLexer.immutableOf(previousToken);
-        int previousTokenPosition = lexer.lastTokenPosition();
-
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) != '(') {
-            lexer.backTo(previousTokenPosition, previousToken);
-            return ColumnType.DECIMAL_DEFAULT_TYPE;
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || tok.charAt(0) == ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing precision");
-        }
-        int precision = DecimalUtil.parsePrecision(lexer.lastTokenPosition(), tok, 0, tok.length());
-        int scale = precision < 8 ? 0 : 3;
-
-        tok = SqlUtil.fetchNext(lexer);
-
-        // The user may provide a scale value
-        if (tok != null && tok.charAt(0) == ',') {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || tok.charAt(0) == ')') {
-                throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing scale value");
-            }
-            scale = DecimalUtil.parseScale(lexer.lastTokenPosition(), tok, 0, tok.length());
-            tok = SqlUtil.fetchNext(lexer);
-        }
-
-        if (tok == null || tok.charAt(0) != ')') {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid DECIMAL type, missing ')'");
-        }
-
-        if (precision <= 0 || precision > Decimals.MAX_PRECISION) {
-            throw SqlException.position(previousTokenPosition)
-                    .put("invalid DECIMAL type, the precision must be between 1 and ")
-                    .put(Decimals.MAX_PRECISION);
-        }
-        if (scale < 0 || scale > precision) {
-            throw SqlException.position(previousTokenPosition)
-                    .put("invalid DECIMAL type, the scale must be between 0 and ")
-                    .put(precision);
-        }
-
-        return ColumnType.getDecimalType(precision, scale);
     }
 
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
@@ -3831,6 +3832,7 @@ public class SqlParser {
         traversalAlgo.traverse(parent, rewriteConcatRef);
         traversalAlgo.traverse(parent, rewritePgCastRef);
         traversalAlgo.traverse(parent, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(parent, rewritePgNumericRef);
         return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 
@@ -3893,6 +3895,35 @@ public class SqlParser {
             }
         }
         return false;
+    }
+
+    /**
+     * Rewrites the following:
+     * <p>
+     * select '123.456'::numeric::decimal(p, s) -> select '123.456'::decimal(p, s)
+     */
+    private void rewritePgNumeric(ExpressionNode node) {
+        if (node.type != ExpressionNode.FUNCTION || !isCastKeyword(node.token)) {
+            return;
+        }
+
+        ExpressionNode innerCastNode = node.lhs;
+        if (innerCastNode == null || innerCastNode.type != ExpressionNode.FUNCTION || !isCastKeyword(innerCastNode.token)) {
+            return;
+        }
+
+        ExpressionNode innerTypeNode = innerCastNode.rhs;
+        if (innerTypeNode == null || innerTypeNode.type != ExpressionNode.CONSTANT || !isNumericKeyword(innerTypeNode.token)) {
+            return;
+        }
+
+        ExpressionNode typeNode = node.rhs;
+        if (typeNode == null || typeNode.type != ExpressionNode.CONSTANT || typeNode.token.length() < 7 || !startsWithDecimalKeyword(typeNode.token)) {
+            return;
+        }
+
+        // At this point, we know that the expression is compatible with our rewrite.
+        node.lhs = innerCastNode.lhs;
     }
 
     @NotNull
