@@ -41,6 +41,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
@@ -93,7 +94,11 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
     @Override
     public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
+        if (state.isGzipEncoded()) {
+            state.inflateAndParse(lo, hi);
+        } else {
+            state.parse(lo, hi);
+        }
     }
 
     @Override
@@ -123,9 +128,14 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            state.reject(ENCODING_NOT_SUPPORTED, "gzip encoding is not supported", context.getFd());
-            return;
+        state.setGzipEncoded(encoding != null && Utf8s.equalsIgnoreCaseAscii("gzip", encoding));
+        if (state.isGzipEncoded()) {
+            long inflateStream = Zip.inflateInitGzip();
+            if (inflateStream < 0) {
+                state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
+                return;
+            }
+            state.setInflateStream(inflateStream);
         }
 
         byte timestampPrecision;
@@ -186,6 +196,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
             sendErrorContent(context);
         }
         engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        state.cleanupGzip();
     }
 
     @Override
