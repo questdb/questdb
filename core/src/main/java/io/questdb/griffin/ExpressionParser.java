@@ -637,8 +637,7 @@ public class ExpressionParser {
                                         // validate type
                                         final short castAsTag = ColumnType.tagOf(node.token);
                                         if ((cannotCastTo(castAsTag, isCastingNull)) ||
-                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL) ||
-                                                (castAsTag == ColumnType.DECIMAL && node.type == ExpressionNode.LITERAL)
+                                                (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
                                         ) {
                                             throw SqlException.$(node.position, "unsupported cast");
                                         }
@@ -1742,6 +1741,7 @@ public class ExpressionParser {
         moreCastTargetTypes.add(ColumnType.IPv4);
         moreCastTargetTypes.add(ColumnType.VARCHAR);
         moreCastTargetTypes.add(ColumnType.ARRAY);
+        moreCastTargetTypes.add(ColumnType.DECIMAL);
 
         allFunctions.put("<>", "<>all");
         allFunctions.put("!=", "<>all");
