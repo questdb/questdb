@@ -415,6 +415,23 @@ public class PGDecimalsTest extends BasePGTest {
         assertDecimalConversion("-123", 5, 1);
     }
 
+    @Test
+    public void testSmallValue() throws Exception {
+        // We are able to convert the ''::numeric::decimal(46, 45) to a direct ''::decimal(46, 45) in simple mode.
+        // Unfortunately, for other mode we're still relying on the bind variable to retrieve the expected decimal
+        // type, which gives us a precision of 76 and a scale of 38.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
+            try (var select = connection.prepareStatement("select cast(? as decimal(46, 45))")) {
+                select.setBigDecimal(1, new BigDecimal("1E-45"));
+                try (var resultSet = select.executeQuery()) {
+                    Assert.assertTrue(resultSet.next());
+                    var bigDecimal = resultSet.getBigDecimal(1);
+                    Assert.assertEquals("1E-45", bigDecimal.toString());
+                }
+            }
+        });
+    }
+
     // Test zero values with different scales
     @Test
     public void testZeroValues() throws Exception {
