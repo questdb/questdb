@@ -144,6 +144,19 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
             final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
             long processingCursor;
+
+            copyContext.updateStatus(
+                    CopyExportRequestTask.Phase.WAITING,
+                    CopyExportRequestTask.Status.STARTED,
+                    null,
+                    Numbers.INT_NULL,
+                    "queued",
+                    0,
+                    tableName,
+                    entry.getId(),
+                    copyExportResult
+            );
+
             do {
                 processingCursor = copyRequestPubSeq.next();
             } while (processingCursor == -2);
@@ -151,6 +164,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             if (processingCursor == -1) {
                 throw SqlException.$(0, "unable to process the export request - export queue is full");
             }
+
             final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
             task.of(
                     entry,
@@ -170,7 +184,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             copyRequestPubSeq.done(processingCursor);
             // Entry is now owned by the task
             entry = null;
-            copyContext.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.STARTED, task, null, Numbers.INT_NULL, "queued", 0);
+
             cursor.toTop();
             return cursor;
         } catch (SqlException | CairoException ex) {

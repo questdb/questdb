@@ -1677,11 +1677,13 @@ public class CopyExportTest extends AbstractCairoTest {
         CountDownLatch processed = new CountDownLatch(wait);
         execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
+        ObjList<Thread> threads = new ObjList<>();
         try {
             for (int i = 0; i < 4; i++) {
                 CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine);
                 jobs.add(copyRequestJob);
                 Thread processingThread = createJobThread(copyRequestJob, processed, i);
+                threads.add(processingThread);
                 processingThread.start();
             }
             statement.run();
@@ -1691,6 +1693,9 @@ public class CopyExportTest extends AbstractCairoTest {
             drainWalQueue(engine);
             test.run();
         } finally {
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
             Misc.freeObjList(jobs);
         }
     }

@@ -240,11 +240,13 @@ public class CopyExportContext {
     public synchronized void updateStatus(
             CopyExportRequestTask.Phase phase,
             CopyExportRequestTask.Status status,
-            CopyExportRequestTask task,
             CharSequence exportDir,
             int numOfFiles,
             @Nullable final CharSequence msg,
-            long errors
+            long errors,
+            String tableName,
+            long copyID,
+            CopyExportResult result
     ) {
         if (statusTableToken == null) {
             return;
@@ -258,44 +260,47 @@ public class CopyExportContext {
                     MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                     TableWriter.Row row = statusTableWriter.newRow(microsecondClock.getTicks());
                     var utf8StringSink = Misc.getThreadLocalUtf8Sink();
-                    Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
+                    Numbers.appendHex(utf8StringSink, copyID, true);
                     row.putVarchar(1, utf8StringSink);
-                    row.putSym(2, task.getTableName());
+                    row.putSym(2, tableName);
                     row.putSym(3, exportDir);
                     row.putInt(4, numOfFiles);
                     row.putSym(5, phase.getName());
                     row.putSym(6, status.getName());
-                    utf8StringSink.clear();
-                    utf8StringSink.put(msg);
-                    row.putVarchar(7, utf8StringSink);
+                    if (msg != null) {
+                        utf8StringSink.clear();
+                        utf8StringSink.put(msg);
+                        row.putVarchar(7, utf8StringSink);
+                    }
                     row.putLong(8, errors);
                     row.append();
                     statusTableWriter.commit();
                 } catch (Throwable th) {
                     error = th;
+                    LOG.error().$("update status failed [table=").$(statusTableToken).$(", error=").$(th).I$();
                 }
             } catch (Throwable e) {
                 error = e;
+                LOG.error().$("update status failed [table=").$(statusTableToken).$(", error=").$(e).I$();
             }
         }
 
         if (error != null) {
             LOG.error()
-                    .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
+                    .$("could not update status table [exportId=").$hexPadded(copyID)
                     .$(", statusTableName=").$(statusTableToken)
-                    .$(", tableName=").$safe(task.getTableName())
+                    .$(", tableName=").$safe(tableName)
                     .$(", exportDir=").$safe(exportDir)
                     .$(", numOfFiles=").$(numOfFiles)
                     .$(", phase=").$(phase.getName())
                     .$(", status=").$(status.getName())
                     .$(", msg=").$safe(msg)
                     .$(", errors=").$(errors)
-                    .$(", error=").$(error).$('`')
                     .I$();
         }
 
-        if (task.getResult() != null) {
-            task.getResult().report(phase, status, msg);
+        if (result != null) {
+            result.report(phase, status, msg);
         }
     }
 
