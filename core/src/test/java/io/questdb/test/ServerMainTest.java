@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -356,7 +357,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.system.wal.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
-                                    "cairo.symbol.table.append.page.size\tQDB_CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
+                                    "cairo.symbol.table.min.allocation.page.size\tQDB_CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE\t" + Files.PAGE_SIZE + "\tdefault\tfalse\tfalse\n" +
+                                    "cairo.symbol.table.max.allocation.page.size\tQDB_CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE\t8388608\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
@@ -687,7 +689,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue"
+                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.auto.scale.symbol.capacity.threshold\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD\t0.8\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

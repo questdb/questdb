@@ -198,7 +198,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (hasTable) {
             throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
         }
-        if (metric.length() == 0) {
+        if (metric.isEmpty()) {
             throw new LineSenderException("table name cannot be empty");
         }
         quoted = false;
@@ -444,18 +444,13 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     protected static long unitToNanos(ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return 1;
-            case MICROS:
-                return 1_000;
-            case MILLIS:
-                return 1_000_000;
-            case SECONDS:
-                return 1_000_000_000;
-            default:
-                return unit.getDuration().toNanos();
-        }
+        return switch (unit) {
+            case NANOS -> 1;
+            case MICROS -> 1_000;
+            case MILLIS -> 1_000_000;
+            case SECONDS -> 1_000_000_000;
+            default -> unit.getDuration().toNanos();
+        };
     }
 
     protected void send00() {

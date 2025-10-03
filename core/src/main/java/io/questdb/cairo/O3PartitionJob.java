@@ -2573,7 +2573,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
 
-                        final long columnTop = tableWriter.getColumnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
+                        final long columnTop = tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);

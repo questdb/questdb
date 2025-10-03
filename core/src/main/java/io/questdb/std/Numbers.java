@@ -554,6 +554,15 @@ public final class Numbers {
     public static long ceilPow2(long value) {
         long i = value;
         if ((i != 0) && (i & (i - 1)) > 0) {
+            // Check if value > 2^62 to prevent overflow
+            // For values > 2^62, the ceiling would be 2^63 which overflows
+            // in signed long arithmetic. We cap the result at 2^62.
+            if (i > (1L << 62)) {
+                // Cannot represent 2^63 as a positive signed long
+                // Return max representable power of 2
+                return 1L << 62;
+            }
+
             i |= (i >>> 1);
             i |= (i >>> 2);
             i |= (i >>> 4);
@@ -561,10 +570,6 @@ public final class Numbers {
             i |= (i >>> 16);
             i |= (i >>> 32);
             i++;
-
-            if (i < 0) {
-                i >>>= 1;
-            }
         }
         return i;
     }
@@ -662,6 +667,14 @@ public final class Numbers {
         return false;
     }
 
+    public static long floorPow2(long value) {
+        return value <= 0 ? 0 : Long.highestOneBit(value);
+    }
+
+    public static int floorPow2(int value) {
+        return value <= 0 ? 0 : Integer.highestOneBit(value);
+    }
+
     // returns lo | hi network address in a single long
     public static long getBroadcastAddress(CharSequence sequence) throws NumericException {
         long subnetAndNetmask = Numbers.getIPv4Subnet(sequence);
@@ -695,7 +708,7 @@ public final class Numbers {
     public static long getIPv4Subnet(CharSequence sequence) throws NumericException {
         int netmask = getIPv4Netmask(sequence);
         if (netmask == BAD_NETMASK) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid netmask in IPv4 subnet: ").put(sequence);
         }
 
         int mid = Chars.indexOf(sequence, 0, '/');
@@ -709,7 +722,7 @@ public final class Numbers {
             return pack(ipv4, netmask);
         } catch (NumericException e) {
             if (mid == -1) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid IPv4 subnet format, expected format: x.x.x.x/mask, got: ").put(sequence);
             }
             return pack(parseSubnet0(sequence, 0, mid, getNetmaskLength(netmask)), netmask);
         }
@@ -782,11 +795,11 @@ public final class Numbers {
 
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid hex character code: ").put(c);
         }
         int r = hexNumbers[c];
         if (r == -1) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid hex character: '").put((char) c).put('\'');
         }
         return r;
     }
@@ -865,7 +878,11 @@ public final class Numbers {
     }
 
     public static boolean isPow2(int value) {
-        return (value & (value - 1)) == 0;
+        return value > 0 && (value & (value - 1)) == 0;
+    }
+
+    public static boolean isPow2(long value) {
+        return value > 0 && (value & (value - 1)) == 0;
     }
 
     public static boolean lessThan(long a, long b, boolean negated) {
@@ -902,21 +919,6 @@ public final class Numbers {
 
     public static boolean notDigit(char c) {
         return c < '0' || c > '9';
-    }
-
-    public static boolean notDigit(byte b) {
-        return b < '0' || b > '9';
-    }
-
-    public static byte parseByte(Utf8Sequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        short n = parseShort0(sequence.asAsciiCharSequence(), p, lim);
-        if (n < Byte.MIN_VALUE || n > Byte.MAX_VALUE) {
-            throw NumericException.INSTANCE;
-        }
-        return (byte) n;
     }
 
     public static double parseDouble(CharSequence sequence) throws NumericException {
@@ -956,7 +958,7 @@ public final class Numbers {
 
     public static int parseHexInt(CharSequence sequence, int lo, int hi) throws NumericException {
         if (hi == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty hex string");
         }
 
         int val = 0;
@@ -976,7 +978,7 @@ public final class Numbers {
 
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
         if (hi == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty hex string");
         }
 
         long val = 0;
@@ -992,7 +994,7 @@ public final class Numbers {
 
     public static long parseHexLong(Utf8Sequence sequence, int lo, int hi) throws NumericException {
         if (hi == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty hex string");
         }
 
         long val = 0;
@@ -1041,7 +1043,7 @@ public final class Numbers {
     }
 
     public static int parseIPv4UDP(CharSequence sequence) throws NumericException {
-        if (sequence == null || sequence.length() == 0) {
+        if (sequence == null || sequence.isEmpty()) {
             return IPv4_NULL;
         }
         // discards quote marks around ip address
@@ -1053,7 +1055,7 @@ public final class Numbers {
 
     public static int parseIPv4_0(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty IPv4 address string");
         }
 
         int hi;
@@ -1071,14 +1073,14 @@ public final class Numbers {
                     lo++;
                 } while (sequence.charAt(lo) == '.');
             } else {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid IPv4 address: ").put(sequence);
             }
         }
 
         while ((hi = Chars.indexOf(sequence, lo, '.')) > -1 && count < 3) {
             num = parseInt(sequence, lo, hi);
             if (num > 255) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
             }
             ipv4 = (ipv4 << 8) | num;
             count++;
@@ -1086,7 +1088,7 @@ public final class Numbers {
         }
 
         if (count != 3) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("IPv4 address must have 4 octets, found: ").put(count + 1);
         }
 
         // removes any trailing dots
@@ -1097,7 +1099,7 @@ public final class Numbers {
                 if (sequence.charAt(hi) == '.') {
                     hi++;
                 } else {
-                    throw NumericException.INSTANCE;
+                    throw NumericException.instance().put("invalid character in IPv4 address: ").put(sequence);
                 }
             }
         } else {
@@ -1105,7 +1107,7 @@ public final class Numbers {
         }
 
         if (num > 255) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
         }
 
         return (ipv4 << 8) | num;
@@ -1113,21 +1115,21 @@ public final class Numbers {
 
     public static int parseInt(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseInt0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 
     public static int parseInt(Utf8Sequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseInt0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static int parseInt(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
 
         return parseInt0(sequence, 0, sequence.length());
@@ -1135,14 +1137,14 @@ public final class Numbers {
 
     public static int parseInt(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseInt0(sequence, p, lim);
     }
 
     public static long parseInt000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty number string");
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -1152,7 +1154,7 @@ public final class Numbers {
         }
 
         if (i >= lim || notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("not a number: ").put(sequence);
         }
 
         int val = 0;
@@ -1166,7 +1168,7 @@ public final class Numbers {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
@@ -1174,7 +1176,7 @@ public final class Numbers {
         final int len = i - p;
 
         if (len > 3 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
 
         while (i - p < 3) {
@@ -1199,7 +1201,7 @@ public final class Numbers {
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty number string");
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -1209,7 +1211,7 @@ public final class Numbers {
         }
 
         if (i >= lim || notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("not a number: ").put(sequence);
         }
 
         int val = 0;
@@ -1223,13 +1225,13 @@ public final class Numbers {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
 
         if (val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
 
         return encodeLowHighInts(negative ? val : -val, i - p);
@@ -1239,7 +1241,7 @@ public final class Numbers {
         int lim = sequence.length();
 
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty size string");
         }
 
         boolean negative = sequence.charAt(0) == '-';
@@ -1249,7 +1251,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("not a number: ").put(sequence);
         }
 
         int val = 0;
@@ -1264,7 +1266,7 @@ public final class Numbers {
                         case 'k':
                             r = val * 1024;
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("size overflow");
                             }
                             val = r;
                             break EX;
@@ -1272,7 +1274,7 @@ public final class Numbers {
                         case 'm':
                             r = val * 1024 * 1024;
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("size overflow");
                             }
                             val = r;
                             break EX;
@@ -1280,53 +1282,53 @@ public final class Numbers {
                             break;
                     }
                 }
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid size format: ").put(sequence);
             }
             // val * 10 + (c - '0')
             r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
 
         if (val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
         return negative ? val : -val;
     }
 
     public static long parseLong(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseLong0(sequence, 0, sequence.length());
     }
 
     public static long parseLong(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseLong0(sequence, p, lim);
     }
 
     public static long parseLong(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseLong0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 
     public static long parseLong(Utf8Sequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseLong0(sequence.asAsciiCharSequence(), p, lim);
     }
 
     public static long parseLong000000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty number string");
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -1336,7 +1338,7 @@ public final class Numbers {
         }
 
         if (i >= lim || notDigit(sequence.charAt(i))) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("not a number: ").put(sequence);
         }
 
         int val = 0;
@@ -1350,7 +1352,7 @@ public final class Numbers {
             // val * 10 + (c - '0')
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
@@ -1358,7 +1360,7 @@ public final class Numbers {
         final int len = i - p;
 
         if (len > 6 || val == Integer.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
 
         while (i - p < 6) {
@@ -1382,12 +1384,12 @@ public final class Numbers {
     public static long parseLongDurationMicros(CharSequence sequence) throws NumericException {
         final int lim = sequence.length();
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         final boolean negative = sequence.charAt(0) == '-';
         if (negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("negative duration not supported: ").put(sequence);
         }
 
         long val = 0;
@@ -1402,49 +1404,49 @@ public final class Numbers {
                         case 's':
                             r = driver.fromSeconds(val);
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'm':
                             r = driver.fromMinutes((int) val);
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'h':
                             r = driver.fromHours((int) val);
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'd':
                             r = driver.fromDays((int) val);
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'w':
                             r = driver.fromWeeks((int) val);
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'M':
                             r = driver.fromDays((int) (val * 30));
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
                         case 'y':
                             r = driver.fromDays((int) (val * 365));
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
@@ -1452,18 +1454,18 @@ public final class Numbers {
                             break;
                     }
                 }
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid duration format");
             }
             // val * 10 + (c - '0')
             r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
 
         if (val == Long.MIN_VALUE) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
         return -val;
     }
@@ -1483,7 +1485,7 @@ public final class Numbers {
         int lim = sequence.length();
 
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty size string");
         }
 
         boolean negative = sequence.charAt(0) == '-';
@@ -1493,7 +1495,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid size format: ").put(sequence);
         }
 
         long val = 0;
@@ -1508,7 +1510,7 @@ public final class Numbers {
                         case 'k':
                             r = val * 1024L;
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
@@ -1516,7 +1518,7 @@ public final class Numbers {
                         case 'm':
                             r = val * 1024L * 1024L;
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
@@ -1524,7 +1526,7 @@ public final class Numbers {
                         case 'g':
                             r = val * 1024L * 1024L * 1024L;
                             if (r > val) {
-                                throw NumericException.INSTANCE;
+                                throw NumericException.instance().put("duration overflow");
                             }
                             val = r;
                             break EX;
@@ -1532,29 +1534,29 @@ public final class Numbers {
                             break;
                     }
                 }
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid duration format");
             }
             // val * 10 + (c - '0')
             r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
 
         if (val == Long.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("number overflow");
         }
         return negative ? val : -val;
     }
 
     public static long parseMicros(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         int lim = sequence.length();
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         boolean negative = sequence.charAt(0) == '-';
@@ -1565,7 +1567,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         long val = 0;
@@ -1580,7 +1582,7 @@ public final class Numbers {
                     // must be 'ms' (millisecond) or 'm' (minute)
                     if (digitCount == 0) {
                         // not at the start of the string
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     if (i + 1 < lim) {
                         // could be 'ms' or an error
@@ -1588,7 +1590,7 @@ public final class Numbers {
                             // 'ms' at the end of the string
                             val = driver.fromMillis(val);
                         } else {
-                            throw NumericException.INSTANCE;
+                            throw NumericException.instance().put("invalid duration format: ").put(sequence);
                         }
                     } else {
                         // 'm' at the end of the string
@@ -1600,19 +1602,19 @@ public final class Numbers {
                     if (digitCount > 0 && i + 1 == lim) {
                         val = driver.fromSeconds(val);
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 'u':
                     // microsecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 'n':
                     // nanosecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     val /= 1000;
                     break OUT;
@@ -1620,24 +1622,24 @@ public final class Numbers {
                     if (digitCount > 0 && i + 1 == lim) {
                         val = driver.fromHours((int) val);
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 127:
                     if (digitCount == 0) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     digitCount = 0;
                     // ignore
                     break;
                 default:
                     if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid character in duration: ").put(sequence);
                     }
                     // val * 10 + (c - '0')
                     long r = (val << 3) + (val << 1) - (c - '0');
                     if (r > val) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("duration overflow: ").put(sequence);
                     }
                     val = r;
                     digitCount++;
@@ -1646,18 +1648,18 @@ public final class Numbers {
         }
 
         if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid duration format: ").put(sequence);
         }
         return negative ? val : -val;
     }
 
     public static long parseMillis(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         int lim = sequence.length();
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         boolean negative = sequence.charAt(0) == '-';
@@ -1668,7 +1670,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         long val = 0;
@@ -1682,12 +1684,12 @@ public final class Numbers {
                     // must be 'ms' (millisecond) or 'm' (minute)
                     if (digitCount == 0) {
                         // not at the start of the string
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     if (i + 1 < lim) {
                         // could be 'ms' or an error
                         if ((sequence.charAt(i + 1) | 32) != 's' || i + 2 != lim) {
-                            throw NumericException.INSTANCE;
+                            throw NumericException.instance().put("invalid duration format: ").put(sequence);
                         }
                         // 'ms' at the end of the string
                     } else {
@@ -1700,20 +1702,20 @@ public final class Numbers {
                     if (digitCount > 0 && i + 1 == lim) {
                         val *= Dates.SECOND_MILLIS;
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 'u':
                     // microsecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     val /= 1000;
                     break OUT;
                 case 'n':
                     // nanosecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     val /= 1000_000;
                     break OUT;
@@ -1721,24 +1723,24 @@ public final class Numbers {
                     if (digitCount > 0 && i + 1 == lim) {
                         val *= Dates.HOUR_MILLIS;
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 127:
                     if (digitCount == 0) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     digitCount = 0;
                     // ignore
                     break;
                 default:
                     if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid character in duration: ").put(sequence);
                     }
                     // val * 10 + (c - '0')
                     long r = (val << 3) + (val << 1) - (c - '0');
                     if (r > val) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("duration overflow: ").put(sequence);
                     }
                     val = r;
                     digitCount++;
@@ -1747,18 +1749,18 @@ public final class Numbers {
         }
 
         if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid duration format: ").put(sequence);
         }
         return negative ? val : -val;
     }
 
     public static long parseNanos(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         int lim = sequence.length();
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         boolean negative = sequence.charAt(0) == '-';
@@ -1769,7 +1771,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty duration string");
         }
 
         long val = 0;
@@ -1784,7 +1786,7 @@ public final class Numbers {
                     // must be 'ms' (millisecond) or 'm' (minute)
                     if (digitCount == 0) {
                         // not at the start of the string
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     if (i + 1 < lim) {
                         // could be 'ms' or an error
@@ -1792,7 +1794,7 @@ public final class Numbers {
                             // 'ms' at the end of the string
                             val = driver.fromMillis(val);
                         } else {
-                            throw NumericException.INSTANCE;
+                            throw NumericException.instance().put("invalid duration format: ").put(sequence);
                         }
                     } else {
                         // 'm' at the end of the string
@@ -1804,44 +1806,44 @@ public final class Numbers {
                     if (digitCount > 0 && i + 1 == lim) {
                         val = driver.fromSeconds(val);
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 'u':
                     // microsecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     val *= 1000;
                     break OUT;
                 case 'n':
                     // nanosecond
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 'h':
                     if (digitCount > 0 && i + 1 == lim) {
                         val = driver.fromHours((int) val);
                     } else {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     break OUT;
                 case 127:
                     if (digitCount == 0) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid duration format: ").put(sequence);
                     }
                     digitCount = 0;
                     // ignore
                     break;
                 default:
                     if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid character in duration: ").put(sequence);
                     }
                     // val * 10 + (c - '0')
                     long r = (val << 3) + (val << 1) - (c - '0');
                     if (r > val) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("duration overflow: ").put(sequence);
                     }
                     val = r;
                     digitCount++;
@@ -1850,35 +1852,28 @@ public final class Numbers {
         }
 
         if ((val == Long.MIN_VALUE && !negative) || digitCount == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid duration format: ").put(sequence);
         }
         return negative ? val : -val;
     }
 
     public static short parseShort(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 
-    public static short parseShort(Utf8Sequence sequence, int p, int lim) throws NumericException {
-        if (sequence == null) {
-            throw NumericException.INSTANCE;
-        }
-        return parseShort0(sequence.asAsciiCharSequence(), p, lim);
-    }
-
     public static short parseShort(CharSequence sequence) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseShort0(sequence, 0, sequence.length());
     }
 
     public static short parseShort(CharSequence sequence, int p, int lim) throws NumericException {
         if (sequence == null) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("null string");
         }
         return parseShort0(sequence, p, lim);
     }
@@ -1886,7 +1881,7 @@ public final class Numbers {
     public static long parseSubnet(CharSequence sequence) throws NumericException {
         int delim = Chars.indexOf(sequence, 0, '/');
         if (delim == -1) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid subnet format, missing '/': ").put(sequence);
         }
 
         int netmaskBits = parseInt0(sequence, delim + 1, sequence.length());
@@ -1906,20 +1901,20 @@ public final class Numbers {
         int i = 1;
 
         if (lim == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty IPv4 subnet string");
         }
 
         final char sign = sequence.charAt(0);
 
         if (notDigit(sign)) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid IPv4 subnet format: ").put(sequence);
         }
 
         while ((hi = Chars.indexOf(sequence, lo, '.')) > -1) {
             num = parseInt(sequence, lo, hi);
 
             if (num > 255) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
             }
             // each byte goes to left-most pos in int - accounts for issues that arise from parsing variable length subnets
             ipv4 = ipv4 | (num << ((4 - i) * 8));
@@ -1929,19 +1924,19 @@ public final class Numbers {
         }
 
         if (count > 3) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("too many octets in IPv4 subnet: ").put(sequence);
         }
 
         num = parseInt(sequence, lo, lim);
 
         if (num > 255) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("IPv4 octet out of range [0-255]: ").put(num);
         }
 
         //if netmaskLength is full byte longer than subnet
         if (count == 0) {
             if (netmaskLength >= 16) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("netmask length too long for single octet subnet: ").put(netmaskLength);
             }
             checker = (checker << bits);
             num = (num << 24) & checker;
@@ -1949,15 +1944,15 @@ public final class Numbers {
         }
         //if netmaskLength is a full byte longer than subnet
         else if (count == 1 && netmaskLength >= 24) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("netmask length too long for two octet subnet: ").put(netmaskLength);
         }
         //if netmaskLength is a full byte longer than subnet
         else if (count == 2 && netmaskLength >= 32) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("netmask length too long for three octet subnet: ").put(netmaskLength);
         }
         //if netmaskLength is a full byte longer than subnet
         else if (count == 3 && netmaskLength > 32) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("netmask length out of range [0-32]: ").put(netmaskLength);
         }
 
         ipv4 = ipv4 | (num << ((4 - i) * 8));
@@ -1975,7 +1970,7 @@ public final class Numbers {
         if (scale < pow10max && scale > -pow10max) {
             return roundDown0(value, scale);
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance().put("scale out of range: ").put(scale);
     }
 
     public static double roundDownNegScale(double value, int scale) {
@@ -1996,14 +1991,14 @@ public final class Numbers {
         if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfDown0(value, scale) : -roundHalfDown0(-value, scale);
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance().put("scale out of range: ").put(scale);
     }
 
     public static double roundHalfEven(double value, int scale) throws NumericException {
         if (scale + 2 < pow10max && scale > -pow10max) {
             return value > 0 ? roundHalfEven0(value, scale) : -roundHalfEven0(-value, scale);
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance().put("scale out of range: ").put(scale);
     }
 
     public static double roundHalfEven0NegScale(double value, int scale) {
@@ -2051,7 +2046,7 @@ public final class Numbers {
             double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
             return Double.longBitsToDouble(Double.doubleToRawLongBits(roundHalfUp0(absValue, scale)) | signMask);
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance().put("scale out of range: ").put(scale);
     }
 
     public static double roundHalfUpNegScale(double value, int scale) {
@@ -2072,7 +2067,7 @@ public final class Numbers {
         if (scale < pow10max && scale > -pow10max) {
             return roundUp0(value, scale);
         }
-        throw NumericException.INSTANCE;
+        throw NumericException.instance().put("scale out of range: ").put(scale);
     }
 
     public static double roundUpNegScale(double value, int scale) {
@@ -2145,7 +2140,7 @@ public final class Numbers {
             return 0;
         }
         if (length < 0 || length > 32) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("netmask length out of range [0-32]: ").put(length);
         }
         return (0xffffffff << (32 - length));
     }
@@ -3043,7 +3038,7 @@ public final class Numbers {
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty integer string");
         }
 
         final char sign = sequence.charAt(p);
@@ -3054,7 +3049,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty integer string");
         }
 
         int digitCounter = 0;
@@ -3063,19 +3058,19 @@ public final class Numbers {
             char c = sequence.charAt(i);
             if (c == '_') {
                 if (digitCounter == 0) {
-                    throw NumericException.INSTANCE;
+                    throw NumericException.instance().put("invalid integer format: ").put(sequence, p, lim);
                 }
                 digitCounter = 0;
             } else if (c < '0' || c > '9') {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid character in integer: ").put(sequence, p, lim);
             } else {
                 // val * 10 + (c - '0')
                 if (val < (Integer.MIN_VALUE / 10)) {
-                    throw NumericException.INSTANCE;
+                    throw NumericException.instance().put("integer overflow: ").put(sequence, p, lim);
                 }
                 int r = (val << 3) + (val << 1) - (c - '0');
                 if (r > val) {
-                    throw NumericException.INSTANCE;
+                    throw NumericException.instance().put("integer overflow: ").put(sequence, p, lim);
                 }
                 val = r;
                 digitCounter++;
@@ -3083,14 +3078,14 @@ public final class Numbers {
         }
 
         if ((val == Integer.MIN_VALUE && !negative) || digitCounter == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid integer format: ").put(sequence, p, lim);
         }
         return negative ? val : -val;
     }
 
     private static long parseLong0(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty long string");
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -3101,7 +3096,7 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty long string");
         }
 
         int digitCounter = 0;
@@ -3111,23 +3106,23 @@ public final class Numbers {
             switch (c | 32) {
                 case 'l':
                     if (i == 0 || i + 1 < lim) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid long format: ").put(sequence, p, lim);
                     }
                     break;
                 case 127: // '_'
                     if (digitCounter == 0) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid long format: ").put(sequence, p, lim);
                     }
                     digitCounter = 0;
                     break;
                 default:
                     if (c < '0' || c > '9') {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("invalid character in long: ").put(sequence, p, lim);
                     }
                     // val * 10 + (c - '0')
                     long r = (val << 3) + (val << 1) - (c - '0');
                     if (r > val) {
-                        throw NumericException.INSTANCE;
+                        throw NumericException.instance().put("long overflow: ").put(sequence, p, lim);
                     }
                     val = r;
                     digitCounter++;
@@ -3135,14 +3130,14 @@ public final class Numbers {
         }
 
         if ((val == Long.MIN_VALUE && !negative) || digitCounter == 0) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("invalid long format: ").put(sequence, p, lim);
         }
         return negative ? val : -val;
     }
 
     private static short parseShort0(CharSequence sequence, final int p, int lim) throws NumericException {
         if (lim == p) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty short string");
         }
 
         boolean negative = sequence.charAt(p) == '-';
@@ -3152,28 +3147,28 @@ public final class Numbers {
         }
 
         if (i >= lim) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("empty short string");
         }
 
         short val = 0;
         for (; i < lim; i++) {
             char c = sequence.charAt(i);
             if (c < '0' || c > '9') {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("invalid character in short: ").put(sequence, p, lim);
             }
             // val * 10 + (c - '0')
             if (val < (Short.MIN_VALUE / 10)) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("short overflow: ").put(sequence, p, lim);
             }
             short r = (short) ((val << 3) + (val << 1) - (c - '0'));
             if (r > val) {
-                throw NumericException.INSTANCE;
+                throw NumericException.instance().put("number overflow");
             }
             val = r;
         }
 
         if (val == Short.MIN_VALUE && !negative) {
-            throw NumericException.INSTANCE;
+            throw NumericException.instance().put("short overflow: ").put(sequence, p, lim);
         }
         return negative ? val : (short) -val;
     }
