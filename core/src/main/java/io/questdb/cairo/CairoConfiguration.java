@@ -386,6 +386,8 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    CharSequence getParquetExportTableNamePrefix();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();

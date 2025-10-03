@@ -24,75 +24,34 @@
 
 package io.questdb.cutlass.parquet;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.network.NetworkError;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.MicrosecondClock;
-import io.questdb.std.str.Utf8StringSink;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
-    private static final Object LOCK = new Object();
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
-    private static MicrosecondClock CLOCK;
-    private static CairoEngine ENGINE;
-    private static TableToken TABLE_TOKEN;
-    private static TableWriter WRITER;
-    private final Utf8StringSink utf8StringSink = new Utf8StringSink();
-    private final int workerId;
+    private final CopyExportContext copyContext;
+    private final CopyExportRequestTask localTaskCopy;
+    private final @NotNull MicrosecondClock microsecondClock;
     private SerialParquetExporter serialExporter;
 
-    public CopyExportRequestJob(final CairoEngine engine, int workerId) throws SqlException {
+    public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
+        microsecondClock = engine.getConfiguration().getMicrosecondClock();
+        localTaskCopy = new CopyExportRequestTask();
         try {
-            SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-            serialExporter = new SerialParquetExporter(sqlExecutionContext);
-            CairoConfiguration configuration = engine.getConfiguration();
-            this.workerId = workerId;
-
-            if (workerId == 0) {
-                CLOCK = configuration.getMicrosecondClock();
-                final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-                int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
-                    TABLE_TOKEN = compiler.query()
-                            .$("CREATE TABLE IF NOT EXISTS \"")
-                            .$(statusTableName)
-                            .$("\" (" +
-                                    "ts TIMESTAMP, " + // 0
-                                    "id VARCHAR, " + // 1
-                                    "table_name SYMBOL, " + // 2
-                                    "export_path SYMBOL, " + // 3
-                                    "num_exported_files INT, " + // 4
-                                    "phase SYMBOL, " + // 5
-                                    "status SYMBOL, " + // 6
-                                    "message VARCHAR, " + // 7
-                                    "errors LONG" + // 8
-                                    ") timestamp(ts) PARTITION BY DAY\n" +
-                                    "TTL " + logRetentionDays + " DAYS Bypass WAL;"
-                            )
-                            .createTable(sqlExecutionContext);
-                    ENGINE = engine;
-                    engine.getCopyExportContext().setReporter(this::updateStatus);
-                }
-            }
-
+            serialExporter = new SerialParquetExporter(engine);
+            copyContext = engine.getCopyExportContext();
         } catch (Throwable t) {
             close();
             throw t;
@@ -102,161 +61,91 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     @Override
     public void close() {
         this.serialExporter = Misc.free(serialExporter);
-        if (this.workerId == 0) {
-            WRITER = Misc.free(WRITER);
-        }
-    }
-
-    private void updateStatus(
-            CopyExportRequestTask.Phase phase,
-            CopyExportRequestTask.Status status,
-            CopyExportRequestTask task,
-            CharSequence exportDir,
-            int numOfFiles,
-            @Nullable final CharSequence msg,
-            long errors
-    ) {
-        // serial insert to copy_export_log table to avoid table busy
-        synchronized (LOCK) {
-            if (WRITER == null) {
-                try {
-                    WRITER = ENGINE.getWriter(TABLE_TOKEN, "QuestDB system");
-                } catch (Throwable e) {
-                    LOG.error()
-                            .$("could not re-open writer [table=").$(TABLE_TOKEN)
-                            .$(", error=`").$(e).$('`')
-                            .I$();
-                }
-            }
-            if (WRITER != null) {
-                try {
-                    TableWriter.Row row = WRITER.newRow(CLOCK.getTicks());
-                    utf8StringSink.clear();
-                    Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
-                    row.putVarchar(1, utf8StringSink);
-                    row.putSym(2, task.getTableName());
-                    row.putSym(3, exportDir);
-                    row.putInt(4, numOfFiles);
-                    row.putSym(5, phase.getName());
-                    row.putSym(6, status.getName());
-                    if (msg != null) {
-                        utf8StringSink.clear();
-                        utf8StringSink.put(msg);
-                        row.putVarchar(7, utf8StringSink);
-                    } else {
-                        row.putVarchar(7, null);
-                    }
-                    row.putLong(8, errors);
-                    row.append();
-                    WRITER.commit();
-                } catch (Throwable th) {
-                    WRITER = Misc.free(WRITER);
-                    LOG.error()
-                            .$("could not update status table [exportId=").$hexPadded(task.getCopyID())
-                            .$(", statusTableName=").$(TABLE_TOKEN)
-                            .$(", tableName=").$(task.getTableName())
-                            .$(", exportDir=").$(exportDir)
-                            .$(", numOfFiles=").$(numOfFiles)
-                            .$(", phase=").$(phase.getName())
-                            .$(", status=").$(status.getName())
-                            .$(", msg=").$(msg)
-                            .$(", errors=").$(errors)
-                            .$(", error=`").$(th).$('`')
-                            .I$();
-                }
-            } else {
-                LOG.error()
-                        .$("could not update status table, writer is null [exportId=").$hexPadded(task.getCopyID())
-                        .$(", statusTableName=").$(TABLE_TOKEN)
-                        .$(", tableName=").$(task.getTableName())
-                        .$(", exportDir=").$(exportDir)
-                        .$(", numOfFiles=").$(numOfFiles)
-                        .$(", phase=").$(phase.getName())
-                        .$(", status=").$(status.getName())
-                        .$(", msg=").$(msg)
-                        .$(", errors=").$(errors)
-                        .I$();
-            }
-
-            if (task.getResult() != null) {
-                task.getResult().report(phase, status, msg);
-            }
-        }
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        CopyExportRequestTask task = queue.get(cursor);
-        CopyExportContext.ExportTaskEntry entry = task.getEntry();
-        entry.setStartTime(CLOCK.getTicks(), workerId);
-        SqlExecutionCircuitBreaker circuitBreaker = task.getCircuitBreaker();
-        CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
-        boolean triggered = false;
         try {
-            if (circuitBreaker.checkIfTripped()) {
-                LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(task.getCopyID()).$(']').$();
-                throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
-            }
-            this.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, task, null, Numbers.INT_NULL, "", 0);
-            serialExporter.of(
-                    task,
-                    circuitBreaker,
-                    this::updateStatus
+            CopyExportRequestTask task = queue.get(cursor);
+            localTaskCopy.of(
+                    task.getEntry(),
+                    task.getCreateOp(),
+                    task.getResult(),
+                    task.getTableName(),
+                    task.getFileName(),
+                    task.getCompressionCodec(),
+                    task.getCompressionLevel(),
+                    task.getRowGroupSize(),
+                    task.getDataPageSize(),
+                    task.isStatisticsEnabled(),
+                    task.getParquetVersion(),
+                    task.isRawArrayEncoding(),
+                    task.isUserSpecifiedExportOptions()
             );
-            phase = serialExporter.process(); // throws CopyExportException
-
-            if (task.getSuspendEvent() != null) {
-                phase = CopyExportRequestTask.Phase.SENDING_DATA;
-                entry.setPhase(phase);
-                utf8StringSink.clear();
-                utf8StringSink.put("sending signal to waiting thread [fd=").put(task.getSuspendEvent().getFd()).put(']');
-                triggered = true;
-                updateStatus(phase, CopyExportRequestTask.Status.STARTED, task,
-                        null, Numbers.INT_NULL, utf8StringSink.asAsciiCharSequence(), 0);
-                task.getSuspendEvent().trigger();
-                updateStatus(phase, CopyExportRequestTask.Status.FINISHED, task,
-                        null, Numbers.INT_NULL, "signal sent", 0);
-            }
-            entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
-            updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, task, serialExporter.getExportPath(), serialExporter.getNumOfFiles(), null, 0);
-        } catch (CopyExportException e) {
-            updateStatus(
-                    e.getPhase(),
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    task,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrno()
-            );
-        } catch (NetworkError e) { // SuspendEvent::trigger() may throw
-            updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    task,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getFlyweightMessage(),
-                    e.getErrno()
-            );
-        } catch (Throwable e) {
-            updateStatus(
-                    phase,
-                    circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
-                    task,
-                    null,
-                    Numbers.INT_NULL,
-                    e.getMessage(),
-                    -1
-            );
-        } finally {
-            SuspendEvent event = task.getSuspendEvent();
             task.clear();
+        } finally {
             subSeq.done(cursor);
-            if (!triggered && event != null) {
-                event.trigger();
+        }
+
+
+        CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
+        try {
+            entry.setStartTime(microsecondClock.getTicks(), workerId);
+            SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
+            CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
+
+            try {
+                if (circuitBreaker.checkIfTripped()) {
+                    LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(localTaskCopy.getCopyID()).$(']').$();
+                    throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
+                }
+                copyContext.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, localTaskCopy, null, Numbers.INT_NULL, "", 0);
+                serialExporter.of(
+                        localTaskCopy,
+                        circuitBreaker
+                );
+                phase = serialExporter.process(); // throws CopyExportException
+
+                entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
+                copyContext.updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, localTaskCopy, serialExporter.getExportPath(), serialExporter.getNumOfFiles(), null, 0);
+            } catch (CopyExportException e) {
+                copyContext.updateStatus(
+                        e.getPhase(),
+                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        localTaskCopy,
+                        null,
+                        Numbers.INT_NULL,
+                        e.getFlyweightMessage(),
+                        e.getErrno()
+                );
+            } catch (NetworkError e) { // SuspendEvent::trigger() may throw
+                copyContext.updateStatus(
+                        phase,
+                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        localTaskCopy,
+                        null,
+                        Numbers.INT_NULL,
+                        e.getFlyweightMessage(),
+                        e.getErrno()
+                );
+            } catch (Throwable e) {
+                copyContext.updateStatus(
+                        phase,
+                        circuitBreaker.checkIfTripped() ? CopyExportRequestTask.Status.CANCELLED : CopyExportRequestTask.Status.FAILED,
+                        localTaskCopy,
+                        null,
+                        Numbers.INT_NULL,
+                        e.getMessage(),
+                        -1
+                );
+            } finally {
+
+                localTaskCopy.clear();
             }
+        } finally {
+            copyContext.releaseEntry(entry);
         }
         return true;
     }
+
 }

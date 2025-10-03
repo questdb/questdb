@@ -67,7 +67,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         private final CopyExportContext copyExportContext;
         private final LongList entryIds = new LongList();
         private final ExportActivityRecord record = new ExportActivityRecord();
-        private CopyExportContext.ExportTaskEntry entry;
+        private final CopyExportContext.ExportTaskEntry entry;
         private int entryIndex;
         private boolean isAdmin;
         private CharSequence principal;
@@ -75,7 +75,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
         private ExportActivityCursor(SqlExecutionContext executionContext) {
             copyExportContext = executionContext.getCairoEngine().getCopyExportContext();
-            entry = copyExportContext.new ExportTaskEntry();
+            entry = new CopyExportContext.ExportTaskEntry();
         }
 
         @Override

@@ -645,6 +645,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return ParquetCompression.COMPRESSION_UNCOMPRESSED;
     }

@@ -40,7 +40,6 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -89,7 +88,6 @@ public class HttpQueryTestBuilder {
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
-    private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
     public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
@@ -105,9 +103,7 @@ public class HttpQueryTestBuilder {
     }
 
     public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
-        assertMemoryLeak(() -> {
-            runNoLeakCheck(configuration, code);
-        });
+        assertMemoryLeak(() -> runNoLeakCheck(configuration, code));
     }
 
     public void runNoLeakCheck(CairoConfiguration configuration, HttpClientCode code) throws Exception {
@@ -198,9 +194,7 @@ public class HttpQueryTestBuilder {
             }
 
             if (cairoConfiguration.getSqlCopyExportRoot() != null) {
-                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(
-                        engine, 0
-                );
+                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
                 workerPool.assign(copyExportRequestJob);
                 workerPool.freeOnExit(copyExportRequestJob);
             }
@@ -215,11 +209,7 @@ public class HttpQueryTestBuilder {
 
                 @Override
                 public HttpRequestHandler newInstance() {
-                    return textImportProcessor != null ? textImportProcessor.create(
-                            httpConfiguration.getJsonQueryProcessorConfiguration(),
-                            engine,
-                            workerPool.getWorkerCount()
-                    ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                    return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                 }
             });
 
@@ -260,6 +250,7 @@ public class HttpQueryTestBuilder {
                 public HttpRequestHandler newInstance() {
                     return new ExportQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
+                            httpServer.getParquetExporterPool(),
                             engine,
                             workerPool.getWorkerCount()
                     );
@@ -336,11 +327,6 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
-        this.textImportProcessor = textQueryProcessor;
-        return this;
-    }
-
     public HttpQueryTestBuilder withFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
         return this;
@@ -409,14 +395,5 @@ public class HttpQueryTestBuilder {
     @FunctionalInterface
     public interface HttpClientCode {
         void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception;
-    }
-
-    @FunctionalInterface
-    public interface HttpRequestProcessorBuilder {
-        HttpRequestHandler create(
-                JsonQueryProcessorConfiguration configuration,
-                CairoEngine engine,
-                int workerCount
-        );
     }
 }

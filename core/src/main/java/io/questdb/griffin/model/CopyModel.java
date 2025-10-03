@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
@@ -77,7 +78,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int selectStartPos;
     @Nullable
     private CharSequence selectText;
-    private int sizeLimit;
     private boolean statisticsEnabled;
     private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private CharSequence timestampColumnName;
@@ -114,7 +114,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         dataPageSize = -1;
         parquetVersion = -1;
         statisticsEnabled = true;
-        sizeLimit = -1;
         rawArrayEncoding = false;
         userSpecifiedExportOptions = false;
         compressionLevelPos = 0;
@@ -170,10 +169,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return selectStartPos;
     }
 
-    public int getSizeLimit() {
-        return sizeLimit;
-    }
-
     @Override
     public @Nullable CharSequence getTableName() {
         return target != null ? target.token : null;
@@ -199,17 +194,17 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public void initDefaultCompressLevel() {
         if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0 && !compressionLevelSet) {
             switch (compressionCodec) {
-                case 2: // COMPRESSION_GZIP
+                case ParquetCompression.COMPRESSION_GZIP:
                     if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
                         compressionLevel = GZIP_MIN_COMPRESSION_LEVEL;
                     }
                     break;
-                case 4: // COMPRESSION_BROTLI
+                case ParquetCompression.COMPRESSION_BROTLI:
                     if (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL) {
                         compressionLevel = BROTLI_MIN_COMPRESSION_LEVEL;
                     }
                     break;
-                case 6: // COMPRESSION_ZSTD
+                case ParquetCompression.COMPRESSION_ZSTD:
                     if (compressionLevel < ZSTD_MIN_COMPRESSION_LEVEL || compressionLevel > ZSTD_MAX_COMPRESSION_LEVEL) {
                         compressionLevel = ZSTD_MIN_COMPRESSION_LEVEL;
                     }
@@ -318,10 +313,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public void setSelectText(@Nullable CharSequence selectText, int startPos) {
         this.selectText = selectText;
         this.selectStartPos = startPos;
-    }
-
-    public void setSizeLimit(int sizeLimit) {
-        this.sizeLimit = sizeLimit;
     }
 
     public void setStatisticsEnabled(boolean statisticsEnabled) {

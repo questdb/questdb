@@ -33,7 +33,6 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.model.CopyModel;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -72,7 +71,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     Rnd rnd;
     long skip;
     long stop;
-    SuspendEvent suspendEvent;
     boolean waitingForCopy;
     private CopyExportResult copyExportResult;
     private boolean queryCacheable = false;
@@ -113,7 +111,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         metadata = null;
         copyID = null;
         waitingForCopy = false;
-        suspendEvent = Misc.free(suspendEvent);
         parquetFileFd = -1;
         parquetFileSize = 0;
         parquetFileOffset = 0;

@@ -230,6 +230,8 @@ public class ServerMain implements Closeable {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            // Signal long-running task to exit ASAP
+            engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
                 fileWatcher = Misc.free(fileWatcher);
@@ -383,7 +385,7 @@ public class ServerMain implements Closeable {
                             );
 
                             for (int i = 0; i < workerCount; i++) {
-                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine, i);
+                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
                                 exportWorkerPool.assign(i, copyExportRequestJob);
                                 exportWorkerPool.freeOnExit(copyExportRequestJob);
                             }

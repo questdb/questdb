@@ -177,6 +177,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private volatile boolean closing;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
@@ -190,7 +191,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyImportContext = new CopyImportContext(configuration);
-            this.copyExportContext = new CopyExportContext(configuration);
+            this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
             this.messageBus = new MessageBusImpl(configuration);
             this.metrics = configuration.getMetrics();
@@ -1072,6 +1073,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
+    public void init() {
+        copyExportContext.init();
+    }
+
+    public boolean isClosing() {
+        return closing;
+    }
+
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
     }
@@ -1089,6 +1098,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
         matViewStateStore = createMatViewStateStore();
+        init();
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
@@ -1469,6 +1479,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
+    }
+
+    public void signalClose() {
+        closing = true;
     }
 
     public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {

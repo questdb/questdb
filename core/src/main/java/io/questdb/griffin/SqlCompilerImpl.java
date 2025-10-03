@@ -2362,6 +2362,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private RecordCursorFactory compileCopyTo(SecurityContext securityContext, CopyModel model, CharSequence sqlText) throws SqlException {
         assert !model.isCancel();
 
+        if (engine.getConfiguration().isReadOnlyInstance()) {
+            throw SqlException.$(0, "COPY TO is not supported on read-only instance");
+        }
+
+        if (Chars.isBlank(engine.getConfiguration().getSqlCopyExportRoot())) {
+            throw SqlException.$(0, "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
+        }
+
         if (model.getTableName() != null) {
             authorizeSelectForCopy(securityContext, model);
         }

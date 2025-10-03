@@ -38,7 +38,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
@@ -50,25 +49,25 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.SerialParquetExporter;
+import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.network.ServerDisconnectException;
-import io.questdb.network.SuspendEventFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
@@ -105,17 +104,21 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
+    private final ConcurrentPool<SerialParquetExporter> parquetExporterPool;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
+    CopyExportRequestTask task = new CopyExportRequestTask();
     private long timeout;
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
+            ConcurrentPool<SerialParquetExporter> parquetExporterPool,
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
+        this.parquetExporterPool = parquetExporterPool;
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
@@ -341,7 +344,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.parquetFileFd = -1;
             state.getExportResult().cleanUpTempPath(ff);
         }
-        state.suspendEvent = Misc.free(state.suspendEvent);
         if (state.parquetFileAddress != 0) {
             ff.munmap(state.parquetFileAddress, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
             state.parquetFileAddress = 0;
@@ -469,6 +471,73 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return true;
     }
 
+    private void copyQueryToParquetFile(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
+        if (state.copyID == null) {
+            SerialParquetExporter parquetExporter = parquetExporterPool.pop();
+            if (parquetExporter == null) {
+                parquetExporter = new SerialParquetExporter(engine);
+            }
+
+            CopyExportContext.ExportTaskEntry entry = null;
+            try {
+
+                var securityContext = context.getSecurityContext();
+
+                var selectText = state.query;
+                var fileName = state.fileName;
+                var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
+                var copyContext = engine.getCopyExportContext();
+                CopyExportResult exportResult = state.getExportResult();
+
+                entry = copyContext.assignExportEntry(securityContext, selectText, fileName, sqlExecutionCircuitBreaker);
+                long copyID = entry.getId();
+                exportResult.setCopyID(copyID);
+
+                var sink = Misc.getThreadLocalSink();
+                sink.put(engine.getConfiguration().getParquetExportTableNamePrefix());
+                Numbers.appendHex(sink, copyID, true);
+                String tableName = sink.toString();
+
+                var createOp = copyContext.validateAndCreateTableOp(
+                        sqlExecutionContext,
+                        selectText,
+                        state.getCopyModel().getPartitionBy(),
+                        tableName,
+                        "",
+                        0
+                );
+
+                task.of(
+                        entry,
+                        createOp,
+                        exportResult,
+                        tableName,
+                        fileName,
+                        state.getCopyModel().getCompressionCodec(),
+                        state.getCopyModel().getCompressionLevel(),
+                        state.getCopyModel().getRowGroupSize(),
+                        state.getCopyModel().getDataPageSize(),
+                        state.getCopyModel().isStatisticsEnabled(),
+                        state.getCopyModel().getParquetVersion(),
+                        state.getCopyModel().isRawArrayEncoding(),
+                        state.getCopyModel().isUserSpecifiedExportOptions()
+                );
+
+                parquetExporter.of(task, sqlExecutionCircuitBreaker);
+                parquetExporter.process();
+            } finally {
+                if (entry != null) {
+                    engine.getCopyExportContext().releaseEntry(entry);
+                }
+                if (!engine.isClosing()) {
+                    parquetExporterPool.push(parquetExporter);
+                } else {
+                    parquetExporter.close();
+                }
+            }
+        }
+    }
+
     private LogRecord critical(ExportQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
@@ -487,7 +556,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
-                            initParquetExport(context, state);
+                            copyQueryToParquetFile(context, state);
                         } catch (SqlException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
@@ -495,28 +564,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT;
-                        // fall through
-                    case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_WAIT:
-                        CopyExportResult result = state.getExportResult();
-
-                        if (!result.isFinished()) {
-                            throw QueryPausedException.instance(state.suspendEvent, sqlExecutionContext.getCircuitBreaker(), Long.MAX_VALUE);
-                        }
-
-                        // Handle non-pending completion statuses
-                        if (result.getPhase() == CopyExportRequestTask.Phase.SUCCESS) {
-                            state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
-                        } else {
-                            errSink.clear();
-                            errSink.put("copy task failed [id=").put(result.getCopyID())
-                                    .put(", phase=").put(result.getPhase().getName())
-                                    .put(", status=").put(result.getStatus().getName())
-                                    .put(", message=").put(result.getMessage() != null ? result.getMessage() : "null")
-                                    .put("]");
-                            sendException(response, 0, errSink, state);
-                            break OUT;
-                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
                         // fall through
 
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT:
@@ -693,35 +741,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private LogRecord info(ExportQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
-    }
-
-    private void initParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
-        if (state.copyID == null) {
-            state.suspendEvent = SuspendEventFactory.newInstance(DefaultIODispatcherConfiguration.INSTANCE);
-            CopyExportFactory factory = new CopyExportFactory(
-                    engine,
-                    state.getCopyModel(),
-                    state.getExportResult(),
-                    context.getSecurityContext(),
-                    state.suspendEvent,
-                    state.query,
-                    sqlExecutionContext.getCircuitBreaker()
-            );
-
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                if (cursor.hasNext()) {
-                    Record record = cursor.getRecord();
-                    CharSequence copyIdSequence = record.getStrA(0);
-                    if (copyIdSequence == null) {
-                        throw CairoException.nonCritical().put("Copy export task did not return a valid copy ID");
-                    }
-                    state.copyID = copyIdSequence;
-                } else {
-                    throw CairoException.nonCritical().put("Copy export task did not return any results");
-                }
-            }
-            state.waitingForCopy = true;
-        }
     }
 
     private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1053,12 +1072,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             return;
         }
 
-        state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, (int) (state.parquetFileSize - state.parquetFileOffset));
+        // This can easily overflow int with 2G+ parquet file size.
+        long writeSize = state.parquetFileSize - state.parquetFileOffset;
+        int sendLSize = (int) Math.min(Integer.MAX_VALUE, writeSize);
+        state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, sendLSize);
         response.bookmark();
         if (state.parquetFileOffset >= state.parquetFileSize) {
             cleanupParquetState(state);
         } else {
-            throw NoSpaceLeftInResponseBufferException.instance(state.parquetFileSize - state.parquetFileOffset);
+            throw NoSpaceLeftInResponseBufferException.instance(writeSize);
         }
     }
 

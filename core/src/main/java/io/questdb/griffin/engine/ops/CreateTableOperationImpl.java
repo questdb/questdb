@@ -71,6 +71,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final CharSequence selectText;
+    private final String sqlText;
     private long batchO3MaxLag;
     private long batchSize;
     private int defaultSymbolCapacity = -1;
@@ -84,9 +86,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionBy;
     private int partitionByPosition;
     private CopyDataProgressReporter reporter;
-    private CharSequence selectText;
     private int selectTextPosition;
-    private String sqlText;
     private String tableName;
     private int tableNamePosition;
     private String timestampColumnName;
@@ -99,13 +99,15 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int volumePosition;
     private boolean walEnabled;
 
-    protected CreateTableOperationImpl(CharSequence selectText,
-                                       String tableName,
-                                       int partitionBy,
-                                       boolean walEnabled,
-                                       int defaultSymbolCapacity,
-                                       String sqlText,
-                                       boolean needRegister) {
+    public CreateTableOperationImpl(
+            CharSequence selectText,
+            String tableName,
+            int partitionBy,
+            boolean walEnabled,
+            int defaultSymbolCapacity,
+            String sqlText,
+            boolean needRegister
+    ) {
         this.selectText = selectText;
         this.tableName = tableName;
         this.partitionBy = partitionBy;
@@ -504,10 +506,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
-    }
-
-    public void setSelectText(String selectText) {
-        this.selectText = selectText;
     }
 
     public void setTableName(String tableName) {
