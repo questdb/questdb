@@ -307,7 +307,9 @@ public class PartitionDecoder implements QuietCloseable {
         }
 
         public int getTimestampIndex() {
-            return Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
+            // The value is stored as Option<NonMaxU32> on the Rust side,
+            // so we need to apply bitwise not to get the actual value.
+            return ~Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
         }
 
         private void init() {

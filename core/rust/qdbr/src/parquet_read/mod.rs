@@ -23,7 +23,7 @@ where
     pub row_group_count: u32,
     pub row_group_sizes_ptr: *const u32,
     pub row_group_sizes: AcVec<u32>,
-    pub timestamp_index: Option<NonMaxU32>, // None (zero) means no designated timestamp
+    pub timestamp_index: Option<NonMaxU32>, // None (~u32::MAX) means no designated timestamp
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
     reader: R,
