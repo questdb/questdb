@@ -91,7 +91,6 @@ public final class DecimalParser {
      * parse(decimal, "123e-2", 0, 6, -1, -1, false, false)
      * // Result: precision=4, scale=2, value=1.23
      * </pre>
-     * </p>
      *
      * @param decimal   the Decimal instance to store the parsed result (modified in-place)
      * @param cs        the CharSequence containing the decimal number to parse
