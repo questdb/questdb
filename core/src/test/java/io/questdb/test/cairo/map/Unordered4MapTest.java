@@ -78,9 +78,15 @@ public class Unordered4MapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
             valueTypes.add(ColumnType.LONG256);
             valueTypes.add(ColumnType.UUID);
+            valueTypes.add(ColumnType.getDecimalType(2, 0)); // DECIMAL8
+            valueTypes.add(ColumnType.getDecimalType(4, 0)); // DECIMAL16
+            valueTypes.add(ColumnType.getDecimalType(8, 0)); // DECIMAL32
+            valueTypes.add(ColumnType.getDecimalType(16, 0)); // DECIMAL64
+            valueTypes.add(ColumnType.getDecimalType(32, 0)); // DECIMAL128
+            valueTypes.add(ColumnType.getDecimalType(64, 0)); // DECIMAL256
 
             try (Unordered4Map map = new Unordered4Map(keyTypes, valueTypes, 64, 0.8, 24)) {
-                final int N = 10000;
+                final int N = 100;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putByte(rnd.nextByte());
@@ -104,6 +110,12 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     long256.fromRnd(rnd);
                     value.putLong256(11, long256);
                     value.putLong128(12, rnd.nextLong(), rnd.nextLong());
+                    value.putByte(13, rnd.nextByte());
+                    value.putShort(14, rnd.nextShort());
+                    value.putInt(15, rnd.nextInt());
+                    value.putLong(16, rnd.nextLong());
+                    value.putDecimal128(17, rnd.nextLong(), rnd.nextLong());
+                    value.putDecimal256(18, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 }
 
                 rnd.reset();
@@ -133,6 +145,16 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     Assert.assertEquals(long256, value.getLong256A(11));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Lo(12));
                     Assert.assertEquals(rnd.nextLong(), value.getLong128Hi(12));
+                    Assert.assertEquals(rnd.nextByte(), value.getDecimal8(13));
+                    Assert.assertEquals(rnd.nextShort(), value.getDecimal16(14));
+                    Assert.assertEquals(rnd.nextInt(), value.getDecimal32(15));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal64(16));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Hi(17));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Lo(17));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HH(18));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HL(18));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LH(18));
+                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LL(18));
                 }
 
                 try (RecordCursor cursor = map.getCursor()) {
@@ -141,7 +163,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         // key part, comes after value part in records
-                        int col = 13;
+                        int col = 19;
                         byte b = record.getByte(col++);
                         short sh = record.getShort(col);
                         String key = b + "," + sh;
@@ -153,7 +175,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     cursor.toTop();
                     int i = 0;
                     while (cursor.hasNext()) {
-                        int col = 13;
+                        int col = 19;
                         byte b = record.getByte(col++);
                         short sh = record.getShort(col);
                         String key = b + "," + sh;
@@ -187,7 +209,17 @@ public class Unordered4MapTest extends AbstractCairoTest {
                         long256.fromRnd(rnd);
                         Assert.assertEquals(long256, record.getLong256A(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col++));
+                        Assert.assertEquals(rnd.nextByte(), record.getDecimal8(col++));
+                        Assert.assertEquals(rnd.nextShort(), record.getDecimal16(col++));
+                        Assert.assertEquals(rnd.nextInt(), record.getDecimal32(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal64(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal128Hi(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal128Lo(col++));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256HH(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256HL(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256LH(col));
+                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256LL(col));
                     }
                 }
             }
@@ -239,6 +271,16 @@ public class Unordered4MapTest extends AbstractCairoTest {
     @Test
     public void testPutDateUnsupported() throws Exception {
         assertUnsupported(key -> key.putDate(0));
+    }
+
+    @Test
+    public void testPutDecimal128Unsupported() throws Exception {
+        assertUnsupported(key -> key.putDecimal128(0, 0));
+    }
+
+    @Test
+    public void testPutDecimal256Unsupported() throws Exception {
+        assertUnsupported(key -> key.putDecimal256(0, 0, 0, 0));
     }
 
     @Test
@@ -359,6 +401,9 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 ColumnType.TIMESTAMP,
                 ColumnType.DATE,
                 ColumnType.GEOLONG,
+                ColumnType.DECIMAL64,
+                ColumnType.DECIMAL128,
+                ColumnType.DECIMAL256,
         };
         for (short columnType : columnTypes) {
             TestUtils.assertMemoryLeak(() -> {

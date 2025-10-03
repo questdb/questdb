@@ -41,6 +41,49 @@ import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class InsertAsSelectTest extends AbstractCairoTest {
     @Test
+    public void testInsertAsSelectStrToDecimal() throws SqlException {
+        try {
+            ColumnType.makeUtf16DefaultString();
+
+            execute("create table append as (" +
+                    "select" +
+                    "  timestamp_sequence(518300000010L,100000L) ts," +
+                    "  x::string as d" +
+                    " from long_sequence(10)" +
+                    ")"
+            );
+
+            execute("create table target (" +
+                    "ts timestamp," +
+                    "d decimal(15, 3)" +
+                    ") timestamp (ts) partition by DAY WAL"
+            );
+
+            drainWalQueue();
+
+            // insert as select
+            execute("insert into target select * from append");
+            drainWalQueue();
+
+            // check
+            assertSql("d\n" +
+                            "1.000\n" +
+                            "2.000\n" +
+                            "3.000\n" +
+                            "4.000\n" +
+                            "5.000\n" +
+                            "6.000\n" +
+                            "7.000\n" +
+                            "8.000\n" +
+                            "9.000\n" +
+                            "10.000\n",
+                    "select d from target");
+        } finally {
+            ColumnType.resetStringToDefault();
+        }
+    }
+
+    @Test
     public void testInsertAsSelectStringToVarChar() throws SqlException {
         try {
             ColumnType.makeUtf16DefaultString();

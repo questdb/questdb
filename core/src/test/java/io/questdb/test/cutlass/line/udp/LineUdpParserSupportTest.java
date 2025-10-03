@@ -32,8 +32,11 @@ import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpParserSupport;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Os;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.DecimalUtilTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -109,6 +112,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1e-13", ColumnType.FLOAT, ColumnType.INT, true));
         Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1.0", ColumnType.FLOAT, ColumnType.BYTE, true));
         Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("1", ColumnType.FLOAT, ColumnType.LONG, true));
+
+        Assert.assertEquals(ColumnType.DECIMAL_DEFAULT_TYPE, LineUdpParserSupport.getValueType("1d", ColumnType.FLOAT, ColumnType.LONG, true));
 
         Assert.assertEquals(ColumnType.TIMESTAMP, LineUdpParserSupport.getValueType("123t"));
 
@@ -284,6 +289,15 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                     sender.flush();
                 }
         );
+    }
+
+    @Test
+    public void testPutNullDecimal() {
+        for (int p = 1; p <= Decimals.MAX_PRECISION; p++) {
+            int columnType = ColumnType.getDecimalType(p, 2);
+            var row = DecimalUtilTest.getRowAsserter(columnType, -1, Decimal256.NULL_VALUE);
+            LineUdpParserSupport.putValue(row, columnType, 0, -1, "");
+        }
     }
 
     @Test

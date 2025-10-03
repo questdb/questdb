@@ -36,6 +36,7 @@ import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -149,7 +150,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             int utf8SinkSize = textConfiguration.getUtf8SinkSize();
             this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
             this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
-            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink, new Decimal256());
             this.ff = configuration.getFilesFacade();
             this.dirMode = configuration.getMkDirMode();
             this.inputRoot = configuration.getSqlCopyInputRoot();

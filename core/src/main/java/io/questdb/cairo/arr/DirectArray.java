@@ -247,6 +247,16 @@ public final class DirectArray extends MutableArray implements Mutable {
         }
 
         @Override
+        public void putDecimal128(long hi, long lo) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(long hh, long hl, long lh, long ll) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putDouble(double value) {
             assert ptr != 0 : "ptr == 0";
             assert appendOffset <= size - Double.BYTES : "appending beyond limit";

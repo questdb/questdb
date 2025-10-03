@@ -40,6 +40,7 @@ import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -272,6 +273,15 @@ public interface Sender extends Closeable, ArraySender<Sender> {
     void close();
 
     /**
+     * Add a column with a Decimal value.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    Sender decimalColumn(CharSequence name, Decimal256 value);
+
+    /**
      * Add a column with a floating point value.
      *
      * @param name  name of the column
@@ -463,9 +473,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_HTTP_PORT = 9000;
         private static final int DEFAULT_HTTP_TIMEOUT = 30_000;
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
+        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final int DEFAULT_MAX_NAME_LEN = 127;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
-        private static final int DEFAULT_MAX_BACKOFF_MILLIS = 1_000;
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = AuthUtils.CHALLENGE_LEN + 1; // challenge size + 1;
@@ -486,9 +496,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int httpTimeout = PARAMETER_NOT_SET_EXPLICITLY;
         private String httpToken;
         private String keyId;
+        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private int maxNameLength = PARAMETER_NOT_SET_EXPLICITLY;
         private int maximumBufferCapacity = PARAMETER_NOT_SET_EXPLICITLY;
-        private int maxBackoffMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private final HttpClientConfiguration httpClientConfiguration = new DefaultHttpClientConfiguration() {
             @Override
             public int getInitialRequestBufferSize() {
@@ -995,6 +1005,46 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         }
 
         /**
+         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
+         * <br>
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
+         * <p>
+         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
+         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
+         * the server during temporary outages while still providing quick recovery when the service becomes available again.
+         * <p>
+         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
+         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
+         * retry attempts.
+         * <p>
+         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
+         * delay (though some small jitter is still applied).
+         * <p>
+         * Default value: 1,000 milliseconds (1 second).
+         *
+         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
+         * @return this instance, enabling method chaining.
+         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
+         *                             or if maxBackoffMillis was already configured.
+         */
+        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
+            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("max backoff was already configured ")
+                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
+            }
+            if (maxBackoffMillis < 0) {
+                throw new LineSenderException("max backoff cannot be negative ")
+                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
+            }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("max backoff is not supported for TCP protocol");
+            }
+            this.maxBackoffMillis = maxBackoffMillis;
+            return this;
+        }
+
+        /**
          * Set the maximum local buffer capacity in bytes.
          * <br>
          * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
@@ -1141,46 +1191,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("retrying is not supported for TCP protocol");
             }
             this.retryTimeoutMillis = retryTimeoutMillis;
-            return this;
-        }
-
-        /**
-         * Configures the maximum backoff time between retry attempts when the Sender encounters recoverable errors.
-         * <br>
-         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
-         * method when communicating over the TCP transport.
-         * <p>
-         * The Sender uses exponential backoff with jitter for retry operations. The backoff time starts at a small value
-         * and doubles with each retry attempt, up to the maximum value specified here. This helps prevent overwhelming
-         * the server during temporary outages while still providing quick recovery when the service becomes available again.
-         * <p>
-         * This parameter works in conjunction with {@link #retryTimeoutMillis(int)}. While retryTimeoutMillis sets
-         * the total time the Sender will spend retrying, maxBackoffMillis controls the maximum delay between individual
-         * retry attempts.
-         * <p>
-         * Setting this value to zero effectively disables the backoff mechanism, causing retries to occur with minimal
-         * delay (though some small jitter is still applied).
-         * <p>
-         * Default value: 1,000 milliseconds (1 second).
-         *
-         * @param maxBackoffMillis the maximum backoff time between retry attempts in milliseconds.
-         * @return this instance, enabling method chaining.
-         * @throws LineSenderException if maxBackoffMillis is negative, if this method is called for TCP protocol,
-         *                             or if maxBackoffMillis was already configured.
-         */
-        public LineSenderBuilder maxBackoffMillis(int maxBackoffMillis) {
-            if (this.maxBackoffMillis != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("max backoff was already configured ")
-                        .put("[maxBackoffMillis=").put(this.maxBackoffMillis).put("]");
-            }
-            if (maxBackoffMillis < 0) {
-                throw new LineSenderException("max backoff cannot be negative ")
-                        .put("[maxBackoffMillis=").put(maxBackoffMillis).put("]");
-            }
-            if (protocol == PROTOCOL_TCP) {
-                throw new LineSenderException("max backoff is not supported for TCP protocol");
-            }
-            this.maxBackoffMillis = maxBackoffMillis;
             return this;
         }
 

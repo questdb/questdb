@@ -28,8 +28,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.str.StringSink;
@@ -39,6 +41,62 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class IntervalFunctionTest extends AbstractCairoTest {
+    private static final IntervalFunction function = new IntervalFunction(ColumnType.INTERVAL_TIMESTAMP_MICRO) {
+        @Override
+        public Interval getInterval(Record rec) {
+            return Interval.NULL;
+        }
+    };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128Hi() {
+        function.getDecimal128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128Lo() {
+        function.getDecimal128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256HH() {
+        function.getDecimal256HH(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256HL() {
+        function.getDecimal256HL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LH() {
+        function.getDecimal256LH(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LL() {
+        function.getDecimal256LL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
+    }
 
     @Test
     public void testInterval() throws Exception {

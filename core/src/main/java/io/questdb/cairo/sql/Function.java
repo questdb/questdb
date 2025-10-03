@@ -123,6 +123,28 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
+    // must be called before getDecimal128Lo method!!!
+    long getDecimal128Hi(Record rec);
+
+    long getDecimal128Lo(Record rec);
+
+    short getDecimal16(Record rec);
+
+    // must be called before any other getDecimal256XY method!!!
+    long getDecimal256HH(Record rec);
+
+    long getDecimal256HL(Record rec);
+
+    long getDecimal256LH(Record rec);
+
+    long getDecimal256LL(Record rec);
+
+    int getDecimal32(Record rec);
+
+    long getDecimal64(Record rec);
+
+    byte getDecimal8(Record rec);
+
     double getDouble(Record rec);
 
     float getFloat(Record rec);

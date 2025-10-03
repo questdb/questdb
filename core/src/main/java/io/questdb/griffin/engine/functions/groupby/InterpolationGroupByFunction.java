@@ -121,6 +121,56 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public long getDecimal128Hi(Record rec) {
+        return wrappedFunction.getDecimal128Hi(rec);
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        return wrappedFunction.getDecimal128Lo(rec);
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return wrappedFunction.getDecimal16(rec);
+    }
+
+    @Override
+    public long getDecimal256HH(Record rec) {
+        return wrappedFunction.getDecimal256HH(rec);
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        return wrappedFunction.getDecimal256HL(rec);
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        return wrappedFunction.getDecimal256LH(rec);
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        return wrappedFunction.getDecimal256LL(rec);
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return wrappedFunction.getDecimal32(rec);
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return wrappedFunction.getDecimal64(rec);
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return wrappedFunction.getDecimal8(rec);
+    }
+
+    @Override
     public double getDouble(Record rec) {
         final double value = wrappedFunction.getDouble(rec);
         if (interpolating) {

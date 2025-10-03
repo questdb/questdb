@@ -175,6 +175,9 @@ public class FunctionFactoryDescriptor {
             case 'δ':
                 sigArgType = ColumnType.INTERVAL;
                 break;
+            case 'ξ':
+                sigArgType = ColumnType.DECIMAL;
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -351,6 +354,7 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('z', "uuid");
         typeNameMap.put('ø', "varchar");
         typeNameMap.put('δ', "interval");
+        typeNameMap.put('ξ', "decimal");
         typeNameMap.put('[' | 32, "[]");
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.std.Decimal256;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.LongList;
@@ -215,7 +216,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
-                        getAdapter(utf16sink, utf8sink),
+                        getAdapter(utf16sink, utf8sink, new Decimal256()),
                         true, Atomicity.SKIP_COL,
                         null
                 );
@@ -239,9 +240,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
         });
     }
 
-    private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
+    private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink, Decimal256 decimal256) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink, decimal256);
         DateFormat dateFormat = TypeManager.adaptiveGetTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
                 configuration.getTextConfiguration().getDefaultDateLocale(), "yyyy-MM-ddTHH:mm:ss.SSSZ"
