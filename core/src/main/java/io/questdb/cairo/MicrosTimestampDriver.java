@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cutlass.line.tcp.LineProtocolException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
@@ -276,6 +277,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
                 return Math.multiplyExact(value, Micros.MILLI_MICROS);
             case SECONDS:
                 return Math.multiplyExact(value, Micros.SECOND_MICROS);
+            case MINUTES:
+                return Math.multiplyExact(value, Micros.MINUTE_MICROS);
+            case HOURS:
+                return Math.multiplyExact(value, Micros.HOUR_MICROS);
             default:
                 Duration duration = unit.getDuration();
                 long micros = Math.multiplyExact(duration.getSeconds(), Micros.SECOND_MICROS);
@@ -295,6 +300,27 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return CommonUtils.nanosToMicros(timestamp);
         }
         return timestamp;
+    }
+
+    @Override
+    public long from(long ts, byte unit) {
+        if (ts == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+
+        try {
+            return switch (unit) {
+                case CommonUtils.TIMESTAMP_UNIT_MICROS -> ts;
+                case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts / Micros.MICRO_NANOS;
+                case CommonUtils.TIMESTAMP_UNIT_MILLIS -> Math.multiplyExact(ts, Micros.MILLI_MICROS);
+                case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Micros.SECOND_MICROS);
+                case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Micros.MINUTE_MICROS);
+                case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Micros.HOUR_MICROS);
+                default -> throw new UnsupportedOperationException();
+            };
+        } catch (ArithmeticException e) {
+            throw LineProtocolException.timestampValueOverflow(ts);
+        }
     }
 
     @Override
@@ -329,7 +355,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromNanos(long nanos) {
-        return nanos == Numbers.LONG_NULL ? nanos : nanos / Micros.MICRO_NANOS;
+        return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / Micros.MICRO_NANOS;
     }
 
     @Override
