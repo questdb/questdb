@@ -1115,7 +1115,15 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int httpJsonQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT, -1);
             int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
-            validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpNetConnectionLimit);
+            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, -1);
+
+            validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpExportConnectionLimit, httpNetConnectionLimit);
+
+            if (httpExportConnectionLimit < 0) {
+                // We don't validate default limit of export endpoint for compatibility,
+                // but we set the limit so that parquet exports don't kill web console queries
+                httpExportConnectionLimit = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
+            }
 
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,
@@ -1134,7 +1142,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     multipartIdleSpinCount,
                     requestHeaderBufferSize,
                     httpJsonQueryConnectionLimit,
-                    httpIlpConnectionLimit
+                    httpIlpConnectionLimit,
+                    httpExportConnectionLimit
             );
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server
@@ -2144,7 +2153,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private void validateHttpConnectionLimits(
-            int httpJsonQueryConnectionLimit, int httpIlpConnectionLimit, int httpNetConnectionLimit
+            int httpJsonQueryConnectionLimit, int httpIlpConnectionLimit, int httpExportConnectionLimit, int httpNetConnectionLimit
     ) throws ServerConfigurationException {
         if (httpJsonQueryConnectionLimit > httpNetConnectionLimit) {
             throw new ServerConfigurationException(
@@ -2160,12 +2169,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
 
-        if (httpJsonQueryConnectionLimit > -1 && httpIlpConnectionLimit > -1
-                && (httpJsonQueryConnectionLimit + httpIlpConnectionLimit) > httpNetConnectionLimit) {
+        if (httpExportConnectionLimit > httpNetConnectionLimit) {
             throw new ServerConfigurationException(
-                    "The sum of the json query and HTTP over ILP connection limits cannot be greater than the overall HTTP connection limit ["
-                            + PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", "
-                            + PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", "
+                    "HTTP export connection limit cannot be greater than the overall HTTP connection limit ["
+                            + PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", "
+                            + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+
+        httpJsonQueryConnectionLimit = Math.max(httpJsonQueryConnectionLimit, 0);
+        httpIlpConnectionLimit = Math.max(httpIlpConnectionLimit, 0);
+        httpExportConnectionLimit = Math.max(httpExportConnectionLimit, 0);
+
+        if ((httpJsonQueryConnectionLimit + httpIlpConnectionLimit + httpExportConnectionLimit) > httpNetConnectionLimit) {
+            throw new ServerConfigurationException(
+                    "The sum of the json query, export and HTTP over ILP connection limits cannot be greater than the overall HTTP connection limit ["
+                            + ((httpJsonQueryConnectionLimit > 0) ? PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", " : "")
+                            + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
+                            + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
     }

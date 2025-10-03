@@ -333,6 +333,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_QUERY_CACHE_BLOCK_COUNT("http.query.cache.block.count"),
     HTTP_QUERY_CACHE_ROW_COUNT("http.query.cache.row.count"),
     HTTP_ILP_CONNECTION_LIMIT("http.ilp.connection.limit"),
+    HTTP_EXPORT_CONNECTION_LIMIT("http.export.connection.limit"),
     LINE_UDP_BIND_TO("line.udp.bind.to"),
     LINE_UDP_HALT_ON_ERROR("line.udp.haltOnError"),
     LINE_UDP_JOIN("line.udp.join"),

@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -214,6 +215,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
             readyForNextRequest(context);
         }
+    }
+
+    @Override
+    public int getConnectionLimit(HttpContextConfiguration configuration) {
+        return configuration.getExportConnectionLimit();
     }
 
     @Override
