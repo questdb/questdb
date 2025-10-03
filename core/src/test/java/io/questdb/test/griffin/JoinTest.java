@@ -2846,6 +2846,40 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnDecimalKeyMixedScales() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t1 (dec, ts) values
+                    (1.1m, '1970-01-01T00:00:00.000000Z'),
+                    (1.2m, '1970-01-01T00:00:01.000000Z'),
+                    (1.3m, '1970-01-01T00:00:02.000000Z'),
+                    (1.41m, '1970-01-01T00:00:03.000000Z')
+                    """);
+
+            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t2 (dec, ts) values
+                    (1.5432m, '1970-01-01T00:00:04.000000Z'),
+                    (1.41m, '1970-01-01T00:00:05.000000Z'),
+                    (1.200m, '1970-01-01T00:00:06.000000Z'),
+                    (1.1000m, '1970-01-01T00:00:07.000000Z')
+                    """);
+
+            String expected = """
+                    dec\tts\tdec1\tts1
+                    1.10\t1970-01-01T00:00:00.000000Z\t1.1000\t1970-01-01T00:00:07.000000Z
+                    1.20\t1970-01-01T00:00:01.000000Z\t1.2000\t1970-01-01T00:00:06.000000Z
+                    1.41\t1970-01-01T00:00:03.000000Z\t1.4100\t1970-01-01T00:00:05.000000Z
+                    """;
+
+            String sql = "select * from t1 join t2 on cast(t1.dec as decimal(8, 4)) = t2.dec";
+
+            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+        });
+    }
+
+    @Test
     public void testJoinOnGeohash() throws Exception {
         assertMemoryLeak(() -> {
             execute(
