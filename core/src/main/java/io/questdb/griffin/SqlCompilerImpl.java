@@ -728,7 +728,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (columnType == ColumnType.DECIMAL) {
-            columnType = SqlParser.parseDecimalColumnType(lexer, tok);
+            columnType = SqlParser.parseDecimalColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);

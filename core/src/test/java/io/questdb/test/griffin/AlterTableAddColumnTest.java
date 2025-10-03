@@ -467,6 +467,33 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddDefaultDecimalColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x (ts timestamp) timestamp (ts)" +
+                            " partition by day" +
+                            (isWal ? " wal" : "") +
+                            ";"
+            );
+            execute("alter table x add column dec decimal");
+            execute("insert into x values('2024-01-01', 123.456m)");
+
+            drainWalQueue();
+
+            assertQuery(
+                    """
+                            ts\tdec
+                            2024-01-01T00:00:00.000000Z\t123.456
+                            """,
+                    "x",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAddDuplicateColumn() throws Exception {
         assertFailure("alter table x add column d int", 25, "column 'd' already exists");
     }

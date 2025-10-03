@@ -176,13 +176,12 @@ public class SqlParser {
      *
      * @return the concrete DECIMAL type with proper precision/scale set.
      */
-    public static int parseDecimalColumnType(GenericLexer lexer, @NotNull CharSequence previousToken) throws SqlException {
-        previousToken = GenericLexer.immutableOf(previousToken);
+    public static int parseDecimalColumnType(GenericLexer lexer) throws SqlException {
         int previousTokenPosition = lexer.lastTokenPosition();
 
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || tok.charAt(0) != '(') {
-            lexer.backTo(previousTokenPosition, previousToken);
+            lexer.unparseLast();
             return ColumnType.DECIMAL_DEFAULT_TYPE;
         }
 
@@ -4045,7 +4044,7 @@ public class SqlParser {
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         } else if (typeTag == ColumnType.DECIMAL) {
-            return parseDecimalColumnType(lexer, tok);
+            return parseDecimalColumnType(lexer);
         }
         return columnType;
     }
