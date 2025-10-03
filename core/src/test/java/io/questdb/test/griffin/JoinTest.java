@@ -2812,6 +2812,22 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnDecimalFailureMixedScale() throws Exception {
+        // We don't support implicit casting between different decimals during join resolution
+        assertMemoryLeak(() -> {
+            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+
+            try {
+                assertQueryNoLeakCheck("", "select * from t1 join t2 on t1.dec = t2.dec");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnDecimalKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
