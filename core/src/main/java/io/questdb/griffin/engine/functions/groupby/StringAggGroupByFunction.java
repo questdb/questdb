@@ -137,7 +137,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         final boolean isSrcNull = srcValue.getBool(valueIndex + 1);
 
         if (isSrcNull || srcPtr == 0) {
-            // nothing to do
+            // Nothing to do
             return;
         }
 
@@ -145,7 +145,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         final boolean isDestNull = destValue.getBool(valueIndex + 1);
 
         if (isDestNull || destPtr == 0) {
-            // just copy source pointer
+            // Just copy source pointer
             destValue.putLong(valueIndex, srcPtr);
             destValue.putBool(valueIndex + 1, false);
             return;
