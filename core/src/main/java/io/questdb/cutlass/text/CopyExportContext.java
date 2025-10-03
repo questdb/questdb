@@ -70,6 +70,7 @@ public class CopyExportContext {
     private final CharSequenceObjHashMap<ExportTaskEntry> exportSql = new CharSequenceObjHashMap<>();
     private final ObjectPool<ExportTaskEntry> exportTaskEntryPools = new ObjectPool<>(ExportTaskEntry::new, 6);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
+    private boolean initialized = false;
     private TableToken statusTableToken;
 
     public CopyExportContext(CairoEngine engine) {
@@ -131,6 +132,10 @@ public class CopyExportContext {
         }
     }
 
+    public void clear() {
+        this.initialized = false;
+    }
+
     @TestOnly
     public long getActiveExportId() {
         lock.readLock().lock();
@@ -162,7 +167,7 @@ public class CopyExportContext {
         }
     }
 
-    public boolean getAndCopyEntry(long id, ExportTaskEntry entry) {
+    public boolean getAndCopyEntry(long id, ExportTaskData entry) {
         lock.readLock().lock();
         try {
             ExportTaskEntry e = activeExports.get(id);
@@ -176,7 +181,7 @@ public class CopyExportContext {
                 entry.finishedPartitionCount = e.finishedPartitionCount;
                 entry.totalPartitionCount = e.totalPartitionCount;
                 entry.totalRowCount = e.totalRowCount;
-                entry.context = e.context;
+                entry.pricipal = e.securityContext != null ? e.securityContext.getPrincipal() : null;
                 return true;
             }
             return false;
@@ -248,12 +253,17 @@ public class CopyExportContext {
             long copyID,
             CopyExportResult result
     ) {
-        if (statusTableToken == null) {
-            return;
-        }
 
         Throwable error = null;
         synchronized (this) {
+            if (!initialized) {
+                init();
+            }
+
+            if (statusTableToken == null) {
+                return;
+            }
+
             // serial insert to copy_export_log table to avoid table busy
             try (TableWriter statusTableWriter = engine.getWriter(statusTableToken, "QuestDB system")) {
                 try {
@@ -352,43 +362,19 @@ public class CopyExportContext {
         return createOp;
     }
 
-    public static class ExportTaskEntry implements Mutable {
-        AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
-        SecurityContext context;
-        int finishedPartitionCount = 0;
-        long id = INACTIVE_COPY_ID;
-        CharSequence path;
-        CopyExportRequestTask.Phase phase;
-        long populatedRowCount = 0;
-        SqlExecutionCircuitBreaker realCircuitBreaker;
-        CharSequence sql;
-        long startTime = Numbers.LONG_NULL;
-        int totalPartitionCount = 0;
-        long totalRowCount = 0;
-        int workerId = -1;
+    public static class ExportTaskData {
+        public CharSequence pricipal;
+        private int finishedPartitionCount = 0;
+        private long id;
+        private CharSequence path;
+        private CopyExportRequestTask.Phase phase;
+        private long populatedRowCount = 0;
+        private CharSequence sql;
+        private long startTime;
+        private int totalPartitionCount = 0;
+        private long totalRowCount = 0;
+        private int workerId = -1;
 
-        @Override
-        public void clear() {
-            if (id != INACTIVE_COPY_ID) {
-                this.context = null;
-                atomicBooleanCircuitBreaker.clear();
-                this.id = INACTIVE_COPY_ID;
-                this.sql = null;
-                this.path = null;
-                this.phase = null;
-                this.startTime = Numbers.LONG_NULL;
-                this.workerId = -1;
-                this.populatedRowCount = 0;
-                this.finishedPartitionCount = 0;
-                realCircuitBreaker = null;
-                this.totalPartitionCount = 0;
-                this.totalRowCount = 0;
-            }
-        }
-
-        public SqlExecutionCircuitBreaker getCircuitBreaker() {
-            return realCircuitBreaker;
-        }
 
         public int getFinishedPartitionCount() {
             return finishedPartitionCount;
@@ -410,8 +396,8 @@ public class CopyExportContext {
             return populatedRowCount;
         }
 
-        public SecurityContext getSecurityContext() {
-            return context;
+        public CharSequence getPrincipal() {
+            return pricipal;
         }
 
         public CharSequence getSql() {
@@ -434,13 +420,92 @@ public class CopyExportContext {
             return workerId;
         }
 
+        public ExportTaskData of(ExportTaskEntry entry) {
+            this.id = entry.id;
+            this.sql = entry.sql;
+            this.path = entry.path;
+            this.phase = entry.phase;
+            this.startTime = entry.startTime;
+            this.workerId = entry.workerId;
+            this.populatedRowCount = entry.populatedRowCount;
+            this.finishedPartitionCount = entry.finishedPartitionCount;
+            this.totalPartitionCount = entry.totalPartitionCount;
+            this.totalRowCount = entry.totalRowCount;
+            return this;
+        }
+    }
+
+    public static class ExportTaskEntry implements Mutable {
+        AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        int finishedPartitionCount = 0;
+        long id = INACTIVE_COPY_ID;
+        CharSequence path;
+        CopyExportRequestTask.Phase phase;
+        long populatedRowCount = 0;
+        SqlExecutionCircuitBreaker realCircuitBreaker;
+        SecurityContext securityContext;
+        CharSequence sql;
+        long startTime = Numbers.LONG_NULL;
+        int totalPartitionCount = 0;
+        long totalRowCount = 0;
+        int workerId = -1;
+
+        @Override
+        public void clear() {
+            this.securityContext = null;
+            atomicBooleanCircuitBreaker.clear();
+            this.id = INACTIVE_COPY_ID;
+            this.sql = null;
+            this.path = null;
+            this.phase = null;
+            this.startTime = Numbers.LONG_NULL;
+            this.workerId = -1;
+            this.populatedRowCount = 0;
+            this.finishedPartitionCount = 0;
+            realCircuitBreaker = null;
+            this.totalPartitionCount = 0;
+            this.totalRowCount = 0;
+        }
+
+        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return realCircuitBreaker;
+        }
+
+        public long getId() {
+            return id;
+        }
+
+        public CharSequence getPath() {
+            return path;
+        }
+
+        public CopyExportRequestTask.Phase getPhase() {
+            return phase;
+        }
+
+        public SecurityContext getSecurityContext() {
+            return securityContext;
+        }
+
+        public CharSequence getSql() {
+            return sql;
+        }
+
+        public long getStartTime() {
+            return startTime;
+        }
+
+        public int getWorkerId() {
+            return workerId;
+        }
+
         public ExportTaskEntry of(long id,
                                   SecurityContext context,
                                   CharSequence sql,
                                   CharSequence path,
                                   SqlExecutionCircuitBreaker circuitBreaker) {
             this.id = id;
-            this.context = context;
+            this.securityContext = context;
             this.sql = sql;
             this.path = path;
             if (circuitBreaker == null) {

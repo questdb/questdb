@@ -73,7 +73,7 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
                         false
                 );
             } finally {
-                entry.clear();
+                copyExportContext.releaseEntry(entry);
             }
         });
     }
@@ -131,8 +131,8 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
                         false
                 );
             } finally {
-                userEntry.clear();
-                adminEntry.clear();
+                copyExportContext.releaseEntry(userEntry);
+                copyExportContext.releaseEntry(adminEntry);
             }
         });
     }

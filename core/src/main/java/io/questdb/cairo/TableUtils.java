@@ -360,7 +360,7 @@ public final class TableUtils {
     }
 
     public static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }

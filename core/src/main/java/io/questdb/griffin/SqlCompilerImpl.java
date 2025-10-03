@@ -2320,7 +2320,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw e;
                 }
             }
-
         }
 
         return new CopyCancelFactory(

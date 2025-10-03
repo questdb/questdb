@@ -67,7 +67,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         private final CopyExportContext copyExportContext;
         private final LongList entryIds = new LongList();
         private final ExportActivityRecord record = new ExportActivityRecord();
-        private final CopyExportContext.ExportTaskEntry entry;
+        private final CopyExportContext.ExportTaskData entry;
         private int entryIndex;
         private boolean isAdmin;
         private CharSequence principal;
@@ -75,7 +75,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
         private ExportActivityCursor(SqlExecutionContext executionContext) {
             copyExportContext = executionContext.getCairoEngine().getCopyExportContext();
-            entry = new CopyExportContext.ExportTaskEntry();
+            entry = new CopyExportContext.ExportTaskData();
         }
 
         @Override
@@ -96,7 +96,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         public boolean hasNext() throws DataUnavailableException {
             while (++entryIndex < size) {
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
-                    if (isAdmin || entry.getSecurityContext().getPrincipal().equals(principal)) {
+                    if (isAdmin || entry.getPrincipal().equals(principal)) {
                         return true;
                     }
                 }
@@ -113,6 +113,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                 isAdmin = false;
                 principal = executionContext.getSecurityContext().getPrincipal();
             }
+            entryIds.clear();
             copyExportContext.getActiveExportIds(entryIds);
             size = entryIds.size();
             toTop();
@@ -158,7 +159,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                     Numbers.appendHex(idSink, entry.getId(), true);
                     return idSink;
                 } else if (col == 2) { // username
-                    return entry.getSecurityContext().getPrincipal();
+                    return entry.getPrincipal();
                 } else if (col == 4) { // phase
                     return entry.getPhase() != null ? entry.getPhase().getName() : null;
                 } else if (col == 5) { // export path

@@ -473,6 +473,7 @@ public class CairoEngine implements Closeable, WriterSource {
         scoreboardPool.clear();
         partitionOverwriteControl.clear();
         frameFactory.clear();
+        copyExportContext.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -1073,10 +1074,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.get(tableToken, lockReason);
     }
 
-    public void init() {
-        copyExportContext.init();
-    }
-
     public boolean isClosing() {
         return closing;
     }
@@ -1098,7 +1095,6 @@ public class CairoEngine implements Closeable, WriterSource {
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
         matViewStateStore = createMatViewStateStore();
-        init();
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {

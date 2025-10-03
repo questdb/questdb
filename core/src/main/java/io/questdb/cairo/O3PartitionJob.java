@@ -406,7 +406,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn - 1
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
                             .$(", e=").$(e)
@@ -1094,7 +1094,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {

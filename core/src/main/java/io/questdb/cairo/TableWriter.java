@@ -1414,7 +1414,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // upgrade partition version
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
         final int newPartitionDirLen = other.size();
 
         // set the parquet file full path
@@ -1633,7 +1633,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // upgrade partition version
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
         final int newPartitionDirLen = other.size();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -9909,7 +9909,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (copyTargetFrame) {
                 try {
                     setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn);
-                    createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+                    createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
