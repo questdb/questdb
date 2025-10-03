@@ -154,6 +154,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
+    private final boolean cairoAutoScaleSymbolCapacity;
+    private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
@@ -471,7 +473,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
-    private final long symbolTableAppendPageSize;
+    private final long symbolTableMaxAllocationPageSize;
+    private final long symbolTableMinAllocationPageSize;
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -887,6 +890,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
         this.cairoCommitLatency = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY, 30_000_000);
+        // opt-in only in this version
+        // when symbol capacity is changed on-the-fly, symbol table files are copy-on-written (if that's a thing) and
+        // this is when their version moves. This new version is stored in a NEW slot, in column version file.
+        // This slot WILL NOT be read by older versions, hence rolling back QuestDB version will be problematic, but not
+        // impossible. Old version will not find new files, the new files will have to be renamed manually. To avoid
+        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
+        this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
+        if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
+            throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");
+        }
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
         this.checkpointRecoveryEnabled = getBoolean(
@@ -1422,7 +1436,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
             this.systemWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
-            this.symbolTableAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE, 256 * 1024));
+            this.symbolTableMinAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE, Files.PAGE_SIZE));
+            this.symbolTableMaxAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE, 8 * 1024 * 1024));
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
@@ -2053,20 +2068,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private byte getLineTimestampUnit(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                return CommonUtils.TIMESTAMP_UNIT_MICROS;
-            case "ms":
-                return CommonUtils.TIMESTAMP_UNIT_MILLIS;
-            case "s":
-                return CommonUtils.TIMESTAMP_UNIT_SECONDS;
-            case "m":
-                return CommonUtils.TIMESTAMP_UNIT_MINUTES;
-            case "h":
-                return CommonUtils.TIMESTAMP_UNIT_HOURS;
-            default:
-                return CommonUtils.TIMESTAMP_UNIT_NANOS;
-        }
+        return switch (lineUdpTimestampSwitch) {
+            case "u" -> CommonUtils.TIMESTAMP_UNIT_MICROS;
+            case "ms" -> CommonUtils.TIMESTAMP_UNIT_MILLIS;
+            case "s" -> CommonUtils.TIMESTAMP_UNIT_SECONDS;
+            case "m" -> CommonUtils.TIMESTAMP_UNIT_MINUTES;
+            case "h" -> CommonUtils.TIMESTAMP_UNIT_HOURS;
+            default -> CommonUtils.TIMESTAMP_UNIT_NANOS;
+        };
     }
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
@@ -2708,6 +2717,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
+            registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2870,6 +2880,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public boolean autoScaleSymbolCapacity() {
+            return cairoAutoScaleSymbolCapacity;
+        }
+
+        @Override
+        public double autoScaleSymbolCapacityThreshold() {
+            return cairoAutoScaleSymbolCapacityThreshold;
         }
 
         @Override
@@ -3863,8 +3883,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSymbolTableAppendPageSize() {
-            return symbolTableAppendPageSize;
+        public long getSymbolTableMaxAllocationPageSize() {
+            return symbolTableMaxAllocationPageSize;
+        }
+
+        @Override
+        public long getSymbolTableMinAllocationPageSize() {
+            return symbolTableMinAllocationPageSize;
         }
 
         @Override

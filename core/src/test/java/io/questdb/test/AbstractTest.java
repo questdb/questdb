@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @SuppressWarnings("ClassEscapesDefinedScope")
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
-    public static final Set<QuietCloseable> CLOSEABLES = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    public static final Set<QuietCloseable> CLOSEABLE = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
@@ -165,8 +165,12 @@ public class AbstractTest {
                 .withCopyExportRoot(root + "/export");
     }
 
-    protected static String[] getServerMainArgs() {
+    protected static String[] getServerMainArgs(CharSequence root) {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static String[] getServerMainArgs() {
+        return getServerMainArgs(root);
     }
 
     protected static HttpQueryTestBuilder getSimpleTester() {
