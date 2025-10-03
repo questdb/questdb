@@ -23,7 +23,8 @@ where
     pub row_group_count: u32,
     pub row_group_sizes_ptr: *const u32,
     pub row_group_sizes: AcVec<u32>,
-    pub timestamp_index: Option<NonMaxU32>, // None (~u32::MAX) means no designated timestamp
+    // None (stored as zero, which is equal to ~u32::MAX) means no designated timestamp
+    pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
     reader: R,
@@ -36,7 +37,8 @@ where
 #[repr(C)]
 #[derive(Debug)]
 pub struct ColumnMeta {
-    pub column_type: Option<ColumnType>, // None (zero) means unsupported column type
+    // None (zero) means unsupported column type
+    pub column_type: Option<ColumnType>,
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
