@@ -1277,7 +1277,8 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private static void setStr0(Function function, CharSequence value, int index, @Nullable CharSequence name) throws SqlException {
-        switch (ColumnType.tagOf(function.getType())) {
+        final int type = function.getType();
+        switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN:
                 ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
                 break;
@@ -1300,7 +1301,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((LongBindVariable) function).value = SqlUtil.implicitCastStrAsLong(value);
                 break;
             case ColumnType.TIMESTAMP:
-                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(function.getType()).implicitCast(value);
+                ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(type).implicitCast(value);
                 break;
             case ColumnType.DATE:
                 ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);
@@ -1334,8 +1335,8 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.DECIMAL256:
                 ((DecimalBindVariable) function).value.ofString(
                         value,
-                        Decimals.MAX_PRECISION,
-                        Decimals.MAX_PRECISION / 2
+                        ColumnType.getDecimalPrecision(type),
+                        ColumnType.getDecimalScale(type)
                 );
                 break;
             default:
