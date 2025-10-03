@@ -195,26 +195,12 @@ public interface TimestampDriver {
      *
      * @param ts   the timestamp value to convert
      * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
+     *             supported units: nanos, micros, millis, seconds, minutes, hours
      * @return the timestamp value
+     * @throws ArithmeticException           if the conversion fails because of long overflow
+     * @throws UnsupportedOperationException if the unit is not supported
      */
-    default long from(long ts, byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-                return fromNanos(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-                return fromMicros(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-                return fromMillis(ts);
-            case CommonUtils.TIMESTAMP_UNIT_SECONDS:
-                return fromSeconds(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MINUTES:
-                return fromMinutes((int) ts);
-            case CommonUtils.TIMESTAMP_UNIT_HOURS:
-                return fromHours((int) ts);
-            default:
-                throw new UnsupportedOperationException();
-        }
-    }
+    long from(long ts, byte unit);
 
     long fromDate(long timestamp);
 
