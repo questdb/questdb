@@ -97,6 +97,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return true;
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityThreshold() {
+        return 0.8;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -1057,8 +1067,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return 256 * 1024;
+    public long getSymbolTableMaxAllocationPageSize() {
+        return 8 * 1024 * 1024;
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return Files.PAGE_SIZE;
     }
 
     @Override

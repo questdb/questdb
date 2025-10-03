@@ -257,12 +257,14 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = replaceTimestampSuffix1("a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix1("""
+                a\tb\tk
+                23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z
+                12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z
+                48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z
+                49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z
+                40.455469747939254\t\t1970-01-22T23:46:40.000000Z
+                """, timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
@@ -285,11 +287,13 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = replaceTimestampSuffix("a\tk\tb\n" +
-                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix("""
+                a\tk\tb
+                78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW
+                51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW
+                50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ
+                72.604681060764\t1970-01-22T23:46:40.000000Z\t
+                """, timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
@@ -314,9 +318,11 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = replaceTimestampSuffix("a\tb\tk\n" +
-                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix("""
+                a\tb\tk
+                11.427984775756228\t\t1970-01-01T00:00:00.000000Z
+                42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z
+                """, timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +
@@ -339,9 +345,11 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = replaceTimestampSuffix("ts\tsym\tlon\tlat\tgeo\n" +
-                "1970-01-12T13:41:40.000000Z\tb\t74.35404787498278\t87.57691791453159\tgk1gj8\n" +
-                "1970-01-12T13:45:00.000000Z\tc\t96.30622421207782\t30.899377111184336\tmbx5c0\n", timestampType.getTypeName());
+        final String expected = replaceTimestampSuffix("""
+                ts\tsym\tlon\tlat\tgeo
+                1970-01-12T13:41:40.000000Z\tb\t74.35404787498278\t87.57691791453159\tgk1gj8
+                1970-01-12T13:45:00.000000Z\tc\t96.30622421207782\t30.899377111184336\tmbx5c0
+                """, timestampType.getTypeName());
 
         final String ddl = "create table x as " +
                 "(" +

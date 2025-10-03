@@ -183,20 +183,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     public void truncate() {
         if (cachedColumnVersionList.size() > 0) {
 
-            final long defaultPartitionTimestamp = COL_TOP_DEFAULT_PARTITION;
-            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, defaultPartitionTimestamp + 1, Vect.BIN_SEARCH_SCAN_UP);
+            int from = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, SYMBOL_TABLE_VERSION_PARTITION + 1, Vect.BIN_SEARCH_SCAN_UP);
             if (from < 0) {
                 from = -from - 1;
             }
 
             if (partitioned) {
-                // Remove all partitions after COL_TOP_DEFAULT_PARTITION
+                // Remove all partitions after SYMBOL_TABLE_VERSION_PARTITION
                 if (from < cachedColumnVersionList.size()) {
                     cachedColumnVersionList.setPos(from);
                 }
                 // Keep default column version but reset the added timestamp to min
                 for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
-                    cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, defaultPartitionTimestamp);
+                    cachedColumnVersionList.setQuick(i + TIMESTAMP_ADDED_PARTITION_OFFSET, SYMBOL_TABLE_VERSION_PARTITION);
                 }
             } else {
                 // We have to keep all the column name txns because the files are truncated but not re-created.
@@ -297,6 +296,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     public void upsertDefaultTxnName(int columnIndex, long columnNameTxn, long partitionTimestamp) {
         // When table is partitioned, use columnTop place to store the timestamp of the partition where the column added
         upsert(COL_TOP_DEFAULT_PARTITION, columnIndex, columnNameTxn, partitionTimestamp);
+    }
+
+    public void upsertSymbolTableTxnName(int columnIndex, long columnNameTxn) {
+        // Store the column name txn for the symbol-table, this txn can increase independently of column name txn in
+        // partitions, when symbol capacity is changed; columnTop is unused here and set to 0.
+        upsert(SYMBOL_TABLE_VERSION_PARTITION, columnIndex, columnNameTxn, 0);
     }
 
     private void bumpFileSize(long size) {
