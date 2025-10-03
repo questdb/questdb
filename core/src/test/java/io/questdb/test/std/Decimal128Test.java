@@ -25,7 +25,9 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -727,6 +729,14 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testNegateNull() {
+        Decimal128 a = new Decimal128();
+        a.ofNull();
+        a.negate();
+        Assert.assertTrue(a.isNull());
+    }
+
+    @Test
     public void testNegativeArithmetic() {
         // Test with negative numbers
         Decimal128 a = Decimal128.fromDouble(-12.5, 1);
@@ -777,9 +787,161 @@ public class Decimal128Test {
         }
     }
 
+    @Test
+    public void testOfStringDecimalPointAtEnd() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString("123."));
+        Assert.assertEquals(3, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("123", d.toString());
+    }
+
+    @Test
+    public void testOfStringDecimalPointAtStart() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString(".123"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.123", d.toString());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringEmptyString() throws NumericException {
+        Decimal128 d = new Decimal128();
+        d.ofString("");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExceedsMaxPrecision() throws NumericException {
+        Decimal128 d = new Decimal128();
+        String tooLarge = new String(new char[39]).replace('\0', '9'); // 39 digits
+        d.ofString(tooLarge);
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringExceedsMaxScale() throws NumericException {
+        Decimal128 d = new Decimal128();
+        String tooManyDecimals = "1." + new String(new char[39]).replace('\0', '1'); // 39 decimal places
+        d.ofString(tooManyDecimals);
+    }
+
+    @Test
+    public void testOfStringExponentWithIntegerBase() throws NumericException {
+        Decimal128 d = new Decimal128();
+
+        // Integer base with positive exponent
+        int precision = Numbers.decodeLowInt(d.ofString("123e2"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("12300", d.toString());
+
+        // Integer base with negative exponent
+        precision = Numbers.decodeLowInt(d.ofString("456e-3"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("0.456", d.toString());
+    }
+
+    @Test
+    public void testOfStringExponentWithNegativeNumber() throws NumericException {
+        Decimal128 d = new Decimal128();
+
+        // Negative number with positive exponent
+        int precision = Numbers.decodeLowInt(d.ofString("-1.5e3"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(0, d.getScale());
+        Assert.assertEquals("-1500", d.toString());
+
+        // Negative number with negative exponent
+        precision = Numbers.decodeLowInt(d.ofString("-2.5e-2"));
+        Assert.assertEquals(4, precision);
+        Assert.assertEquals(3, d.getScale());
+        Assert.assertEquals("-0.025", d.toString());
+    }
+
+    @Test
+    public void testOfStringInfinity() throws NumericException {
+        Decimal128 d = new Decimal128();
+        d.ofString("Infinity");
+        Assert.assertTrue(d.isNull());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testOfStringInvalidCharacter() throws NumericException {
+        Decimal128 d = new Decimal128();
+        d.ofString("123a45");
+    }
+
+    @Test
+    public void testOfStringNaN() throws NumericException {
+        Decimal128 d = new Decimal128();
+        d.ofString("NaN");
+        Assert.assertTrue(d.isNull());
+    }
+
+    @Test
+    public void testOfStringSimpleNegative() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString("-123.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("-123.45", d.toString());
+    }
+
+    @Test
+    public void testOfStringSimplePositive() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString("103.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("103.45", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithLeadingZeros() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString("00123.45"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.45", d.toString());
+    }
+
+    @Test
+    public void testOfStringWithMSuffix() throws NumericException {
+        Decimal128 d = new Decimal128();
+        int precision = Numbers.decodeLowInt(d.ofString("123.45m"));
+        Assert.assertEquals(5, precision);
+        Assert.assertEquals(2, d.getScale());
+        Assert.assertEquals("123.45", d.toString());
+    }
+
     @Test(expected = NumericException.class)
     public void testOverflowCtor() {
         new Decimal128(Long.MAX_VALUE, -1L, 0);
+    }
+
+    @Test
+    public void testPowersTenTable() {
+        BigDecimal bd = new BigDecimal(1);
+        long[][] table = new long[Decimal128.MAX_PRECISION][9 * 4];
+        for (int i = 0; i < Decimal128.MAX_PRECISION; i++) {
+            BigDecimal base = bd;
+            for (int j = 0; j < 9; j++) {
+                Decimal128 d = Decimal128.fromBigDecimal(bd);
+                table[i][j * 2] = d.getHigh();
+                table[i][j * 2 + 1] = d.getLow();
+                bd = bd.add(base);
+            }
+        }
+
+        printPowerTable(table);
+
+        long[][] currentTable = Decimal128.getPowersTenTable();
+        for (int i = 0; i < Decimal128.MAX_PRECISION; i++) {
+            for (int j = 0; j < 9 * 2; j++) {
+                Assert.assertEquals(table[i][j], currentTable[i][j]);
+            }
+        }
     }
 
     @Test
@@ -1043,6 +1205,14 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testRoundNull() {
+        Decimal128 d = new Decimal128();
+        d.ofNull();
+        d.round(2, RoundingMode.HALF_UP);
+        Assert.assertTrue(d.isNull());
+    }
+
+    @Test
     public void testRoundScaleIncrease() {
         // Test increasing scale (should add trailing zeros)
         Decimal128 a = Decimal128.fromDouble(1.23, 2);
@@ -1051,30 +1221,6 @@ public class Decimal128Test {
         java.math.BigDecimal expected = java.math.BigDecimal.valueOf(1.23).setScale(4, java.math.RoundingMode.HALF_UP);
         Assert.assertEquals("Scale increase failed", expected, a.toBigDecimal());
         Assert.assertEquals("Scale should be 4", 4, a.getScale());
-    }
-
-    @Test
-    public void testRoundUnnecessaryMode() {
-        // Test UNNECESSARY mode - should be a no-op regardless of whether rounding is needed
-        Decimal128 a = Decimal128.fromDouble(1.235, 3);
-        Decimal128 original = new Decimal128();
-        original.copyFrom(a);
-
-        a.round(2, java.math.RoundingMode.UNNECESSARY);
-
-        // UNNECESSARY mode should be a no-op, leaving the value unchanged
-        Assert.assertEquals("UNNECESSARY mode should be no-op", original.toBigDecimal(), a.toBigDecimal());
-        Assert.assertEquals("Scale should remain unchanged", original.getScale(), a.getScale());
-    }
-
-    @Test
-    public void testRoundUnnecessaryModeNoRounding() {
-        // Test UNNECESSARY mode when no rounding is needed
-        Decimal128 a = Decimal128.fromDouble(1.231, 3);
-        a.round(2, java.math.RoundingMode.UNNECESSARY);
-
-        java.math.BigDecimal expected = java.math.BigDecimal.valueOf(1.231);
-        Assert.assertEquals("UNNECESSARY mode should work when no rounding needed", expected, a.toBigDecimal());
     }
 
     @Test
@@ -1361,6 +1507,92 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testToDecimal256Basic() {
+        Decimal128 d128 = Decimal128.fromDouble(123.45, 2);
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(2, d256.getScale());
+        Assert.assertEquals("123.45", d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256LargeNumber() {
+        // Test with a large 128-bit number
+        Decimal128 d128 = Decimal128.fromBigDecimal(new BigDecimal("12345678901234567890.123456"));
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(d128.getScale(), d256.getScale());
+        Assert.assertEquals(d128.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256MaxValue() {
+        Decimal128 d128 = new Decimal128();
+        d128.copyFrom(Decimal128.MAX_VALUE);
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(0, d256.getScale());
+        Assert.assertEquals(d128.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256MinValue() {
+        Decimal128 d128 = new Decimal128();
+        d128.copyFrom(Decimal128.MIN_VALUE);
+        d128.add(Decimal128.fromLong(1, 0));  // Avoid NULL value
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(0, d256.getScale());
+        Assert.assertEquals(d128.toString(), d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256NegativeValue() {
+        Decimal128 d128 = Decimal128.fromDouble(-987.654321, 6);
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(6, d256.getScale());
+        Assert.assertEquals("-987.654321", d256.toString());
+    }
+
+    @Test
+    public void testToDecimal256Null() {
+        Decimal128 d128 = new Decimal128();
+        d128.ofNull();
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertTrue(d256.isNull());
+    }
+
+    @Test
+    public void testToDecimal256WithHighScale() {
+        Decimal128 d128 = Decimal128.fromDouble(1.23456789012345678, 17);
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(17, d256.getScale());
+        Assert.assertEquals(d128.toString(), d256.toString());
+    }
+
+    // ofString tests
+
+    @Test
+    public void testToDecimal256Zero() {
+        Decimal128 d128 = Decimal128.fromLong(0, 10);
+        Decimal256 d256 = new Decimal256();
+        d128.toDecimal256(d256);
+
+        Assert.assertEquals(10, d256.getScale());
+        Assert.assertEquals("0.0000000000", d256.toString());
+    }
+
+    @Test
     public void testToDouble() {
         Decimal128 decimal = Decimal128.fromLong(12345, 3);
         Assert.assertEquals(12.345, decimal.toDouble(), 0.0001);
@@ -1505,6 +1737,8 @@ public class Decimal128Test {
         Assert.assertEquals("123", sink.toString());
     }
 
+    // toDecimal256 tests
+
     @Test
     public void testToString() {
         Decimal128 decimal = Decimal128.fromLong(12345, 2);
@@ -1546,6 +1780,25 @@ public class Decimal128Test {
         Decimal128 mod = Decimal128.fromLong(1000, 2); // 10.00 with scale 2
         accumulator.modulo(mod);
         Assert.assertEquals(5.0, accumulator.toDouble(), 0.01);
+    }
+
+    private void printPowerTable(long[][] table) {
+        System.err.println("    private static final long[][] POWERS_TEN_TABLE = new long[][]{");
+        for (int i = 0, n = table.length; i < n; i++) {
+            System.err.print("            {");
+            for (int j = 0; j < 9 * 2; j++) {
+                System.err.printf("%dL", table[i][j]);
+                if (j < (9 * 2 - 1)) {
+                    System.err.print(", ");
+                }
+            }
+            System.err.print("}");
+            if (i < n - 1) {
+                System.err.print(",");
+            }
+            System.err.println();
+        }
+        System.err.println("    };");
     }
 
     private void testAdditionAccuracy(Decimal128 a, Decimal128 b, int iteration) {

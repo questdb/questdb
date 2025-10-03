@@ -24,7 +24,7 @@ import java.math.RoundingMode;
  * Using 1 bit for the sign, we have 255 bits for T, which gives us 77 digits of precision.
  * </p>
  */
-public class Decimal256 implements Sinkable {
+public class Decimal256 implements Sinkable, Decimal {
     public static final int BYTES = 32;
     /**
      * Maximum allowed scale (number of decimal places)
@@ -714,6 +714,26 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
+     * Add a specific multiplier of a power of ten to the current 256-bit value.
+     * This method modifies the value in-place by adding (multiplier * 10^pow).
+     *
+     * @param pow        the power of ten position
+     * @param multiplier the digit to add (1-9, or 0 for no-op)
+     */
+    public void addPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+
+        final int offset = (multiplier - 1) * 4;
+        final long bHH = Decimal256.POWERS_TEN_TABLE[pow][offset];
+        final long bHL = Decimal256.POWERS_TEN_TABLE[pow][offset + 1];
+        final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
+        final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
+        uncheckedAdd(this, bHH, bHL, bLH, bLL);
+    }
+
+    /**
      * Compare the decimal precision with the other.
      *
      * @return true if the decimal precision is smaller or equal to the given precision, false otherwise.
@@ -989,6 +1009,16 @@ public class Decimal256 implements Sinkable {
      */
     public long getLl() {
         return ll;
+    }
+
+    @Override
+    public final int getMaxPrecision() {
+        return Decimals.MAX_PRECISION;
+    }
+
+    @Override
+    public final int getMaxScale() {
+        return MAX_SCALE;
     }
 
     /**
@@ -1324,184 +1354,12 @@ public class Decimal256 implements Sinkable {
      * {@link Numbers#decodeHighInt} to retrieve the scale
      */
     public long ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict, boolean lossy) throws NumericException {
-        int ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
-        // We don't want to parse the m suffix, we can safely skip it
-        if (ch == 'm') {
-            strict = true;
-            hi--;
-            ch = hi > lo ? cs.charAt(hi - 1) | 32 : 0;
-        }
+        return DecimalParser.parse(this, cs, lo, hi, precision, scale, strict, lossy);
+    }
 
-        // We also need to skip 'd' and 'f' when parsing doubles/floats
-        if (ch == 'f' || ch == 'd') {
-            hi--;
-        }
-
-        // Skip leading whitespaces
-        while (lo < hi && cs.charAt(lo) == ' ') {
-            lo++;
-        }
-
-        if (lo == hi) {
-            throw NumericException.instance().put("invalid decimal: empty value");
-        }
-
-        // Parses sign
-        boolean negative = false;
-        if (cs.charAt(lo) == '-') {
-            negative = true;
-            lo++;
-        } else if (cs.charAt(lo) == '+') {
-            lo++;
-        }
-
-        if (lo == hi) {
-            throw NumericException.instance().put("invalid decimal: empty value");
-        }
-
-        ch = cs.charAt(lo);
-        if (ch >= 'I') {
-            if (isNanOrInfinite((char) ch, cs, lo, hi)) {
-                ofNull();
-                return 0;
-            }
-        }
-
-        // Remove leading zeros
-        boolean skippedZeroes = false;
-        while (lo < hi - 1 && cs.charAt(lo) == '0') {
-            lo++;
-            skippedZeroes = true;
-        }
-
-        // We do a first pass over the literal to ensure that the format is correct (numerical and at most 1 dot) and to
-        // measure the given precision/scale.
-        int dot = -1;
-        boolean digitFound = false;
-        int digitLo = lo;
-        for (; lo < hi; lo++) {
-            char c = cs.charAt(lo);
-            if (isDigit(c)) {
-                digitFound = true;
-                continue;
-            } else if (c == '.' && dot == -1) {
-                dot = lo;
-                continue;
-            }
-            break;
-        }
-        if (!digitFound) {
-            if (skippedZeroes) {
-                digitLo--;
-            } else {
-                throw NumericException.instance()
-                        .put("invalid decimal: '").put(cs)
-                        .put("' contains no digits");
-            }
-        }
-        int digitHi = lo;
-        if (!strict && dot != -1) {
-            while (digitHi > dot && cs.charAt(digitHi - 1) == '0') {
-                digitHi--;
-            }
-        }
-
-        // If lossy is enabled, we can strip digits after the provided scale (as long as it is provided)
-        if (lossy && scale >= 0 && digitHi > dot + scale) {
-            digitHi = dot + scale + 1;
-        }
-
-        // Compute the scale of the given literal (e.g. '1.234' -> 3) and the total number of digits
-        final int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
-        final int literalDigits = digitHi - digitLo - (dot == -1 ? 0 : 1);
-
-        int virtualScale = literalScale;
-
-        int exp = 0;
-        if (lo != hi) {
-            // Parses exponent
-            if ((cs.charAt(lo) | 32) == 'e') {
-                exp = Numbers.parseInt(cs, lo + 1, hi);
-                // Depending on whether exp is positive or negative, we have to virtually move the dot to the right
-                // or to the left respectively
-                if (exp >= 0 && exp > literalScale) {
-                    exp -= literalScale;
-                    virtualScale = 0;
-                } else {
-                    virtualScale -= exp;
-                    exp = 0;
-                }
-            } else {
-                throw NumericException.instance()
-                        .put("decimal '").put(cs)
-                        .put("' contains invalid character '")
-                        .put(cs.charAt(digitHi)).put('\'');
-            }
-        }
-
-        // We still need to adjust the exponent if the user specifies a target scale.
-        if (scale == -1) {
-            scale = virtualScale;
-        } else if (virtualScale <= scale) {
-            exp += scale - virtualScale;
-        } else {
-            throw NumericException.instance()
-                    .put("decimal '").put(cs)
-                    .put("' has ").put(virtualScale).put(" decimal places but scale is limited to ").put(scale);
-        }
-        if (scale > Decimals.MAX_SCALE) {
-            throw NumericException.instance()
-                    .put("decimal '").put(cs)
-                    .put("' exceeds maximum allowed scale of ").put(Decimals.MAX_SCALE);
-        }
-
-        // At this point, the exponent might add zeroes (but not remove them, we've handled this case right before).
-        // Knowing that the scale is right and that we have the correct amount of digits, computing the final precision
-        // is trivial.
-        // Note that contrary to the scale, it's alright to have a precision that is different than the user provided
-        // precision, as long as it's lower.
-
-        // Compute the final precision of the decimal
-        int pow = literalDigits + exp;
-        final int finalPrecision = Math.max(pow, scale + 1);
-        if (precision != -1 && finalPrecision > precision) {
-            throw NumericException.instance()
-                    .put("decimal '").put(cs)
-                    .put("' requires precision of ").put(finalPrecision)
-                    .put(" but is limited to ").put(precision);
-        }
-        if (finalPrecision > Decimals.MAX_PRECISION) {
-            throw NumericException.instance()
-                    .put("decimal '").put(cs)
-                    .put("' exceeds maximum allowed precision of ").put(Decimals.MAX_PRECISION);
-        }
-
+    @Override
+    public void ofZero() {
         of(0, 0, 0, 0, 0);
-        for (int p = digitLo; p < digitHi; p++) {
-            if (p == dot) {
-                continue;
-            }
-
-            pow--;
-            int times = cs.charAt(p) - '0';
-            if (times == 0) {
-                continue;
-            }
-
-            final int offset = (times - 1) * 4;
-            final long bHH = Decimal256.POWERS_TEN_TABLE[pow][offset];
-            final long bHL = Decimal256.POWERS_TEN_TABLE[pow][offset + 1];
-            final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
-            final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
-            uncheckedAdd(this, bHH, bHL, bLH, bLL);
-        }
-        this.scale = scale;
-
-        if (negative) {
-            negate();
-        }
-
-        return Numbers.encodeLowHighInts(finalPrecision, scale);
     }
 
     /**
@@ -1668,26 +1526,6 @@ public class Decimal256 implements Sinkable {
     }
 
     /**
-     * Add a specific multiplier of a power of ten to the current 256-bit value.
-     * This method modifies the value in-place by adding (multiplier * 10^pow).
-     *
-     * @param pow        the power of ten position
-     * @param multiplier the digit to add (1-9, or 0 for no-op)
-     */
-    public void addPowerOfTenMultiple(int pow, int multiplier) {
-        if (multiplier == 0 || multiplier > 9) {
-            return;
-        }
-
-        final int offset = (multiplier - 1) * 4;
-        final long bHH = Decimal256.POWERS_TEN_TABLE[pow][offset];
-        final long bHL = Decimal256.POWERS_TEN_TABLE[pow][offset + 1];
-        final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
-        final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
-        uncheckedAdd(this, bHH, bHL, bLH, bLL);
-    }
-
-    /**
      * Convert to BigDecimal.
      *
      * @return BigDecimal representation
@@ -1697,6 +1535,11 @@ public class Decimal256 implements Sinkable {
             return ZERO_SCALED[scale];
         }
         return toBigDecimal(hh, hl, lh, ll, scale);
+    }
+
+    @Override
+    public void toDecimal256(Decimal256 decimal256) {
+        decimal256.of(hh, hl, lh, ll, scale);
     }
 
     /**
@@ -1798,25 +1641,6 @@ public class Decimal256 implements Sinkable {
         }
         long bLL = POWERS_TEN_TABLE[pow][offset + 3];
         return Long.compareUnsigned(aLL, bLL);
-    }
-
-    private static boolean isDigit(char c) {
-        return '0' <= c && c <= '9';
-    }
-
-    /**
-     * Returns whether the given CharSequence starts with either NaN or Infinity.
-     *
-     * @param ch the character of the CharSequence at position lo
-     * @param cs the CharSequence to be parsed
-     * @param lo the index of the first character of the CharSequence
-     * @param hi the index of the last character of the CharSequence + 1
-     */
-    private static boolean isNanOrInfinite(char ch, CharSequence cs, int lo, int hi) {
-        return (ch == 'N' && lo + 2 < hi && cs.charAt(lo + 1) == 'a' && cs.charAt(lo + 2) == 'N') ||
-                (ch == 'I' && lo + 7 < hi && cs.charAt(lo + 1) == 'n' && cs.charAt(lo + 2) == 'f'
-                        && cs.charAt(lo + 3) == 'i' && cs.charAt(lo + 4) == 'n' && cs.charAt(lo + 5) == 'i'
-                        && cs.charAt(lo + 6) == 't' && cs.charAt(lo + 7) == 'y');
     }
 
     private static void putLongIntoBytes(byte[] bytes, int offset, long value) {

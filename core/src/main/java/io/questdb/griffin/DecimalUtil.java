@@ -41,14 +41,17 @@ import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal32Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal64Constant;
 import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
+import io.questdb.std.Decimal;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.DecimalParser;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public final class DecimalUtil {
     public static final int BYTE_TYPE = ColumnType.getDecimalType(3, 0);
@@ -625,33 +628,39 @@ public final class DecimalUtil {
         return func;
     }
 
+
     /**
      * Parses a decimal from a literal to the most adapted decimal type as a constant.
      * The literal may end with [m/M] but not necessarily.
      *
-     * @param position  the position in the SQL query for error reporting
-     * @param tok       token containing the literal
-     * @param decimal   to parse and store the resulting value
-     * @param precision of the decimal (or -1 to infer from literal)
-     * @param scale     of the decimal (or -1 to infer from literal)
+     * @param position         the position in the SQL query for error reporting
+     * @param tok              token containing the literal
+     * @param executionContext to retrieve an instance of a decimal that can parse and store the resulting value
+     * @param precision        of the decimal (or -1 to infer from literal)
+     * @param scale            of the decimal (or -1 to infer from literal)
      * @return a ConstantFunction containing the value parsed
      * @throws SqlException if the value couldn't be parsed with detailed error message
      */
     public static @NotNull ConstantFunction parseDecimalConstant(
             int position,
-            @NotNull Decimal256 decimal,
+            @NotNull SqlExecutionContext executionContext,
             @NotNull CharSequence tok,
             int precision,
             int scale
     ) throws SqlException {
+        Decimal256 decimal256 = executionContext.getDecimal256();
         try {
-            int p = Numbers.decodeLowInt(decimal.ofString(tok, precision, scale));
-            precision = precision == -1 ? p : precision;
+            // We might not know the precision of the final type, in this case we want to use
+            // the decimal that have the most precision.
+            Decimal decimal = precision > 0 ? getDecimal(executionContext, precision) : decimal256;
+            long r = DecimalParser.parse(decimal, tok, 0, tok.length(), precision, scale, false, false);
+            precision = precision == -1 ? Numbers.decodeLowInt(r) : precision;
+            decimal.toDecimal256(decimal256);
         } catch (NumericException ex) {
             throw SqlException.position(position).put(ex);
         }
 
-        return createDecimalConstant(decimal, precision, decimal.getScale());
+        return createDecimalConstant(decimal256, precision, decimal256.getScale());
     }
 
     /**
@@ -817,6 +826,26 @@ public final class DecimalUtil {
                         Decimals.DECIMAL256_LL_NULL
                 );
                 break;
+        }
+    }
+
+    /**
+     * Returns a decimal instance from a sqlExecutionContext that can fit any number of {@code precision} digits.
+     *
+     * @param executionContext to retrieve an instance of the decimal
+     */
+    @TestOnly
+    public static @NotNull Decimal getDecimal(SqlExecutionContext executionContext, int precision) {
+        switch (Decimals.getStorageSizePow2(precision)) {
+            case 0:
+            case 1:
+            case 2:
+            case 3:
+                return executionContext.getDecimal64();
+            case 4:
+                return executionContext.getDecimal128();
+            default:
+                return executionContext.getDecimal256();
         }
     }
 }

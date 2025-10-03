@@ -51,15 +51,14 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.MemoryTag;
-import io.questdb.test.AbstractTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DecimalUtilTest extends AbstractTest {
-
+public class DecimalUtilTest extends AbstractCairoTest {
     public static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
         int fromTag = ColumnType.tagOf(fromType);
         return new Record() {
@@ -302,6 +301,26 @@ public class DecimalUtilTest extends AbstractTest {
             Assert.assertEquals(2, ColumnType.getDecimalPrecision(func.getType()));
             Assert.assertEquals(0, ColumnType.getDecimalScale(func.getType()));
         }
+    }
+
+    @Test
+    public void testGetDecimal128() {
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, Decimal128.MAX_PRECISION) instanceof Decimal128);
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 19) instanceof Decimal128);
+    }
+
+    @Test
+    public void testGetDecimal256() {
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, Decimals.MAX_PRECISION) instanceof Decimal256);
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 39) instanceof Decimal256);
+    }
+
+    @Test
+    public void testGetDecimal64() {
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, Decimal64.MAX_PRECISION) instanceof Decimal64);
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 8) instanceof Decimal64);
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 4) instanceof Decimal64);
+        Assert.assertTrue(DecimalUtil.getDecimal(sqlExecutionContext, 2) instanceof Decimal64);
     }
 
     @Test
@@ -714,20 +733,20 @@ public class DecimalUtilTest extends AbstractTest {
 
     @Test
     public void testParseDecimalConstantComplexDecimalWithMSuffix() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-0012.345M", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-0012.345M", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(-12345, result.getDecimal32(null));
     }
 
     @Test
     public void testParseDecimalConstantDecimal128() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "12345678901234567890", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "12345678901234567890", -1, -1);
         Assert.assertTrue(result instanceof Decimal128Constant);
     }
 
     @Test
     public void testParseDecimalConstantDecimal16() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "9999", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "9999", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(9999, result.getDecimal16(null));
     }
@@ -735,34 +754,34 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantDecimal256() throws SqlException {
         String largeNumber = "1234567890123456789012345678901234567890";
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), largeNumber, -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, largeNumber, -1, -1);
         Assert.assertTrue(result instanceof Decimal256Constant);
     }
 
     @Test
     public void testParseDecimalConstantDecimal32() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123456789", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123456789", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(123456789, result.getDecimal32(null));
     }
 
     @Test
     public void testParseDecimalConstantDecimal64() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "1234567890123456", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "1234567890123456", -1, -1);
         Assert.assertTrue(result instanceof Decimal64Constant);
         Assert.assertEquals(1234567890123456L, result.getDecimal64(null));
     }
 
     @Test
     public void testParseDecimalConstantDecimalAtEnd() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantDecimalAtStart() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), ".123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, ".123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
@@ -770,7 +789,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantEmptyString() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid decimal: empty value");
@@ -781,7 +800,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseDecimalConstantExceedsMaxPrecision() {
         String tooLarge = "1234567890123456789012345678901234567890123456789012345678901234567890123456789"; // 80 digits
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), tooLarge, -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, tooLarge, -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "exceeds maximum allowed precision of 76");
@@ -793,7 +812,7 @@ public class DecimalUtilTest extends AbstractTest {
         // Create a number with 77 decimal places
         String number = "1." + new String(new char[77]).replace('\0', '1');
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), number, -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, number, -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "exceeds maximum allowed scale of 76");
@@ -804,7 +823,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseDecimalConstantExceedsPrecision() {
         // Try to parse "123456" with precision 5 (should fail)
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123456", 5, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123456", 5, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "decimal '123456' requires precision of 6 but is limited to 5");
@@ -815,7 +834,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseDecimalConstantExceedsScale() {
         // Try to parse "123.456" with scale 2 (should fail as it has 3 decimal places)
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.456", -1, 2);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.456", -1, 2);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "decimal '123.456' has 3 decimal places but scale is limited to 2");
@@ -825,7 +844,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantIntegerWithScale() throws SqlException {
         // Parse integer "123" with scale 0
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, 0);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", -1, 0);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
@@ -833,7 +852,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantInvalidCharacter() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123a45", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123a45", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "contains invalid character 'a'");
@@ -843,13 +862,13 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantMaxPrecisionBoundary() throws SqlException {
         String maxPrecision = new String(new char[76]).replace('\0', '9');
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), maxPrecision, -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, maxPrecision, -1, -1);
         Assert.assertTrue(result instanceof Decimal256Constant);
     }
 
     @Test
     public void testParseDecimalConstantMixedLeadingZerosAndSpaces() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "  00123.45", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "  00123.45", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(12345, result.getDecimal32(null));
     }
@@ -857,7 +876,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantMultipleDots() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "12.34.56", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "12.34.56", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "contains invalid character '.'");
@@ -866,7 +885,7 @@ public class DecimalUtilTest extends AbstractTest {
 
     @Test
     public void testParseDecimalConstantNegativeWithDecimal() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-123.45", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-123.45", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(-12345, result.getDecimal32(null));
     }
@@ -874,7 +893,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantNegativeWithPrecisionAndScale() throws SqlException {
         // Parse "-123.45" with precision 10 and scale 2
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-123.45", 10, 2);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-123.45", 10, 2);
         Assert.assertTrue(result instanceof Decimal64Constant);
         Assert.assertEquals(-12345, result.getDecimal64(null));
     }
@@ -882,7 +901,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantOnlyDecimalPoint() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), ".", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, ".", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid decimal: '.' contains no digits");
@@ -892,7 +911,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantOnlySign() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid decimal: empty value");
@@ -902,7 +921,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantOnlySpaces() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "   ", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "   ", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid decimal: empty value");
@@ -912,7 +931,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantOnlyZeros() throws SqlException {
         // "0" is valid and should return 0
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "0", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "0", -1, -1);
         Assert.assertTrue(result instanceof Decimal8Constant);
         Assert.assertEquals(0, result.getDecimal8(null));
     }
@@ -921,7 +940,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseDecimalConstantPrecisionSmallerThanActualDigits() {
         // Try to parse "12345" with precision 3 (should fail)
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "12345", 3, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "12345", 3, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "decimal '12345' requires precision of 5 but is limited to 3");
@@ -931,7 +950,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantSignAndDot() {
         try {
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-.", -1, -1);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-.", -1, -1);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "invalid decimal: '-.' contains no digits");
@@ -940,14 +959,14 @@ public class DecimalUtilTest extends AbstractTest {
 
     @Test
     public void testParseDecimalConstantSmallNegative() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "-123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "-123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(-123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantSmallPositive() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
@@ -956,7 +975,7 @@ public class DecimalUtilTest extends AbstractTest {
     public void testParseDecimalConstantSpecificScaleExceedsMax() {
         try {
             // Try to parse with scale 77 (exceeds maximum)
-            DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, 77);
+            DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", -1, 77);
             Assert.fail("Expected SqlException");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "exceeds maximum allowed scale of 76");
@@ -966,42 +985,42 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantWithBothPrecisionAndScale() throws SqlException {
         // Parse "123.45" with precision 10 and scale 2
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.45", 10, 2);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.45", 10, 2);
         Assert.assertTrue(result instanceof Decimal64Constant);
         Assert.assertEquals(12345, result.getDecimal64(null));
     }
 
     @Test
     public void testParseDecimalConstantWithDecimalAndScale() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.456789", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.456789", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(123456789, result.getDecimal32(null));
     }
 
     @Test
     public void testParseDecimalConstantWithDecimalPoint() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.45", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.45", -1, -1);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(12345, result.getDecimal32(null));
     }
 
     @Test
     public void testParseDecimalConstantWithLeadingSpaces() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "  123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "  123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantWithLeadingZeros() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "00123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "00123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantWithPositiveSign() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "+123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "+123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
@@ -1009,14 +1028,14 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantWithPrecisionAndScaleLimits() throws SqlException {
         // Test with max precision and scale
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "1.23", 76, 75);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "1.23", 76, 75);
         Assert.assertTrue(result instanceof Decimal256Constant);
     }
 
     @Test
     public void testParseDecimalConstantWithPrecisionForcesSmallerType() throws SqlException {
         // Large number but with small precision forces smaller type
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", 4, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", 4, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
@@ -1024,7 +1043,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantWithScalePadsZeros() throws SqlException {
         // Parse "123" with scale 2 should be like "123.00"
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, 2);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", -1, 2);
         Assert.assertTrue(result instanceof Decimal32Constant);
         // The internal representation should be 12300 (123 * 10^2)
         Assert.assertEquals(12300, result.getDecimal32(null));
@@ -1033,7 +1052,7 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantWithSpecifiedPrecision() throws SqlException {
         // Parse "123.45" with precision 10 (total digits allowed)
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.45", 10, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.45", 10, -1);
         Assert.assertTrue(result instanceof Decimal64Constant);
         Assert.assertEquals(12345, result.getDecimal64(null));
     }
@@ -1041,28 +1060,28 @@ public class DecimalUtilTest extends AbstractTest {
     @Test
     public void testParseDecimalConstantWithSpecifiedScale() throws SqlException {
         // Parse "123.45" with scale 2 (decimal places)
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123.45", -1, 2);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123.45", -1, 2);
         Assert.assertTrue(result instanceof Decimal32Constant);
         Assert.assertEquals(12345, result.getDecimal32(null));
     }
 
     @Test
     public void testParseDecimalConstantWithTrailingCapitalM() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantWithTrailingM() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "123m", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "123m", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }
 
     @Test
     public void testParseDecimalConstantZeroWithDecimal() throws SqlException {
-        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, new Decimal256(), "0.123", -1, -1);
+        ConstantFunction result = DecimalUtil.parseDecimalConstant(0, sqlExecutionContext, "0.123", -1, -1);
         Assert.assertTrue(result instanceof Decimal16Constant);
         Assert.assertEquals(123, result.getDecimal16(null));
     }

@@ -59,7 +59,9 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1165,8 +1167,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            return sqlExecutionContext.getDecimal128();
+        }
+
+        @Override
         public Decimal256 getDecimal256() {
             return sqlExecutionContext.getDecimal256();
+        }
+
+        @Override
+        public Decimal64 getDecimal64() {
+            return sqlExecutionContext.getDecimal64();
         }
 
         @Override

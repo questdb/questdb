@@ -22,7 +22,8 @@ import java.math.RoundingMode;
  * Maximum precision is approximately 18 digits.
  * </p>
  */
-public class Decimal64 implements Sinkable {
+public class Decimal64 implements Sinkable, Decimal {
+    public static final int MAX_PRECISION = 18;
     /**
      * Maximum allowed scale (number of decimal places)
      * Limited by the range of 64-bit signed long
@@ -227,6 +228,21 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Add a specific multiplier of a power of ten to the current 256-bit value.
+     * This method modifies the value in-place by adding (multiplier * 10^pow).
+     *
+     * @param pow        the power of ten position
+     * @param multiplier the digit to add (1-9, or 0 for no-op)
+     */
+    public void addPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+
+        value += TEN_POWERS_TABLE[pow] * multiplier;
+    }
+
+    /**
      * Compare this to another Decimal64
      */
     public int compareTo(Decimal64 other) {
@@ -341,6 +357,26 @@ public class Decimal64 implements Sinkable {
 
         Decimal64 other = (Decimal64) obj;
         return compareTo(other) == 0;
+    }
+
+    @Override
+    public final int getMaxPrecision() {
+        return MAX_PRECISION;
+    }
+
+    @Override
+    public final int getMaxScale() {
+        return MAX_SCALE;
+    }
+
+    @Override
+    public void toDecimal256(Decimal256 decimal256) {
+        if (isNull()) {
+            decimal256.ofNull();
+            return;
+        }
+        long s = value < 0 ? -1L : 0L;
+        decimal256.of(s, s, s, value, scale);
     }
 
     /**
@@ -461,6 +497,48 @@ public class Decimal64 implements Sinkable {
     }
 
     /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
+     * @param cs is the CharSequence to be parsed
+     * @return the precision of the decimal
+     */
+    public long ofString(CharSequence cs) throws NumericException {
+        return ofString(cs, -1, -1);
+    }
+
+    /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
+     * @param cs        is the CharSequence to be parsed
+     * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
+     * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
+     * @return the precision of the decimal
+     */
+    public long ofString(CharSequence cs, int precision, int scale) throws NumericException {
+        return ofString(cs, 0, cs.length(), precision, scale, false, false);
+    }
+
+    /**
+     * Parses a CharSequence decimal and store the result into the given Decimal256.
+     *
+     * @param cs        is the CharSequence to be parsed
+     * @param precision is the maximum precision that we allow when parsing or -1 if we don't want a limit
+     * @param scale     is the final scale of our decimal, if the string has a bigger scale we will throw a NumericException
+     * @param strict    determines whether we can strip tailing zeroes (making a different scale from the expected one)
+     * @param lossy     allows to remove digits from the decimal after the dot to fit the provided scale
+     * @return the precision and scale of the decimal, use {@link Numbers#decodeLowInt} to retrieve the precision and
+     * {@link Numbers#decodeHighInt} to retrieve the scale
+     */
+    public long ofString(CharSequence cs, int lo, int hi, int precision, int scale, boolean strict, boolean lossy) throws NumericException {
+        return DecimalParser.parse(this, cs, lo, hi, precision, scale, strict, lossy);
+    }
+
+    @Override
+    public void ofZero() {
+        of(0, 0);
+    }
+
+    /**
      * Rescale this Decimal64 in place
      *
      * @param newScale The new scale (must be >= current scale)
@@ -485,6 +563,10 @@ public class Decimal64 implements Sinkable {
      * @throws NumericException if roundingMode is UNNECESSARY and rounding is required
      */
     public void round(int targetScale, RoundingMode roundingMode) {
+        if (isNull()) {
+            return;
+        }
+
         if (targetScale == this.scale) {
             // No rounding needed
             return;
@@ -492,12 +574,6 @@ public class Decimal64 implements Sinkable {
 
         validateScale(targetScale);
 
-        // UNNECESSARY mode should be a complete no-op
-        if (roundingMode == RoundingMode.UNNECESSARY) {
-            return;
-        }
-
-        // Handle zero specially
         if (isZero()) {
             this.scale = targetScale;
             return;
