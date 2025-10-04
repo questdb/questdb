@@ -326,7 +326,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         // there is no previous frame, search space is exhausted
                         long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId + 1);
                         long rememberedNoMatchRowId = -rememberedRowId - 1;
-                        if (didJumpOverValidityPeriod && minRowScannedWithoutMatch < rememberedNoMatchRowId) {
+                        if (!didJumpOverValidityPeriod || minRowScannedWithoutMatch < rememberedNoMatchRowId) {
                             // This isn't the edge case where we just jumped over the remembered period
                             // with no symbol, and immediately realized there's nothing left beyond it.
                             // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
