@@ -809,12 +809,6 @@ fn chunk_to_primitive_page(
             "unexpected symbol type in primitive encoder for column {} (should be handled earlier)",
             column.name,
         )),
-        _ => Err(fmt_err!(
-            InvalidType,
-            "unexpected type {} for column {}",
-            column.data_type,
-            column.name,
-        )),
     }
 }
 

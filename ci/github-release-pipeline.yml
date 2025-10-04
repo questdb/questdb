@@ -10,7 +10,7 @@ pr: none
 
 stages:
   - stage: BuildAndRunOnAzure
-    displayName: "Building Binaires"
+    displayName: "Building Binaries"
     jobs:
       - job: RunOn
         displayName: "on Azure workers"
@@ -24,7 +24,7 @@ stages:
             windows:
               imageName: "windows-latest"
               poolName: "Azure Pipelines"
-              os: macOS
+              os: Windows
               jdk: "1.17"
         pool:
           vmImage: $(imageName)

@@ -113,7 +113,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     public @Nullable PageFrame next(long skipTarget) {
         final int rowGroupIndex = ++frame.rowGroupIndex;
         if (rowGroupIndex < rowGroupCount) {
-            frame.rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
+            frame.rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
             frame.partitionLo = frame.partitionHi;
             frame.partitionHi = frame.partitionHi + frame.rowGroupSize;
             return frame;
@@ -136,8 +136,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnIndexes.add(i);
         }
-        this.rowCount = decoder.metadata().rowCount();
-        this.rowGroupCount = decoder.metadata().rowGroupCount();
+        this.rowCount = decoder.metadata().getRowCount();
+        this.rowGroupCount = decoder.metadata().getRowGroupCount();
 
         toTop();
     }
