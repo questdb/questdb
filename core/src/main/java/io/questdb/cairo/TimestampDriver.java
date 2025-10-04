@@ -388,6 +388,14 @@ public interface TimestampDriver {
      */
     int getNanosOfMicros(long timestamp);
 
+    /**
+     * Gets the nanoseconds within the second from a timestamp value.
+     *
+     * @param timestamp the timestamp value
+     * @return the nanoseconds within the second, or Numbers.INT_NULL if timestamp is null
+     */
+    int getNanosOfSecond(long timestamp);
+
     PartitionAddMethod getPartitionAddMethod(int partitionBy);
 
     TimestampCeilMethod getPartitionCeilMethod(int partitionBy);

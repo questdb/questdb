@@ -547,6 +547,14 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getNanosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getNanosOfSecond(timestamp);
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
