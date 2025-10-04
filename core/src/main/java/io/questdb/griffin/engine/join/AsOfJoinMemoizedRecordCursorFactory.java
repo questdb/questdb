@@ -188,7 +188,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     //     ! ---------- | remembered period
                     // ! ------------------ | new period
                     //
-                    // Furthermore, since our search never revisits the remembered period, it will never give up
+                    // Furthermore, since our search never rescans the remembered period, it will never give up
                     // in the middle of it and try to memorize it didn't find anything. So, this is impossible:
                     //
                     // ! ------------ | remembered period
@@ -202,14 +202,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     // the algo reached the remembered period, and used it. It didn't call this method, it just
                     // directly extended the validity period.
                     //
-                    // These cases also won't occur, since it would imply we searched beyond the end of the search
+                    // This also won't occur, since it would imply we searched beyond the end of the search
                     // space:
                     //
                     //        x --------------- | remembered period
-                    // ! ---------------------------- | new period
-                    //
-                    //        x --------------- | remembered period
-                    // x ---------------------------- | new period
+                    // ? ---------------------------- | new period
                     //
                     // So, this is the only way to end up in this branch:
                     //
@@ -286,7 +283,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     } else {
                         // We remembered a period within which the symbol doesn't occur. Jump over the entire
                         // period and continue searching, unless the remembered period extends beyond the
-                        // tolerance interval. If we just extended the validity period, it definitely
+                        // tolerance interval. If we have just extended the validity period, it definitely
                         // extends beyond the tolerance interval.
                         if (didExtendValidityPeriod || !isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(false);
@@ -304,7 +301,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     }
                 }
                 if (!isSlaveWithinToleranceInterval(masterTimestamp, slaveTimestamp)) {
-                    // we are past the tolerance interval, no need to traverse the slave cursor any further
+                    // We have been searching outside the remembered period and are past the tolerance interval.
+                    // Stop and report no match.
                     record.hasSlave(false);
                     long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId);
                     // memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
@@ -328,7 +326,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         long rememberedNoMatchRowId = -rememberedRowId - 1;
                         if (!didJumpOverValidityPeriod || minRowScannedWithoutMatch < rememberedNoMatchRowId) {
                             // This isn't the edge case where we just jumped over the remembered period
-                            // with no symbol, and immediately realized there's nothing left beyond it.
+                            // with no symbol, only to realize there's nothing left beyond it.
                             // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
                             memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1);
                         }
