@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit {
+public final class SingleStringColumnAccessHelper implements AsofJoinColumnAccessHelper {
     private final int masterStringIndex;
     private final int slaveSymbolIndex;
     private StaticSymbolTable slaveSymbolTable;
 
-    public SingleStringSymbolShortCircuit(int masterStringIndex, int slaveSymbolIndex) {
+    public SingleStringColumnAccessHelper(int masterStringIndex, int slaveSymbolIndex) {
         this.masterStringIndex = masterStringIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
     }

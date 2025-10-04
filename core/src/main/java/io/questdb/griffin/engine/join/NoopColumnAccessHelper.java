@@ -27,56 +27,28 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class SingleVarcharSymbolShortCircuit implements SymbolShortCircuit {
-    private final int masterVarcharIndex;
-    private final int slaveSymbolIndex;
-    private final StringSink utf16Sink = new StringSink();
-    private StaticSymbolTable slaveSymbolTable;
-
-    public SingleVarcharSymbolShortCircuit(int masterVarcharIndex, int slaveSymbolIndex) {
-        this.masterVarcharIndex = masterVarcharIndex;
-        this.slaveSymbolIndex = slaveSymbolIndex;
-    }
+public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    public static final NoopColumnAccessHelper INSTANCE = new NoopColumnAccessHelper();
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
-        if (masterVarchar == null) {
-            return null;
-        }
-        if (masterVarchar.isAscii()) {
-            return masterVarchar.asAsciiCharSequence();
-        }
-        utf16Sink.clear();
-        utf16Sink.put(masterVarchar);
-        return utf16Sink;
+        throw new UnsupportedOperationException("NoopColumnAccessHelper can't return the master value");
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override
     public boolean isShortCircuit(Record masterRecord) {
-        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
-        if (masterVarchar == null) {
-            return slaveSymbolTable.containsNullValue();
-        }
-        if (masterVarchar.isAscii()) {
-            return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence()) == StaticSymbolTable.VALUE_NOT_FOUND;
-        }
-        utf16Sink.clear();
-        utf16Sink.put(masterVarchar);
-        return slaveSymbolTable.keyOf(utf16Sink) == StaticSymbolTable.VALUE_NOT_FOUND;
+        return false;
     }
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
+
     }
 }
