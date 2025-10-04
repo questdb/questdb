@@ -152,80 +152,89 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             return toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval;
         }
 
-        private void memorizeSymbolLocation(long masterTimestamp, long slaveTimestamp, int slaveSymbolKey, long slaveRowId) {
+        private void memorizeSymbolLocation(
+                long masterTimestamp,
+                long slaveTimestamp,
+                int slaveSymbolKey,
+                long slaveRowId,
+                boolean onlyIfNew
+        ) {
             int rowIdKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
             if (rowIdKeyIndex >= 0) {
                 // nothing remembered so far, store all the data with no further questions
                 symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
                 symKeyToValidityPeriodStart.put(slaveSymbolKey, slaveTimestamp);
                 symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
-            } else {
-                int periodStartKeyIndex = symKeyToValidityPeriodStart.keyIndex(slaveSymbolKey);
-                int periodEndKeyIndex = symKeyToValidityPeriodEnd.keyIndex(slaveSymbolKey);
-                long periodStart = symKeyToValidityPeriodStart.valueAt(periodStartKeyIndex);
-                long periodEnd = symKeyToValidityPeriodEnd.valueAt(periodEndKeyIndex);
-                if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
-                    // The period to memorize overlaps existing remembered period.
-                    // Let's explain under what circumstances we may end up in this branch.
-                    // We'll use this notation:
-                    //   ! ---- | we found the symbal at the start of this period
-                    //   x ---- | we did not find the symbol anywhere within this period
-                    //   ? ---- | we may or may not have found the symbol within this period
-                    //
-                    // We have this invariant: the symbol does not occur anywhere inside either the
-                    // remembered or the new period. It may only appear at its very start.
-                    // So, all of these are impossible:
-                    //
-                    // ! ------------ | remembered period
-                    //          ! --------------- | new period
-                    //
-                    //          ! --------------- | remembered period
-                    // ! ------------ | new period
-                    //
-                    // ! ------------------ | remembered period
-                    //     ! ---------- | new period
-                    //
-                    //     ! ---------- | remembered period
-                    // ! ------------------ | new period
-                    //
-                    // Furthermore, since our search never rescans the remembered period, it will never give up
-                    // in the middle of it and try to memorize it didn't find anything. So, this is impossible:
-                    //
-                    // ! ------------ | remembered period
-                    //          x --------------- | new period
-                    //
-                    // Also, in this case:
-                    //
-                    // ? ------------ | remembered period
-                    //                x --------------- | new period
-                    //
-                    // the algo reached the remembered period, and used it. It didn't call this method, it just
-                    // directly extended the validity period.
-                    //
-                    // This also won't occur, since it would imply we searched beyond the end of the search
-                    // space:
-                    //
-                    //        x --------------- | remembered period
-                    // ? ---------------------------- | new period
-                    //
-                    // So, this is the only way to end up in this branch:
-                    //
-                    //          x --------------- | remembered period
-                    // ? ------------ | new period
-                    //
-                    // The master record is in the middle of the remembered period, we skipped it,
-                    // continued to search further back, and either found the symbol or failed again.
-                    // We must update the period start, and save the rowId of the symbol.
-                    assert slaveTimestamp < periodStart : "slaveTimestamp >= periodStart";
-                    assert masterTimestamp < periodEnd : "masterTimestamp >= periodEnd";
-                    symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
-                    symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
-                } else if (masterTimestamp - slaveTimestamp > periodEnd - periodStart) {
-                    // Periods aren't overlapping. Let's memorize the new one if it's longer, saving more work.
-                    symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
-                    symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
-                    symKeyToValidityPeriodEnd.putAt(periodEndKeyIndex, slaveSymbolKey, masterTimestamp);
-                }
+                return;
+            }
+            if (onlyIfNew) {
+                return;
+            }
+            int periodStartKeyIndex = symKeyToValidityPeriodStart.keyIndex(slaveSymbolKey);
+            int periodEndKeyIndex = symKeyToValidityPeriodEnd.keyIndex(slaveSymbolKey);
+            long periodStart = symKeyToValidityPeriodStart.valueAt(periodStartKeyIndex);
+            long periodEnd = symKeyToValidityPeriodEnd.valueAt(periodEndKeyIndex);
+            if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
+                // The period to memorize overlaps existing remembered period.
+                // Let's explain under what circumstances we may end up in this branch.
+                // We'll use this notation:
+                //   ! ---- | we found the symbal at the start of this period
+                //   x ---- | we did not find the symbol anywhere within this period
+                //   ? ---- | we may or may not have found the symbol within this period
+                //
+                // We have this invariant: the symbol does not occur anywhere inside either the
+                // remembered or the new period. It may only appear at its very start.
+                // So, all of these are impossible:
+                //
+                // ! ------------ | remembered period
+                //          ! --------------- | new period
+                //
+                //          ! --------------- | remembered period
+                // ! ------------ | new period
+                //
+                // ! ------------------ | remembered period
+                //     ! ---------- | new period
+                //
+                //     ! ---------- | remembered period
+                // ! ------------------ | new period
+                //
+                // Furthermore, since our search never rescans the remembered period, it will never give up
+                // in the middle of it and try to memorize it didn't find anything. So, this is impossible:
+                //
+                // ! ------------ | remembered period
+                //          x --------------- | new period
+                //
+                // Also, in this case:
+                //
+                // ? ------------ | remembered period
+                //                x --------------- | new period
+                //
+                // the algo reached the remembered period, and used it. It didn't call this method, it just
+                // directly extended the validity period.
+                //
+                // This also won't occur, since it would imply we searched beyond the end of the search
+                // space:
+                //
+                //        x --------------- | remembered period
+                // ? ---------------------------- | new period
+                //
+                // So, this is the only way to end up in this branch:
+                //
+                //          x --------------- | remembered period
+                // ? ------------ | new period
+                //
+                // The master record is in the middle of the remembered period, we skipped it,
+                // continued to search further back, and either found the symbol or failed again.
+                // We must update the period start, and save the rowId of the symbol.
+                assert slaveTimestamp < periodStart : "slaveTimestamp >= periodStart";
+                assert masterTimestamp < periodEnd : "masterTimestamp >= periodEnd";
+                symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
+                symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
+            } else if (masterTimestamp - slaveTimestamp > periodEnd - periodStart) {
+                // Periods aren't overlapping. Let's memorize the new one if it's longer, saving more work.
+                symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
+                symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
+                symKeyToValidityPeriodEnd.putAt(periodEndKeyIndex, slaveSymbolKey, masterTimestamp);
             }
         }
 
@@ -306,14 +315,19 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     record.hasSlave(false);
                     long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId);
                     // memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
-                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1);
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1, false);
                     break;
                 }
-                if (slaveRecB.getInt(slaveSymbolColumnIndex) == slaveSymbolKey) {
+                int thisSymbolKey = slaveRecB.getInt(slaveSymbolColumnIndex);
+                if (thisSymbolKey == slaveSymbolKey) {
                     record.hasSlave(true);
                     // We found the symbol that we don't remember. Memorize it now.
-                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, slaveRecB.getRowId());
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, slaveRecB.getRowId(), false);
                     break;
+                } else {
+                    // This isn't the symbol we're looking for, but memorize it anyway in the hope that some future
+                    // master row will need it.
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, slaveRecB.getRowId(), true);
                 }
 
                 // let's try to move backwards in the slave cursor until we have a match
@@ -328,7 +342,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                             // This isn't the edge case where we just jumped over the remembered period
                             // with no symbol, only to realize there's nothing left beyond it.
                             // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
-                            memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1);
+                            memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1, false);
                         }
                         record.hasSlave(false);
                         break;
