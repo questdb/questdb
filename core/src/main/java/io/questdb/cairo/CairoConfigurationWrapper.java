@@ -632,6 +632,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return getDelegate().getParquetExportTableNamePrefix();
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return getDelegate().getPartitionEncoderParquetCompressionCodec();
     }
@@ -774,6 +779,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return getDelegate().getSqlCopyBufferSize();
+    }
+
+    @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return getDelegate().getSqlCopyExportQueueCapacity();
+    }
+
+    @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return getDelegate().getSqlCopyExportRoot();
     }
 
     @Override

@@ -655,6 +655,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return ParquetCompression.COMPRESSION_UNCOMPRESSED;
     }
@@ -799,6 +804,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return 32;
+    }
+
+    @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return null;
     }
 
     @Override

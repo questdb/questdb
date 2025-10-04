@@ -24,11 +24,21 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
@@ -103,7 +113,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
         final long startMs = getCurrentTimeMs();
 
-        updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
+        updateImportStatus(CopyImportTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
         setupTextLoaderFromModel();
 
         final int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
@@ -124,13 +134,13 @@ public final class SerialCsvFileImporter implements Closeable {
                 int read;
                 while (n < fileLen) {
                     if (circuitBreaker.checkIfTripped()) {
-                        TextImportException ex = TextImportException.instance(CopyTask.NO_PHASE, "import was cancelled");
+                        TextImportException ex = TextImportException.instance(CopyImportTask.NO_PHASE, "import was cancelled");
                         ex.setCancelled(true);
                         throw ex;
                     }
                     read = (int) ff.read(fd, buf, sqlCopyBufferSize, n);
                     if (read < 1) {
-                        throw TextImportException.instance(CopyTask.NO_PHASE, "could not read file [errno=").put(ff.errno()).put(']');
+                        throw TextImportException.instance(CopyImportTask.NO_PHASE, "could not read file [errno=").put(ff.errno()).put(']');
                     }
                     textLoader.parse(buf, buf + read, securityContext);
                     n += read;
@@ -142,7 +152,7 @@ public final class SerialCsvFileImporter implements Closeable {
                 for (int i = 0, size = columnErrorCounts.size(); i < size; i++) {
                     errorCount += columnErrorCounts.get(i);
                 }
-                updateImportStatus(CopyTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
+                updateImportStatus(CopyImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
 
                 long endMs = getCurrentTimeMs();
                 LOG.info()
@@ -152,9 +162,9 @@ public final class SerialCsvFileImporter implements Closeable {
                         .I$();
             }
         } catch (TextException e) {
-            throw TextImportException.instance(CopyTask.NO_PHASE, e.getFlyweightMessage());
+            throw TextImportException.instance(CopyImportTask.NO_PHASE, e.getFlyweightMessage());
         } catch (CairoException e) {
-            throw TextImportException.instance(CopyTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
+            throw TextImportException.instance(CopyImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
             ff.close(fd);
             textLoader.clear();
@@ -168,7 +178,7 @@ public final class SerialCsvFileImporter implements Closeable {
 
     public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(CopyTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
+            this.statusReporter.report(CopyImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
         }
     }
 

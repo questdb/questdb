@@ -407,6 +407,8 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    CharSequence getParquetExportTableNamePrefix();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
@@ -491,10 +493,13 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" SQL
-    CharSequence getSqlCopyInputRoot();
+    int getSqlCopyExportQueueCapacity();
 
-    CharSequence getSqlCopyInputWorkRoot();
+    @Nullable CharSequence getSqlCopyExportRoot();
+
+    @Nullable CharSequence getSqlCopyInputRoot();
+
+    @Nullable CharSequence getSqlCopyInputWorkRoot();
 
     int getSqlCopyLogRetentionDays();
 

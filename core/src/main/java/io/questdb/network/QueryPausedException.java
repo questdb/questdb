@@ -47,6 +47,19 @@ public class QueryPausedException extends Exception {
         return ex;
     }
 
+    public static QueryPausedException instance(SuspendEvent event, SqlExecutionCircuitBreaker circuitBreaker, long timeout) {
+        QueryPausedException ex = tlException.get();
+        SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = circuitBreaker.getConfiguration();
+        if (circuitBreakerConfiguration != null) {
+            if (timeout != Long.MAX_VALUE) {
+                long deadline = circuitBreakerConfiguration.getClock().getTicks() + timeout;
+                event.setDeadline(deadline);
+            }
+        }
+        ex.event = event;
+        return ex;
+    }
+
     public SuspendEvent getEvent() {
         return event;
     }

@@ -30,7 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -55,10 +55,10 @@ import java.util.concurrent.CountDownLatch;
 import static org.junit.Assert.*;
 
 @RunWith(Parameterized.class)
-public class CopyTest extends AbstractCairoTest {
+public class CopyImportTest extends AbstractCairoTest {
     private final boolean walEnabled;
 
-    public CopyTest(boolean walEnabled) {
+    public CopyImportTest(boolean walEnabled) {
         this.walEnabled = walEnabled;
     }
 
@@ -326,7 +326,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -358,7 +358,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
@@ -369,7 +369,7 @@ public class CopyTest extends AbstractCairoTest {
                                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Another import request is in progress");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "another import may be in progress");
                     }
 
                     // cancel request should succeed
@@ -400,7 +400,7 @@ public class CopyTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
             }
 
-            TestUtils.drainTextImportJobQueue(engine);
+            TestUtils.drainCopyImportJobQueue(engine);
         });
     }
 
@@ -767,7 +767,7 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
         assertMemoryLeak(() -> {
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
                 setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
                 String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
@@ -1247,7 +1247,7 @@ public class CopyTest extends AbstractCairoTest {
             CountDownLatch processed = new CountDownLatch(1);
 
             execute("drop table if exists \"" + configuration.getSystemTableNamePrefix() + "text_import_log\"");
-            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
+            try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
                 Thread processingThread = createJobThread(copyRequestJob, processed);
                 processingThread.start();
                 statement.run();

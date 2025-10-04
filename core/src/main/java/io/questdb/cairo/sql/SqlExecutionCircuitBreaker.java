@@ -112,7 +112,8 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     };
     int STATE_TIMEOUT = STATE_OK + 1; // 1
     int STATE_BROKEN_CONNECTION = STATE_TIMEOUT + 1; // 2
-    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1;// 3
+    int STATE_CANCELLED = STATE_BROKEN_CONNECTION + 1; // 3
+    int STATE_FINISHED = STATE_CANCELLED + 1; // 4
     // Triggers timeout on first timeout check regardless of how much time elapsed since timer was reset
     // (used mainly for testing)
     long TIMEOUT_FAIL_ON_FIRST_CHECK = Long.MIN_VALUE;
@@ -140,6 +141,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * - {@link #STATE_BROKEN_CONNECTION} <br>
      * - {@link #STATE_TIMEOUT} <br>
      */
+    // todo: add finished state
     int getState();
 
     /**
