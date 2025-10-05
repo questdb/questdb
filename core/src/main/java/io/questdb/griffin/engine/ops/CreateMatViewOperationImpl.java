@@ -456,7 +456,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                                 // Found the column with this alias
                                 ExpressionNode ast = qc.getAst();
                                 if (ast != null) {
-                                    String effectiveColumnName = findUnderlyingColumnName(ast);
+                                    // Use priority column logic for multi-column expressions
+                                    String effectiveColumnName = findUnderlyingColumnName(ast, queryModel,
+                                            baseTableTimestampColumn);
                                     if (effectiveColumnName != null
                                             && Chars.equalsIgnoreCase(effectiveColumnName, baseTableTimestampColumn)) {
                                         timestampMatches = true;
@@ -486,7 +488,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                                 // Found the column with this alias
                                 ExpressionNode ast = qc.getAst();
                                 if (ast != null) {
-                                    String foundColumnName = findUnderlyingColumnName(ast);
+                                    // Use priority column logic for multi-column expressions
+                                    String foundColumnName = findUnderlyingColumnName(ast, queryModel,
+                                            baseTableTimestampColumn);
                                     if (foundColumnName != null) {
                                         effectiveColumnName = foundColumnName;
                                     }
@@ -719,55 +723,134 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
+    /**
+     * Finds all underlying column names in an expression.
+     * This is useful for complex expressions involving multiple columns.
+     */
+    private static void findAllUnderlyingColumnNames(ExpressionNode node, QueryModel queryModel,
+                                                     ObjList<CharSequence> columnNames) {
+        if (node == null) {
+            return;
+        }
+
+        if (node.type == ExpressionNode.LITERAL) {
+            String literalName = node.token.toString();
+
+            // If we have a QueryModel, check if this is an alias that needs further resolution
+            if (queryModel != null) {
+                boolean resolved = false;
+                for (int i = 0, n = queryModel.getColumns().size(); i < n; i++) {
+                    final QueryColumn qc = queryModel.getColumns().getQuick(i);
+                    if (qc.getAlias() != null && Chars.equalsIgnoreCase(literalName, qc.getAlias())) {
+                        findAllUnderlyingColumnNames(qc.getAst(), queryModel.getNestedModel(), columnNames);
+                        resolved = true;
+                        break;
+                    }
+                }
+
+                if (!resolved) {
+                    // Try nested model if not resolved in current model
+                    QueryModel nestedModel = queryModel.getNestedModel();
+                    if (nestedModel != null) {
+                        findAllUnderlyingColumnNames(node, nestedModel, columnNames);
+                        return;
+                    }
+                }
+
+                if (!resolved) {
+                    // Add the literal name if not resolved as alias
+                    columnNames.add(literalName);
+                }
+            } else {
+                columnNames.add(literalName);
+            }
+            return;
+        }
+
+        // If this is a function, check all arguments
+        if (node.type == ExpressionNode.FUNCTION) {
+            if (node.args != null && node.args.size() > 0) {
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    findAllUnderlyingColumnNames(node.args.getQuick(i), queryModel, columnNames);
+                }
+            }
+
+            // check left and right
+            if (node.rhs != null) {
+                findAllUnderlyingColumnNames(node.rhs, queryModel, columnNames);
+            }
+
+            if (node.lhs != null) {
+                findAllUnderlyingColumnNames(node.lhs, queryModel, columnNames);
+            }
+            return;
+        }
+
+        // Recursively search left and right nodes
+        if (node.lhs != null) {
+            findAllUnderlyingColumnNames(node.lhs, queryModel, columnNames);
+        }
+        if (node.rhs != null) {
+            findAllUnderlyingColumnNames(node.rhs, queryModel, columnNames);
+        }
+    }
 
     /**
-     * Recursively searches for the underlying column name in an expression AST.
+     * Enhanced version that can prioritize a specific column
      */
-    private static String findUnderlyingColumnName(ExpressionNode node) {
+    private static String findUnderlyingColumnName(ExpressionNode node, QueryModel queryModel, String priorityColumn) {
         if (node == null) {
             return null;
         }
 
-        if (node.type == ExpressionNode.LITERAL) {
-            return node.token.toString();
+        final ObjList<CharSequence> allColumns = new ObjList<>();
+        findAllUnderlyingColumnNames(node, queryModel, allColumns);
+
+        if (allColumns.size() == 0) {
+            return null;
         }
 
-        // If this is a function, search its arguments for literals
-        if (node.type == ExpressionNode.FUNCTION) {
-            if (node.args != null && node.args.size() > 0) {
-                for (int i = 0, n = node.args.size(); i < n; i++) {
-                    String result = findUnderlyingColumnName(node.args.getQuick(i));
-                    if (result != null) {
-                        return result;
-                    }
-                }
-            }
+        if (allColumns.size() == 1) {
+            return allColumns.getQuick(0).toString();
+        }
 
-            // Also check left and right sides for completeness
-            ExpressionNode rhs = node.rhs;
-            if (rhs != null) {
-                String result = findUnderlyingColumnName(rhs);
-                if (result != null) {
-                    return result;
-                }
-            }
-
-            // Check left side as well
-            ExpressionNode lhs = node.lhs;
-            if (lhs != null) {
-                String result = findUnderlyingColumnName(lhs);
-                if (result != null) {
-                    return result;
+        if (priorityColumn != null) {
+            // 1: exact match with priority column
+            for (int i = 0, n = allColumns.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(allColumns.getQuick(i), priorityColumn)) {
+                    return priorityColumn;
                 }
             }
         }
 
-        // Recursively search left and right nodes
-        String leftResult = findUnderlyingColumnName(node.lhs);
-        if (leftResult != null) {
-            return leftResult;
+        // 2: look for timestamp-like column names
+        for (int i = 0, n = allColumns.size(); i < n; i++) {
+            String columnName = allColumns.getQuick(i).toString();
+            if (isTimestampLikeColumn(columnName)) {
+                return columnName;
+            }
         }
 
-        return findUnderlyingColumnName(node.rhs);
+        // Fallback: return the first column found
+        return allColumns.getQuick(0).toString();
+    }
+
+    /**
+     * Checks if a column name looks like a timestamp column.
+     */
+    private static boolean isTimestampLikeColumn(String columnName) {
+        if (columnName == null) {
+            return false;
+        }
+        String lower = columnName.toLowerCase();
+        return lower.equals("ts") ||
+                lower.equals("timestamp") ||
+                lower.equals("time") ||
+                lower.endsWith("_ts") ||
+                lower.endsWith("_timestamp") ||
+                lower.endsWith("_time") ||
+                lower.startsWith("ts_") ||
+                lower.startsWith("timestamp_") ||
+                lower.startsWith("time_");
     }
 }
