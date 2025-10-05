@@ -83,12 +83,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
             // Store the sink pointer in the map at valueIndex
             mapValue.putLong(valueIndex, sinkA.ptr());
-            // Store false at valueIndex+1 to indicate group is not null
-            mapValue.putBool(valueIndex + 1, false);
         } else {
             // First value is null: mark group as null
             mapValue.putLong(valueIndex, 0);
-            mapValue.putBool(valueIndex + 1, true);
         }
     }
 
@@ -101,9 +98,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         }
 
         final long ptr = mapValue.getLong(valueIndex);
-        final boolean isNull = mapValue.getBool(valueIndex + 1);
 
-        if (isNull || ptr == 0) {
+        if (ptr == 0) {
             // First non-null value for this group
             sinkA.of(0);
             sinkA.put(str);
@@ -112,7 +108,6 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             assertSizeCompliance();
 
             mapValue.putLong(valueIndex, sinkA.ptr());
-            mapValue.putBool(valueIndex + 1, false);
         } else {
             // Group already has data, append with delimiter
             sinkA.of(ptr);
@@ -134,20 +129,17 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcPtr = srcValue.getLong(valueIndex);
-        final boolean isSrcNull = srcValue.getBool(valueIndex + 1);
 
-        if (isSrcNull || srcPtr == 0) {
+        if (srcPtr == 0) {
             // Nothing to do
             return;
         }
 
         final long destPtr = destValue.getLong(valueIndex);
-        final boolean isDestNull = destValue.getBool(valueIndex + 1);
 
-        if (isDestNull || destPtr == 0) {
+        if (destPtr == 0) {
             // Just copy source pointer
             destValue.putLong(valueIndex, srcPtr);
-            destValue.putBool(valueIndex + 1, false);
             return;
         }
 
@@ -155,8 +147,15 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         sinkA.of(destPtr);
         sinkB.of(srcPtr);
 
+        int oldLen = sinkA.length();
+
         sinkA.putAscii(delimiter);
         sinkA.put(sinkB);
+
+        int newLen = sinkA.length();
+        int chars = newLen - oldLen;
+        totalMemoryUsed += chars * 2;
+        assertSizeCompliance();
 
         // Update destination with merged result pointer
         destValue.putLong(valueIndex, sinkA.ptr());
@@ -169,26 +168,14 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public CharSequence getStrA(Record rec) {
-        final boolean isNull = rec.getBool(valueIndex + 1);
         final long ptr = rec.getLong(valueIndex);
-
-        if (isNull || ptr == 0) {
-            return "";
-        }
-
-        return sinkA.of(ptr);
+        return ptr == 0 ? "" : sinkA.of(ptr);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        final boolean isNull = rec.getBool(valueIndex + 1);
         final long ptr = rec.getLong(valueIndex);
-
-        if (isNull || ptr == 0) {
-            return "";
-        }
-
-        return sinkB.of(ptr);
+        return ptr == 0 ? "" : sinkB.of(ptr);
     }
 
     @Override
@@ -204,10 +191,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        // Reserve slot at valueIndex for sink pointer
         columnTypes.add(ColumnType.LONG);
-        // Reserve slot at valueIndex+1 for null flag
-        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
@@ -222,13 +206,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
-        mapValue.putBool(valueIndex + 1, true);
     }
 
     @Override
@@ -238,7 +216,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public boolean isThreadSafe() {
-        return UnaryFunction.super.isThreadSafe();
+        return false;
     }
 
     @Override
