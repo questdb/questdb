@@ -123,7 +123,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
 
-        private final IntLongHashMap symKeyToRowId = new IntLongHashMap(8, NOT_REMEMBERED);
+        // These three hashmaps are used in strict parallel, always putting the same key in each.
+        // When accessing them, we can look up the key index only once, and use it for all three maps.
+        private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
 
@@ -159,12 +161,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 long slaveRowId,
                 boolean onlyIfNew
         ) {
-            int rowIdKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
-            if (rowIdKeyIndex >= 0) {
+            int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
+            if (slaveKeyIndex >= 0) {
                 // nothing remembered so far, store all the data with no further questions
-                symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.put(slaveSymbolKey, slaveTimestamp);
-                symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
+                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
+                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
+                symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
                 return;
             }
             if (onlyIfNew) {
@@ -228,11 +230,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We must update the period start, and save the rowId of the symbol.
                 assert slaveTimestamp < periodStart : "slaveTimestamp >= periodStart";
                 assert masterTimestamp < periodEnd : "masterTimestamp >= periodEnd";
-                symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
+                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
                 symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
             } else if (masterTimestamp - slaveTimestamp > periodEnd - periodStart) {
                 // Periods aren't overlapping. Let's memorize the new one if it's longer, saving more work.
-                symKeyToRowId.putAt(rowIdKeyIndex, slaveSymbolKey, slaveRowId);
+                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
                 symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
                 symKeyToValidityPeriodEnd.putAt(periodEndKeyIndex, slaveSymbolKey, masterTimestamp);
             }
@@ -253,12 +255,14 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             final StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             final CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
             final int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
-            final long rememberedRowId = symKeyToRowId.get(slaveSymbolKey);
-            final long validityPeriodStart, validityPeriodEnd;
-            if (rememberedRowId != NOT_REMEMBERED) {
-                validityPeriodStart = symKeyToValidityPeriodStart.get(slaveSymbolKey);
-                validityPeriodEnd = symKeyToValidityPeriodEnd.get(slaveSymbolKey);
+            final int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
+            final long rememberedRowId, validityPeriodStart, validityPeriodEnd;
+            if (slaveKeyIndex < 0) {
+                rememberedRowId = symKeyToRowId.valueAt(slaveKeyIndex);
+                validityPeriodStart = symKeyToValidityPeriodStart.valueAt(slaveKeyIndex);
+                validityPeriodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
             } else {
+                rememberedRowId = NOT_REMEMBERED;
                 validityPeriodStart = validityPeriodEnd = Numbers.LONG_NULL;
             }
 
@@ -272,12 +276,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 boolean didJumpOverValidityPeriod = false;
                 if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
                     // Our search is now within the validity period of the remembered symbol. Let's use it.
+                    // The above check also ensures that rememberedRowId != NOT_REMEMBERED.
                     if (masterTimestamp > validityPeriodEnd) {
                         // We started our search from timestamp that is more recent than the remembered period.
                         // The fact that we got to this point means we haven't found a more recent symbol.
                         // Therefore, the remembered symbol is still the applicable one. Same for the remembered
                         // non-existence of symbol. We can extend the validity period end to current masterTimestamp.
-                        symKeyToValidityPeriodEnd.put(slaveSymbolKey, masterTimestamp);
+                        symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
                         didExtendValidityPeriod = true;
                     }
                     if (rememberedRowId >= 0) {
