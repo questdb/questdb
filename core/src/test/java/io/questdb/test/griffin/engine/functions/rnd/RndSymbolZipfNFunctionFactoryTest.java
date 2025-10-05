@@ -135,11 +135,12 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
     }
 
     @Test
-    public void testInsufficientArgs() {
+    public void testInsufficientArgs() throws Exception {
         // Need exactly 2 arguments: symbol count and alpha
-        assertFailure(
-                "[7] expected at least 2 arguments: symbol list and alpha parameter",
-                "select rnd_symbol_zipf(10) as testCol from long_sequence(10)"
+        assertException(
+                "select rnd_symbol_zipf(10) as testCol from long_sequence(10)",
+                7,
+                "expected at least 2 arguments: symbol list and alpha parameter"
         );
     }
 
@@ -183,16 +184,29 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
     }
 
     @Test
-    public void testNegativeAlpha() {
-        assertFailure("[26] alpha must be positive",
-                "select rnd_symbol_zipf(5, -1.0) as testCol from long_sequence(10)");
+    public void testNanAlpha() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf(1_000_000, nan)",
+                23,
+                "non-null value expected"
+        );
     }
 
     @Test
-    public void testNegativeSymbolCount() {
-        assertFailure(
-                "[23] symbol count must be positive",
-                "select rnd_symbol_zipf(-5, 1.5) as testCol from long_sequence(10)"
+    public void testNegativeAlpha() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf(5, -1.0) as testCol from long_sequence(10)",
+                26,
+                "alpha must be positive"
+        );
+    }
+
+    @Test
+    public void testNegativeSymbolCount() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf(-5, 1.5) as testCol from long_sequence(10)",
+                23,
+                "symbol count must be positive"
         );
     }
 
@@ -213,18 +227,20 @@ public class RndSymbolZipfNFunctionFactoryTest extends AbstractFunctionFactoryTe
     }
 
     @Test
-    public void testZeroAlpha() {
-        assertFailure(
-                "[26] alpha must be positive",
-                "select rnd_symbol_zipf(5, 0.0) as testCol from long_sequence(10)"
+    public void testZeroAlpha() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf(5, 0.0) as testCol from long_sequence(10)",
+                26,
+                "alpha must be positive"
         );
     }
 
     @Test
-    public void testZeroSymbolCount() {
-        assertFailure(
-                "[23] symbol count must be positive",
-                "select rnd_symbol_zipf(0, 1.5) as testCol from long_sequence(10)"
+    public void testZeroSymbolCount() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf(0, 1.5) as testCol from long_sequence(10)",
+                23,
+                "symbol count must be positive"
         );
     }
 

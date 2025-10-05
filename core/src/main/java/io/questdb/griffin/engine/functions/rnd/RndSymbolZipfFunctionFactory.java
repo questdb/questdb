@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -72,11 +73,17 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
             if (!arg.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
-            CharSequence value = arg.getStrA(null);
-            if (value == null) {
-                throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+
+            switch (arg.getType()) {
+                case ColumnType.STRING, ColumnType.CHAR, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
+                    CharSequence value = arg.getStrA(null);
+                    if (value == null) {
+                        throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+                    }
+                    symbols.add(Chars.toString(value));
+                }
+                default -> throw SqlException.$(argPositions.getQuick(i), "non-null value expected");
             }
-            symbols.add(Chars.toString(value));
         }
 
         // Extract alpha parameter
@@ -84,13 +91,20 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
         if (!alphaFunc.isConstant()) {
             throw SqlException.$(argPositions.getQuick(symbolCount), "constant alpha expected");
         }
-        double alpha = alphaFunc.getDouble(null);
 
-        if (alpha <= 0 || Double.isNaN(alpha)) {
-            throw SqlException.$(argPositions.getQuick(symbolCount), "alpha must be positive");
+        switch (alphaFunc.getType()) {
+            case ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.INT, ColumnType.LONG, ColumnType.SHORT,
+                 ColumnType.BYTE -> {
+                double alpha = alphaFunc.getDouble(null);
+
+                if (alpha <= 0 || Double.isNaN(alpha)) {
+                    throw SqlException.$(argPositions.getQuick(symbolCount), "alpha must be positive");
+                }
+
+                return new Func(symbols, alpha);
+            }
+            default -> throw SqlException.$(argPositions.getQuick(symbolCount), "double value alpha expected");
         }
-
-        return new Func(symbols, alpha);
     }
 
     private static final class Func extends SymbolFunction implements Function {
