@@ -412,10 +412,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts) as ts, avg(v) from " + TABLE1 + " order by ts";
+            final String query = "select timestamp_floor('1m', ts) as ts1, avg(v) from " + TABLE1 + " order by ts1";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery0("ts\tavg\n", "test", "ts");
+            assertQuery0("ts1\tavg\n", "test", "ts1");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
         });
@@ -426,10 +426,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts, avg(v) from " + TABLE1;
+            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts2, avg(v) from " + TABLE1;
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery0("ts\tavg\n", "test", "ts");
+            assertQuery0("ts2\tavg\n", "test", "ts2");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'm', null, null);
         });
@@ -1089,7 +1089,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewTsAlias() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            final String query = "select ts, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
