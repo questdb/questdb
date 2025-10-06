@@ -1346,6 +1346,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isResourcePoolTracingEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
     }

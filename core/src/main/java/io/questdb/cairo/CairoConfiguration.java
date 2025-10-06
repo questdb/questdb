@@ -743,6 +743,8 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
+    boolean isResourcePoolTracingEnabled();
+
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlOrderBySortEnabled();

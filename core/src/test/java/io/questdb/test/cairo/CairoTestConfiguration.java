@@ -173,6 +173,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean isResourcePoolTracingEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return overrides.mangleTableDirNames();
     }

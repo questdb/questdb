@@ -1322,6 +1322,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isResourcePoolTracingEnabled() {
+        return getDelegate().isResourcePoolTracingEnabled();
+    }
+
+    @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
     }

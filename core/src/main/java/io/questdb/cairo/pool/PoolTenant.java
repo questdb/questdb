@@ -47,6 +47,16 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
     int getIndex();
 
     /**
+     * Supervisor this reader is attached to.
+     *
+     * @return supervisor instance or null if reader is not attached to any supervisor.
+     */
+    @Nullable
+    default ResourcePoolSupervisor<T> getSupervisor() {
+        return null;
+    }
+
+    /**
      * Name of table this reader is attached to. Pooled reader instances cannot be reused across
      * more than one table.
      *
