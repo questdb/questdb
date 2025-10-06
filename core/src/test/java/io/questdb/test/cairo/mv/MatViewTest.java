@@ -6627,8 +6627,8 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEstimateRowsPerBucket(long rows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
-        long result = MatViewRefreshJob.estimateRowsPerBucket(rows, bucket, partitionDuration, partitionCount);
+    private void testEstimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
+        long result = MatViewRefreshJob.estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
         Assert.assertTrue("Expected from " + expectedLo + " to " + expectedHi + ", got " + result, result >= expectedLo && result < expectedHi);
     }
 
