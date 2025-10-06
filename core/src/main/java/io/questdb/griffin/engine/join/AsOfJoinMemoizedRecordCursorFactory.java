@@ -172,10 +172,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             if (onlyIfNew) {
                 return;
             }
-            int periodStartKeyIndex = symKeyToValidityPeriodStart.keyIndex(slaveSymbolKey);
-            int periodEndKeyIndex = symKeyToValidityPeriodEnd.keyIndex(slaveSymbolKey);
-            long periodStart = symKeyToValidityPeriodStart.valueAt(periodStartKeyIndex);
-            long periodEnd = symKeyToValidityPeriodEnd.valueAt(periodEndKeyIndex);
+            long periodStart = symKeyToValidityPeriodStart.valueAt(slaveKeyIndex);
+            long periodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
             if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
                 // The period to memorize overlaps existing remembered period.
                 // Let's explain under what circumstances we may end up in this branch.
@@ -231,12 +229,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 assert slaveTimestamp < periodStart : "slaveTimestamp >= periodStart";
                 assert masterTimestamp < periodEnd : "masterTimestamp >= periodEnd";
                 symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
+                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
             } else if (masterTimestamp - slaveTimestamp > periodEnd - periodStart) {
                 // Periods aren't overlapping. Let's memorize the new one if it's longer, saving more work.
                 symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.putAt(periodStartKeyIndex, slaveSymbolKey, slaveTimestamp);
-                symKeyToValidityPeriodEnd.putAt(periodEndKeyIndex, slaveSymbolKey, masterTimestamp);
+                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
+                symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
             }
         }
 
