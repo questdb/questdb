@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -35,20 +34,20 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
-import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
-public class RndSymbolZipfFunctionFactory implements FunctionFactory {
+public class RndSymbolZipfNFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_symbol_zipf(V)";
+        return "rnd_symbol_zipf(ID)";
     }
 
     @Override
@@ -59,64 +58,50 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args == null || args.size() < 2) {
-            throw SqlException.$(position, "expected at least 2 arguments: symbol list and alpha parameter");
+        if (args == null || args.size() != 2) {
+            throw SqlException.$(position, "expected 2 arguments: symbol count (int) and alpha (double)");
         }
 
-        // Last argument is alpha (double), rest are symbols
-        final int symbolCount = args.size() - 1;
-        final ObjList<String> symbols = new ObjList<>(symbolCount);
-
-        // Extract symbols from all arguments except the last one
-        for (int i = 0; i < symbolCount; i++) {
-            Function arg = args.getQuick(i);
-            if (!arg.isConstant()) {
-                throw SqlException.$(argPositions.getQuick(i), "constant expected");
-            }
-
-            switch (arg.getType()) {
-                case ColumnType.STRING, ColumnType.CHAR, ColumnType.SYMBOL, ColumnType.VARCHAR -> {
-                    CharSequence value = arg.getStrA(null);
-                    if (value == null) {
-                        throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
-                    }
-                    symbols.add(Chars.toString(value));
-                }
-                default -> throw SqlException.$(argPositions.getQuick(i), "non-null value expected");
-            }
+        // First argument: number of symbols
+        Function countFunc = args.getQuick(0);
+        if (!countFunc.isConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "constant symbol count expected");
+        }
+        int symbolCount;
+        try {
+            symbolCount = countFunc.getInt(null);
+        } catch (NumericException e) {
+            throw SqlException.$(argPositions.getQuick(0), "integer constant expected");
         }
 
-        // Extract alpha parameter
-        Function alphaFunc = args.getQuick(symbolCount);
+        if (symbolCount <= 0) {
+            throw SqlException.$(argPositions.getQuick(0), "symbol count must be positive");
+        }
+
+        // Second argument: alpha parameter
+        Function alphaFunc = args.getQuick(1);
         if (!alphaFunc.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(symbolCount), "constant alpha expected");
+            throw SqlException.$(argPositions.getQuick(1), "constant alpha expected");
+        }
+        double alpha = alphaFunc.getDouble(null);
+
+        if (alpha <= 0 || Double.isNaN(alpha)) {
+            throw SqlException.$(argPositions.getQuick(1), "alpha must be positive");
         }
 
-        switch (alphaFunc.getType()) {
-            case ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.INT, ColumnType.LONG, ColumnType.SHORT,
-                 ColumnType.BYTE -> {
-                double alpha = alphaFunc.getDouble(null);
-
-                if (alpha <= 0 || Double.isNaN(alpha)) {
-                    throw SqlException.$(argPositions.getQuick(symbolCount), "alpha must be positive");
-                }
-
-                return new Func(symbols, alpha);
-            }
-            default -> throw SqlException.$(argPositions.getQuick(symbolCount), "double value alpha expected");
-        }
+        return new Func(symbolCount, alpha);
     }
 
     private static final class Func extends SymbolFunction implements Function {
         private final double alpha;
         private final int count;
         private final DoubleList cumulativeProbabilities;
-        private final ObjList<String> symbols;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
         private Rnd rnd;
 
-        public Func(ObjList<String> symbols, double alpha) {
-            this.symbols = symbols;
-            this.count = symbols.size();
+        public Func(int count, double alpha) {
+            this.count = count;
             this.alpha = alpha;
             this.cumulativeProbabilities = new DoubleList(count);
             this.cumulativeProbabilities.setPos(count);
@@ -144,12 +129,18 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(next());
+            int key = next();
+            sinkA.clear();
+            sinkA.put("sym").put(key);
+            return sinkA;
         }
 
         @Override
         public CharSequence getSymbolB(Record rec) {
-            return getSymbol(rec);
+            int key = next();
+            sinkB.clear();
+            sinkB.put("sym").put(key);
+            return sinkB;
         }
 
         @Override
@@ -174,14 +165,14 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
 
         @Override
         public SymbolTable newSymbolTable() {
-            Func func = new Func(symbols, alpha);
+            Func func = new Func(count, alpha);
             func.rnd = new Rnd(this.rnd.getSeed0(), this.rnd.getSeed1());
             return func;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("rnd_symbol_zipf(").val((Sinkable) symbols).val(',').val(alpha).val(')');
+            sink.val("rnd_symbol_zipf(").val(count).val(',').val(alpha).val(')');
         }
 
         @Override
@@ -191,7 +182,12 @@ public class RndSymbolZipfFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return symbolKey != -1 ? symbols.getQuick(symbolKey) : null;
+            if (symbolKey == -1) {
+                return null;
+            }
+            sinkA.clear();
+            sinkA.put("sym").put(symbolKey);
+            return sinkA;
         }
 
         private int next() {
