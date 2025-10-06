@@ -2373,6 +2373,60 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEstimateRowsPerBucket() {
+        // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
+        // Expected: (1B * 1hour) / (24hours * 30 partitions) = 1B / 720 ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS, 30, 1_000_000, 2_000_000);
+
+        // Small table: 1000 rows
+        testEstimateRowsPerBucket(1_000L, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS, 30, 1, 100);
+
+        // Large table: 5 billion rows
+        // Expected: (5B * 1hour) / (24hours * 30 partitions) ≈ 6,944,444
+        testEstimateRowsPerBucket(5_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS, 30, 5_000_000, 10_000_000);
+
+        // Daily bucket
+        // Expected: (1B * 24hours) / (24hours * 30 partitions) = 1B / 30 ≈ 33,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.DAY_MICROS, Timestamps.DAY_MICROS, 30, 30_000_000, 40_000_000);
+
+        // Weekly bucket
+        // Expected: (1B * 168hours) / (24hours * 30 partitions) = 1B * 7 / 30 ≈ 233,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.WEEK_MICROS, Timestamps.DAY_MICROS, 30, 200_000_000, 300_000_000);
+
+        // Monthly bucket (30 days)
+        // Expected: (1B * 720hours) / (24hours * 30 partitions) = 1B * 30 / 30 = 1B
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.MONTH_MICROS_APPROX, Timestamps.DAY_MICROS, 30, 900_000_000, 1_100_000_000);
+
+        // Edge case: Weekly partitions with hourly bucket
+        // Expected: (1B * 1hour) / (168hours * 4 partitions) ≈ 1,488,095
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.WEEK_MICROS, 4, 1_000_000, 2_000_000);
+
+        // Edge case: Single partition
+        // Expected: (1B * 1hour) / (720hours * 1 partition) ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.MONTH_MICROS_APPROX, 1, 1_000_000, 2_000_000);
+
+        // Edge case: Many partitions (1000)
+        // Expected: (1B * 1hour) / (24hours * 1000 partitions) ≈ 41,666
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS, 1000, 30_000, 50_000);
+
+        // Edge case: Zero partition count (should return 1)
+        final long result = MatViewRefreshJob.estimateRowsPerBucket(1_000_000_000L, Timestamps.HOUR_MICROS, Timestamps.HOUR_MICROS, 0);
+        Assert.assertEquals("expected 1 for zero partitions", 1, result);
+
+        // Overflow prevention test: Very large rows and bucket that would overflow with naive multiplication
+        // Should not overflow, should return a reasonable positive value
+        testEstimateRowsPerBucket(Long.MAX_VALUE / 2, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS, 1, 1, Long.MAX_VALUE / 2);
+
+        // Very small bucket compared to partition
+        // Expected: very small number, but at least 1
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.MILLI_MICROS, Timestamps.DAY_MICROS, 30, 1, 1000);
+
+        // Bucket larger than partition duration (unusual but possible)
+        // Expected: (1B * 168hours) / (24hours * 1) = 1B * 7 = 7B
+        testEstimateRowsPerBucket(1_000_000_000L, Timestamps.WEEK_MICROS, Timestamps.DAY_MICROS, 1, 6_000_000_000L, 8_000_000_000L);
+    }
+
+    @Test
     public void testFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -6253,6 +6307,11 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
         });
+    }
+
+    private void testEstimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
+        long result = MatViewRefreshJob.estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+        Assert.assertTrue("Expected from " + expectedLo + " to " + expectedHi + ", got " + result, result >= expectedLo && result < expectedHi);
     }
 
     private void testIncrementalRefreshTransactionLogV2(String viewSql) throws Exception {
