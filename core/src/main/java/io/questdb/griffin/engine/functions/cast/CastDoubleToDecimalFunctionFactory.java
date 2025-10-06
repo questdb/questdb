@@ -45,7 +45,12 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
     }
 
     public static Function newInstance(Function arg, int targetType, int position) {
-        return new Func(arg, targetType, position);
+        return switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Func64(arg, targetType, position);
+            case ColumnType.DECIMAL128 -> new Func128(arg, targetType, position);
+            default -> new Func(arg, targetType, position);
+        };
     }
 
     @Override
@@ -63,6 +68,52 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         private final StringSink sink = new StringSink();
 
         public Func(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            double d = this.arg.getDouble(rec);
+            if (!Numbers.isFinite(d)) {
+                return false;
+            }
+            sink.clear();
+            sink.put(d);
+            try {
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func64 extends AbstractCastToDecimal64Function {
+        private final StringSink sink = new StringSink();
+
+        public Func64(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            double d = this.arg.getDouble(rec);
+            if (!Numbers.isFinite(d)) {
+                return false;
+            }
+            sink.clear();
+            sink.put(d);
+            try {
+                decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func128 extends AbstractCastToDecimal128Function {
+        private final StringSink sink = new StringSink();
+
+        public Func128(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
 

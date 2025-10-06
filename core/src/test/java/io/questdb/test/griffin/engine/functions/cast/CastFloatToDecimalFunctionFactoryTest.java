@@ -175,8 +175,10 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // We allow lossy casts from double to decimal when it is explicit
             assertSql(
-                    "cast\n" +
-                            "123.45\n",
+                    """
+                            cast
+                            123.45
+                            """,
                     "WITH data AS (SELECT 123.456f AS value) SELECT cast(value as DECIMAL(5,2)) FROM data"
             );
         });
@@ -186,17 +188,92 @@ public class CastFloatToDecimalFunctionFactoryTest extends AbstractCairoTest {
     public void testRuntimeCast() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    // Runtime cast from double column
+                    // Runtime cast from float column
                     assertSql(
-                            "value\tdecimal_value\n" +
-                                    "123.45\t123.45\n" +
-                                    "-67.89\t-67.89\n" +
-                                    "0.0\t0.00\n" +
-                                    "null\t\n",
-                            "WITH data AS (SELECT 123.45f value UNION ALL SELECT -67.89f UNION ALL SELECT 0.0f UNION ALL SELECT cast('NaN' as float)) " +
-                                    "SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data"
+                            """
+                                    value\tdecimal_value
+                                    123.45\t123.45
+                                    -67.89\t-67.89
+                                    0.0\t0.00
+                                    null\t
+                                    """,
+                            """
+                                    WITH data AS (
+                                     SELECT 123.45f value UNION ALL
+                                     SELECT -67.89f UNION ALL
+                                     SELECT 0.0f UNION ALL
+                                     SELECT cast('NaN' as float)
+                                    )
+                                    SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data
+                                    """
+                    );
+
+                    // Runtime cast from float column
+                    assertSql(
+                            """
+                                    value\tdecimal_value
+                                    123.45\t123.45
+                                    -67.89\t-67.89
+                                    0.0\t0.00
+                                    null\t
+                                    """,
+                            """
+                                    WITH data AS (
+                                     SELECT 123.45f value UNION ALL
+                                     SELECT -67.89f UNION ALL
+                                     SELECT 0.0f UNION ALL
+                                     SELECT cast('NaN' as float)
+                                    )
+                                    SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
+                                    """
+                    );
+
+                    // Runtime cast from float column
+                    assertSql(
+                            """
+                                    value\tdecimal_value
+                                    123.45\t123.45
+                                    -67.89\t-67.89
+                                    0.0\t0.00
+                                    null\t
+                                    """,
+                            """
+                                    WITH data AS (
+                                     SELECT 123.45f value UNION ALL
+                                     SELECT -67.89f UNION ALL
+                                     SELECT 0.0f UNION ALL
+                                     SELECT cast('NaN' as float)
+                                    )
+                                    SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
+                                    """
                     );
                 }
         );
+    }
+
+    @Test
+    public void testRuntimeOverflows() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    assertException(
+                            "with data as (select 1e30f v) select cast(v as decimal(10,2)) from data",
+                            42,
+                            "inconvertible value: `1.0E30` [FLOAT -> DECIMAL(10,2)]"
+                    );
+
+                    assertException(
+                            "with data as (select -1e30f v) select cast(v as decimal(24,2)) from data",
+                            43,
+                            "inconvertible value: `-1.0E30` [FLOAT -> DECIMAL(24,2)]"
+                    );
+
+                    assertException(
+                            "with data as (select 1e36f v) select cast(v as decimal(42,12)) from data",
+                            42,
+                            "inconvertible value: `1.0E36` [FLOAT -> DECIMAL(42,12)]"
+                    );
+                }
+        );
+
     }
 }

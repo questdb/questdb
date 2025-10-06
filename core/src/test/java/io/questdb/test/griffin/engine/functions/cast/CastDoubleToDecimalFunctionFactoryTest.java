@@ -195,6 +195,46 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "WITH data AS (SELECT 123.45 value UNION ALL SELECT -67.89 UNION ALL SELECT 0.0 UNION ALL SELECT cast('NaN' as double)) " +
                                     "SELECT value, cast(value as DECIMAL(5,2)) as decimal_value FROM data"
                     );
+
+                    // Runtime cast from double column
+                    assertSql(
+                            """
+                                    value\tdecimal_value
+                                    123.45\t123.45
+                                    -67.89\t-67.89
+                                    0.0\t0.00
+                                    null\t
+                                    """,
+                            """
+                                    WITH data AS (
+                                     SELECT 123.45 value UNION ALL
+                                     SELECT -67.89 UNION ALL
+                                     SELECT 0.0 UNION ALL
+                                     SELECT cast('NaN' as double)
+                                    )
+                                    SELECT value, cast(value as DECIMAL(25,2)) as decimal_value FROM data
+                                    """
+                    );
+
+                    // Runtime cast from double column
+                    assertSql(
+                            """
+                                    value\tdecimal_value
+                                    123.45\t123.45
+                                    -67.89\t-67.89
+                                    0.0\t0.00
+                                    null\t
+                                    """,
+                            """
+                                    WITH data AS (
+                                     SELECT 123.45 value UNION ALL
+                                     SELECT -67.89 UNION ALL
+                                     SELECT 0.0 UNION ALL
+                                     SELECT cast('NaN' as double)
+                                    )
+                                    SELECT value, cast(value as DECIMAL(55,2)) as decimal_value FROM data
+                                    """
+                    );
                 }
         );
     }
@@ -208,6 +248,18 @@ public class CastDoubleToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "WITH data AS (SELECT 1000.0 AS value) SELECT cast(value as DECIMAL(4,2)) FROM data",
                             50,
                             "inconvertible value: `1000.0` [DOUBLE -> DECIMAL(4,2)]"
+                    );
+
+                    assertException(
+                            "with data as (select -1e30d v) select cast(v as decimal(24,2)) from data",
+                            43,
+                            "inconvertible value: `-1.0E30` [DOUBLE -> DECIMAL(24,2)]"
+                    );
+
+                    assertException(
+                            "with data as (select 1e36d v) select cast(v as decimal(42,12)) from data",
+                            42,
+                            "inconvertible value: `1.0E36` [DOUBLE -> DECIMAL(42,12)]"
                     );
                 }
         );
