@@ -53,6 +53,8 @@ import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -416,47 +418,71 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         byte l = rec.getDecimal8(col);
+        if (l == Decimals.DECIMAL8_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(l == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
     private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         short l = rec.getDecimal16(col);
+        if (l == Decimals.DECIMAL16_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(l == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
     private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         int l = rec.getDecimal32(col);
+        if (l == Decimals.DECIMAL32_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(l == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
     private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         long l = rec.getDecimal64(col);
+        if (l == Decimals.DECIMAL64_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
     private static void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         long hi = rec.getDecimal128Hi(col);
         long lo = rec.getDecimal128Lo(col);
+        if (Decimal128.isNull(hi, lo)) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
     private static void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        response.putAscii('"');
         long hh = rec.getDecimal256HH(col);
         long hl = rec.getDecimal256HL(col);
         long lh = rec.getDecimal256LH(col);
         long ll = rec.getDecimal256LL(col);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
         Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
