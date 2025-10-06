@@ -1011,7 +1011,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         }
                         sender1.flush();
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1032,7 +1032,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         }
                         sender2.flush();
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1048,7 +1048,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                             Os.pause();
                         }
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCount.incrementAndGet();
                     } finally {
                         Path.clearThreadLocals();
@@ -1095,6 +1095,57 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testSymbolsCannotBeWrittenAfterString() throws Exception {
         assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
+    }
+
+    @Test
+    public void testTimestampMicrosIngestWithDifferentUnits() throws Exception {
+        testTimestampIngestWithDifferentUnits("TIMESTAMP", """
+                ts\tdts
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                """, """
+                ts\tdts
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2300-11-19T10:55:24.123456Z\t2300-11-20T10:55:24.834129Z
+                2797-10-26T19:46:29.123456Z\t2797-10-26T19:46:30.123457Z
+                """
+        );
+    }
+
+    @Test
+    public void testTimestampNanosIngestWithDifferentUnits() throws Exception {
+        testTimestampIngestWithDifferentUnits("TIMESTAMP_NS", """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456799Z	2025-11-20T10:55:24.834129092Z
+                        """,
+                null
+        );
     }
 
     @Test
@@ -1341,6 +1392,87 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     TestUtils.assertContains(e.getMessage(), "before any other column types");
                     sender.atNow();
                 }
+            }
+        });
+    }
+
+    private void testTimestampIngestWithDifferentUnits(String timestampType, String expected1, String expected2) throws Exception {
+        runInContext(r -> {
+            engine.execute("create table tab (ts " + timestampType + ", dts " + timestampType + ") timestamp(dts) partition by DAY BYPASS WAL");
+            assertTableExists(engine, "tab");
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V2)
+                    .build()
+            ) {
+                long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                long dts_ns = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                long dts_us = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834129Z");
+                long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                long dts_ms = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834Z") / 1000;
+                Instant tsInstant_ns = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+                Instant dtsInstant_ns = Instant.ofEpochSecond(dts_ns / 1_000_000_000, dts_ns % 1_000_000_000 + 10);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_ns, ChronoUnit.NANOS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_us, ChronoUnit.MICROS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_us, ChronoUnit.MICROS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_us, ChronoUnit.MICROS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+                sender.table("tab")
+                        .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                        .at(dts_ms, ChronoUnit.MILLIS);
+
+                sender.table("tab")
+                        .timestampColumn("ts", tsInstant_ns)
+                        .at(dtsInstant_ns);
+
+                sender.flush();
+
+                assertTableSizeEventually(engine, "tab", 10);
+                assertTable(expected1, "tab");
+
+                // fails for nanos, long overflow
+                long ts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-19T10:55:24.123456Z");
+                long dts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-20T10:55:24.834129Z");
+                sender.table("tab")
+                        .timestampColumn("ts", ts_tooLargeForNanos_us, ChronoUnit.MICROS)
+                        .at(dts_tooLargeForNanos_us, ChronoUnit.MICROS);
+                sender.flush();
+
+                // fails for nanos, long overflow
+                Instant tsInstant_tooLargeForNanos_us = Instant.ofEpochSecond(26123456789L, 123456789L);
+                Instant dtsInstant_tooLargeForNanos_us = Instant.ofEpochSecond(26123456790L, 123457890L);
+                sender.table("tab")
+                        .timestampColumn("ts", tsInstant_tooLargeForNanos_us)
+                        .at(dtsInstant_tooLargeForNanos_us);
+                sender.flush();
+
+                assertTableSizeEventually(engine, "tab", expected2 == null ? 10 : 12);
+                assertTable(expected2 == null ? expected1 : expected2, "tab");
             }
         });
     }
