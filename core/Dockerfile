@@ -75,7 +75,7 @@ RUN groupadd -g 10001 questdb && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
-USER questdb
+USER 10001
 
 WORKDIR /var/lib/questdb
 
