@@ -79,6 +79,45 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testExplainPlan() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([AAPL,MSFT,GOOGL],1.5)]
+                            long_sequence count: 10
+                        """,
+                "explain select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)"
+        );
+    }
+
+    @Test
+    public void testExplainPlanLowAlpha() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([X,Y,Z],0.5)]
+                            long_sequence count: 3
+                        """,
+                "explain select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)"
+        );
+    }
+
+    @Test
+    public void testExplainPlanTwoSymbols() throws Exception {
+        assertSql(
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [rnd_symbol_zipf([A,B],2.0)]
+                            long_sequence count: 5
+                        """,
+                "explain select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)"
+        );
+    }
+
+    @Test
     public void testHighAlphaConcentration() throws Exception {
         execute("""
                 create table abc as (
@@ -96,10 +135,13 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testInsufficientArgs() {
+    public void testInsufficientArgs() throws Exception {
         // Need at least 2 arguments: one symbol and alpha
-        assertFailure("[7] expected at least 2 arguments: symbol list and alpha parameter",
-                "select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)");
+        assertException(
+                "select rnd_symbol_zipf('AAPL') as testCol from long_sequence(10)",
+                7,
+                "expected at least 2 arguments: symbol list and alpha parameter"
+        );
     }
 
     @Test
@@ -123,9 +165,12 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testNegativeAlpha() {
-        assertFailure("[39] alpha must be positive",
-                "select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)");
+    public void testNegativeAlpha() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf('AAPL', 'MSFT', -1.0) as testCol from long_sequence(10)",
+                39,
+                "alpha must be positive"
+        );
     }
 
     @Test
@@ -145,49 +190,91 @@ public class RndSymbolZipfFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testZeroAlpha() {
-        assertFailure(
-                "[39] alpha must be positive",
-                "select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)"
-        );
+    public void testTwoSymbolsByteAlpha() throws Exception {
+        execute("""
+                create table abc as (
+                  select rnd_symbol_zipf('A', 'B', 1::byte) as testCol
+                  from long_sequence(100)
+                )
+                """);
+
+        assertSql("""
+                testCol\tcnt
+                A\t63
+                B\t37
+                """, "select testCol, count() as cnt from abc order by 1");
     }
 
     @Test
-    public void testExplainPlan() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
-                        VirtualRecord
-                          functions: [rnd_symbol_zipf([AAPL,MSFT,GOOGL],1.5)]
-                            long_sequence count: 10
-                        """,
-                "explain select rnd_symbol_zipf('AAPL', 'MSFT', 'GOOGL', 1.5) from long_sequence(10)"
-        );
+    public void testTwoSymbolsFloatAlpha() throws Exception {
+        execute("""
+                create table abc as (
+                  select rnd_symbol_zipf('A', 'B', 1::float) as testCol
+                  from long_sequence(100)
+                )
+                """);
+
+        assertSql("""
+                testCol\tcnt
+                A\t63
+                B\t37
+                """, "select testCol, count() as cnt from abc order by 1");
     }
 
     @Test
-    public void testExplainPlanTwoSymbols() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
-                        VirtualRecord
-                          functions: [rnd_symbol_zipf([A,B],2.0)]
-                            long_sequence count: 5
-                        """,
-                "explain select rnd_symbol_zipf('A', 'B', 2.0) from long_sequence(5)"
-        );
+    public void testTwoSymbolsIntAlpha() throws Exception {
+        execute("""
+                create table abc as (
+                  select rnd_symbol_zipf('A', 'B', 1) as testCol
+                  from long_sequence(100)
+                )
+                """);
+
+        assertSql("""
+                testCol\tcnt
+                A\t63
+                B\t37
+                """, "select testCol, count() as cnt from abc order by 1");
     }
 
     @Test
-    public void testExplainPlanLowAlpha() throws Exception {
-        assertSql(
-                """
-                        QUERY PLAN
-                        VirtualRecord
-                          functions: [rnd_symbol_zipf([X,Y,Z],0.5)]
-                            long_sequence count: 3
-                        """,
-                "explain select rnd_symbol_zipf('X', 'Y', 'Z', 0.5) from long_sequence(3)"
+    public void testTwoSymbolsLongAlpha() throws Exception {
+        execute("""
+                create table abc as (
+                  select rnd_symbol_zipf('A', 'B', 1L) as testCol
+                  from long_sequence(100)
+                )
+                """);
+
+        assertSql("""
+                testCol\tcnt
+                A\t63
+                B\t37
+                """, "select testCol, count() as cnt from abc order by 1");
+    }
+
+    @Test
+    public void testTwoSymbolsShortAlpha() throws Exception {
+        execute("""
+                create table abc as (
+                  select rnd_symbol_zipf('A', 'B', 1::short) as testCol
+                  from long_sequence(100)
+                )
+                """);
+
+        assertSql("""
+                testCol\tcnt
+                A\t63
+                B\t37
+                """, "select testCol, count() as cnt from abc order by 1");
+    }
+
+    @Test
+    public void testZeroAlpha() throws Exception {
+        assertException(
+                "select rnd_symbol_zipf('AAPL', 'MSFT', 0.0) as testCol from long_sequence(10)",
+                39,
+                "alpha must be positive"
         );
     }
 
