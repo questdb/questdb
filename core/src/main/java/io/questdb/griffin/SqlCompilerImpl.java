@@ -315,7 +315,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             row.append();
             rowCount++;
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
         if (reporter != null) {
@@ -610,7 +610,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     commitTarget = rowCount + batchSize;
                 }
                 if (rowCount % 50000 == 0 && reporter != null) {
-                    reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
+                    reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
         } else {
@@ -624,7 +624,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     commitTarget = rowCount + batchSize;
                 }
                 if (rowCount % 50000 == 0 && reporter != null) {
-                    reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
+                    reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
         }
@@ -664,7 +664,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
         if (reporter != null) {
@@ -703,7 +703,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0 && reporter != null) {
-                reporter.onProgress(CopyDataProgressReporter.Stage.InsertIng, rowCount);
+                reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
         if (reporter != null) {
@@ -1617,7 +1617,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void authorizeSelectForCopy(SecurityContext securityContext, CopyModel model) {
         final CharSequence tableName = unquote(model.getTableName());
-        final TableToken tt = engine.getTableTokenIfExists(tableName);
+        final TableToken tt = engine.verifyTableName(tableName);
         if (tt != null) {
             securityContext.authorizeSelectOnAnyColumn(tt);
         }

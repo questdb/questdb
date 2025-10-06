@@ -165,23 +165,26 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 throw SqlException.$(0, "unable to process the export request - export queue is full");
             }
 
-            final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
-            task.of(
-                    entry,
-                    createOp,
-                    copyExportResult,
-                    tableName,
-                    fileName,
-                    compressionCodec,
-                    compressionLevel,
-                    rowGroupSize,
-                    dataPageSize,
-                    statisticsEnabled,
-                    parquetVersion,
-                    rawArrayEncoding,
-                    userSpecifiedExportOptions
-            );
-            copyRequestPubSeq.done(processingCursor);
+            try {
+                final CopyExportRequestTask task = copyExportRequestQueue.get(processingCursor);
+                task.of(
+                        entry,
+                        createOp,
+                        copyExportResult,
+                        tableName,
+                        fileName,
+                        compressionCodec,
+                        compressionLevel,
+                        rowGroupSize,
+                        dataPageSize,
+                        statisticsEnabled,
+                        parquetVersion,
+                        rawArrayEncoding,
+                        userSpecifiedExportOptions
+                );
+            } finally {
+                copyRequestPubSeq.done(processingCursor);
+            }
             // Entry is now owned by the task
             entry = null;
 

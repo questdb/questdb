@@ -53,6 +53,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
@@ -87,11 +88,11 @@ public class SerialParquetExporter implements Closeable {
         this.tempPath = new Path();
     }
 
-    public static void cleanupDir(FilesFacade ff, Path dir, int tempBaseDirLen) {
+    public static void cleanupDir(FilesFacade ff, Utf8Sequence dir) {
         try {
-            dir.trimTo(tempBaseDirLen);
-            if (ff.exists(dir.slash$())) {
-                ff.rmdir(dir);
+            Path dirPath = Path.getThreadLocal(dir);
+            if (ff.exists(dirPath.slash$())) {
+                ff.rmdir(dirPath);
             }
         } catch (Throwable e) {
             LOG.error().$("error during temp directory cleanup [path=").$(dir).$(" error=").$(e).$(']').$();
@@ -261,11 +262,15 @@ public class SerialParquetExporter implements Closeable {
             }
 
             if (exportResult == null) {
-                entry.setPhase(CopyExportRequestTask.Phase.MOVE_FILES);
+                phase = CopyExportRequestTask.Phase.MOVE_FILES;
+                entry.setPhase(phase);
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 moveExportFiles(tempBaseDirLen, fileName);
+                copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
+            } else {
+                copyExportContext.updateStatus(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
             }
             LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
-            copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
         } catch (CopyExportException e) {
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw e;
@@ -297,7 +302,8 @@ public class SerialParquetExporter implements Closeable {
                 }
             }
             if (exportResult == null || numOfFiles == 0) {
-                cleanupDir(ff, tempPath, tempBaseDirLen);
+                tempPath.trimTo(tempBaseDirLen);
+                cleanupDir(ff, tempPath);
             }
         }
         return phase;
@@ -438,7 +444,7 @@ public class SerialParquetExporter implements Closeable {
                 case Start:
                     entry.setTotalRowCount(rows);
                     break;
-                case InsertIng:
+                case Inserting:
                     entry.setPopulatedRowCount(rows);
                     LOG.info().$("populating temporary table progress [id=")
                             .$(copyIdHex)

@@ -24,21 +24,17 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
-
-import java.io.Closeable;
-import java.io.IOException;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cutlass.text.CopyExportContext.INACTIVE_COPY_ID;
 
-public class CopyExportResult implements Closeable {
-    private final CairoEngine engine;
-    private final Path path = new Path();
+public class CopyExportResult {
+    private final Utf8StringSink path = new Utf8StringSink();
     private int cleanUpFileLength;
     private long copyID = INACTIVE_COPY_ID;
     private volatile CharSequence message;
@@ -46,19 +42,16 @@ public class CopyExportResult implements Closeable {
     private volatile CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
     private volatile CopyExportRequestTask.Status status = CopyExportRequestTask.Status.NONE;
 
-    public CopyExportResult(CairoEngine engine) {
-        this.engine = engine;
-    }
-
     public void addFilePath(Path path, boolean needCleanUp, int cleanUpFileLength) {
-        this.path.of(path);
+        this.path.put(path);
         this.needCleanUp = needCleanUp;
         this.cleanUpFileLength = cleanUpFileLength;
     }
 
     public void cleanUpTempPath(FilesFacade ff) {
         if (needCleanUp) {
-            SerialParquetExporter.cleanupDir(ff, path, cleanUpFileLength);
+            path.clear(cleanUpFileLength, path.isAscii());
+            SerialParquetExporter.cleanupDir(ff, path);
         }
     }
 
@@ -67,17 +60,9 @@ public class CopyExportResult implements Closeable {
         phase = CopyExportRequestTask.Phase.NONE;
         status = CopyExportRequestTask.Status.NONE;
         message = null;
-        path.trimTo(0);
+        path.clear();
         needCleanUp = false;
         cleanUpFileLength = 0;
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (copyID != INACTIVE_COPY_ID) {
-            engine.getCopyExportContext().cancel(copyID, null);
-        }
-        Misc.free(path);
     }
 
     public long getCopyID() {
@@ -88,7 +73,7 @@ public class CopyExportResult implements Closeable {
         return message;
     }
 
-    public Path getPath() {
+    public Utf8Sequence getPath() {
         return path;
     }
 

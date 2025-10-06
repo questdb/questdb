@@ -30,7 +30,7 @@ public interface CopyDataProgressReporter {
 
     enum Stage {
         Start(),
-        InsertIng(),
+        Inserting(),
         Finish(),
     }
 }

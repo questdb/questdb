@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -72,12 +71,12 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     boolean waitingForCopy;
-    private CopyExportResult copyExportResult;
+    private final CopyExportResult copyExportResult;
     private boolean queryCacheable = false;
 
-    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CairoEngine engine) {
+    public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
-        this.copyExportResult = new CopyExportResult(engine);
+        this.copyExportResult = new CopyExportResult();
         clear();
     }
 
@@ -131,7 +130,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
         }
-        copyExportResult = Misc.free(copyExportResult);
     }
 
     public CopyModel getCopyModel() {

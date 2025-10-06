@@ -238,7 +238,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new ExportQueryProcessorState(context, engine));
+            LV.set(context, state = new ExportQueryProcessorState(context));
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
@@ -750,11 +750,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void initParquetFileSending(HttpConnectionContext context, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        Path path = state.getExportResult().getPath();
-        if (path.size() == 0) {
+        Utf8Sequence pathStr = state.getExportResult().getPath();
+        if (pathStr.size() == 0) {
             throw CairoException.nonCritical().put("empty table");
         }
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        Path path = Path.getThreadLocal(pathStr);
         state.parquetFileFd = ff.openRO(path.$());
         if (state.parquetFileFd < 0) {
             throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
