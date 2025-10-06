@@ -35,19 +35,19 @@ jobs:
           echo "sha=$WIN64SVC_SHA" >> "$GITHUB_OUTPUT"
           echo "Building win64svc from commit: $WIN64SVC_SHA"
 
-      - name: Install MinGW-w64 toolchain via MSYS2
+      - name: Install MinGW-w64 UCRT toolchain via MSYS2
         shell: bash
         run: |
           # Update package database
           /c/msys64/usr/bin/pacman.exe -Sy --noconfirm
 
-          # Install MinGW-w64 GCC, CMake, and Ninja
-          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+          # Install MinGW-w64 UCRT GCC, CMake, and Ninja
+          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
 
-      - name: Build win64svc with MinGW-w64
+      - name: Build win64svc with MinGW-w64 UCRT
         shell: bash
         run: |
-          export PATH="/c/msys64/mingw64/bin:$PATH"
+          export PATH="/c/msys64/ucrt64/bin:$PATH"
           cd win64svc
           mkdir -p build
           cd build
