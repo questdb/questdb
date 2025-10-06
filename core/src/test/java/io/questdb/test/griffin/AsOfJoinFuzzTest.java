@@ -52,7 +52,7 @@ import java.util.List;
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
-    private static final int RUN_N_PERMUTATIONS = 10;
+    private static final int RUN_N_PERMUTATIONS = 50;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
