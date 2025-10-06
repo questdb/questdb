@@ -34,5 +34,6 @@ public interface ResourcePoolSupervisor<T> {
     /**
      * Prints information about the resource allocation (thread's name, stack frame).
      */
-    default void printResourceInfo(CharSink<?> sink, T resource) {}
+    default void printResourceInfo(CharSink<?> sink, T resource) {
+    }
 }
