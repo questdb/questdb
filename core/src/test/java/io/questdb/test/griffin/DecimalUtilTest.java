@@ -32,7 +32,7 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.Decimal8Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;

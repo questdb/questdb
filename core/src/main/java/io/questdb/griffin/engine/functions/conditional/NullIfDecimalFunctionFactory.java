@@ -32,7 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.ToDecimalFunction;
+import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 

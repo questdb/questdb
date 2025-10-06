@@ -22,15 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 
-public abstract class Decimal64Function extends DecimalFunction implements Function {
-    protected Decimal64Function(int type) {
+public abstract class Decimal32Function extends DecimalFunction implements Function {
+    protected Decimal32Function(int type) {
         super(type);
     }
+
 
     @Override
     public final long getDecimal128Hi(Record rec) {
@@ -43,7 +45,7 @@ public abstract class Decimal64Function extends DecimalFunction implements Funct
     }
 
     @Override
-    public short getDecimal16(Record rec) {
+    public final short getDecimal16(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -68,12 +70,12 @@ public abstract class Decimal64Function extends DecimalFunction implements Funct
     }
 
     @Override
-    public int getDecimal32(Record rec) {
+    public final long getDecimal64(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public byte getDecimal8(Record rec) {
+    public final byte getDecimal8(Record rec) {
         throw new UnsupportedOperationException();
     }
 }

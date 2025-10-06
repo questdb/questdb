@@ -54,7 +54,12 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
         if (value.isConstant()) {
             return newConstantInstance(decimal, position, targetType, value);
         }
-        return new Func(value, targetType, position);
+        return switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Func64(value, targetType, position);
+            case ColumnType.DECIMAL128 -> new Func128(value, targetType, position);
+            default -> new Func(value, targetType, position);
+        };
     }
 
     @Override
@@ -95,6 +100,44 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func extends AbstractCastToDecimalFunction {
         public Func(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            Utf8Sequence sequence = this.arg.getVarcharA(rec);
+            if (sequence == null) {
+                return false;
+            }
+            try {
+                decimal.ofString(sequence.asAsciiCharSequence(), precision, scale);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func128 extends AbstractCastToDecimal128Function {
+        public Func128(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            Utf8Sequence sequence = this.arg.getVarcharA(rec);
+            if (sequence == null) {
+                return false;
+            }
+            try {
+                decimal.ofString(sequence.asAsciiCharSequence(), precision, scale);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func64 extends AbstractCastToDecimal64Function {
+        public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
 

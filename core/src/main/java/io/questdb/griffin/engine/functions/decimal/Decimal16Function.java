@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 
 public abstract class Decimal16Function extends DecimalFunction implements Function {
     protected Decimal16Function(int type) {

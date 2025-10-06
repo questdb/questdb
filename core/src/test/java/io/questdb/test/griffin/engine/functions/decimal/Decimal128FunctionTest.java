@@ -22,11 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions;
+package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal128Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 

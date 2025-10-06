@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.std.Decimal256;
 
 public class Decimal256Constant extends Decimal256Function implements ConstantFunction {

@@ -629,6 +629,20 @@ public class CastVarcharToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             66,
                             "inconvertible value: `100` [VARCHAR -> DECIMAL(5,3)]"
                     );
+
+                    // Runtime overflow for DECIMAL(32,2)
+                    assertException(
+                            "WITH data AS (SELECT cast('1000000000000000000000000000000' as varchar) AS value) SELECT cast(value as DECIMAL(32,2)) FROM data",
+                            94,
+                            "inconvertible value: `1000000000000000000000000000000` [VARCHAR -> DECIMAL(32,2)]"
+                    );
+
+                    // Runtime overflow for DECIMAL(62,2)
+                    assertException(
+                            "WITH data AS (SELECT cast('1000000000000000000000000000000000000000000000000000000000000' as varchar) AS value) SELECT cast(value as DECIMAL(62,2)) FROM data",
+                            124,
+                            "inconvertible value: `1000000000000000000000000000000000000000000000000000000000000` [VARCHAR -> DECIMAL(62,2)]"
+                    );
                 }
         );
     }

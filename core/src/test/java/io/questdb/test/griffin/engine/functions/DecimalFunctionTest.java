@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal8Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 

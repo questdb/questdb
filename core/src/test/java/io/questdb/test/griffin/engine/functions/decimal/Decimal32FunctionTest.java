@@ -22,19 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions;
+package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal8Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal32Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 
-public class Decimal8FunctionTest {
-    private static final DecimalFunction function = new Decimal8Function(ColumnType.getDecimalType(1, 0)) {
+public class Decimal32FunctionTest {
+    private static final DecimalFunction function = new Decimal32Function(ColumnType.getDecimalType(8, 0)) {
         @Override
-        public byte getDecimal8(Record record) {
-            return (byte) 0;
+        public int getDecimal32(Record record) {
+            return 0;
         }
 
         @Override
@@ -79,12 +79,12 @@ public class Decimal8FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal32() {
-        function.getDecimal32(null);
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal64() {
-        function.getDecimal64(null);
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
     }
 }

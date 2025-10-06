@@ -53,7 +53,13 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
         if (value.isConstant()) {
             return newConstantInstance(decimal, position, targetType, value);
         }
-        return new Func(value, targetType, position);
+        final int tag = ColumnType.tagOf(targetType);
+        return switch (tag) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Func64(value, targetType, position);
+            case ColumnType.DECIMAL128 -> new Func128(value, targetType, position);
+            default -> new Func(value, targetType, position);
+        };
     }
 
     @Override
@@ -94,6 +100,44 @@ public class CastStrToDecimalFunctionFactory implements FunctionFactory {
 
     private static class Func extends AbstractCastToDecimalFunction {
         public Func(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            CharSequence cs = this.arg.getStrA(rec);
+            if (cs == null) {
+                return false;
+            }
+            try {
+                decimal.ofString(cs, precision, scale);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func128 extends AbstractCastToDecimal128Function {
+        public Func128(Function value, int targetType, int position) {
+            super(value, targetType, position);
+        }
+
+        protected boolean cast(Record rec) {
+            CharSequence cs = this.arg.getStrA(rec);
+            if (cs == null) {
+                return false;
+            }
+            try {
+                decimal.ofString(cs, precision, scale);
+            } catch (NumericException e) {
+                throw ImplicitCastException.inconvertibleValue(cs, ColumnType.STRING, type).position(position);
+            }
+            return true;
+        }
+    }
+
+    private static class Func64 extends AbstractCastToDecimal64Function {
+        public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
 

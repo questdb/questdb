@@ -22,19 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions;
+package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal16Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 
-public class Decimal16FunctionTest {
-    private static final DecimalFunction function = new Decimal16Function(ColumnType.getDecimalType(3, 0)) {
+public class Decimal256FunctionTest {
+    private static final DecimalFunction function = new Decimal256Function(ColumnType.getDecimalType(76, 0)) {
         @Override
-        public short getDecimal16(Record record) {
-            return (short) 0;
+        public long getDecimal256HH(Record record) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256HL(Record record) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256LH(Record record) {
+            return 0;
+        }
+
+        @Override
+        public long getDecimal256LL(Record record) {
+            return 0;
         }
 
         @Override
@@ -54,23 +69,8 @@ public class Decimal16FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HH() {
-        function.getDecimal256HH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HL() {
-        function.getDecimal256HL(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LH() {
-        function.getDecimal256LH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LL() {
-        function.getDecimal256LL(null);
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

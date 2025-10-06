@@ -22,33 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions;
+package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal256Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 
-public class Decimal256FunctionTest {
-    private static final DecimalFunction function = new Decimal256Function(ColumnType.getDecimalType(76, 0)) {
+public class Decimal64FunctionTest {
+    private static final DecimalFunction function = new Decimal64Function(ColumnType.getDecimalType(18, 0)) {
         @Override
-        public long getDecimal256HH(Record record) {
-            return 0;
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return 0;
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return 0;
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
+        public long getDecimal64(Record record) {
             return 0;
         }
 
@@ -74,13 +59,28 @@ public class Decimal256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal32() {
-        function.getDecimal32(null);
+    public void testGetDecimal256HH() {
+        function.getDecimal256HH(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal64() {
-        function.getDecimal64(null);
+    public void testGetDecimal256HL() {
+        function.getDecimal256HL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LH() {
+        function.getDecimal256LH(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256LL() {
+        function.getDecimal256LL(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -28,16 +28,17 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.decimal.ToDecimal64Function;
+import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 
-public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction implements UnaryFunction {
+public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements UnaryFunction {
     protected final Function arg;
     protected final int position;
     protected final int precision;
     protected final int scale;
 
-    public AbstractCastToDecimalFunction(Function arg, int targetType, int position) {
+    public AbstractCastToDecimal64Function(Function arg, int targetType, int position) {
         super(targetType);
         this.arg = arg;
         this.position = position;

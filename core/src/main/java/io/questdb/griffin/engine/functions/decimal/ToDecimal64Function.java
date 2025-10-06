@@ -22,36 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions;
+package io.questdb.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 
-public abstract class ToDecimalFunction extends DecimalFunction {
-    protected final Decimal256 decimal = new Decimal256();
-    private boolean isNull;
+public abstract class ToDecimal64Function extends Decimal64Function {
+    protected final Decimal64 decimal = new Decimal64();
 
-    public ToDecimalFunction(int targetType) {
+    public ToDecimal64Function(int targetType) {
         super(targetType);
-    }
-
-    @Override
-    public long getDecimal128Hi(Record rec) {
-        if (!store(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL128_HI_NULL;
-        }
-        isNull = false;
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL128_LO_NULL;
-        }
-        return decimal.getLl();
     }
 
     @Override
@@ -59,41 +42,7 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         if (!store(rec)) {
             return Decimals.DECIMAL16_NULL;
         }
-        return (short) decimal.getLl();
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        if (!store(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL256_HH_NULL;
-        }
-        isNull = false;
-        return decimal.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_HL_NULL;
-        }
-        return decimal.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LH_NULL;
-        }
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LL_NULL;
-        }
-        return decimal.getLl();
+        return (short) decimal.getValue();
     }
 
     @Override
@@ -101,7 +50,7 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         if (!store(rec)) {
             return Decimals.DECIMAL32_NULL;
         }
-        return (int) decimal.getLl();
+        return (int) decimal.getValue();
     }
 
     @Override
@@ -109,7 +58,7 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         if (!store(rec)) {
             return Decimals.DECIMAL64_NULL;
         }
-        return decimal.getLl();
+        return decimal.getValue();
     }
 
     @Override
@@ -117,7 +66,7 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         if (!store(rec)) {
             return Decimals.DECIMAL8_NULL;
         }
-        return (byte) decimal.getLl();
+        return (byte) decimal.getValue();
     }
 
     /**

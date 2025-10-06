@@ -204,6 +204,42 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             12,
                             "inconvertible value: `not_a_number` [STRING -> DECIMAL(10,0)]"
                     );
+
+                    assertException(
+                            "select cast('abc' as DECIMAL(35,2))",
+                            12,
+                            "inconvertible value: `abc` [STRING -> DECIMAL(35,2)]"
+                    );
+
+                    assertException(
+                            "select cast('12.34.56' as DECIMAL(35,2))",
+                            12,
+                            "inconvertible value: `12.34.56` [STRING -> DECIMAL(35,2)]"
+                    );
+
+                    assertException(
+                            "select cast('not_a_number' as DECIMAL(37))",
+                            12,
+                            "inconvertible value: `not_a_number` [STRING -> DECIMAL(37,0)]"
+                    );
+
+                    assertException(
+                            "select cast('abc' as DECIMAL(55,2))",
+                            12,
+                            "inconvertible value: `abc` [STRING -> DECIMAL(55,2)]"
+                    );
+
+                    assertException(
+                            "select cast('12.34.56' as DECIMAL(55,2))",
+                            12,
+                            "inconvertible value: `12.34.56` [STRING -> DECIMAL(55,2)]"
+                    );
+
+                    assertException(
+                            "select cast('not_a_number' as DECIMAL(70))",
+                            12,
+                            "inconvertible value: `not_a_number` [STRING -> DECIMAL(70,0)]"
+                    );
                 }
         );
     }
@@ -577,6 +613,20 @@ public class CastStrToDecimalFunctionFactoryTest extends AbstractCairoTest {
                             "WITH data AS (SELECT '100' AS value) SELECT cast(value as DECIMAL(5,3)) FROM data",
                             49,
                             "inconvertible value: `100` [STRING -> DECIMAL(5,3)]"
+                    );
+
+                    // Runtime overflow for DECIMAL(32,2)
+                    assertException(
+                            "WITH data AS (SELECT '1000000000000000000000000000000' AS value) SELECT cast(value as DECIMAL(32,2)) FROM data",
+                            77,
+                            "inconvertible value: `1000000000000000000000000000000` [STRING -> DECIMAL(32,2)]"
+                    );
+
+                    // Runtime overflow for DECIMAL(62,2)
+                    assertException(
+                            "WITH data AS (SELECT '1000000000000000000000000000000000000000000000000000000000000' AS value) SELECT cast(value as DECIMAL(62,2)) FROM data",
+                            107,
+                            "inconvertible value: `1000000000000000000000000000000000000000000000000000000000000` [STRING -> DECIMAL(62,2)]"
                     );
                 }
         );

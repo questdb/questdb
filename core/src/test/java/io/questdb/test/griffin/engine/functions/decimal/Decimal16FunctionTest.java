@@ -22,19 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions;
+package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.Decimal64Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal16Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import org.junit.Test;
 
-public class Decimal64FunctionTest {
-    private static final DecimalFunction function = new Decimal64Function(ColumnType.getDecimalType(18, 0)) {
+public class Decimal16FunctionTest {
+    private static final DecimalFunction function = new Decimal16Function(ColumnType.getDecimalType(3, 0)) {
         @Override
-        public long getDecimal64(Record record) {
-            return 0;
+        public short getDecimal16(Record record) {
+            return (short) 0;
         }
 
         @Override
@@ -51,11 +51,6 @@ public class Decimal64FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDecimal128Lo() {
         function.getDecimal128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal16() {
-        function.getDecimal16(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -81,6 +76,11 @@ public class Decimal64FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDecimal32() {
         function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
