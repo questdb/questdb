@@ -1144,6 +1144,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
+        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
+        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
+        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
+            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
+            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
+                int masterColType = masterMetadata.getColumnType(masterIndex);
+                AsofJoinColumnAccessHelper newSymbolShortCircuit;
+                switch (masterColType) {
+                    case SYMBOL:
+                        if (selfJoin && masterIndex == slaveIndex) {
+                            // self join on the same column -> there is no point in attempting short-circuiting
+                            // NOTE: This check is naive, it can generate false positives
+                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
+                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
+                            //       it will take this branch (even when it fact it's comparing different columns)
+                            //       and won't create a short circuit. This is OK from correctness perspective,
+                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
+                            //       would require a more complex logic, which is not worth it for now
+                            continue;
+                        }
+                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
+                        break;
+                    case VARCHAR:
+                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
+                        break;
+                    case STRING:
+                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
+                        break;
+                    default:
+                        // unsupported type for short circuit
+                        continue;
+                }
+                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
+                    // ok, a single symbol short circuit
+                    columnAccessHelper = newSymbolShortCircuit;
+                } else if (symbolShortCircuits == null) {
+                    // 2 symbol short circuits, we need to chain them
+                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
+                    symbolShortCircuits[0] = columnAccessHelper;
+                    symbolShortCircuits[1] = newSymbolShortCircuit;
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
+                } else {
+                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
+                    // this allocates arrays, but it should be very rare
+                    int size = symbolShortCircuits.length;
+                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
+                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
+                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
+                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
+                    symbolShortCircuits = newSymbolShortCircuits;
+                }
+            }
+        }
+        return columnAccessHelper;
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -1539,65 +1598,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnSplit,
                 context
         );
-    }
-
-    private @NotNull AsofJoinColumnAccessHelper createSymbolShortCircuit(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
-        AsofJoinColumnAccessHelper columnAccessHelper = NoopColumnAccessHelper.INSTANCE;
-        assert listColumnFilterA.getColumnCount() == listColumnFilterB.getColumnCount();
-        AsofJoinColumnAccessHelper[] symbolShortCircuits = null;
-        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-            int masterIndex = listColumnFilterB.getColumnIndexFactored(i);
-            int slaveIndex = listColumnFilterA.getColumnIndexFactored(i);
-            if (slaveMetadata.getColumnType(slaveIndex) == ColumnType.SYMBOL && slaveMetadata.isSymbolTableStatic(slaveIndex)) {
-                int masterColType = masterMetadata.getColumnType(masterIndex);
-                AsofJoinColumnAccessHelper newSymbolShortCircuit;
-                switch (masterColType) {
-                    case SYMBOL:
-                        if (selfJoin && masterIndex == slaveIndex) {
-                            // self join on the same column -> there is no point in attempting short-circuiting
-                            // NOTE: This check is naive, it can generate false positives
-                            //       For example 'select t1.s, t2.s2 from t as t1 asof join t as t2 on t1.s = t2.s2'
-                            //       This is deemed as a self-join (which it is), and due to the way columns are projected
-                            //       it will take this branch (even when it fact it's comparing different columns)
-                            //       and won't create a short circuit. This is OK from correctness perspective,
-                            //       but it is a missed opportunity for performance optimization. Doing a perfect check
-                            //       would require a more complex logic, which is not worth it for now
-                            continue;
-                        }
-                        newSymbolShortCircuit = new SingleSymbolColumnAccessHelper(configuration, masterIndex, slaveIndex);
-                        break;
-                    case VARCHAR:
-                        newSymbolShortCircuit = new SingleVarcharColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    case STRING:
-                        newSymbolShortCircuit = new SingleStringColumnAccessHelper(masterIndex, slaveIndex);
-                        break;
-                    default:
-                        // unsupported type for short circuit
-                        continue;
-                }
-                if (columnAccessHelper == NoopColumnAccessHelper.INSTANCE) {
-                    // ok, a single symbol short circuit
-                    columnAccessHelper = newSymbolShortCircuit;
-                } else if (symbolShortCircuits == null) {
-                    // 2 symbol short circuits, we need to chain them
-                    symbolShortCircuits = new AsofJoinColumnAccessHelper[2];
-                    symbolShortCircuits[0] = columnAccessHelper;
-                    symbolShortCircuits[1] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(symbolShortCircuits);
-                } else {
-                    // ok, this is pretty uncommon - a join key with more than 2 symbol short circuits
-                    // this allocates arrays, but it should be very rare
-                    int size = symbolShortCircuits.length;
-                    AsofJoinColumnAccessHelper[] newSymbolShortCircuits = new AsofJoinColumnAccessHelper[size + 1];
-                    System.arraycopy(symbolShortCircuits, 0, newSymbolShortCircuits, 0, size);
-                    newSymbolShortCircuits[size] = newSymbolShortCircuit;
-                    columnAccessHelper = new ChainedSymbolColumnAccessHelper(newSymbolShortCircuits);
-                    symbolShortCircuits = newSymbolShortCircuits;
-                }
-            }
-        }
-        return columnAccessHelper;
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2772,7 +2772,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (!hasLinearHint) {
                                             if (slave.supportsTimeFrameCursor()) {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                AsofJoinColumnAccessHelper columnAccessHelper = createSymbolShortCircuit(masterMetadata, slaveMetadata, selfJoin);
+                                                AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
                                                 boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
                                                 JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
