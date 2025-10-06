@@ -78,8 +78,8 @@ jobs:
           objdump -p core/src/main/bin/questdb.exe | grep -i "subsystem" || true
 
           # Extract and verify subsystem version
-          SUBSYS_MAJOR=$(objdump -p core/src/main/bin/questdb.exe | grep -oP 'MajorSubsystemVersion\s+\K\d+' || echo "")
-          SUBSYS_MINOR=$(objdump -p core/src/main/bin/questdb.exe | grep -oP 'MinorSubsystemVersion\s+\K\d+' || echo "")
+          SUBSYS_MAJOR=$(objdump -p core/src/main/bin/questdb.exe | grep 'MajorSubsystemVersion' | awk '{print $2}' || echo "")
+          SUBSYS_MINOR=$(objdump -p core/src/main/bin/questdb.exe | grep 'MinorSubsystemVersion' | awk '{print $2}' || echo "")
           if [ -n "$SUBSYS_MAJOR" ] && [ -n "$SUBSYS_MINOR" ]; then
             echo "Subsystem version: $SUBSYS_MAJOR.$SUBSYS_MINOR"
             if [ "$SUBSYS_MAJOR" -lt 6 ] || ([ "$SUBSYS_MAJOR" -eq 6 ] && [ "$SUBSYS_MINOR" -le 1 ]); then
