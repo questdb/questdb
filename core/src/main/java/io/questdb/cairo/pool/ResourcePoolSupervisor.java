@@ -24,16 +24,8 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.std.str.CharSink;
-
 public interface ResourcePoolSupervisor<T> {
     void onResourceBorrowed(T resource);
 
     void onResourceReturned(T resource);
-
-    /**
-     * Prints information about the resource allocation (thread's name, stack frame).
-     */
-    default void printResourceInfo(CharSink<?> sink, T resource) {
-    }
 }

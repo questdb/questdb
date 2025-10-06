@@ -409,8 +409,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                 Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                                 var rec = LOG.info().$("shutting down, table is left behind [table=").$(r.getTableToken()).$(']');
                                 var supervisor = r.getSupervisor();
-                                if (supervisor != null) {
-                                    supervisor.printResourceInfo(rec.$(": "), r);
+                                if (supervisor instanceof TracingResourcePoolSupervisor<T>) {
+                                    ((TracingResourcePoolSupervisor<T>) supervisor).printResourceInfo(rec.$(": "), r);
                                 }
                                 rec.$();
                                 leftBehind = r.getTableToken();
