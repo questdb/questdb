@@ -80,6 +80,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
+            PropertyKey.HTTP_ILP_CONNECTION_LIMIT,
+            PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT,
+            PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT,
             PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
             PropertyKey.QUERY_TRACING_ENABLED,
@@ -89,7 +92,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
-            PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD
+            PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD,
+            PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
@@ -281,6 +285,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getExportPoolConfiguration();
+    }
+
+    @Override
     public FactoryProvider getFactoryProvider() {
         return serverConfig.get().getFactoryProvider();
     }
@@ -310,12 +320,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getMatViewRefreshPoolConfiguration();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getExportPoolConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getExportPoolConfiguration();
     }
 
     @Override

@@ -285,7 +285,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            CopyDataProgressReporter reporter
+            CopyDataProgressReporter reporter,
+            int reportFrequency
     ) {
         long rowCount;
         int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
@@ -294,7 +295,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else if (metadata.getColumnType(cursorTimestampIndex) == ColumnType.VARCHAR) {
             rowCount = copyOrderedBatchedVarcharTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatched0(writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, reportFrequency);
         }
         return rowCount;
     }
@@ -302,7 +303,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Returns number of copied rows.
      */
-    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker, CopyDataProgressReporter reporter) {
+    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker, CopyDataProgressReporter reporter, int reportFrequency) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         if (reporter != null) {
@@ -314,7 +315,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             copier.copy(record, row);
             row.append();
             rowCount++;
-            if (rowCount % 50000 == 0 && reporter != null) {
+            if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
@@ -590,7 +591,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            CopyDataProgressReporter reporter
+            CopyDataProgressReporter reporter,
+            int reportFrequency
     ) {
         long commitTarget = batchSize;
         long rowCount = 0;
@@ -609,7 +611,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writer.ic(o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
-                if (rowCount % 50000 == 0 && reporter != null) {
+                if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
                     reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
@@ -623,7 +625,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writer.ic(o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
-                if (rowCount % 50000 == 0 && reporter != null) {
+                if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
                     reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
@@ -663,7 +665,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 writer.ic(o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
-            if (rowCount % 50000 == 0 && reporter != null) {
+            if (reporter != null && rowCount % 50000 == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
@@ -2374,7 +2376,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (!model.isParquetFormat()) {
-            throw SqlException.$(0, "export format must be specified, supported formats:, 'parquet'");
+            throw SqlException.$(0, "export format must be specified, supported formats: 'parquet'");
         }
         model.validCompressOptions();
         return new CopyExportFactory(
@@ -3388,16 +3390,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            CopyDataProgressReporter reporter
+            CopyDataProgressReporter reporter,
+            int reportFrequency
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         long rowCount;
         if (timestampIndex == -1) {
-            rowCount = copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker, reporter);
+            rowCount = copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker, reporter, reportFrequency);
         } else if (batchSize != -1) {
-            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         } else {
-            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, circuitBreaker, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         }
         writer.commit();
         return rowCount;
@@ -3454,7 +3457,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     batchSize,
                     o3MaxLag,
                     circuitBreaker,
-                    reporter
+                    reporter,
+                    configuration.getParquetExportCopyReportFrequencyLines()
             );
         } catch (CairoException e) {
             // Close writer, the table will be removed
@@ -4603,7 +4607,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             configuration.getCreateTableModelBatchSize(),
                                             configuration.getO3MaxLag(),
                                             SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER,
-                                            null
+                                            null,
+                                            configuration.getParquetExportCopyReportFrequencyLines()
                                     );
                                     break;
                                 } catch (TableReferenceOutOfDateException ex) {

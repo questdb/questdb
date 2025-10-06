@@ -655,6 +655,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return 50_0000;
+    }
+
+    @Override
     public CharSequence getParquetExportTableNamePrefix() {
         return "zzz.copy.";
     }

@@ -148,7 +148,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
-                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker, null);
+                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker, null, -1);
                     } else {
                         if (batchSize != -1) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
@@ -160,10 +160,11 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                                     batchSize,
                                     o3MaxLag,
                                     circuitBreaker,
-                                    null
+                                    null,
+                                    -1
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker, null);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker, null, -1);
                         }
                     }
                 } catch (Throwable e) {

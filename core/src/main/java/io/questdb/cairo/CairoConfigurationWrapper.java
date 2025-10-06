@@ -632,6 +632,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return getDelegate().getParquetExportCopyReportFrequencyLines();
+    }
+
+    @Override
     public CharSequence getParquetExportTableNamePrefix() {
         return getDelegate().getParquetExportTableNamePrefix();
     }

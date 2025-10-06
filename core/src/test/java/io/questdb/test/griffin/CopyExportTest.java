@@ -238,10 +238,11 @@ public class CopyExportTest extends AbstractCairoTest {
                 "unsupported format, only 'parquet' is supported"
         );
 
+        execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
         assertException(
                 "copy test_table to 'test_table'  with partition_by Day;",
                 0,
-                "export format must be specified, supported formats:, 'parquet'"
+                "export format must be specified, supported formats: 'parquet'"
         );
 
         assertException(
@@ -423,7 +424,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyParquetFailsWithNonExistentTable() throws Exception {
         assertException(
                 "copy test_table to 'blah blah blah' with format parquet",
-                5,
+                0,
                 "table does not exist [table=test_table]"
         );
     }
@@ -477,17 +478,19 @@ public class CopyExportTest extends AbstractCairoTest {
 
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\tmessage\terrors\n" +
-                                        "\tnull\tstarted\tqueued\t0\n" +
-                                        "\tnull\tfinished\t\t0\n" +
-                                        "\tnull\tstarted\t\t0\n" +
-                                        "\tnull\tfinished\t\t0\n" +
-                                        "\tnull\tstarted\t\t0\n" +
-                                        "\tnull\tfinished\t\t0\n" +
-                                        "\tnull\tstarted\t\t0\n" +
-                                        "\tnull\tfinished\t\t0\n" +
-                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\t\t0\n",
-                                "SELECT export_path, num_exported_files, status,message,errors FROM sys.copy_export_log");
+                        assertSql("export_path\tnum_exported_files\tphase\tstatus\tmessage\terrors\n" +
+                                        "\tnull\twait_to_run\tstarted\tqueued\t0\n" +
+                                        "\tnull\twait_to_run\tfinished\t\t0\n" +
+                                        "\tnull\tpopulating_data_to_temp_table\tstarted\t\t0\n" +
+                                        "\tnull\tpopulating_data_to_temp_table\tfinished\t\t0\n" +
+                                        "\tnull\tconverting_partitions\tstarted\t\t0\n" +
+                                        "\tnull\tconverting_partitions\tfinished\t\t0\n" +
+                                        "\tnull\tmove_files\tstarted\t\t0\n" +
+                                        "\tnull\tmove_files\tfinished\t\t0\n" +
+                                        "\tnull\tdropping_temp_table\tstarted\t\t0\n" +
+                                        "\tnull\tdropping_temp_table\tfinished\t\t0\n" +
+                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tsuccess\tfinished\t\t0\n",
+                                "SELECT export_path, num_exported_files,phase,status,message,errors FROM sys.copy_export_log");
                         // Verify count and sample data
                         assertSql("ts\tx\n" +
                                         "2023-01-01T10:00:00.000000Z\t1\n" +
@@ -504,7 +507,6 @@ public class CopyExportTest extends AbstractCairoTest {
                     });
             testCopyExport(stmt, test);
         });
-
     }
 
     @Test
@@ -811,7 +813,7 @@ public class CopyExportTest extends AbstractCairoTest {
         CopyExportRunnable test = () -> {
             assertTrue(exportFileExists("async_types"));
 
-            String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' limit -1";
+            String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
             assertSql("status\nfinished\n", query);
 
             assertSql("bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tts\n" +
@@ -869,7 +871,7 @@ public class CopyExportTest extends AbstractCairoTest {
         CopyExportRunnable test = () -> {
             assertTrue(exportFileExists("async_output1"));
 
-            String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' limit -1";
+            String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
             assertSql("status\nfinished\n", query);
 
             assertSql("id\tname\tvalue\n" +
@@ -1056,7 +1058,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
         CopyExportRunnable test = () -> assertEventually(() -> {
             // Verify export completed successfully
-            String query = "select status from '" + configuration.getSystemTableNamePrefix() + "copy_export_log' limit -1";
+            String query = "select status from \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" limit -1";
             assertSql("status\nfinished\n", query);
 
             // Verify exported data can be read back and matches original
@@ -1582,7 +1584,7 @@ public class CopyExportTest extends AbstractCairoTest {
             assertException(
                     "COPY test_table TO 'output12' WITH FORMAT PARQUET size_limit 1000",
                     50,
-                    "size limit is not yet support"
+                    "size limit is not yet supported"
             );
         });
     }

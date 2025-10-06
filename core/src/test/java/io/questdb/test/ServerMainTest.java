@@ -673,8 +673,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
                                     "query.tracing.enabled\tQDB_QUERY_TRACING_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
-                                    "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
-                                    "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
+                                    "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
+                                    "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
                                     "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n" +
                                     "http.context.table.status\tQDB_HTTP_CONTEXT_TABLE_STATUS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.execute\tQDB_HTTP_CONTEXT_EXECUTE\t\tdefault\tfalse\tfalse\n" +
@@ -700,7 +700,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.auto.scale.symbol.capacity.threshold\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD\t0.8\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.table.prefix\tQDB_CAIRO_PARQUET_EXPORT_TABLE_PREFIX\tzzz.copy.\tdefault\tfalse\tfalse\n" +
-                                    "http.export.connection.limit\tQDB_HTTP_EXPORT_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n"
+                                    "http.export.connection.limit\tQDB_HTTP_EXPORT_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
+                                    "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t50000\tdefault\tfalse\ttrue\n"
                     )
                             .split("\n");
 

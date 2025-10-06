@@ -353,6 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final int parquetExportCopyReportFrequencyLines;
     private final CharSequence parquetExportTableNamePrefix;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
@@ -1437,6 +1438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
+            this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 50_000);
             this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
             this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
@@ -3475,6 +3477,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
+        }
+
+        @Override
+        public int getParquetExportCopyReportFrequencyLines() {
+            return parquetExportCopyReportFrequencyLines;
         }
 
         @Override

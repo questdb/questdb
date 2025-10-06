@@ -407,6 +407,8 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getParquetExportCopyReportFrequencyLines();
+
     CharSequence getParquetExportTableNamePrefix();
 
     int getPartitionEncoderParquetCompressionCodec();
@@ -608,9 +610,9 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
-    long getSymbolTableMinAllocationPageSize();
-
     long getSymbolTableMaxAllocationPageSize();
+
+    long getSymbolTableMinAllocationPageSize();
 
     long getSystemDataAppendPageSize();
 
