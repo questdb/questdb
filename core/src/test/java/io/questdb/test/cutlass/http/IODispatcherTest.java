@@ -928,7 +928,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "0a\r\n" +
-                        "null\r\n" +
+                        "\"null\"\r\n" +
                         "\r\n" +
                         "\r\n" +
                         "00\r\n" +
@@ -5727,7 +5727,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "85\r\n" +
-                        "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":null,\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[null]],\"count\":1}\r\n" +
+                        "{\"query\":\"select null from long_sequence(1)\",\"columns\":[{\"name\":\"null\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[null]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
