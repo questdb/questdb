@@ -75,7 +75,7 @@ public class ReaderLeftBehindTest extends AbstractCairoTest {
                         TestUtils.assertContains(ex.getFlyweightMessage(),
                                 "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
                         capture.waitFor("shutting down, table is left behind");
-                        capture.assertLoggedRE(elem.getFileName() + ":" + (elem.getLineNumber() + 1));
+                        capture.assertLogged(elem.getFileName() + ":" + (elem.getLineNumber() + 1));
                     }
                     Assert.assertTrue(reader.isOpen());
                 }
