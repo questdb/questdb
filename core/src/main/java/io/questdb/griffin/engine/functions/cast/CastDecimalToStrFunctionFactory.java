@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
@@ -32,7 +33,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -58,7 +61,12 @@ public class CastDecimalToStrFunctionFactory implements FunctionFactory {
             sink.put(d);
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Func64(arg);
+            case ColumnType.DECIMAL128 -> new Func128(arg);
+            default -> new Func(arg);
+        };
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -89,6 +97,70 @@ public class CastDecimalToStrFunctionFactory implements FunctionFactory {
             if (!decimal256.isNull()) {
                 sinkB.clear();
                 sinkB.put(decimal256);
+                return sinkB;
+            }
+            return null;
+        }
+    }
+
+    public static class Func128 extends AbstractCastToStrFunction {
+        private final Decimal128 decimal128 = new Decimal128();
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public Func128(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            DecimalUtil.load(decimal128, arg, rec);
+            if (!decimal128.isNull()) {
+                sinkA.clear();
+                sinkA.put(decimal128);
+                return sinkA;
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            DecimalUtil.load(decimal128, arg, rec);
+            if (!decimal128.isNull()) {
+                sinkB.clear();
+                sinkB.put(decimal128);
+                return sinkB;
+            }
+            return null;
+        }
+    }
+
+    public static class Func64 extends AbstractCastToStrFunction {
+        private final Decimal64 decimal64 = new Decimal64();
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public Func64(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            DecimalUtil.load(decimal64, arg, rec);
+            if (!decimal64.isNull()) {
+                sinkA.clear();
+                sinkA.put(decimal64);
+                return sinkA;
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            DecimalUtil.load(decimal64, arg, rec);
+            if (!decimal64.isNull()) {
+                sinkB.clear();
+                sinkB.put(decimal64);
                 return sinkB;
             }
             return null;

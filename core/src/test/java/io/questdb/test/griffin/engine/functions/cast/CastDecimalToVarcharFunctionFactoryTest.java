@@ -27,11 +27,11 @@ package io.questdb.test.griffin.engine.functions.cast;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 import io.questdb.griffin.engine.functions.cast.CastDecimalToVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.constants.Decimal256Constant;
 import io.questdb.griffin.engine.functions.constants.StrTypeConstant;
+import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
@@ -46,9 +46,11 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
     private final CastDecimalToVarcharFunctionFactory factory = new CastDecimalToVarcharFunctionFactory();
 
     @Test
-    public void testBasic() throws SqlException {
+    public void testBasic() {
         decimal256.ofString("1234.56m");
-        createFunctionAndAssert("1234.56");
+        for (int precision = 6; precision <= Decimals.MAX_PRECISION; precision++) {
+            createFunctionAndAssert("1234.56", precision);
+        }
     }
 
     @Test
@@ -143,13 +145,21 @@ public class CastDecimalToVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws SqlException {
         decimal256.ofNull();
-        createFunctionAndAssert(null);
+        for (int precision = 1; precision <= Decimals.MAX_PRECISION; precision++) {
+            createFunctionAndAssert(null, precision);
+        }
     }
 
-    private void createFunctionAndAssert(CharSequence expected) throws SqlException {
-        int type = ColumnType.getDecimalType(Decimals.MAX_PRECISION, decimal256.getScale());
+    private void createFunctionAndAssert(CharSequence expected, int precision) {
+        int type = ColumnType.getDecimalType(precision, decimal256.getScale());
+        Function constant;
+        if (decimal256.isNull()) {
+            constant = DecimalUtil.createNullDecimalConstant(precision, 0);
+        } else {
+            constant = DecimalUtil.createDecimalConstant(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl(), precision, decimal256.getScale());
+        }
 
-        createFunctionAndAssert(new Decimal256Constant(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl(), type), expected);
+        createFunctionAndAssert(constant, expected);
         createFunctionAndAssert(new RuntimeDecimalFunction(type), expected);
     }
 
