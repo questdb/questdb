@@ -397,6 +397,76 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"').putISODateMillis(d).putAscii('"');
     }
 
+    private static void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long hi = rec.getDecimal128Hi(col);
+        long lo = rec.getDecimal128Lo(col);
+        if (Decimal128.isNull(hi, lo)) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        short l = rec.getDecimal16(col);
+        if (l == Decimals.DECIMAL16_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long hh = rec.getDecimal256HH(col);
+        long hl = rec.getDecimal256HL(col);
+        long lh = rec.getDecimal256LH(col);
+        long ll = rec.getDecimal256LL(col);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        int l = rec.getDecimal32(col);
+        if (l == Decimals.DECIMAL32_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        long l = rec.getDecimal64(col);
+        if (l == Decimals.DECIMAL64_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
+    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
+        byte l = rec.getDecimal8(col);
+        if (l == Decimals.DECIMAL8_NULL) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        response.putAscii('"');
+    }
+
     private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
         byte l = rec.getGeoByte(col);
         GeoHashes.append(l, bitFlags, response);
@@ -415,76 +485,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private static void putGeoHashStringShortValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
         short l = rec.getGeoShort(col);
         GeoHashes.append(l, bitFlags, response);
-    }
-
-    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        byte l = rec.getDecimal8(col);
-        if (l == Decimals.DECIMAL8_NULL) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(l == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
-    }
-
-    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        short l = rec.getDecimal16(col);
-        if (l == Decimals.DECIMAL16_NULL) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(l == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
-    }
-
-    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        int l = rec.getDecimal32(col);
-        if (l == Decimals.DECIMAL32_NULL) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(l == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
-    }
-
-    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        long l = rec.getDecimal64(col);
-        if (l == Decimals.DECIMAL64_NULL) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
-    }
-
-    private static void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        long hi = rec.getDecimal128Hi(col);
-        long lo = rec.getDecimal128Lo(col);
-        if (Decimal128.isNull(hi, lo)) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
-    }
-
-    private static void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
-        long hh = rec.getDecimal256HH(col);
-        long hl = rec.getDecimal256HL(col);
-        long lh = rec.getDecimal256LH(col);
-        long ll = rec.getDecimal256LL(col);
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
-            response.putAscii("null");
-            return;
-        }
-        response.putAscii('"');
-        Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
-        response.putAscii('"');
     }
 
     private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col) {

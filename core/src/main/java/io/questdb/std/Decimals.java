@@ -64,8 +64,7 @@ public final class Decimals {
         if (value == Decimals.DECIMAL64_NULL) {
             sink.put("null");
         } else {
-            long s = value < 0 ? -1 : 0;
-            Decimal256.toSink(sink, s, s, s, value, scale, precision);
+            Decimal64.toSink(sink, value, scale, precision);
         }
     }
 
@@ -79,8 +78,7 @@ public final class Decimals {
         if (Decimal128.isNull(hi, lo)) {
             sink.put("null");
         } else {
-            long s = hi < 0 ? -1 : 0;
-            Decimal256.toSink(sink, s, s, hi, lo, scale, precision);
+            Decimal128.toSink(sink, hi, lo, scale, precision);
         }
     }
 
