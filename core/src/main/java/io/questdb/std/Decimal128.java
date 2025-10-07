@@ -2,6 +2,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -34,6 +35,8 @@ public class Decimal128 implements Sinkable, Decimal {
     public static final int MAX_SCALE = 38;
     public static final Decimal128 MAX_VALUE = new Decimal128(5421010862427522170L, 687399551400673279L);
     public static final Decimal128 MIN_VALUE = new Decimal128(-5421010862427522171L, -687399551400673279L);
+    public static final Decimal128 NULL_VALUE = new Decimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+    public static final Decimal128 ZERO = new Decimal128(0, 0);
     static final long LONG_MASK = 0xffffffffL;
     /**
      * Pre-computed powers of 10 table for decimal arithmetic.
@@ -363,6 +366,57 @@ public class Decimal128 implements Sinkable, Decimal {
         return new Decimal128(h, value, scale);
     }
 
+    /**
+     * Extracts the digit at a specific power-of-ten position from a 128-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10000)
+     *
+     * @param high  high 64 bits of the 128-bit decimal
+     * @param low  low 64 bits of the 128-bit decimal
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public static int getDigitAtPowerOfTen(long high, long low, int pow) {
+        // We do a binary search to retrieve the digit we need to display at a specific power
+        if (compareToPowerOfTen(high, low, pow, 5) >= 0) {
+            if (compareToPowerOfTen(high, low, pow, 7) >= 0) {
+                if (compareToPowerOfTen(high, low, pow, 9) >= 0) {
+                    return 9;
+                } else if (compareToPowerOfTen(high, low, pow, 8) >= 0) {
+                    return 8;
+                } else {
+                    return 7;
+                }
+            } else {
+                if (compareToPowerOfTen(high, low, pow, 6) >= 0) {
+                    return 6;
+                } else {
+                    return 5;
+                }
+            }
+        } else {
+            if (compareToPowerOfTen(high, low, pow, 3) >= 0) {
+                if (compareToPowerOfTen(high, low, pow, 4) >= 0) {
+                    return 4;
+                } else {
+                    return 3;
+                }
+            } else {
+                if (compareToPowerOfTen(high, low, pow, 2) >= 0) {
+                    return 2;
+                } else if (compareToPowerOfTen(high, low, pow, 1) >= 0) {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+
     @TestOnly
     public static long[][] getPowersTenTable() {
         return POWERS_TEN_TABLE;
@@ -425,12 +479,79 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
+     * Writes the string representation of the given Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long high, long low, int scale) {
+        toSink(sink, high, low, scale, MAX_PRECISION);
+    }
+
+    /**
+     * Writes the string representation of the given Decimal256 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long high, long low, int scale, int precision) {
+        if (isNull(high, low)) {
+            return;
+        }
+
+        if (high < 0) {
+            low = ~low + 1;
+            high = ~high + (low == 0L ? 1L : 0L);
+            sink.put('-');
+        }
+
+        boolean printed = false;
+        for (int i = precision - 1; i >= 0; i--) {
+            if (i == scale - 1) {
+                if (!printed) {
+                    sink.put('0');
+                }
+                printed = true;
+                sink.put('.');
+            }
+
+            // Fast path, we expect most digits to be 0
+            if (compareToPowerOfTen(high, low, i, 1) < 0) {
+                if (printed) {
+                    sink.put('0');
+                }
+                continue;
+            }
+
+            int mul = getDigitAtPowerOfTen(high, low, i);
+            sink.putAscii((char) ('0' + mul));
+            printed = true;
+
+            // Subtract the value and continue again
+            int offset = (mul - 1) * 2;
+
+            long bLow = ~POWERS_TEN_TABLE[i][offset + 1] + 1;
+            long c = bLow == 0L ? 1L : 0L;
+            long r = low + bLow;
+            long carry = hasCarry(low, r) ? 1L : 0L;
+            low = r;
+
+            long bHigh = ~POWERS_TEN_TABLE[i][offset] + c;
+            high += carry + bHigh;
+        }
+
+        if (!printed) {
+            sink.put('0');
+        }
+    }
+
+    /**
      * Add another Decimal128 to this one (in-place)
      *
      * @param other the Decimal128 to add
      */
     public void add(Decimal128 other) {
-        add(this, this.high, this.low, this.scale, other.high, other.low, other.scale);
+        add(other.high, other.low, other.scale);
     }
 
     /**
@@ -602,6 +723,23 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
+     * Extracts the digit at a specific power-of-ten position from a 128-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10,000)
+     *
+     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public int getDigitAtPowerOfTen(int pow) {
+        return getDigitAtPowerOfTen(high, low, pow);
+    }
+
+    /**
      * Gets the high 64 bits of the 128-bit decimal value.
      *
      * @return the high 64 bits of the decimal value
@@ -710,7 +848,7 @@ public class Decimal128 implements Sinkable, Decimal {
         long qL = this.low;
         int qScale = this.scale;
         // restore this as a
-        this.set(thisH, thisL, thisScale);
+        this.of(thisH, thisL, thisScale);
         // Finally compute remainder: a - (a / b) * b
         this.subtract(qH, qL, qScale);
 
@@ -879,32 +1017,6 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
-     * Set values directly.
-     *
-     * @param high  the high 64 bits of the decimal value
-     * @param low   the low 64 bits of the decimal value
-     * @param scale the number of decimal places
-     */
-    public void set(long high, long low, int scale) {
-        this.high = high;
-        this.low = low;
-        this.scale = scale;
-    }
-
-    /**
-     * Set from a long value.
-     *
-     * @param value the long value to set
-     * @param scale the number of decimal places
-     */
-    public void setFromLong(long value, int scale) {
-        validateScale(scale);
-        this.high = value < 0 ? -1L : 0L;
-        this.low = value;
-        this.scale = scale;
-    }
-
-    /**
      * Set the scale forcefully without doing any rescaling operations
      */
     public void setScale(int scale) {
@@ -980,8 +1092,7 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        BigDecimal bd = toBigDecimal();
-        sink.put(bd.toPlainString());
+        toSink(sink, high, low, scale);
     }
 
     /**
@@ -992,10 +1103,9 @@ public class Decimal128 implements Sinkable, Decimal {
      */
     @Override
     public String toString() {
-        if (isNull()) {
-            return "";
-        }
-        return toBigDecimal().toPlainString();
+        StringSink sink = new StringSink(8);
+        toSink(sink, high, low, scale);
+        return sink.toString();
     }
 
     /**
@@ -1043,6 +1153,16 @@ public class Decimal128 implements Sinkable, Decimal {
         if (result.hasOverflowed()) {
             throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
+    }
+
+    private static int compareToPowerOfTen(long aHi, long aLo, int pow, int multiplier) {
+        final int offset = (multiplier - 1) * 2;
+        long bHi = POWERS_TEN_TABLE[pow][offset];
+        if (aHi != bHi) {
+            return Long.compare(aHi, bHi);
+        }
+        long bLo = POWERS_TEN_TABLE[pow][offset + 1];
+        return Long.compareUnsigned(aLo, bLo);
     }
 
     private static void uncheckedAdd(Decimal128 result, long bHi, long bLo) {

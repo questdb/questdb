@@ -965,7 +965,7 @@ public class Decimal256 implements Sinkable, Decimal {
      * <p>
      * Prerequisites:
      * - The decimal value must be positive
-     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 1000)
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10,000)
      *
      * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
      * @return the digit (0-9) at the specified power-of-ten position
@@ -1171,16 +1171,7 @@ public class Decimal256 implements Sinkable, Decimal {
 
         // Handle scale adjustment
         if (this.scale != resultScale) {
-            int scaleUp = resultScale - this.scale;
-            boolean isNegative = isNegative();
-            if (isNegative) {
-                negate();
-            }
-            multiplyByPowerOf10InPlace(scaleUp);
-            if (isNegative) {
-                negate();
-            }
-            this.scale = resultScale;
+            rescale0(resultScale);
         }
     }
 

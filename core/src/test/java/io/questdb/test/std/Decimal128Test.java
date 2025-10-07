@@ -251,6 +251,42 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testDigitExtractionLoop() {
+        // Test extracting all digits from 12345 using the two methods together
+        Decimal128 value = new Decimal128(0, 12345, 0);
+
+        // Extract ten thousands digit (1)
+        int digit = value.getDigitAtPowerOfTen(4);
+        Assert.assertEquals(1, digit);
+        value.subtract(0, 10000L * digit, 0);
+        Assert.assertEquals(2345, value.getLow());
+
+        // Extract thousands digit (2)
+        digit = value.getDigitAtPowerOfTen(3);
+        Assert.assertEquals(2, digit);
+        value.subtract(0, 1000L * digit, 0);
+        Assert.assertEquals(345, value.getLow());
+
+        // Extract hundreds digit (3)
+        digit = value.getDigitAtPowerOfTen(2);
+        Assert.assertEquals(3, digit);
+        value.subtract(0, 100L * digit, 0);
+        Assert.assertEquals(45, value.getLow());
+
+        // Extract tens digit (4)
+        digit = value.getDigitAtPowerOfTen(1);
+        Assert.assertEquals(4, digit);
+        value.subtract(0, 10L * digit, 0);
+        Assert.assertEquals(5, value.getLow());
+
+        // Extract ones digit (5)
+        digit = value.getDigitAtPowerOfTen(0);
+        Assert.assertEquals(5, digit);
+        value.subtract(0, digit, 0);
+        Assert.assertEquals(0, value.getLow());
+    }
+
+    @Test
     public void testDivide() {
         Decimal128 a = new Decimal128(0, 1000, 2);
         Decimal128 b = new Decimal128(0, 3, 0);
@@ -494,6 +530,44 @@ public class Decimal128Test {
         Assert.assertEquals(12345, decimal.getLow());
         Assert.assertEquals(2, decimal.getScale());
         Assert.assertEquals(123.45, decimal.toDouble(), 0.001);
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenBoundaryValues() {
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 9, 0));
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 99, 1));
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 999, 2));
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 9999, 3));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenHundredsPlace() {
+        Assert.assertEquals(5, Decimal128.getDigitAtPowerOfTen(0, 523, 2));
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 999, 2));
+        Assert.assertEquals(1, Decimal128.getDigitAtPowerOfTen(0, 100, 2));
+        Assert.assertEquals(0, Decimal128.getDigitAtPowerOfTen(0, 99, 2));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenSingleDigits() {
+        for (int i = 0; i <= 9; i++) {
+            Assert.assertEquals(i, Decimal128.getDigitAtPowerOfTen(0, i, 0));
+        }
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenTensPlace() {
+        Assert.assertEquals(9, Decimal128.getDigitAtPowerOfTen(0, 95, 1));
+        Assert.assertEquals(5, Decimal128.getDigitAtPowerOfTen(0, 50, 1));
+        Assert.assertEquals(1, Decimal128.getDigitAtPowerOfTen(0, 19, 1));
+        Assert.assertEquals(0, Decimal128.getDigitAtPowerOfTen(0, 9, 1));
+    }
+
+    @Test
+    public void testGetDigitAtPowerOfTenZero() {
+        Assert.assertEquals(0, Decimal128.getDigitAtPowerOfTen(0, 0, 0));
+        Assert.assertEquals(0, Decimal128.getDigitAtPowerOfTen(0, 0, 5));
+        Assert.assertEquals(0, Decimal128.getDigitAtPowerOfTen(0, 0, 10));
     }
 
     @Test
@@ -1254,6 +1328,21 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testSinkNull() {
+        // Sinking a null value shouldn't print anything
+        StringSink sink = new StringSink();
+        Decimal128.NULL_VALUE.toSink(sink);
+        Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testSinkZero() {
+        StringSink sink = new StringSink();
+        Decimal128.ZERO.toSink(sink);
+        Assert.assertEquals("0", sink.toString());
+    }
+
+    @Test
     public void testSinkableInterface() {
         // Test that Decimal128 can be used as a Sinkable
         Decimal128 decimal = Decimal128.fromDouble(42.99, 2);
@@ -1570,6 +1659,8 @@ public class Decimal128Test {
         Assert.assertTrue(d256.isNull());
     }
 
+    // ofString tests
+
     @Test
     public void testToDecimal256WithHighScale() {
         Decimal128 d128 = Decimal128.fromDouble(1.23456789012345678, 17);
@@ -1579,8 +1670,6 @@ public class Decimal128Test {
         Assert.assertEquals(17, d256.getScale());
         Assert.assertEquals(d128.toString(), d256.toString());
     }
-
-    // ofString tests
 
     @Test
     public void testToDecimal256Zero() {
@@ -1727,6 +1816,8 @@ public class Decimal128Test {
         Assert.assertEquals("0.000", sink.toString());
     }
 
+    // toDecimal256 tests
+
     @Test
     public void testToSinkZeroScale() {
         Decimal128 decimal = Decimal128.fromLong(123, 0);
@@ -1736,8 +1827,6 @@ public class Decimal128Test {
 
         Assert.assertEquals("123", sink.toString());
     }
-
-    // toDecimal256 tests
 
     @Test
     public void testToString() {
@@ -1754,7 +1843,7 @@ public class Decimal128Test {
         Decimal128 accumulator = new Decimal128();
 
         // Start with 100
-        accumulator.setFromLong(10000, 2); // 100.00 with scale 2
+        accumulator.ofLong(10000, 2); // 100.00 with scale 2
 
         // Add 50 -> 150
         Decimal128 increment = Decimal128.fromLong(5000, 2); // 50.00 with scale 2
