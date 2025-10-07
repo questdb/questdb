@@ -109,6 +109,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_DATA);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
@@ -158,6 +160,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_DATA);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
