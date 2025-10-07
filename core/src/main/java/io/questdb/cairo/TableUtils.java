@@ -124,13 +124,13 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_KIND_DATA = 0;
+    public static final int TABLE_KIND_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
-    public static final int TABLE_KIND_DATA = 0;
-    public static final int TABLE_KIND_PARQUET_EXPORT = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TODO_FILE_NAME = "_todo_";
     /**

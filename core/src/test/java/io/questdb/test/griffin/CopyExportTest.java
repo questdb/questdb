@@ -1636,6 +1636,18 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithParquetPrefixDenied() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("create table \"" + configuration.getParquetExportTableNamePrefix() + "tbl\" (x int);");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "table name cannot start with reserved prefix");
+            }
+        });
+    }
+
+    @Test
     public void testExportDisabled() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "");

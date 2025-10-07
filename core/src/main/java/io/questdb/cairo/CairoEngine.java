@@ -519,7 +519,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeMatViewCreate();
         final TableToken matViewToken = createTableOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken);
+        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken, TableUtils.TABLE_KIND_DATA);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -569,9 +569,14 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume,
             int tableKind
     ) {
+        if (tableKind != TableUtils.TABLE_KIND_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
+            throw CairoException.nonCritical().put("table name cannot start with reserved prefix [tableName=").put(struct.getTableName())
+                    .put(", parquetExportPrefix=").put(configuration.getParquetExportTableNamePrefix())
+                    .put(']');
+        }
         securityContext.authorizeTableCreate(tableKind);
         final TableToken tableToken = createTableOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken);
+        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken, tableKind);
         return tableToken;
     }
 

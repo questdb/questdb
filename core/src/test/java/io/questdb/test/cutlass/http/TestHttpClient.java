@@ -40,8 +40,9 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
-    private final Utf8StringSink sink = new Utf8StringSink();
+    protected static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
+    protected final Utf8StringSink sink = new Utf8StringSink();
+    protected int port;
     private HttpClient httpClient;
     private boolean keepConnection;
 
@@ -404,7 +405,7 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    private void toSink0(
+    protected void toSink0(
             CharSequence url,
             CharSequence sql,
             Utf8StringSink sink,
@@ -416,7 +417,7 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         toSink0(
                 "localhost",
-                9001,
+                port,
                 url,
                 sql,
                 sink,
@@ -428,7 +429,7 @@ public class TestHttpClient implements QuietCloseable {
         );
     }
 
-    private void toSink0(
+    protected void toSink0(
             String host,
             int port,
             CharSequence url,
