@@ -27,7 +27,6 @@ public class TracingResourcePoolSupervisor<T> implements ResourcePoolSupervisor<
         resources.remove(resource);
     }
 
-    @Override
     public void printResourceInfo(CharSink<?> sink, T resource) {
         StackTraceElement[] stackTrace = resources.get(resource);
         if (stackTrace != null) {
