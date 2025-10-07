@@ -118,7 +118,7 @@ public class JsonPlanSinkTest {
             sink.attr("long_null");
             sink.valDecimal(Decimals.DECIMAL64_NULL, 5, 2);
             sink.attr("decimal128");
-            sink.valDecimal(123, 456, 75, 15);
+            sink.valDecimal(123, 456, 38, 15);
             sink.attr("decimal128_null");
             sink.valDecimal(
                     Decimals.DECIMAL128_HI_NULL,
