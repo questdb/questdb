@@ -93,12 +93,12 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                         .$(statusTableName)
                         .$("\" (" +
                                 "ts timestamp, " + // 0
-                                "id string, " + // 1
+                                "id varchar, " + // 1
                                 "table_name symbol, " + // 2
                                 "file symbol, " + // 3
                                 "phase symbol, " + // 4
                                 "status symbol, " + // 5
-                                "message string," + // 6
+                                "message varchar," + // 6
                                 "rows_handled long," + // 7
                                 "rows_imported long," + // 8
                                 "errors long" + // 9
@@ -155,9 +155,11 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                 row.putSym(5, CopyImportTask.getStatusName(status));
                 final int msgColumnType = writer.getMetadata().getColumnType(6);
                 if (msgColumnType == ColumnType.VARCHAR) {
-                    utf8StringSink.clear();
-                    utf8StringSink.put(msg);
-                    row.putVarchar(6, utf8StringSink);
+                    if (msg != null) {
+                        utf8StringSink.clear();
+                        utf8StringSink.put(msg);
+                        row.putVarchar(6, utf8StringSink);
+                    }
                 } else {
                     row.putStr(6, msg);
                 }
