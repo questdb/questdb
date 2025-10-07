@@ -37,10 +37,10 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | Handling bit  | Extra type information | Timestamp Flag | GeoHash Flag |Extra type information | Type discriminant (tag) |
-// +---------------+------------------------+----------------+--------------+-----------------------+-------------------------+
-// |    1 bit      |        12 bits         |     1 bit      |    1 bit     |        8 bits         |         8 bits          |
-// +---------------+------------------------+----------------+--------------+-----------------------+-------------------------+
+// | Handling bit | Extra type information | Timestamp Flag | GeoHash Flag | Extra type information | Type discriminant (tag) |
+// +--------------+------------------------+----------------+--------------+------------------------+-------------------------+
+// |    1 bit     |        13 bits         |     1 bit      |    1 bit     |         8 bits         |         8 bits          |
+// +--------------+------------------------+----------------+--------------+------------------------+-------------------------+
 //
 // Handling bit:
 //   Skip column use case:
