@@ -100,6 +100,20 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableCreate();
 
+    default void authorizeTableCreate(int tableKind) {
+        switch (tableKind) {
+            case TableUtils.TABLE_KIND_DATA:
+                authorizeTableCreate();
+                break;
+            case TableUtils.TABLE_KIND_PARQUET_EXPORT:
+                // Allowed even in read-only mode
+                return;
+            default:
+                throw new UnsupportedOperationException("Unsupported table kind: " + tableKind);
+        }
+    }
+
+
     void authorizeTableDrop(TableToken tableToken);
 
     // columnNames - empty means all indexed columns

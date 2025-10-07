@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -258,6 +259,7 @@ public class CopyExportContext {
         synchronized (this) {
             if (!initialized) {
                 init();
+                initialized = true;
             }
 
             if (statusTableToken == null) {
@@ -314,7 +316,7 @@ public class CopyExportContext {
         }
     }
 
-    public CreateTableOperation validateAndCreateTableOp(
+    public CreateTableOperation validateAndCreateParquetExportTableOp(
             SqlExecutionContext executionContext,
             CharSequence selectText,
             int partitionBy,
@@ -341,7 +343,9 @@ public class CopyExportContext {
                         false,
                         executionContext.getCairoEngine().getConfiguration().getDefaultSymbolCapacity(),
                         sqlText,
-                        false);
+                        false
+                );
+                createOp.setTableKind(TableUtils.TABLE_KIND_PARQUET_EXPORT);
                 createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata());
             }
         } catch (SqlException ex) {

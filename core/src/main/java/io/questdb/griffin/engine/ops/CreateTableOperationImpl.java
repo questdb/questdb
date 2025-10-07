@@ -87,6 +87,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionByPosition;
     private CopyDataProgressReporter reporter;
     private int selectTextPosition;
+    private int tableKind = TableUtils.TABLE_KIND_DATA;
     private String tableName;
     private int tableNamePosition;
     private String timestampColumnName;
@@ -228,6 +229,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
+     * @param tableKind                   table kind, DATA, PARQUET_EXPORT see TableUtils.TABLE_KIND_* constants
      */
     public CreateTableOperationImpl(
             String sqlText,
@@ -250,7 +252,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
-            long batchO3MaxLag
+            long batchO3MaxLag,
+            int tableKind
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -275,6 +278,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        this.tableKind = tableKind;
 
         // This constructor is for a "create as select", column names will be scraped from the record
         // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
@@ -398,6 +402,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getTableKind() {
+        return tableKind;
+    }
+
+    @Override
     public CharSequence getTableName() {
         return tableName;
     }
@@ -506,6 +515,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setTableKind(int tableKind) {
+        this.tableKind = tableKind;
     }
 
     public void setTableName(String tableName) {

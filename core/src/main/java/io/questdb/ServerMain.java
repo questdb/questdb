@@ -340,9 +340,11 @@ public class ServerMain implements Closeable {
                     sharedPoolWrite.assign(engine.getEngineMaintenanceJob());
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
-                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
-                    sharedPoolQuery.assign(queryTracingJob);
-                    freeOnExit(queryTracingJob);
+                    if (config.getCairoConfiguration().isQueryTracingEnabled()) {
+                        QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                        sharedPoolQuery.assign(queryTracingJob);
+                        freeOnExit(queryTracingJob);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);

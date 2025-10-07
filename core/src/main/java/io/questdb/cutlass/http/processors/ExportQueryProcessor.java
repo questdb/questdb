@@ -504,7 +504,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 Numbers.appendHex(sink, copyID, true);
                 String tableName = sink.toString();
 
-                var createOp = copyContext.validateAndCreateTableOp(
+                var createOp = copyContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
                         selectText,
                         state.getCopyModel().getPartitionBy(),

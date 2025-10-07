@@ -129,6 +129,8 @@ public final class TableUtils {
     public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
+    public static final int TABLE_KIND_DATA = 0;
+    public static final int TABLE_KIND_PARQUET_EXPORT = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String TODO_FILE_NAME = "_todo_";
     /**

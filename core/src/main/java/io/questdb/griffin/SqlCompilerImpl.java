@@ -146,6 +146,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.TABLE_KIND_DATA;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.CopyModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
@@ -3665,7 +3666,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 createTableOp.ignoreIfExists(),
                                 createTableOp,
                                 keepLock,
-                                volumeAlias != null
+                                volumeAlias != null,
+                                createTableOp.getTableKind()
                         );
 
                         try {
@@ -3714,7 +3716,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         createTableOp.ignoreIfExists(),
                                         createTableOp,
                                         false,
-                                        volumeAlias != null
+                                        volumeAlias != null,
+                                        TABLE_KIND_DATA
                                 );
                             }
                         } else {
@@ -3725,7 +3728,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.ignoreIfExists(),
                                     createTableOp,
                                     false,
-                                    volumeAlias != null
+                                    volumeAlias != null,
+                                    TABLE_KIND_DATA
                             );
                         }
                         createTableOp.updateOperationFutureTableToken(tableToken);

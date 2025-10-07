@@ -543,7 +543,20 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_DATA);
+    }
+
+
+    public @NotNull TableToken createTable(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            int tableKind
+    ) {
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, tableKind);
     }
 
     public @NotNull TableToken createTable(
@@ -553,9 +566,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean ifNotExists,
             TableStructure struct,
             boolean keepLock,
-            boolean inVolume
+            boolean inVolume,
+            int tableKind
     ) {
-        securityContext.authorizeTableCreate();
+        securityContext.authorizeTableCreate(tableKind);
         final TableToken tableToken = createTableOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
         getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken);
         return tableToken;

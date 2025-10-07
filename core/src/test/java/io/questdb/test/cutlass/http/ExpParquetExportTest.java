@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultHttpClientConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
@@ -32,11 +34,13 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -47,6 +51,7 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.test.tools.TestUtils.assertSql;
 
 public class ExpParquetExportTest extends AbstractBootstrapTest {
@@ -85,6 +90,120 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
                     testHttpClient.assertGetParquet("/exp", 1286, "basic_parquet_test");
                 });
+    }
+
+    @Test
+    public void testParquetExportDisabledReadOnlyInstance() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
+            )) {
+                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                        "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                        "FROM long_sequence(5)" +
+                        ")");
+            }
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.READ_ONLY_INSTANCE.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
+            )) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.GET()
+                            .url("/exp")
+                            .query("fmt", "parquet")
+                            .query("query", "basic_parquet_test");
+
+                    try (var headers = request.send()) {
+                        headers.await();
+                        TestUtils.assertEquals("400", headers.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetExportCopyRootNotSet() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
+            )) {
+                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                        "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                        "FROM long_sequence(5)" +
+                        ")");
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.GET()
+                            .url("/exp")
+                            .query("fmt", "parquet")
+                            .query("query", "basic_parquet_test");
+
+                    try (var headers = request.send()) {
+                        headers.await();
+                        TestUtils.assertEquals("400", headers.getStatusCode());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetExportReadOnlyHttp() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
+            )) {
+                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                        "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                        "FROM long_sequence(5)" +
+                        ")");
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
+                    request.GET()
+                            .url("/exp")
+                            .query("fmt", "parquet")
+                            .query("query", "basic_parquet_test");
+
+                    try (var headers = request.send()) {
+                        headers.await();
+                        TestUtils.assertEquals("200", headers.getStatusCode());
+                    }
+                }
+            }
+        });
     }
 
     @Test

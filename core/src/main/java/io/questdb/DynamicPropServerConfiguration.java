@@ -93,7 +93,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD,
             PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY,
             PropertyKey.CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD,
-            PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES
+            PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES,
+            PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);

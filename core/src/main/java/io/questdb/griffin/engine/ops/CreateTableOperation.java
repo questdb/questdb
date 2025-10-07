@@ -54,6 +54,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     CharSequence getSqlText();
 
+    int getTableKind();
+
     int getTableNamePosition();
 
     CharSequence getVolumeAlias();

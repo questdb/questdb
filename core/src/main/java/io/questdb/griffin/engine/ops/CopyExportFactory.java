@@ -124,7 +124,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 exportIdSink.put("copy.");
                 Numbers.appendHex(exportIdSink, copyID, true);
                 this.tableName = exportIdSink.toString();
-                createOp = copyContext.validateAndCreateTableOp(
+                createOp = copyContext.validateAndCreateParquetExportTableOp(
                         executionContext,
                         selectText,
                         partitionBy,

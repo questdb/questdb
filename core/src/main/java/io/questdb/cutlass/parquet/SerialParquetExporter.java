@@ -120,6 +120,10 @@ public class SerialParquetExporter implements Closeable {
     }
 
     public CopyExportRequestTask.Phase process() {
+        if (copyExportRoot == null) {
+            throw CairoException.nonCritical().put("parquet export is disabled ['cairo.sql.copy.export.root' is not set]");
+        }
+
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         TableToken tableToken = null;
         int tempBaseDirLen = 0;

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,6 +66,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private QueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableKind = TableUtils.TABLE_KIND_DATA;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
@@ -110,7 +112,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag
+                    batchO3MaxLag,
+                    tableKind
             );
         }
 
@@ -176,6 +179,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
+        tableKind = TableUtils.TABLE_KIND_DATA;
     }
 
     public int getColumnCount() {
