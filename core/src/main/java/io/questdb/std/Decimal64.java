@@ -276,7 +276,7 @@ public class Decimal64 implements Sinkable, Decimal {
         }
 
         boolean printed = false;
-        for (int i = precision - 1; i >= 0; i--) {
+        for (int i = precision; i >= 0; i--) {
             if (i == scale - 1) {
                 if (!printed) {
                     sink.put('0');
