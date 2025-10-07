@@ -629,19 +629,18 @@ public class Decimal256 implements Sinkable, Decimal {
         }
 
         boolean printed = false;
-        boolean afterDot = false;
         for (int i = precision - 1; i >= 0; i--) {
             if (i == scale - 1) {
                 if (!printed) {
                     sink.put('0');
                 }
-                afterDot = true;
+                printed = true;
                 sink.put('.');
             }
 
             // Fast path, we expect most digits to be 0
             if (compareToPowerOfTen(hh, hl, lh, ll, i, 1) < 0) {
-                if (afterDot || printed) {
+                if (printed) {
                     sink.put('0');
                 }
                 continue;
@@ -680,7 +679,7 @@ public class Decimal256 implements Sinkable, Decimal {
             hh += carry + bHH;
         }
 
-        if (!printed && !afterDot) {
+        if (!printed) {
             sink.put('0');
         }
     }

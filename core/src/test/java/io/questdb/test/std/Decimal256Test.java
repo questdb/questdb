@@ -387,31 +387,31 @@ public class Decimal256Test {
         Decimal256 value = new Decimal256(0, 0, 0, 12345, 0);
 
         // Extract ten thousands digit (1)
-        int digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 4);
+        int digit = value.getDigitAtPowerOfTen(4);
         Assert.assertEquals(1, digit);
         value.subtractPowerOfTenMultiple(4, digit);
         Assert.assertEquals(2345, value.getLl());
 
         // Extract thousands digit (2)
-        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 3);
+        digit = value.getDigitAtPowerOfTen(3);
         Assert.assertEquals(2, digit);
         value.subtractPowerOfTenMultiple(3, digit);
         Assert.assertEquals(345, value.getLl());
 
         // Extract hundreds digit (3)
-        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 2);
+        digit = value.getDigitAtPowerOfTen(2);
         Assert.assertEquals(3, digit);
         value.subtractPowerOfTenMultiple(2, digit);
         Assert.assertEquals(45, value.getLl());
 
         // Extract tens digit (4)
-        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 1);
+        digit = value.getDigitAtPowerOfTen(1);
         Assert.assertEquals(4, digit);
         value.subtractPowerOfTenMultiple(1, digit);
         Assert.assertEquals(5, value.getLl());
 
         // Extract ones digit (5)
-        digit = Decimal256.getDigitAtPowerOfTen(value.getHh(), value.getHl(), value.getLh(), value.getLl(), 0);
+        digit = value.getDigitAtPowerOfTen(0);
         Assert.assertEquals(5, digit);
         value.subtractPowerOfTenMultiple(0, digit);
         Assert.assertEquals(0, value.getLl());
@@ -1165,6 +1165,14 @@ public class Decimal256Test {
     public void testMultiplyOverflow64B() {
         Decimal256 m = new Decimal256(Long.MAX_VALUE / 2, 0, 0, 0, 0);
         m.multiply(new Decimal256(0, 0, 0, 3, 0));
+    }
+
+    @Test
+    public void testNegateNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.negate();
+        Assert.assertTrue(m.isNull());
     }
 
     @Test
@@ -2073,10 +2081,32 @@ public class Decimal256Test {
         Assert.assertEquals("1.0000000000", a.toString());
     }
 
-    @Test(expected = NumericException.class)
+    @Test
     public void testRescaleLess() {
+        Decimal256 m = Decimal256.fromLong(12340, 2); // 123.40
+        m.rescale(1); // / 10 -> ok, last digit is 0
+        Assert.assertEquals(1234, m.getLl());
+        Assert.assertEquals(1, m.getScale());
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleLessFails() {
+        Decimal256 m = Decimal256.fromLong(12345, 2); // 123.45
+        m.rescale(1); // / 10 -> fails because it ends with a non-zero digit
+    }
+
+    @Test(expected = NumericException.class)
+    public void testRescaleLessFails2() {
         Decimal256 a = new Decimal256(0, 0, 0, 100, 10);
         a.rescale(5);
+    }
+
+    @Test
+    public void testRescaleMore() {
+        Decimal256 m = Decimal256.fromLong(12345, 2); // 123.45
+        m.rescale(4); // * 100
+        Assert.assertEquals(1234500, m.getLl());
+        Assert.assertEquals(4, m.getScale());
     }
 
     @Test
@@ -2085,6 +2115,14 @@ public class Decimal256Test {
         a.rescale(2);
         Assert.assertEquals(-1000, a.getLl());
         Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
+    public void testRescaleNull() {
+        Decimal256 m = new Decimal256();
+        m.copyFrom(Decimal256.NULL_VALUE);
+        m.rescale(10);
+        Assert.assertTrue(m.isNull());
     }
 
     @Test(expected = NumericException.class)
@@ -2271,6 +2309,22 @@ public class Decimal256Test {
     }
 
     @Test
+    public void testRoundNull() {
+        Decimal256 a = new Decimal256();
+        a.copyFrom(Decimal256.NULL_VALUE);
+        a.round(2, java.math.RoundingMode.HALF_UP);
+        Assert.assertTrue(a.isNull());
+    }
+
+    @Test
+    public void testRoundUseless() {
+        Decimal256 a = Decimal256.fromLong(12345, 2); // 123.45
+        a.round(2, java.math.RoundingMode.HALF_UP);
+        Assert.assertEquals(12345, a.getLl());
+        Assert.assertEquals(2, a.getScale());
+    }
+
+    @Test
     public void testRoundZero() {
         Decimal256 a = Decimal256.fromLong(0, 3);
 
@@ -2284,6 +2338,14 @@ public class Decimal256Test {
         Decimal256 a = new Decimal256(0, 0, 0, 12345, 2);
         a.setScale(1);
         Assert.assertEquals("1234.5", a.toString());
+    }
+
+    @Test
+    public void testSinkNull() {
+        // Sinking a null value shouldn't print anything
+        StringSink sink = new StringSink();
+        Decimal256.NULL_VALUE.toSink(sink);
+        Assert.assertEquals("", sink.toString());
     }
 
     @Test
@@ -2374,7 +2436,7 @@ public class Decimal256Test {
 
         // Test positive number
         Decimal256 a = Decimal256.fromDouble(42.5, 1);
-        result.copyFrom(a);
+        a.toDecimal256(result);
         result.negate();
         Assert.assertEquals(a.toBigDecimal().negate(), result.toBigDecimal());
 
@@ -2504,7 +2566,7 @@ public class Decimal256Test {
     @Test
     public void testSubtractionNull() {
         Decimal256 m = new Decimal256();
-        m.copyFrom(Decimal256.NULL_VALUE);
+        Decimal256.NULL_VALUE.toDecimal256(m);
         m.subtract(Decimal256.fromLong(1, 0));
         Assert.assertEquals(Decimal256.NULL_VALUE, m);
     }
@@ -2836,7 +2898,7 @@ public class Decimal256Test {
                     b.toBigDecimal(), b.toBigDecimal());
 
             Decimal256 result = new Decimal256();
-            result.copyFrom(a);
+            a.toDecimal256(result);
 
             // Test in-place subtract method
             result.subtract(b);

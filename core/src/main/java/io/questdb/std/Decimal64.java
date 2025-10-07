@@ -2,6 +2,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigDecimal;
@@ -29,31 +30,32 @@ public class Decimal64 implements Sinkable, Decimal {
      * Limited by the range of 64-bit signed long
      */
     public static final int MAX_SCALE = 18;
-    public static final Decimal64 MAX_VALUE = new Decimal64(Long.MAX_VALUE, 0);
-    public static final Decimal64 MIN_VALUE = new Decimal64(Long.MIN_VALUE, 0);
+    public static final Decimal64 MAX_VALUE = new Decimal64(999999999999999999L, 0);
+    public static final Decimal64 MIN_VALUE = new Decimal64(-999999999999999999L, 0);
+    public static final Decimal64 NULL_VALUE = new Decimal64(Decimals.DECIMAL64_NULL, 0);
     public static final Decimal64 ONE = new Decimal64(1, 0);
     public static final Decimal64 ZERO = new Decimal64(0, 0);
     // Maximum values that 10^n can multiply without overflow
     private static final long[] MAX_SAFE_MULTIPLY = {
-            Long.MAX_VALUE,
-            Long.MAX_VALUE / 10L,
-            Long.MAX_VALUE / 100L,
-            Long.MAX_VALUE / 1000L,
-            Long.MAX_VALUE / 10000L,
-            Long.MAX_VALUE / 100000L,
-            Long.MAX_VALUE / 1000000L,
-            Long.MAX_VALUE / 10000000L,
-            Long.MAX_VALUE / 100000000L,
-            Long.MAX_VALUE / 1000000000L,
-            Long.MAX_VALUE / 10000000000L,
-            Long.MAX_VALUE / 100000000000L,
-            Long.MAX_VALUE / 1000000000000L,
-            Long.MAX_VALUE / 10000000000000L,
-            Long.MAX_VALUE / 100000000000000L,
-            Long.MAX_VALUE / 1000000000000000L,
-            Long.MAX_VALUE / 10000000000000000L,
-            Long.MAX_VALUE / 100000000000000000L,
-            Long.MAX_VALUE / 1000000000000000000L,
+            999999999999999999L,
+            99999999999999999L,
+            9999999999999999L,
+            999999999999999L,
+            99999999999999L,
+            9999999999999L,
+            999999999999L,
+            99999999999L,
+            9999999999L,
+            999999999L,
+            99999999L,
+            9999999L,
+            999999L,
+            99999L,
+            9999L,
+            999L,
+            99L,
+            9L,
+            0L
     };
     // Power of 10 lookup table for 64-bit arithmetic (10^0 to 10^18)
     private static final long[] TEN_POWERS_TABLE = {
@@ -159,6 +161,56 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     /**
+     * Extracts the digit at a specific power-of-ten position from a 64-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten position when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10,000, p will be 1000)
+     *
+     * @param value the 64-bit decimal
+     * @param p     the value at power of ten to compare {@code value} against
+     * @return the digit (0-9) at the specified power-of-ten position
+     */
+    public static int getDigit(long value, long p) {
+        // We do a binary search to retrieve the digit we need to display at a specific power
+        if (value >= p * 5) {
+            if (value >= p * 7) {
+                if (value >= p * 9) {
+                    return 9;
+                } else if (value >= p * 8) {
+                    return 8;
+                } else {
+                    return 7;
+                }
+            } else {
+                if (value >= p * 6) {
+                    return 6;
+                } else {
+                    return 5;
+                }
+            }
+        } else {
+            if (value >= p * 3) {
+                if (value >= p * 4) {
+                    return 4;
+                } else {
+                    return 3;
+                }
+            } else {
+                if (value >= p * 2) {
+                    return 2;
+                } else if (value >= p) {
+                    return 1;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
      * Returns whether the Decimal64 is null or not.
      */
     public static boolean isNull(long value) {
@@ -198,6 +250,64 @@ public class Decimal64 implements Sinkable, Decimal {
     }
 
     /**
+     * Writes the string representation of the given Decimal64 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long value, int scale) {
+        toSink(sink, value, scale, MAX_PRECISION);
+    }
+
+    /**
+     * Writes the string representation of the given Decimal64 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
+    public static void toSink(@NotNull CharSink<?> sink, long value, int scale, int precision) {
+        if (value == Decimals.DECIMAL64_NULL) {
+            return;
+        }
+
+        if (value < 0) {
+            value = -value;
+            sink.put('-');
+        }
+
+        boolean printed = false;
+        for (int i = precision - 1; i >= 0; i--) {
+            if (i == scale - 1) {
+                if (!printed) {
+                    sink.put('0');
+                }
+                printed = true;
+                sink.put('.');
+            }
+
+            // Fast path, we expect most digits to be 0
+            long pow = TEN_POWERS_TABLE[i];
+            if (value < pow) {
+                if (printed) {
+                    sink.put('0');
+                }
+                continue;
+            }
+
+            int mul = getDigit(value, pow);
+            sink.putAscii((char) ('0' + mul));
+            printed = true;
+
+            // Subtract the value and continue again
+            value -= mul * pow;
+        }
+
+        if (!printed) {
+            sink.put('0');
+        }
+    }
+
+    /**
      * Add another Decimal64 to this one (in-place)
      */
     public void add(long otherValue, int otherScale) {
@@ -217,6 +327,9 @@ public class Decimal64 implements Sinkable, Decimal {
             }
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
+        }
+        if (hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds max value");
         }
     }
 
@@ -359,6 +472,23 @@ public class Decimal64 implements Sinkable, Decimal {
         return compareTo(other) == 0;
     }
 
+    /**
+     * Extracts the digit at a specific power-of-ten from a 64-bit decimal number.
+     * <p>
+     * Uses binary search to efficiently determine which digit (0-9) should appear at the
+     * given power-of-ten when the decimal is represented in base 10.
+     * <p>
+     * Prerequisites:
+     * - The decimal value must be positive
+     * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10,000)
+     *
+     * @param p the value at power of ten (10^pow)
+     * @return the digit (0-9) at the specified power-of-ten
+     */
+    public int getDigit(long p) {
+        return getDigit(value, p);
+    }
+
     @Override
     public final int getMaxPrecision() {
         return MAX_PRECISION;
@@ -367,16 +497,6 @@ public class Decimal64 implements Sinkable, Decimal {
     @Override
     public final int getMaxScale() {
         return MAX_SCALE;
-    }
-
-    @Override
-    public void toDecimal256(Decimal256 decimal256) {
-        if (isNull()) {
-            decimal256.ofNull();
-            return;
-        }
-        long s = value < 0 ? -1L : 0L;
-        decimal256.of(s, s, s, value, scale);
     }
 
     /**
@@ -470,6 +590,9 @@ public class Decimal64 implements Sinkable, Decimal {
 
         if (this.scale > MAX_SCALE) {
             throw NumericException.instance().put("Overflow in multiplication: resulting scale exceeds maximum (" + MAX_SCALE + ")");
+        }
+        if (hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in multiplication: resulting value exceeds max value");
         }
     }
 
@@ -634,6 +757,9 @@ public class Decimal64 implements Sinkable, Decimal {
         } catch (ArithmeticException ignored) {
             throw NumericException.instance().put("Overflow in subtraction: result exceeds 64-bit capacity");
         }
+        if (hasOverflowed()) {
+            throw NumericException.instance().put("Overflow in subtraction: result exceeds max value");
+        }
     }
 
     /**
@@ -643,6 +769,16 @@ public class Decimal64 implements Sinkable, Decimal {
         return BigDecimal.valueOf(this.value, this.scale);
     }
 
+    @Override
+    public void toDecimal256(Decimal256 decimal256) {
+        if (isNull()) {
+            decimal256.ofNull();
+            return;
+        }
+        long s = value < 0 ? -1L : 0L;
+        decimal256.of(s, s, s, value, scale);
+    }
+
     /**
      * Convert to double (may lose precision)
      */
@@ -650,9 +786,15 @@ public class Decimal64 implements Sinkable, Decimal {
         return toBigDecimal().doubleValue();
     }
 
+    /**
+     * Writes the string representation of this Decimal64 to the specified CharSink.
+     * The output format is a plain decimal string without scientific notation.
+     *
+     * @param sink the CharSink to write to
+     */
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(toString());
+        toSink(sink, value, scale);
     }
 
     /**
@@ -663,10 +805,10 @@ public class Decimal64 implements Sinkable, Decimal {
         if (isNull()) {
             return "";
         }
-        return toBigDecimal().toString();
+        var sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
     }
-
-    // Helper methods
 
     /**
      * Compare remainder with half of divisor
@@ -755,5 +897,13 @@ public class Decimal64 implements Sinkable, Decimal {
         if (Integer.compareUnsigned(scale, MAX_SCALE) > 0) {
             throw NumericException.instance().put("Scale must be between 0 and " + MAX_SCALE + ", got: " + scale);
         }
+    }
+
+    private boolean hasOverflowed() {
+        return hasUnsignOverflowed() || value < -999999999999999999L;
+    }
+
+    private boolean hasUnsignOverflowed() {
+        return value > 999999999999999999L;
     }
 }
