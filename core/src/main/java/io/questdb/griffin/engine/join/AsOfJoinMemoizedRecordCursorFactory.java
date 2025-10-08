@@ -249,15 +249,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         protected void performKeyMatching(long masterTimestamp) {
             if (columnAccessHelper.isShortCircuit(masterRecord)) {
-                // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
-                // and report no match.
+                // the master record's symbol does not match any symbol in the slave table,
+                // so we can skip the key matching part and report no match.
                 record.hasSlave(false);
                 return;
             }
-
-            // ok, the non-keyed matcher found a record with a matching timestamp.
-            // we have to make sure the JOIN keys match as well.
-
             final CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
             final int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
             final int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
@@ -340,7 +336,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, slaveRecB.getRowId(), true);
                 }
 
-                // let's try to move backwards in the slave cursor until we have a match
+                // move the slave cursor backwards
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
                     // we exhausted this frame, let's try the previous one
