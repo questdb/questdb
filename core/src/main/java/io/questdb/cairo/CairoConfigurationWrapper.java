@@ -77,6 +77,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return getDelegate().cairoResourcePoolTracingEnabled();
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
     }
@@ -1319,11 +1324,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
-    }
-
-    @Override
-    public boolean isResourcePoolTracingEnabled() {
-        return getDelegate().isResourcePoolTracingEnabled();
     }
 
     @Override

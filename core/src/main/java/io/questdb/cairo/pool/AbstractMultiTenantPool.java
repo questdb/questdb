@@ -35,8 +35,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,7 +60,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
-        if (configuration.isResourcePoolTracingEnabled()) {
+        if (configuration.cairoResourcePoolTracingEnabled()) {
             threadLocalPoolSupervisor = new io.questdb.std.ThreadLocal<>(TracingResourcePoolSupervisor::new);
         } else {
             threadLocalPoolSupervisor = new ThreadLocal<>();

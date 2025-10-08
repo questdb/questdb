@@ -62,6 +62,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean freeLeakedReaders() {
         return overrides.freeLeakedReaders();
     }
@@ -169,11 +174,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public boolean isMultiKeyDedupEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isResourcePoolTracingEnabled() {
         return true;
     }
 
