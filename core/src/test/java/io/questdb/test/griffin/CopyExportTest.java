@@ -49,6 +49,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertTrue;
 
@@ -1659,10 +1660,10 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-    private static Thread createJobThread(Job job, CountDownLatch latch, int workerId) {
+    private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {
-                while (latch.getCount() > 0) {
+                while (!stop.get()) {
                     if (job.run(workerId)) {
                         break;
                     }
@@ -1670,7 +1671,7 @@ public class CopyExportTest extends AbstractCairoTest {
                 }
             } finally {
                 Path.clearThreadLocals();
-                latch.countDown();
+                workCount.countDown();
             }
         });
     }
@@ -1687,16 +1688,17 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
-    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int wait) throws Exception {
-        CountDownLatch processed = new CountDownLatch(wait);
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int workCount) throws Exception {
+        CountDownLatch processed = new CountDownLatch(workCount);
         execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
         ObjList<Thread> threads = new ObjList<>();
+        AtomicBoolean stop = new AtomicBoolean();
         try {
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < workCount; i++) {
                 CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine);
                 jobs.add(copyRequestJob);
-                Thread processingThread = createJobThread(copyRequestJob, processed, i);
+                Thread processingThread = createJobThread(copyRequestJob, processed, stop, i);
                 threads.add(processingThread);
                 processingThread.start();
             }
@@ -1704,6 +1706,7 @@ public class CopyExportTest extends AbstractCairoTest {
             if (blocked) {
                 processed.await();
             }
+            stop.set(true);
             drainWalQueue(engine);
             test.run();
         } finally {

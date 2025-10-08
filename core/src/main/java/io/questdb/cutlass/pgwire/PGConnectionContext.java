@@ -60,6 +60,7 @@ import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
@@ -458,7 +459,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (PGMessageProcessingException e) {
-                LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                if (!Chars.startsWith(e.getFlyweightMessage(), "Access")) {
+                    LOG.error().$(e.getFlyweightMessage()).I$();
+                } else {
+                    LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                }
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }

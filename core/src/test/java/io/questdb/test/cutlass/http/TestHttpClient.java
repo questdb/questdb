@@ -245,6 +245,24 @@ public class TestHttpClient implements QuietCloseable {
     }
 
     public void assertGetParquet(
+            int port,
+            CharSequence url,
+            CharSequence expectedResponseCode,
+            int expectedResponseLength,
+            CharSequence sql
+    ) {
+        try {
+            this.port = port;
+            toSink0(url, sql, sink, null, null, null, PARQUET_GET_PARAM, expectedResponseCode);
+            Assert.assertEquals(expectedResponseLength, sink.size());
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetParquet(
             CharSequence url,
             int expectedResponseLength,
             CharSequence sql

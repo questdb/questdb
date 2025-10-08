@@ -183,6 +183,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
+                    PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
             )) {
                 serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
@@ -190,17 +192,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         "FROM long_sequence(5)" +
                         ")");
 
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    HttpClient.Request request = httpClient.newRequest("localhost", serverMain.getHttpServerPort());
-                    request.GET()
-                            .url("/exp")
-                            .query("fmt", "parquet")
-                            .query("query", "basic_parquet_test");
+                try (var httpClient = new TestHttpClient()) {
 
-                    try (var headers = request.send()) {
-                        headers.await();
-                        TestUtils.assertEquals("200", headers.getStatusCode());
-                    }
+                    httpClient.assertGetParquet(serverMain.getHttpServerPort(), "/exp", "200", 1256, "basic_parquet_test");
                 }
             }
         });
