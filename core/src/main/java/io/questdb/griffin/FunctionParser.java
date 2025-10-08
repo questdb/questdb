@@ -776,7 +776,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return createDecimalTypeConstant(tok, len, position);
         }
 
-        if (len > 1 && (tok.charAt(len - 1) == 'm' || tok.charAt(len - 1) == 'M')) {
+        if (len > 1 && (tok.charAt(len - 1) | 32) == 'm') {
             return DecimalUtil.parseDecimalConstant(position, sqlExecutionContext, tok, -1, -1);
         }
 
