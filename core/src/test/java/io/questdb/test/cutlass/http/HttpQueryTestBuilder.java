@@ -63,6 +63,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.function.LongSupplier;
 
@@ -147,7 +148,7 @@ public class HttpQueryTestBuilder {
                 }
 
                 @Override
-                public CharSequence getSqlCopyExportRoot() {
+                public @Nullable CharSequence getSqlCopyExportRoot() {
                     return copyExportRoot != null ? copyExportRoot : super.getSqlCopyExportRoot();
                 }
 
