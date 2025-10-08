@@ -460,7 +460,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (PGMessageProcessingException e) {
                 if (!Chars.startsWith(e.getFlyweightMessage(), "Access")) {
-                    LOG.error().$(e.getFlyweightMessage()).I$();
+                    LOG.error().$safe(e.getFlyweightMessage()).I$();
                 } else {
                     LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
                 }
