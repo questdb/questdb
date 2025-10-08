@@ -65,14 +65,12 @@ public class GroupByArraySink implements Mutable {
     }
 
     public ArrayView getArray() {
-        if (ptr == 0) {
+        if (ptr == 0)
             return null;
-        }
 
         int totalSize = Unsafe.getUnsafe().getInt(ptr);
-        if (totalSize <= 0) {
+        if (totalSize <= 0)
             return null;
-        }
 
         int nDims = ColumnType.decodeArrayDimensionality(type);
         int dimLen = nDims * Integer.BYTES;
@@ -88,9 +86,8 @@ public class GroupByArraySink implements Mutable {
         if (ptr != 0) {
             int totalSize = Unsafe.getUnsafe().getInt(ptr);
             this.allocatedSize = INT_SIZE + totalSize;
-        } else {
+        } else
             this.allocatedSize = 0;
-        }
 
         return this;
     }
