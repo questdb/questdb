@@ -24,12 +24,14 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+import static io.questdb.cairo.TableUtils.NULL_LEN;
 
 /**
  * Specialized flyweight array sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -38,17 +40,23 @@ import io.questdb.std.Unsafe;
  * <p>
  * Buffer layout is the following:
  * <pre>
- * | totalSize | type (with dim count) |   dim0  |  dim1  | ... |     dimN-1     | array data |
- * +-----------+-----------------------+---------+--------+-----+----------------+------------+
- * |  8 bytes  |        4 bytes        |                 N * 4 bytes             |     -      |
- * +-----------+-----------------------+-----------------------------------------+------------+
+ * | totalSize |   dim0  |  dim1  | ... |     dimN-1     | array data |
+ * +-----------+---------+--------+-----+----------------+------------+
+ * |  4 bytes  |                 N * 4 bytes             |     -      |
+ * +-----------+-----------------------------------------+------------+
  * </pre>
  */
 public class GroupByArraySink implements Mutable {
+    private static final long INT_SIZE = Integer.BYTES;
     private final BorrowedArray borrowedArray = new BorrowedArray();
+    private final int type;
     private GroupByAllocator allocator;
     private long ptr;
     private long allocatedSize;
+
+    public GroupByArraySink(int type) {
+        this.type = type;
+    }
 
     @Override
     public void clear() {
@@ -60,17 +68,30 @@ public class GroupByArraySink implements Mutable {
         if (ptr == 0) {
             return null;
         }
-        ArrayView array = ArrayTypeDriver.getPlainValue(ptr, borrowedArray);
-        return array.isNull() ? null : array;
+
+        int totalSize = Unsafe.getUnsafe().getInt(ptr);
+        if (totalSize <= 0) {
+            return null;
+        }
+
+        int nDims = ColumnType.decodeArrayDimensionality(type);
+        int dimLen = nDims * Integer.BYTES;
+        long dimPtr = ptr + INT_SIZE;
+        borrowedArray.of(type, dimPtr, dimPtr + dimLen, totalSize - dimLen);
+
+        return borrowedArray;
     }
 
     public GroupByArraySink of(long ptr) {
         this.ptr = ptr;
+
         if (ptr != 0) {
-            this.allocatedSize = ArrayTypeDriver.getPlainValueSize(ptr);
+            int totalSize = Unsafe.getUnsafe().getInt(ptr);
+            this.allocatedSize = INT_SIZE + totalSize;
         } else {
             this.allocatedSize = 0;
         }
+
         return this;
     }
 
@@ -80,14 +101,52 @@ public class GroupByArraySink implements Mutable {
 
     public void put(ArrayView array) {
         if (array == null || array.isNull()) {
-            ensureCapacity(8);
-            Unsafe.getUnsafe().putLong(ptr, TableUtils.NULL_LEN);
+            putNull();
             return;
         }
 
-        long requiredSize = ArrayTypeDriver.getPlainValueSize(array);
+        long requiredSize = calculateRequiredSize(array);
         ensureCapacity(requiredSize);
-        ArrayTypeDriver.appendPlainValue(ptr, array);
+
+        long offset = putHeader(requiredSize);
+        offset = putShape(array, offset);
+        putData(array, offset);
+    }
+
+    private long calculateRequiredSize(ArrayView array) {
+        int nDims = array.getDimCount();
+        int elemSize = ColumnType.sizeOf(array.getElemType());
+        return INT_SIZE + nDims * INT_SIZE + (long) array.getFlatViewLength() * elemSize;
+    }
+
+    private long putHeader(long requiredSize) {
+        int totalSize = (int) (requiredSize - INT_SIZE);
+        Unsafe.getUnsafe().putInt(ptr, totalSize);
+        return ptr + Integer.BYTES;
+    }
+
+    private void putNull() {
+        ensureCapacity(INT_SIZE);
+        Unsafe.getUnsafe().putInt(ptr, NULL_LEN);
+    }
+
+    private long putShape(ArrayView array, long offset) {
+        int nDims = array.getDimCount();
+        for (int i = 0; i < nDims; i++) {
+            long dimPos = offset + i * INT_SIZE;
+            Unsafe.getUnsafe().putInt(dimPos, array.getDimLen(i));
+        }
+        return offset + nDims * INT_SIZE;
+    }
+
+    private void putData(ArrayView array, long offset) {
+        int elemSize = ColumnType.sizeOf(array.getElemType());
+        long srcOffset = array.getFlatViewOffset();
+        long length = array.getFlatViewLength();
+
+        long srcPtr = array.borrowedFlatView().ptr() + srcOffset * elemSize;
+        long dataSize = length * elemSize;
+        Vect.memcpy(offset, srcPtr, dataSize);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
