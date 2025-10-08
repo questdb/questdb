@@ -1688,14 +1688,14 @@ public class CopyExportTest extends AbstractCairoTest {
         }
     }
 
-    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int workCount) throws Exception {
-        CountDownLatch processed = new CountDownLatch(workCount);
+    private synchronized static void testCopyExport(CopyExportRunnable statement, CopyExportRunnable test, boolean blocked, int waitCount) throws Exception {
+        CountDownLatch processed = new CountDownLatch(waitCount);
         execute("truncate table if exists \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\"");
         ObjList<CopyExportRequestJob> jobs = new ObjList<>();
         ObjList<Thread> threads = new ObjList<>();
         AtomicBoolean stop = new AtomicBoolean();
         try {
-            for (int i = 0; i < workCount; i++) {
+            for (int i = 0; i < 4; i++) {
                 CopyExportRequestJob copyRequestJob = new CopyExportRequestJob(engine);
                 jobs.add(copyRequestJob);
                 Thread processingThread = createJobThread(copyRequestJob, processed, stop, i);
@@ -1706,10 +1706,10 @@ public class CopyExportTest extends AbstractCairoTest {
             if (blocked) {
                 processed.await();
             }
-            stop.set(true);
             drainWalQueue(engine);
             test.run();
         } finally {
+            stop.set(true);
             for (int i = 0, n = threads.size(); i < n; i++) {
                 threads.getQuick(i).join();
             }

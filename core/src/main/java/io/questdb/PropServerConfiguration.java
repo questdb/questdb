@@ -1838,9 +1838,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
-        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_DEFAULT);
+        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_ZSTD);
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
-        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
+        int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
+        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
 

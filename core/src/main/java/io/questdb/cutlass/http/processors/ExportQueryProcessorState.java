@@ -123,7 +123,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
-        System.out.println("ExportQueryProcessorState.close()");
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
         if (parquetFileBuffer != 0) {
