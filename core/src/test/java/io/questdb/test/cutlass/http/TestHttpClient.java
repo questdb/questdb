@@ -42,7 +42,7 @@ import java.util.regex.Pattern;
 public class TestHttpClient implements QuietCloseable {
     protected static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
     protected final Utf8StringSink sink = new Utf8StringSink();
-    protected int port;
+    protected int port = 9001;
     private HttpClient httpClient;
     private boolean keepConnection;
 
