@@ -26,9 +26,10 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.Nullable;
 
-public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
+public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable, Sinkable {
 
     /**
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
