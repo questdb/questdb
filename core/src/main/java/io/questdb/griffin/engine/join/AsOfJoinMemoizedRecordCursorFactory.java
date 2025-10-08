@@ -128,6 +128,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
+        private StaticSymbolTable symbolTable;
 
         public AsOfJoinMemoizedRecordCursor(
                 int columnSplit,
@@ -142,8 +143,15 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         }
 
         @Override
+        public void close() {
+            super.close();
+            symbolTable = null;
+        }
+
+        @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
+            symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             symKeyToRowId.clear();
             symKeyToValidityPeriodStart.clear();
             symKeyToValidityPeriodEnd.clear();
@@ -250,7 +258,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
 
-            final StaticSymbolTable symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             final CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
             final int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
             final int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
