@@ -279,13 +279,13 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public void setParquetDefaults(CairoConfiguration configuration) {
-        compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
-        compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
-        rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
-        dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
-        statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
-        parquetVersion = configuration.getPartitionEncoderParquetVersion();
-        rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+        compressionCodec = configuration.getParquetExportCompressionCodec();
+        compressionLevel = configuration.getParquetExportCompressionLevel();
+        rowGroupSize = configuration.getParquetExportRowGroupSize();
+        dataPageSize = configuration.getParquetExportDataPageSize();
+        statisticsEnabled = configuration.isParquetExportStatisticsEnabled();
+        parquetVersion = configuration.getParquetExportVersion();
+        rawArrayEncoding = configuration.isParquetExportRawArrayEncoding();
         partitionBy = -1;
         compressionLevelSet = false;
     }

@@ -637,6 +637,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCompressionCodec() {
+        return getDelegate().getParquetExportCompressionCodec();
+    }
+
+    @Override
+    public int getParquetExportCompressionLevel() {
+        return getDelegate().getParquetExportCompressionLevel();
+    }
+
+    @Override
+    public int getParquetExportDataPageSize() {
+        return getDelegate().getParquetExportDataPageSize();
+    }
+
+    @Override
+    public int getParquetExportRowGroupSize() {
+        return getDelegate().getParquetExportRowGroupSize();
+    }
+
+    @Override
+    public int getParquetExportVersion() {
+        return getDelegate().getParquetExportVersion();
+    }
+
+    @Override
     public CharSequence getParquetExportTableNamePrefix() {
         return getDelegate().getParquetExportTableNamePrefix();
     }
@@ -1314,6 +1339,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isParquetExportRawArrayEncoding() {
+        return getDelegate().isParquetExportRawArrayEncoding();
+    }
+
+    @Override
+    public boolean isParquetExportStatisticsEnabled() {
+        return getDelegate().isParquetExportStatisticsEnabled();
     }
 
     @Override

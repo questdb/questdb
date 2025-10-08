@@ -353,8 +353,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final int parquetExportCompressionCodec;
+    private final int parquetExportCompressionLevel;
     private final int parquetExportCopyReportFrequencyLines;
+    private final int parquetExportDataPageSize;
+    private final boolean parquetExportRawArrayEncoding;
+    private final int parquetExportRowGroupSize;
+    private final boolean parquetExportStatisticsEnabled;
     private final CharSequence parquetExportTableNamePrefix;
+    private final int parquetExportVersion;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
@@ -1439,6 +1446,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
             this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
             this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 50_000);
+            this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+            this.parquetExportStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED, true);
+            this.parquetExportCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_ZSTD);
+            this.parquetExportRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED, false);
+            int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
+            this.parquetExportCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL, defaultCompressionLevel);
+            this.parquetExportRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE, 100_000);
+            this.parquetExportDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE, 1_048_576);
             this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
             this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
@@ -1840,7 +1855,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
         this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_ZSTD);
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
-        int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
+        int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
         this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
@@ -3486,6 +3501,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getParquetExportCompressionCodec() {
+            return parquetExportCompressionCodec;
+        }
+
+        @Override
+        public int getParquetExportCompressionLevel() {
+            return parquetExportCompressionLevel;
+        }
+
+        @Override
+        public int getParquetExportDataPageSize() {
+            return parquetExportDataPageSize;
+        }
+
+        @Override
+        public int getParquetExportRowGroupSize() {
+            return parquetExportRowGroupSize;
+        }
+
+        @Override
+        public int getParquetExportVersion() {
+            return parquetExportVersion;
+        }
+
+        @Override
         public CharSequence getParquetExportTableNamePrefix() {
             return parquetExportTableNamePrefix;
         }
@@ -4163,6 +4203,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
+        }
+
+        @Override
+        public boolean isParquetExportRawArrayEncoding() {
+            return parquetExportRawArrayEncoding;
+        }
+
+        @Override
+        public boolean isParquetExportStatisticsEnabled() {
+            return parquetExportStatisticsEnabled;
         }
 
         @Override

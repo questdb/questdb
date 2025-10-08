@@ -868,8 +868,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         ")");
 
                 try (var httpClient = new TestHttpClient()) {
-
-                    httpClient.assertGetParquet(serverMain.getHttpServerPort(), "/exp", "200", 1256, "basic_parquet_test");
+                    httpClient.assertGetParquet(serverMain.getHttpServerPort(), "/exp", "200", 1293, "basic_parquet_test");
                 }
             }
         });

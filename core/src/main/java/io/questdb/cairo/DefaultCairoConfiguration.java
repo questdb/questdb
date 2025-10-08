@@ -660,18 +660,43 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCompressionCodec() {
+        return ParquetCompression.COMPRESSION_ZSTD;
+    }
+
+    @Override
+    public int getParquetExportCompressionLevel() {
+        return 9;
+    }
+
+    @Override
+    public int getParquetExportDataPageSize() {
+        return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public int getParquetExportRowGroupSize() {
+        return 0; // use default (512*512) rows
+    }
+
+    @Override
+    public int getParquetExportVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
     public CharSequence getParquetExportTableNamePrefix() {
         return "zzz.copy.";
     }
 
     @Override
     public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+        return ParquetCompression.COMPRESSION_ZSTD;
     }
 
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
-        return 0;
+        return 9;
     }
 
     @Override
@@ -1337,6 +1362,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isParallelIndexingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isParquetExportRawArrayEncoding() {
+        return false;
+    }
+
+    @Override
+    public boolean isParquetExportStatisticsEnabled() {
         return true;
     }
 

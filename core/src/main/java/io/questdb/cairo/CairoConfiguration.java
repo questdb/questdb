@@ -409,6 +409,16 @@ public interface CairoConfiguration {
 
     int getParquetExportCopyReportFrequencyLines();
 
+    int getParquetExportCompressionCodec();
+
+    int getParquetExportCompressionLevel();
+
+    int getParquetExportDataPageSize();
+
+    int getParquetExportRowGroupSize();
+
+    int getParquetExportVersion();
+
     CharSequence getParquetExportTableNamePrefix();
 
     int getPartitionEncoderParquetCompressionCodec();
@@ -739,6 +749,10 @@ public interface CairoConfiguration {
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isParquetExportRawArrayEncoding();
+
+    boolean isParquetExportStatisticsEnabled();
 
     boolean isPartitionEncoderParquetRawArrayEncoding();
 
