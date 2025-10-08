@@ -55,11 +55,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
     }
 
     @Override
-    public void close() {
-        super.close();
-    }
-
-    @Override
     public final boolean hasNext() {
         // Common master cursor iteration logic
         if (isMasterHasNextPending) {
