@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.std.Decimals;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -45,5 +46,36 @@ public class TextPlanSinkTest {
         sink.val(list, 0, 1);
 
         Assert.assertEquals("0.0 null [null]", sink.getSink().toString());
+    }
+
+    @Test
+    public void testSinkDecimal() {
+        TextPlanSink sink = new TextPlanSink();
+
+        sink.valDecimal(12300, 5, 2);
+        sink.val(" ");
+        sink.valDecimal(Decimals.DECIMAL64_NULL, 5, 2);
+        sink.val(" ");
+        sink.valDecimal(123, 456, 38, 15);
+        sink.val(" ");
+        sink.valDecimal(
+                Decimals.DECIMAL128_HI_NULL,
+                Decimals.DECIMAL128_LO_NULL,
+                38,
+                10
+        );
+        sink.val(" ");
+        sink.valDecimal(123, 456, 789, 12, 75, 15);
+        sink.val(" ");
+        sink.valDecimal(
+                Decimals.DECIMAL256_HH_NULL,
+                Decimals.DECIMAL256_HL_NULL,
+                Decimals.DECIMAL256_LH_NULL,
+                Decimals.DECIMAL256_LL_NULL,
+                75,
+                15
+        );
+
+        Assert.assertEquals("123.00 null 2268949.521066274849224 null 772083513452561734106970858370490908534443021.732119385735180 null", sink.getSink().toString());
     }
 }

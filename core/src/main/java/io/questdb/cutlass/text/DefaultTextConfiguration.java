@@ -65,6 +65,11 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
+    public int getDecimalAdapterPoolCapacity() {
+        return 16;
+    }
+
+    @Override
     public DateLocale getDefaultDateLocale() {
         return EN_LOCALE;
     }

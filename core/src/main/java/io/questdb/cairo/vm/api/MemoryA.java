@@ -60,6 +60,10 @@ public interface MemoryA extends Closeable {
 
     void putChar(char value);
 
+    void putDecimal128(long hi, long lo);
+
+    void putDecimal256(long hh, long hl, long lh, long ll);
+
     void putDouble(double value);
 
     void putFloat(float value);

@@ -24,7 +24,12 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.std.*;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Long256Util;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 final class OrderedMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
@@ -35,6 +40,7 @@ final class OrderedMapValue implements MapValue {
     private OrderedMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
+
 
     public OrderedMapValue(long valueSize, long[] valueOffsets) {
         this.valueSize = valueSize;
@@ -112,6 +118,56 @@ final class OrderedMapValue implements MapValue {
     @Override
     public long getDate(int index) {
         return getLong(index);
+    }
+
+    @Override
+    public long getDecimal128Hi(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + 8L);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return Unsafe.getUnsafe().getShort(address0(col));
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + 8L);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + 16L);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col) + 24L);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return Unsafe.getUnsafe().getInt(address0(col));
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return Unsafe.getUnsafe().getLong(address0(col));
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return Unsafe.getUnsafe().getByte(address0(col));
     }
 
     @Override
@@ -247,6 +303,22 @@ final class OrderedMapValue implements MapValue {
     @Override
     public void putDate(int index, long value) {
         putLong(index, value);
+    }
+
+    @Override
+    public void putDecimal128(int index, long hi, long lo) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, hi);
+        Unsafe.getUnsafe().putLong(p + 8L, lo);
+    }
+
+    @Override
+    public void putDecimal256(int index, long hh, long hl, long lh, long ll) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, hh);
+        Unsafe.getUnsafe().putLong(p + 8L, hl);
+        Unsafe.getUnsafe().putLong(p + 16L, lh);
+        Unsafe.getUnsafe().putLong(p + 24L, ll);
     }
 
     @Override

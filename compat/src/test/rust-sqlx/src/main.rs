@@ -3,6 +3,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_yaml::Value;
 use sqlx::postgres::{PgArguments, PgPool, PgRow, PgValueRef};
+use sqlx::types::BigDecimal;
 use sqlx::{Arguments, Column, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use std::env;
@@ -10,7 +11,6 @@ use std::error::Error;
 use std::fs;
 use std::process;
 use thiserror::Error;
-
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
@@ -90,18 +90,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let yaml_file = env::args()
         .nth(1)
         .ok_or_else(|| "Usage: runner <test_file.yaml>".to_string())?;
-    
+
     let yaml_content = fs::read_to_string(&yaml_file)?;
     let test_file: TestFile = serde_yaml::from_str(&yaml_content)?;
 
     let port = env::var("PGPORT").unwrap_or_else(|_| "8812".to_string());
-    let connection_string = format!(
-        "postgres://admin:quest@localhost:{}/qdb",
-        port
-    );
-    
+    let connection_string = format!("postgres://admin:quest@localhost:{}/qdb", port);
+
     let pool = PgPool::connect(&connection_string).await?;
-    
+
     let all_tests_passed = run_tests(&pool, &test_file).await?;
 
     if !all_tests_passed {
@@ -111,16 +108,22 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-async fn run_tests(pool: &PgPool, test_file: &TestFile) -> Result<bool, Box<dyn Error + Send + Sync>> {
+async fn run_tests(
+    pool: &PgPool,
+    test_file: &TestFile,
+) -> Result<bool, Box<dyn Error + Send + Sync>> {
     let mut all_tests_passed = true;
     let sqlx_string = "sqlx".to_string();
-    
+
     for test in &test_file.tests {
         let iterations = test.iterations.unwrap_or(50);
 
         if let Some(excludes) = &test.exclude {
             if excludes.contains(&sqlx_string) {
-                println!("Skipping test: {:?} because it's excluded for sqlx", test.name);
+                println!(
+                    "Skipping test: {:?} because it's excluded for sqlx",
+                    test.name
+                );
                 continue;
             }
         }
@@ -133,7 +136,7 @@ async fn run_tests(pool: &PgPool, test_file: &TestFile) -> Result<bool, Box<dyn 
                 break;
             }
         }
-        
+
         // If any test failed, exit immediately
         if !all_tests_passed {
             break;
@@ -297,7 +300,8 @@ async fn execute_step(
                     if expected_value != &Value::Number(result.rows_affected().into()) {
                         return Err(format!(
                             "Expected result {:?}, got {:?}",
-                            expected_value, result.rows_affected()
+                            expected_value,
+                            result.rows_affected()
                         )
                         .into());
                     }
@@ -316,7 +320,7 @@ fn bind_parameters(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     for param in parameters {
         let type_lower = param.type_.to_lowercase();
-        
+
         match &param.value {
             Value::Number(n) => match type_lower.as_str() {
                 "int4" => arguments.add(n.as_i64().ok_or("Invalid int4")? as i32)?,
@@ -377,6 +381,7 @@ fn bind_parameters(
                             arguments.add(float_vec)?;
                         }
                     }
+                    "numeric" => arguments.add(substituted.parse::<BigDecimal>()?)?,
                     _ => return Err(format!("Unsupported parameter type: {}", param.type_).into()),
                 }
             }
@@ -436,11 +441,7 @@ enum AssertError {
 fn assert_result(expect: &Expect, actual: &[PgRow]) -> Result<(), Box<dyn Error + Send + Sync>> {
     let actual_converted: Vec<Vec<Value>> = actual
         .iter()
-        .map(|row| {
-            (0..row.len())
-                .map(|i| get_value_as_yaml(row, i))
-                .collect()
-        })
+        .map(|row| (0..row.len()).map(|i| get_value_as_yaml(row, i)).collect())
         .collect();
 
     if let Some(expected_result) = &expect.result {
@@ -461,15 +462,14 @@ fn assert_result(expect: &Expect, actual: &[PgRow]) -> Result<(), Box<dyn Error 
     Ok(())
 }
 
-
 fn get_value_as_yaml(row: &PgRow, idx: usize) -> Value {
     let column = row.column(idx);
     let type_info = column.type_info();
     let type_name = type_info.name();
-    
+
     // Get raw value reference
     let raw_value: PgValueRef = row.try_get_raw(idx).unwrap();
-    
+
     // Check for NULL first
     if raw_value.is_null() {
         return Value::Null;
@@ -497,7 +497,7 @@ fn get_value_as_yaml(row: &PgRow, idx: usize) -> Value {
         // Multi-dimensional arrays are excluded, so this shouldn't happen
         return Value::Null;
     }
-    
+
     match type_name {
         "INT2" => {
             if let Ok(val) = row.try_get::<i16, _>(idx) {
@@ -551,6 +551,13 @@ fn get_value_as_yaml(row: &PgRow, idx: usize) -> Value {
         "VARCHAR" | "TEXT" => {
             if let Ok(val) = row.try_get::<String, _>(idx) {
                 Value::String(val)
+            } else {
+                Value::Null
+            }
+        }
+        "NUMERIC" => {
+            if let Ok(val) = row.try_get::<BigDecimal, _>(idx) {
+                Value::String(val.normalized().to_string())
             } else {
                 Value::Null
             }

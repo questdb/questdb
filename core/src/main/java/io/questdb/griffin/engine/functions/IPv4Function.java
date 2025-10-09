@@ -74,6 +74,56 @@ public abstract class IPv4Function implements Function {
     }
 
     @Override
+    public final long getDecimal128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
