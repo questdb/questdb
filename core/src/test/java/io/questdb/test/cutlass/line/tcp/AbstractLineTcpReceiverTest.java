@@ -55,6 +55,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -116,6 +117,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyStringDefault = true;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
+
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;
@@ -193,6 +195,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public int getRecvBufferSize() {
             return msgBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            // we don't want the connections to time out due to slow CI box
+            return 10 * Dates.MINUTE_MILLIS;
         }
 
         @Override
