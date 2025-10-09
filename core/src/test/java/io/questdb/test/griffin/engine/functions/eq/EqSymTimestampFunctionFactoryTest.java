@@ -69,7 +69,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDynamicCast1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("create table x as (select rnd_timestamp_ns(0, 86400000000, 0) t from long_sequence(10))");
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
@@ -108,7 +108,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDynamicCastConst1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("create table x as (select rnd_timestamp_ns(0, 86400000000, 0) t from long_sequence(10))");
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
@@ -137,7 +137,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDynamicCastNull1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("create table x as (select rnd_timestamp_ns(0, 86400000000, 0) t from long_sequence(10))");
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
@@ -175,7 +175,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testDynamicCastNulls1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 3) t from long_sequence(10))");
+            execute("create table x as (select rnd_timestamp_ns(0, 86400000000, 3) t from long_sequence(10))");
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 
@@ -223,7 +223,7 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testOptimisationWithARuntimeConstantNanoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_timestamp(0::timestamp_ns, 86400000000::timestamp_ns, 0) t from long_sequence(10))");
+            execute("create table x as (select rnd_timestamp_ns(0, 86400000000, 0) t from long_sequence(10))");
             execute("alter table x add column sym symbol");
             execute("update x set sym = t::symbol");
 

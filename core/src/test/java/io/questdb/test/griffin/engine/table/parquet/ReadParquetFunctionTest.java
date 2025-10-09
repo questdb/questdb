@@ -83,7 +83,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " case when x % 2 = 0 then rnd_long() end as a_long," +
                     " case when x % 2 = 0 then rnd_int() end as an_int," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
-                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns" +
+                    " rnd_timestamp_ns('2015','2016',2) as a_ns" +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -141,7 +141,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " rnd_geohash(32) a_geo_long," +
                     " rnd_bin(10, 20, 2) a_bin," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
-                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns," +
+                    " rnd_timestamp_ns('2015','2016',2) as a_ns," +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -168,7 +168,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
             execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
-                    " rnd_timestamp('2015'::timestamp_ns,'2016',2) as a_ns," +
+                    " rnd_timestamp_ns('2015','2016',2) as a_ns," +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -288,7 +288,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " rnd_uuid4() a_uuid," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                     " timestamp_sequence(500000000000, 600) a_ts," +
-                    " timestamp_sequence(500000000000000::timestamp_ns, 600000) a_ns," +
+                    " timestamp_sequence_ns(500000000000000, 600000) a_ns," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
@@ -385,7 +385,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                             " rnd_geohash(32) a_geo_long," +
                             " rnd_bin(10, 20, 2) a_bin," +
                             " timestamp_sequence('2015', " + Micros.DAY_MICROS + ") as a_ts," +
-                            " timestamp_sequence('2015'::timestamp_ns, " + Nanos.DAY_NANOS + ") as a_ns," +
+                            " timestamp_sequence_ns('2015', " + Nanos.DAY_NANOS + ") as a_ns," +
                             " from long_sequence(" + rows + ")) timestamp (a_ts) partition by YEAR"
             );
             // create a newer partition, so that 2015 partition is no longer the active one

@@ -85,7 +85,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(100000)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -100,7 +100,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithStringNegated() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -115,7 +115,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithTimestampNegated() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -136,7 +136,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithVarchar() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(100000)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -151,7 +151,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithVarcharFromTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(100000)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
             assertQueryNoLeakCheck(
@@ -184,7 +184,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareNanoTimestampWithVarcharNegated() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -199,7 +199,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testCompareTimestampNanoWithTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(100000)" +
+                    "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(

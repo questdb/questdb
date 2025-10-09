@@ -28,7 +28,14 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 
 public final class Dates {
 
@@ -44,6 +51,7 @@ public final class Dates {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_SIGN = 7;
     public static final int STATE_UTC = 1;
+    public static final long WEEK_MILLIS = 86400000L * 7;
     private static final char AFTER_NINE = '9' + 1;
     private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
     private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
@@ -55,6 +63,7 @@ public final class Dates {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
     private static final int DAY_HOURS = 24;
+    private static final long FIRST_CENTURY_MILLIS = -62135596800000L;
     private static final int HOUR_MINUTES = 60;
     private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
@@ -67,6 +76,22 @@ public final class Dates {
 
     public static long addDays(long millis, int days) {
         return millis + days * DAY_MILLIS;
+    }
+
+    public static long addHours(long millis, int hours) {
+        return millis + hours * HOUR_MILLIS;
+    }
+
+    public static long addMicros(long millis, int micros) {
+        return millis + (micros / Micros.MILLI_MICROS);
+    }
+
+    public static long addMillis(long millis, int milliseconds) {
+        return millis + milliseconds;
+    }
+
+    public static long addMinutes(long millis, int minutes) {
+        return millis + minutes * MINUTE_MILLIS;
     }
 
     public static long addMonths(final long millis, int months) {
@@ -100,7 +125,19 @@ public final class Dates {
         return toMillis(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
     }
 
-    public static long addYear(long millis, int years) {
+    public static long addNanos(long millis, int nanos) {
+        return millis + (nanos / Nanos.MILLI_NANOS);
+    }
+
+    public static long addSeconds(long millis, int seconds) {
+        return millis + seconds * SECOND_MILLIS;
+    }
+
+    public static long addWeeks(long millis, int weeks) {
+        return millis + weeks * WEEK_MILLIS;
+    }
+
+    public static long addYears(long millis, int years) {
         if (years == 0) {
             return millis;
         }
@@ -131,6 +168,10 @@ public final class Dates {
                 ;
     }
 
+    public static long ceilHH(long millis) {
+        return floorHH(millis) + HOUR_MILLIS - 1;
+    }
+
     public static long ceilMM(long millis) {
         int y, m;
         boolean l;
@@ -142,6 +183,10 @@ public final class Dates {
                 + 59 * SECOND_MILLIS
                 + 999L
                 ;
+    }
+
+    public static long ceilWW(long millis) {
+        return floorWW(millis) + WEEK_MILLIS - 1;
     }
 
     public static long ceilYYYY(long millis) {
@@ -157,7 +202,7 @@ public final class Dates {
     }
 
     public static long endOfYear(int year) {
-        return toMillis(year, 12, 31, 23, 59) + 59 * 1000L + 999L;
+        return toMillis(year, 12, 31, 23, 59) + 59 * SECOND_MILLIS + 999L;
     }
 
     public static long floorDD(long millis) {
@@ -174,9 +219,28 @@ public final class Dates {
         return yearMillis(y = getYear(millis), l = isLeapYear(y)) + monthOfYearMillis(getMonthOfYear(millis, y, l), l);
     }
 
+    public static long floorWW(long millis) {
+        int dow = getDayOfWeek(millis);
+        return millis - (dow - 1) * DAY_MILLIS - getTime(millis);
+    }
+
     public static long floorYYYY(long millis) {
         int y;
         return yearMillis(y = getYear(millis), isLeapYear(y));
+    }
+
+    public static int getCentury(long millis) {
+        final int year = getYear(millis);
+        int century = year / 100;
+
+        if (year > century * 100) {
+            century++;
+        }
+
+        if (millis >= FIRST_CENTURY_MILLIS) {
+            return century;
+        }
+        return century - 1;
     }
 
     public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
@@ -239,12 +303,47 @@ public final class Dates {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
+    public static int getDecade(long millis) {
+        return getYear(millis) / 10;
+    }
+
+    public static int getDow(long millis) {
+        return getDayOfWeekSundayFirst(millis) - 1;
+    }
+
+    public static int getDoy(long millis) {
+        final int year = getYear(millis);
+        final boolean leap = isLeapYear(year);
+        final long yearStart = yearMillis(year, leap);
+        return (int) ((millis - yearStart) / DAY_MILLIS) + 1;
+    }
+
     public static int getHourOfDay(long millis) {
         if (millis > -1) {
             return (int) ((millis / HOUR_MILLIS) % DAY_HOURS);
         } else {
             return DAY_HOURS - 1 + (int) (((millis + 1) / HOUR_MILLIS) % DAY_HOURS);
         }
+    }
+
+    public static int getIsoYear(long millis) {
+        int w = (10 + getDoy(millis) - getDayOfWeek(millis)) / 7;
+        int y = getYear(millis);
+        if (w < 1) {
+            return y - 1;
+        }
+
+        if (w > getWeeks(y)) {
+            return y + 1;
+        }
+
+        return y;
+    }
+
+    public static int getMillennium(long millis) {
+        int year = getYear(millis);
+        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
+        return millenniumFirstYear / 1000 + 1;
     }
 
     public static int getMillisOfSecond(long millis) {
@@ -329,6 +428,12 @@ public final class Dates {
 
     public static int getWeekOfYear(long millis) {
         return getDayOfYear(millis) / 7 + 1;
+    }
+
+    public static int getWeeks(int year) {
+        final boolean leap = isLeapYear(year);
+        final int jan1dow = getDayOfWeek(yearMillis(year, leap));
+        return jan1dow == 5 || (jan1dow == 6 && leap) ? 53 : 52;
     }
 
     /**
@@ -543,6 +648,52 @@ public final class Dates {
         StringSink sink = Misc.getThreadLocalSink();
         DateFormatUtils.appendDateTime(sink, millis);
         return sink.toString();
+    }
+
+    public static long toTimezone(long utc, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toTimezone(utc, locale, timezone, 0, timezone.length());
+    }
+
+    public static long toTimezone(long utc, DateLocale locale, CharSequence timezone, int lo, int hi) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            TimeZoneRules zoneRules = locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MILLIS
+            );
+            long offset = zoneRules.getOffset(utc);
+            return utc + offset;
+        }
+        long offset = Numbers.decodeLowInt(l) * MINUTE_MILLIS;
+        return utc + offset;
+    }
+
+    public static String toUSecString(long millis) {
+        Utf16Sink sink = Misc.getThreadLocalSink();
+        DateFormatUtils.appendDateTime(sink, millis);
+        return sink.toString();
+    }
+
+    public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        return localTimestamp - zoneRules.getLocalOffset(localTimestamp);
+    }
+
+    public static long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toUTC(localTimestamp, locale, timezone, 0, timezone.length());
+    }
+
+    public static long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone, int lo, int hi) throws NumericException {
+        long l = parseOffset(timezone, lo, hi);
+        if (l == Long.MIN_VALUE) {
+            TimeZoneRules zoneRules = locale.getZoneRules(
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MILLIS
+            );
+            long offset = zoneRules.getLocalOffset(localTimestamp);
+            return localTimestamp - offset;
+        }
+        long offset = Numbers.decodeLowInt(l) * MINUTE_MILLIS;
+        return localTimestamp - offset;
     }
 
     /**

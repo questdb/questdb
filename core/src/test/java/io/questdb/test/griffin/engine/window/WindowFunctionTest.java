@@ -4102,7 +4102,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     execute("create table x as (" +
                             "select " +
                             "timestamp_sequence(0, 1000000) as ts, " +
-                            "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                            "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                             "from long_sequence(5)" +
                             ") timestamp(ts)");
                     assertQuery(

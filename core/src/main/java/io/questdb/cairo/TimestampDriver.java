@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -449,7 +449,7 @@ public interface TimestampDriver {
 
     TimestampCeilMethod getTimestampCeilMethod(char unit);
 
-    TimestampConstant getTimestampConstantNull();
+    ConstantFunction getTimestampConstantNull();
 
     TimestampDateFormatFactory getTimestampDateFormatFactory();
 
