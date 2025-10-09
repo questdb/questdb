@@ -4995,6 +4995,7 @@ public class SqlOptimiser implements Mutable {
      * Recursive. Replaces SAMPLE BY models with GROUP BY + ORDER BY. For now, the rewrite
      * avoids the following:
      * - linear and prev fills
+     *
      * <p>
      * When "timestamp" column is not explicitly selected, this method has to do
      * a trick to add artificial timestamp to the original model and then wrap the original
