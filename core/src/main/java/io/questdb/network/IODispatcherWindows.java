@@ -80,14 +80,18 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
                 if (heartbeatRow < 0) {
-                    continue; // The connection is already closed.
+                    LOG.info().$("could not find heartbeat, connection must be already closed [fd=").$(fd)
+                            .$(", srcId=").$(srcOpId)
+                            .I$();
+                    continue;
                 } else {
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
                     LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                             .$(", op=").$(operation)
                             .$(", srcId=").$(srcOpId)
-                            .$(", id=").$(opId).I$();
+                            .$(", id=").$(opId)
+                            .I$();
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
@@ -107,7 +111,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
 
                 int r = pending.addRow();
                 pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
@@ -148,6 +153,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     @Override
     protected void pendingAdded(int index) {
         pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
+        pending.set(index, OPM_ID, nextOpId());
     }
 
     @Override

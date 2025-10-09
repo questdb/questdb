@@ -182,7 +182,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
         LOG.debug().$("handling triggered suspend event and resuming original operation [fd=").$(context.getFd())
                 .$(", opId=").$(opId)
-                .$(", eventId=").$(eventId).I$();
+                .$(", eventId=").$(eventId)
+                .I$();
 
         rearmKqueue(context, opId, operation);
         context.clearSuspendEvent();
@@ -231,7 +232,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
                 LOG.debug().$("published heartbeat [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
             }
 
             final SuspendEvent suspendEvent = context.getSuspendEvent();
@@ -281,14 +283,18 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
                 int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
                 if (heartbeatRow < 0) {
-                    continue; // The connection is already closed.
+                    LOG.info().$("could not find heartbeat, connection must be already closed [fd=").$(fd)
+                            .$(", srcId=").$(srcOpId)
+                            .I$();
+                    continue;
                 } else {
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
                     LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                             .$(", op=").$(operation)
                             .$(", srcId=").$(srcOpId)
-                            .$(", id=").$(opId).I$();
+                            .$(", id=").$(opId)
+                            .I$();
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
@@ -308,7 +314,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
 
                 int opRow = pending.addRow();
                 pending.set(opRow, OPM_CREATE_TIMESTAMP, timestamp);
@@ -328,7 +335,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                         .$(", op=").$(operation)
                         .$(", eventId=").$(eventId)
                         .$(", suspendedOpId=").$(opId)
-                        .$(", deadline=").$(suspendEvent.getDeadline()).I$();
+                        .$(", deadline=").$(suspendEvent.getDeadline())
+                        .I$();
 
                 int eventRow = pendingEvents.addRow();
                 pendingEvents.set(eventRow, EVM_ID, eventId);
@@ -341,7 +349,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             // Important: We have to prioritize write registration over read registration!
             // In other words: Register for writing before registering for reading.
             // Why? If a TLS socket wants to write then it means it has encrypted data available
-            // in its internal buffer and we must write it out as soon as possible.
+            // in its internal buffer, and we must write it out as soon as possible.
             // If we register for reading first, then kqueue may trigger a read event before write event,
             // and while processing the read event we have to deregister from write events.
             // This can create a loop where we keep deregistering and registering for write events without ever
@@ -422,7 +430,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         int offset = 0;
         if (n > 0) {
             // check all activated FDs
-            LOG.debug().$("poll [n=").$(n).$(']').$();
+            LOG.debug().$("poll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -525,7 +533,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return this;
         }
 
-        public KeventWriter removeWriteFD(long fd) {
+        public void removeWriteFD(long fd) {
             kqueue.setWriteOffset(offset);
             kqueue.removeWriteFD(fd);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -533,15 +541,13 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 register(index);
                 index = offset = 0;
             }
-            return this;
         }
 
-        public KeventWriter tolerateErrors() {
+        public void tolerateErrors() {
             this.tolerateErrors = true;
-            return this;
         }
 
-        public KeventWriter writeFD(long fd, int id) {
+        public void writeFD(long fd, int id) {
             kqueue.setWriteOffset(offset);
             kqueue.writeFD(fd, id);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -549,7 +555,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 register(index);
                 index = offset = 0;
             }
-            return this;
         }
 
         private KeventWriter prepare() {
@@ -565,7 +570,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 throw NetworkError.instance(nf.errno()).put("could not register [changeCount=").put(changeCount).put(']');
             }
             lastError = res != 0 ? res : lastError;
-            LOG.debug().$("kqueued [count=").$(changeCount).$(']').$();
+            LOG.debug().$("kqueued [count=").$(changeCount).I$();
         }
     }
 }
