@@ -256,6 +256,7 @@ public class SqlOptimiser implements Mutable {
         tempIntList.clear();
         tempBoolList.clear();
         tempColumns.clear();
+        tempColumns2.clear();
     }
 
     public void clearForUnionModelInJoin() {
