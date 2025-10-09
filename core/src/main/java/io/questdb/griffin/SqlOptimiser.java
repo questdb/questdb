@@ -5369,9 +5369,12 @@ public class SqlOptimiser implements Mutable {
                         fixAndCollectExprToken(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, existsDependedTokens, missingDependedTokens);
                     }
                     for (int i = 0, size = missingDependedTokens.size(); i < size; i++) {
-                        model.addBottomUpColumnIfNotExists(nextColumn(missingDependedTokens.get(i)));
+                        final CharSequence dependentToken = missingDependedTokens.get(i);
+                        if (model.getAliasToColumnMap().excludes(dependentToken)) {
+                            model.addBottomUpColumn(nextColumn(dependentToken));
+                            needRemoveColumns++;
+                        }
                     }
-                    needRemoveColumns += missingDependedTokens.size();
                 }
 
                 // Normalize ORDER BY by replacing column names with their aliases.

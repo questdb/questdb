@@ -6125,6 +6125,52 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRewriteTimestampExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table if not exists x (ts1 timestamp, ts2 timestamp) timestamp(ts1) partition by DAY");
+            execute(
+                    "insert into x values ('2020-01-01T00:00:00', '2020-01-01T00:00:01'), " +
+                            "('2020-01-01T00:00:00', '2020-01-01T00:00:01'), " +
+                            "('2020-01-01T00:01:00', '2020-01-01T00:01:01'), " +
+                            "('2020-01-01T00:02:00', '2020-01-01T00:02:01')"
+            );
+
+            final String query = "select ts1, ts2, ts1 - ts2 as ts_diff, count() " +
+                    "from x " +
+                    "sample by 2m";
+            assertQueryNoLeakCheck(
+                    """
+                            ts1\tts2\tts_diff\tcount
+                            2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:01.000000Z\t-1000000\t2
+                            2020-01-01T00:00:00.000000Z\t2020-01-01T00:01:01.000000Z\t-61000000\t1
+                            2020-01-01T00:02:00.000000Z\t2020-01-01T00:02:01.000000Z\t-1000000\t1
+                            """,
+                    query,
+                    "ts1",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts1]
+                                VirtualRecord
+                                  functions: [ts1,ts2,ts1-ts2,count]
+                                    Async Group By workers: 1
+                                      keys: [ts1,ts2]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
