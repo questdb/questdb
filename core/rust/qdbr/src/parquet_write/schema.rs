@@ -90,10 +90,7 @@ pub fn column_type_to_parquet_type(
                 Repetition::Optional
             };
 
-            let timestamp_ns_flag = QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG << 8;
-            if column_type.code() & timestamp_ns_flag
-                == timestamp_ns_flag
-            {
+            if column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG) {
                 Ok(ParquetType::try_from_primitive(
                     name,
                     PhysicalType::Int64,

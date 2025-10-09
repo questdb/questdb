@@ -25,7 +25,7 @@ use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 
-pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 10;
+pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 18;
 
 // Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
@@ -219,8 +219,7 @@ pub struct ColumnType {
 
 impl ColumnType {
     pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
-        let shifted_extra_type_info = extra_type_info << 8;
-        let code = tag as i32 | shifted_extra_type_info;
+        let code = tag as i32 | extra_type_info;
         Self { code }
     }
 
@@ -276,6 +275,10 @@ impl ColumnType {
         let tag = (self.code() >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK;
         let tag = ColumnTypeTag::try_from(tag as u8)?;
         Ok(tag)
+    }
+
+    pub fn has_flag(&self, flag: i32) -> bool {
+        self.code & flag == flag
     }
 }
 
@@ -335,7 +338,7 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
     let extra = ((dim - 1) & ARRAY_NDIMS_FIELD_MASK)
         << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
         | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
-    Ok(ColumnType::new(ColumnTypeTag::Array, extra))
+    Ok(ColumnType::new(ColumnTypeTag::Array, extra << 8))
 }
 
 #[cfg(test)]
