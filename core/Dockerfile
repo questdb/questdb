@@ -1,7 +1,7 @@
 FROM debian:bookworm AS builder
 ARG tag_name
 
-ENV GOSU_VERSION=1.14
+ENV GOSU_VERSION=1.19
 ENV JDK_VERSION=17.0.11.9-1
 
 RUN apt-get update \

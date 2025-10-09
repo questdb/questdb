@@ -104,6 +104,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // kept public for testing
+    public static long estimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount) {
+        if (partitionCount > 0) {
+            final double bucketToPartition = (double) bucket / partitionDuration;
+            return Math.max(1, (long) ((bucketToPartition * tableRows) / partitionCount));
+        }
+        return 1;
+    }
+
     @Override
     public void close() {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
@@ -124,13 +133,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * of splitting large refresh table scans into multiple smaller scans.
      */
     private static long estimateRowsPerBucket(@NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
-        final long rows = baseTableReader.size();
+        final long tableRows = baseTableReader.size();
         final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
-        if (partitionCount > 0) {
-            return Math.max(1, (rows * bucket) / (partitionDuration * partitionCount));
-        }
-        return 1;
+        return estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
     }
 
     private static void intersectIntervals(LongList intervals, long lo, long hi) {

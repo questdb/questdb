@@ -55,11 +55,14 @@ import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.QueryTracingJob;
+import io.questdb.mp.Job;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.filewatch.FileWatcher;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -333,7 +336,10 @@ public class ServerMain implements Closeable {
             @Override
             protected void configureWorkerPools(final WorkerPool sharedPoolQuery, final WorkerPool sharedPoolWrite) {
                 try {
-                    sharedPoolWrite.assign(engine.getEngineMaintenanceJob());
+                    Job engineMaintenanceJob = setupEngineMaintenanceJob(engine);
+                    if (engineMaintenanceJob != null) {
+                        sharedPoolWrite.assign(engineMaintenanceJob);
+                    }
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
                     QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
@@ -475,6 +481,10 @@ public class ServerMain implements Closeable {
         return Services.INSTANCE;
     }
 
+    protected Job setupEngineMaintenanceJob(CairoEngine engine) {
+        return new EngineMaintenanceJob(engine);
+    }
+
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
         for (int i = 0, workerCount = mvWorkerPool.getWorkerCount(); i < workerCount; i++) {
             // create job per worker
@@ -501,5 +511,29 @@ public class ServerMain implements Closeable {
 
     protected String webConsoleSchema() {
         return "http";
+    }
+
+    public static class EngineMaintenanceJob extends SynchronizedJob {
+        private final long checkInterval;
+        private final Clock clock;
+        private final CairoEngine engine;
+        private long last = 0;
+
+        public EngineMaintenanceJob(CairoEngine engine) {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            this.engine = engine;
+            this.clock = configuration.getMicrosecondClock();
+            this.checkInterval = configuration.getIdleCheckInterval() * 1000;
+        }
+
+        @Override
+        protected boolean runSerially() {
+            long t = clock.getTicks();
+            if (last + checkInterval < t) {
+                last = t;
+                return engine.releaseInactive();
+            }
+            return false;
+        }
     }
 }
