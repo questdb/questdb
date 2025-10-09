@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -319,7 +320,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 if (needMaintenanceJob) {
-                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                    sharedWorkerPool.assign(new ServerMain.EngineMaintenanceJob(engine));
                 }
                 sharedWorkerPool.start(LOG);
                 try {
