@@ -31,7 +31,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.text.CopyExportContext;
@@ -73,7 +72,7 @@ public class SerialParquetExporter implements Closeable {
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final Path tempPath;
     private final Path toParquet;
-    private ExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private CharSequence copyExportRoot;
     private int numOfFiles;
     private CopyExportRequestTask task;
@@ -134,7 +133,7 @@ public class SerialParquetExporter implements Closeable {
 
         try {
             if (createOp != null) {
-                insertSelectReporter.of(entry, task.getCopyID(), task.getTableName());
+                insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
                 createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 entry.setPhase(phase);
@@ -431,10 +430,12 @@ public class SerialParquetExporter implements Closeable {
 
     private static class ProgressReporter implements CopyDataProgressReporter {
         private final StringSink copyIdHex = new StringSink();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private CopyExportContext.ExportTaskEntry entry;
         private CharSequence tableName;
 
-        public void of(CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
+        public void of(SqlExecutionCircuitBreaker circuitBreaker, CopyExportContext.ExportTaskEntry entry, long copyId, CharSequence name) {
+            this.circuitBreaker = circuitBreaker;
             this.entry = entry;
             this.copyIdHex.clear();
             Numbers.appendHex(copyIdHex, copyId, true);
@@ -443,6 +444,7 @@ public class SerialParquetExporter implements Closeable {
 
         @Override
         public void onProgress(CopyDataProgressReporter.Stage stage, long rows) {
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             switch (stage) {
                 case Start:
                     entry.setTotalRowCount(rows);

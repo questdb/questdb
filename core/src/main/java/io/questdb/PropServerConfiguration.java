@@ -1123,15 +1123,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int httpJsonQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT, -1);
             int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
-            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, -1);
+
+            // We don't validate default limit of export endpoint for compatibility,
+            // but we set the limit so that parquet exports don't kill web console queries
+            int httpExportConnectionLimitDefault = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
+            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, httpExportConnectionLimitDefault);
 
             validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpExportConnectionLimit, httpNetConnectionLimit);
 
-            if (httpExportConnectionLimit < 0) {
-                // We don't validate default limit of export endpoint for compatibility,
-                // but we set the limit so that parquet exports don't kill web console queries
-                httpExportConnectionLimit = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
-            }
 
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,

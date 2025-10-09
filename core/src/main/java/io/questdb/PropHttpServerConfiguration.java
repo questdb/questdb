@@ -111,7 +111,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             long multipartIdleSpinCount,
             int requestHeaderBufferSize,
             int httpJsonQueryConnectionLimit,
-            int httpIlpConnectionLimit, int exportConnectionLimit
+            int httpIlpConnectionLimit,
+            int exportConnectionLimit
     ) {
         this.connectionPoolInitialCapacity = connectionPoolInitialCapacity;
         this.connectionStringPoolCapacity = connectionStringPoolCapacity;
