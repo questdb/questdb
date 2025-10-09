@@ -443,13 +443,17 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         connectionCountGauge.dec();
     }
 
-    // returns monotonically growing event identifier;
+    protected boolean isEventId(long id) {
+        return (id & 1) == 1;
+    }
+
+    // returns monotonically growing event identifier (odd number);
     // may be used for suspend event identifiers
     protected long nextEventId() {
         return (idSeq++ << 1) + 1;
     }
 
-    // returns monotonically growing operation identifier
+    // returns monotonically growing operation identifier (even number)
     protected long nextOpId() {
         return idSeq++ << 1;
     }

@@ -50,10 +50,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         LOG.info().$("closed").$();
     }
 
-    private static boolean isEventId(long id) {
-        return (id & 1) == 1;
-    }
-
     private void doDisconnect(C context, long id, int reason) {
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         if (suspendEvent != null) {

@@ -63,10 +63,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         LOG.info().$("closed").$();
     }
 
-    private static boolean isEventId(long id) {
-        return (id & 1) == 1;
-    }
-
     private void doDisconnect(C context, long id, int reason) {
         final SuspendEvent suspendEvent = context.getSuspendEvent();
         if (suspendEvent != null) {
@@ -232,8 +228,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 if (eventRow < 0) {
                     LOG.critical().$("internal error: suspend event not found on heartbeat [id=").$(opId).I$();
                 } else {
-                    final long eventId = pendingEvents.get(eventRow, EVM_ID);
-                    keventWriter.prepare().readFD(suspendEvent.getFd(), eventId).done();
+                    keventWriter.prepare().removeReadFD(suspendEvent.getFd()).done();
                     pendingEvents.deleteRow(eventRow);
                 }
             }
