@@ -481,12 +481,11 @@ public class LineWalAppender {
     }
 
     private byte getOverloadTimestampUnit(byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-                return unit;
-        }
-        return timestampUnit;
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS,
+                 CommonUtils.TIMESTAMP_UNIT_MILLIS,
+                 CommonUtils.TIMESTAMP_UNIT_MICROS -> unit;
+            default -> timestampUnit;
+        };
     }
 }

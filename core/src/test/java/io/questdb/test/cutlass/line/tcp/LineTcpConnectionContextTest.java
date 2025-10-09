@@ -91,13 +91,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
             drainWalQueue();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\tcast\ttemperature\ttimestamp\thumidity\n" +
-                    "us-midwest\t\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
-                    "us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0\n"
-                    : "location\tcast\ttemperature\ttimestamp\thumidity\n" +
-                    "us-midwest\t\t82.0\t2016-06-13T17:43:50.100400200Z\tnull\n" +
-                    "us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400200Z\t23.0\n";
+            String expected = """
+                    location\tcast\ttemperature\ttimestamp\thumidity
+                    us-midwest\t\t82.0\t2016-06-13T17:43:50.100400Z\tnull
+                    us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0
+                    """;
             try (
                     TableReader reader = newOffPoolReader(configuration, tableName);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
@@ -108,7 +106,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                 Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("location"));
                 Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("temperature"));
                 Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("cast"));
-                Assert.assertEquals(timestampType.getTimestampType(), meta.getColumnType("timestamp"));
+                Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("timestamp"));
                 Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("humidity"));
             }
         });
@@ -443,21 +441,15 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -558,11 +550,10 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     Assert.assertFalse(recvBuffer.isEmpty());
                     closeContext();
 
-                    String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                            ? "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t1970-01-01T00:00:00.000099Z\n"
-                            : "location\ttemperature\ttimestamp\n" +
-                            "us-midwest\t82.0\t1970-01-01T00:00:00.000099000Z\n";
+                    String expected = """
+                            location\ttemperature\ttimestamp
+                            us-midwest\t82.0\t1970-01-01T00:00:00.000099Z
+                            """;
                     assertTable(expected, table);
                 },
                 null
@@ -746,23 +737,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600000Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300000Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400000Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -781,23 +765,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
             handleIO();
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttimestamp\ttemperature\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100400Z\t82.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100500Z\t83.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.102300Z\t85.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0\n" +
-                    "us-westcost\t2016-06-13T17:43:50.102500Z\t82.0\n"
-                    : "location\ttimestamp\ttemperature\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.101600000Z\t81.0\n" +
-                    "us-midwest\t2016-06-13T17:43:50.102300000Z\t85.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400000Z\t89.0\n" +
-                    "us-eastcoast\t2016-06-13T17:43:50.102400000Z\t80.0\n" +
-                    "us-westcost\t2016-06-13T17:43:50.102500000Z\t82.0\n";
+            String expected = """
+                    location\ttimestamp\ttemperature
+                    us-midwest\t2016-06-13T17:43:50.100400Z\t82.0
+                    us-midwest\t2016-06-13T17:43:50.100500Z\t83.0
+                    us-eastcoast\t2016-06-13T17:43:50.101600Z\t81.0
+                    us-midwest\t2016-06-13T17:43:50.102300Z\t85.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400Z\t89.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400Z\t80.0
+                    us-westcost\t2016-06-13T17:43:50.102500Z\t82.0
+                    """;
             assertTable(expected, table);
         });
     }
@@ -817,23 +794,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
 
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200000Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600200Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100200Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -1242,23 +1212,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101500000Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101500Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -1277,23 +1240,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400000Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600200Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -1603,23 +1559,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -2081,23 +2030,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-midwest\t83.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-midwest\t85.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z\n" +
-                    "us-westcost\t82.0\t1970-01-01T00:00:00.000000Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-midwest\t83.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-eastcoast\t81.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-midwest\t85.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-eastcoast\t89.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-eastcoast\t80.0\t1970-01-01T00:00:00.000000000Z\n" +
-                    "us-westcost\t82.0\t1970-01-01T00:00:00.000000000Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t1970-01-01T00:00:00.000000Z
+                    us-midwest\t83.0\t1970-01-01T00:00:00.000000Z
+                    us-eastcoast\t81.0\t1970-01-01T00:00:00.000000Z
+                    us-midwest\t85.0\t1970-01-01T00:00:00.000000Z
+                    us-eastcoast\t89.0\t1970-01-01T00:00:00.000000Z
+                    us-eastcoast\t80.0\t1970-01-01T00:00:00.000000Z
+                    us-westcost\t82.0\t1970-01-01T00:00:00.000000Z
+                    """;
             assertTable(expected, table);
         });
     }
@@ -2195,23 +2137,16 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n"
-                    : "location\ttemperature\ttimestamp\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400200Z\n" +
-                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400200Z\n" +
-                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z\n" +
-                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z\n" +
-                    "us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z\n";
+            String expected = """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100400Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500Z
+                    """;
             assertTable(expected, table);
         });
     }

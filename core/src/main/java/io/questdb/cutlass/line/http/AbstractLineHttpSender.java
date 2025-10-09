@@ -27,8 +27,6 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -61,8 +59,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 
 public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
@@ -412,20 +408,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     @Override
-    public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ');
-        putTimestamp(timestamp, unit);
-        atNow();
-    }
-
-    @Override
-    public void at(Instant timestamp) {
-        request.putAscii(' ');
-        putTimestamp(timestamp);
-        atNow();
-    }
-
-    @Override
     public void atNow() {
         switch (state) {
             case EMPTY:
@@ -561,20 +543,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         rowBookmark = request.getContentLength();
         state = RequestState.TABLE_NAME_SET;
         escapeQuotedString(table);
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name);
-        putTimestamp(value, unit);
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name);
-        putTimestamp(value);
         return this;
     }
 
@@ -770,32 +738,8 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
         r.withContent();
         rowBookmark = r.getContentLength();
+        state = RequestState.EMPTY;
         return r;
-    }
-
-    private void putTimestamp(long timestamp, ChronoUnit unit) {
-        // nanos sent as nanos, everything else is sent as micros
-        switch (unit) {
-            case NANOS:
-                request.put(timestamp).putAscii('n');
-                break;
-            case MICROS:
-                request.put(timestamp).putAscii('t');
-                break;
-            default:
-                // unit needs conversion to micros
-                request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAscii('t');
-        }
-    }
-
-    private void putTimestamp(Instant timestamp) {
-        // always send as nanos as long as it fits in a long 
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAscii('n');
-        } catch (ArithmeticException e) {
-            // timestamp does not fit in a long, sending as micros
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAscii('t');
-        }
     }
 
     private void reset(long newFlushAfterNanos) {

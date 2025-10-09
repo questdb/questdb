@@ -56,8 +56,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
-    int getDefaultColumnTypeForTimestamp();
-
     int getDefaultPartitionBy();
 
     boolean getDisconnectOnError();
@@ -65,8 +63,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -89,6 +85,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     MillisecondClock getMillisecondClock();
 
     NetworkFacade getNetworkFacade();
+
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     long getSymbolCacheWaitBeforeReload();
 

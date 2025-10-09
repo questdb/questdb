@@ -207,11 +207,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getDefaultColumnTypeForTimestamp() {
-                return timestampType.getTimestampType();
-            }
-
-            @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
             }

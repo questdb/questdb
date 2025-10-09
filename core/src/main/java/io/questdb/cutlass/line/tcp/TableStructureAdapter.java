@@ -34,6 +34,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -49,6 +50,7 @@ public class TableStructureAdapter implements TableStructure {
     private final boolean walEnabledDefault;
     private CharSequence tableName;
     private int timestampIndex = -1;
+    private int timestampUnit = -1;
 
     public TableStructureAdapter(
             CairoConfiguration configuration,
@@ -92,11 +94,20 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
-            return defaultColumnTypes.DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
+            int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
+            if (columnType == ColumnType.TIMESTAMP && timestampUnit == CommonUtils.TIMESTAMP_UNIT_NANOS) {
+                columnType = ColumnType.TIMESTAMP_NANO;
+            }
+            return columnType;
         }
-        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+
+        LineTcpParser.ProtoEntity entity = entities.get(columnIndex);
+        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
         if (columnType == ColumnType.ARRAY) {
-            columnType = entities.get(columnIndex).getArray().getType();
+            columnType = entity.getArray().getType();
+        }
+        if (columnType == ColumnType.TIMESTAMP && entity.getUnit() == CommonUtils.TIMESTAMP_UNIT_NANOS) {
+            columnType = ColumnType.TIMESTAMP_NANO;
         }
         return columnType;
     }
@@ -161,6 +172,7 @@ public class TableStructureAdapter implements TableStructure {
         entityNamesUtf16.clear();
         entities.clear();
         timestampIndex = -1;
+        timestampUnit = parser.getTimestampUnit();
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
             final DirectUtf8Sequence colNameUtf8 = entity.getName();
