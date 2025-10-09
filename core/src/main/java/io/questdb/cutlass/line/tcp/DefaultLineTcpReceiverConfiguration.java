@@ -117,6 +117,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
+    public int getDefaultCreateTimestampColumnType() {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public int getDefaultPartitionBy() {
         return PartitionBy.DAY;
     }

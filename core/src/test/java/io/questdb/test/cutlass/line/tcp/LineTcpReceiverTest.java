@@ -1050,7 +1050,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 send(lineDataThread, threadTable, WAIT_NO_WAIT);
                             }
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                         } finally {
                             threadPushFinished.countDown();
                         }
@@ -1519,7 +1519,18 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 Assert.assertTrue(isWalTable(table));
             }
 
-            String expected = """
+            String expected = timestampType.getTimestampType() == ColumnType.TIMESTAMP_NANO
+                    ? """
+                    location\ttimestamp\ttemperature
+                    us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0
+                    us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0
+                    us-eastcoast\t2016-06-13T17:43:50.101600000Z\t81.0
+                    us-midwest\t2016-06-13T17:43:50.102300000Z\t85.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t89.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t80.0
+                    us-westcost\t2016-06-13T17:43:50.102500000Z\t82.0
+                    """
+                    : """
                     location\ttimestamp\ttemperature
                     us-midwest\t2016-06-13T17:43:50.100400Z\t82.0
                     us-midwest\t2016-06-13T17:43:50.100500Z\t83.0

@@ -146,6 +146,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getDefaultCreateTimestampColumnType() {
+            return timestampType.getTimestampType();
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return partitionByDefault;
         }

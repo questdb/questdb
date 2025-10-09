@@ -561,6 +561,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
+    private int lineDefaultTimestampColumnType;
     private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
@@ -1640,17 +1641,26 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 this.lineTcpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
+
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
                     log.info().$("invalid default column type for float ").$safe(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
+
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
                     log.info().$("invalid default column type for integer ").$safe(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
+                }
+
+                String timestampDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.TIMESTAMP_MICRO));
+                this.lineDefaultTimestampColumnType = ColumnType.typeOf(timestampDefaultColumnTypeName);
+                if (!ColumnType.isTimestamp(lineDefaultTimestampColumnType)) {
+                    log.info().$("invalid default column type for timestamp ").$(timestampDefaultColumnTypeName).$(", will use TIMESTAMP_MICRO").$();
+                    this.lineDefaultTimestampColumnType = ColumnType.TIMESTAMP_MICRO;
                 }
             }
 
@@ -2654,7 +2664,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
             registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
             registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
-            registerDeprecated(PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE);
             registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
             registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
             registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
@@ -4741,6 +4750,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getDefaultCreateTimestampColumnType() {
+            return lineDefaultTimestampColumnType;
+        }
+
+        @Override
         public int getDefaultPartitionBy() {
             return lineTcpDefaultPartitionBy;
         }
@@ -4913,6 +4927,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public short getDefaultColumnTypeForInteger() {
             return integerDefaultColumnType;
+        }
+
+        @Override
+        public int getDefaultCreateTimestampColumnType() {
+            return lineDefaultTimestampColumnType;
         }
 
         @Override

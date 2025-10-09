@@ -39,6 +39,8 @@ public interface LineHttpProcessorConfiguration {
 
     short getDefaultColumnTypeForInteger();
 
+    int getDefaultCreateTimestampColumnType();
+
     int getDefaultPartitionBy();
 
     CharSequence getInfluxPingVersion();

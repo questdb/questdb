@@ -765,7 +765,18 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost timestamp=1465839830102500t,temperature=82\n";
             handleIO();
             closeContext();
-            String expected = """
+            String expected = timestampType.getTimestampType() == ColumnType.TIMESTAMP_NANO
+                    ? """
+                    location\ttimestamp\ttemperature
+                    us-midwest\t2016-06-13T17:43:50.100400000Z\t82.0
+                    us-midwest\t2016-06-13T17:43:50.100500000Z\t83.0
+                    us-eastcoast\t2016-06-13T17:43:50.101600000Z\t81.0
+                    us-midwest\t2016-06-13T17:43:50.102300000Z\t85.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t89.0
+                    us-eastcoast\t2016-06-13T17:43:50.102400000Z\t80.0
+                    us-westcost\t2016-06-13T17:43:50.102500000Z\t82.0
+                    """
+                    : """
                     location\ttimestamp\ttemperature
                     us-midwest\t2016-06-13T17:43:50.100400Z\t82.0
                     us-midwest\t2016-06-13T17:43:50.100500Z\t83.0
@@ -794,7 +805,18 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleIO();
             closeContext();
 
-            String expected = """
+            String expected = timestampType.getTimestampType() == ColumnType.TIMESTAMP_NANO
+                    ? """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t2016-06-13T17:43:50.100200000Z
+                    us-midwest\t83.0\t2016-06-13T17:43:50.100500200Z
+                    us-eastcoast\t81.0\t2016-06-13T17:43:50.101600200Z
+                    us-midwest\t85.0\t2016-06-13T17:43:50.102300200Z
+                    us-eastcoast\t89.0\t2016-06-13T17:43:50.102400200Z
+                    us-eastcoast\t80.0\t2016-06-13T17:43:50.102400200Z
+                    us-westcost\t82.0\t2016-06-13T17:43:50.102500200Z
+                    """
+                    : """
                     location\ttemperature\ttimestamp
                     us-midwest\t82.0\t2016-06-13T17:43:50.100200Z
                     us-midwest\t83.0\t2016-06-13T17:43:50.100500Z
@@ -2030,7 +2052,18 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO0();
             Assert.assertFalse(disconnected);
             closeContext();
-            String expected = """
+            String expected = timestampType.getTimestampType() == ColumnType.TIMESTAMP_NANO
+                    ? """
+                    location\ttemperature\ttimestamp
+                    us-midwest\t82.0\t1970-01-01T00:00:00.000000000Z
+                    us-midwest\t83.0\t1970-01-01T00:00:00.000000000Z
+                    us-eastcoast\t81.0\t1970-01-01T00:00:00.000000000Z
+                    us-midwest\t85.0\t1970-01-01T00:00:00.000000000Z
+                    us-eastcoast\t89.0\t1970-01-01T00:00:00.000000000Z
+                    us-eastcoast\t80.0\t1970-01-01T00:00:00.000000000Z
+                    us-westcost\t82.0\t1970-01-01T00:00:00.000000000Z
+                    """
+                    : """
                     location\ttemperature\ttimestamp
                     us-midwest\t82.0\t1970-01-01T00:00:00.000000Z
                     us-midwest\t83.0\t1970-01-01T00:00:00.000000Z
