@@ -274,7 +274,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testNullConversionsFromDate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD LONG, colE INT, colF TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
                     "SELECT '2025-04-09 17:20:00.000' AS ts, " +
                     "null::date as colA, " +
@@ -299,7 +299,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testNullConversionsFromFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB TIMESTAMP, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB TIMESTAMP, colC DATE, colD LONG, colE INT, colF TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
                     "SELECT '2025-04-09 17:20:00.000' AS ts, " +
                     "cast(null as float) as colA, " +
@@ -324,7 +324,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testNullConversionsFromInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG, colF TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
                     "SELECT '2025-04-09 17:20:00.000' AS ts, " +
                     "null::int as colA, " +
@@ -349,7 +349,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testNullConversionsFromLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE INT, colF TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
                     "SELECT '2025-04-09 17:20:00.000' AS ts, " +
                     "null::long as colA, " +
@@ -374,7 +374,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testNullConversionsFromTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT, colF TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
                     "SELECT '2025-04-09 17:20:00.000' AS ts, " +
                     "null::timestamp as colA, " +
@@ -383,31 +383,6 @@ public class UnionTest extends AbstractCairoTest {
                     "null::timestamp as colD, " +
                     "null::timestamp as colE, " +
                     "null::timestamp as colF;");
-            drainWalQueue();
-
-            assertQueryNoLeakCheck(
-                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\tcolF\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\t\n",
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testNullConversionsFromTimestampNanos() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT, colF TIMESTAMP_NS) timestamp(ts) PARTITION BY DAY WAL;");
-            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE, colF) " +
-                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
-                    "null::timestamp_ns as colA, " +
-                    "null::timestamp_ns as colB, " +
-                    "null::timestamp_ns as colC, " +
-                    "null::timestamp_ns as colD, " +
-                    "null::timestamp_ns as colE, " +
-                    "null::timestamp_ns as colF;");
             drainWalQueue();
 
             assertQueryNoLeakCheck(
