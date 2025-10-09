@@ -582,7 +582,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_DB_LOG_NAME("debug.db.log.name", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
-    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
+    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

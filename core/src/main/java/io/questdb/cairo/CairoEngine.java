@@ -95,13 +95,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
-import io.questdb.mp.Job;
 import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.mp.SynchronizedJob;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
@@ -113,7 +111,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -147,7 +144,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
-    private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
@@ -198,7 +194,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
-            this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
             this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
@@ -674,10 +669,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
-    }
-
-    public Job getEngineMaintenanceJob() {
-        return engineMaintenanceJob;
     }
 
     public FrameFactory getFrameFactory() {
@@ -1848,27 +1839,5 @@ public class CairoEngine implements Closeable, WriterSource {
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
-    }
-
-    private class EngineMaintenanceJob extends SynchronizedJob {
-
-        private final long checkInterval;
-        private final Clock clock;
-        private long last = 0;
-
-        public EngineMaintenanceJob(CairoConfiguration configuration) {
-            this.clock = configuration.getMicrosecondClock();
-            this.checkInterval = configuration.getIdleCheckInterval() * 1000;
-        }
-
-        @Override
-        protected boolean runSerially() {
-            long t = clock.getTicks();
-            if (last + checkInterval < t) {
-                last = t;
-                return releaseInactive();
-            }
-            return false;
-        }
     }
 }
