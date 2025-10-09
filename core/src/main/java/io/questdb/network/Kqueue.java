@@ -70,7 +70,7 @@ public final class Kqueue implements Closeable {
     }
 
     public long getData() {
-        return Unsafe.getUnsafe().getInt(readAddress + KqueueAccessor.DATA_OFFSET);
+        return Unsafe.getUnsafe().getLong(readAddress + KqueueAccessor.DATA_OFFSET);
     }
 
     public int getFilter() {
