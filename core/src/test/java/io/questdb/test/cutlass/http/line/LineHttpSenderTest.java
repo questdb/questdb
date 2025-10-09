@@ -69,6 +69,7 @@ import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.test.AbstractCairoTest.parseFloorPartialTimestamp;
+import static org.junit.Assert.assertEquals;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -760,6 +761,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                        .protocolVersion(PROTOCOL_VERSION_V1)
                         .build()) {
 
                     sender.cancelRow(); // this should be no-op
@@ -792,6 +794,62 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                 "true\t3.0\t2024-09-09T14:38:26.361110Z\n");
             }
         });
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456789Z");
     }
 
     @Test
@@ -1724,8 +1782,27 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testTimestampMicrosIngestWithDifferentUnits() throws Exception {
-        testTimestampIngestWithDifferentUnits("TIMESTAMP", """
+    public void testTimestampIngestMicrosV1() throws Exception {
+        testTimestampIngest("TIMESTAMP", PROTOCOL_VERSION_V1, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        """,
+                null
+        );
+    }
+
+    @Test
+    public void testTimestampIngestMicrosV2() throws Exception {
+        testTimestampIngest("TIMESTAMP", PROTOCOL_VERSION_V2, """
                 ts\tdts
                 2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
                 2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
@@ -1756,11 +1833,47 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTimestampIngestNanosV1() throws Exception {
+        testTimestampIngest("TIMESTAMP_NS", PROTOCOL_VERSION_V1, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129092Z
+                        """,
+                null
+        );
+    }
+
+    @Test
+    public void testTimestampIngestNanosV2() throws Exception {
+        testTimestampIngest("TIMESTAMP_NS", PROTOCOL_VERSION_V2, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456799Z	2025-11-20T10:55:24.834129092Z
+                        """,
+                null
+        );
+    }
+
+    @Test
     public void testTimestampNSAutoCreateTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE.getEnvVarName(), "timestamp_ns"
-            )) {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 final String tab_ns = "tab_ns";
                 final String tab_us = "tab_us";
                 final int port = serverMain.getHttpServerPort();
@@ -1776,8 +1889,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(dts_ns, ChronoUnit.NANOS);
                     sender.flush();
                     serverMain.awaitTable(tab_ns);
-                    serverMain.assertSql(tab_ns, "ts\ttimestamp\n" +
-                            "2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z\n");
+                    serverMain.assertSql(tab_ns, """
+                            ts\ttimestamp
+                            2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z
+                            """);
 
                     long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
                     long dts_us = MicrosTimestampDriver.floor("2025-11-20T10:55:24.234567Z");
@@ -1786,8 +1901,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(dts_us, ChronoUnit.MICROS);
                     sender.flush();
                     serverMain.awaitTable(tab_us);
-                    serverMain.assertSql(tab_us, "ts\ttimestamp\n" +
-                            "2025-11-19T10:55:24.123456000Z\t2025-11-20T10:55:24.234567000Z\n");
+                    serverMain.assertSql(tab_us, """
+                            ts\ttimestamp
+                            2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.234567Z
+                            """);
                 }
 
                 final CairoEngine engine = serverMain.getEngine();
@@ -1798,11 +1915,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     Assert.assertEquals(ColumnType.TIMESTAMP_NANO, metadata.getColumnType("timestamp"));
                 }
 
-                // type follows LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE config, column type is always TIMESTAMP_NS
                 final TableToken tt_us = engine.verifyTableName(tab_us);
                 try (TableMetadata metadata = engine.getTableMetadata(tt_us)) {
-                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, metadata.getColumnType("ts"));
-                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, metadata.getColumnType("timestamp"));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType("ts"));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType("timestamp"));
                 }
             }
         });
@@ -1871,25 +1987,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testTimestampNanosIngestWithDifferentUnits() throws Exception {
-        testTimestampIngestWithDifferentUnits("TIMESTAMP_NS", """
-                        ts\tdts
-                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834000000Z
-                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
-                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
-                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129000Z
-                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
-                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
-                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129082Z
-                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
-                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
-                        2025-11-19T10:55:24.123456799Z	2025-11-20T10:55:24.834129092Z
-                        """,
-                null
-        );
     }
 
     @Test
@@ -2013,7 +2110,63 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         }
     }
 
-    private void testTimestampIngestWithDifferentUnits(String timestampType, String expected1, String expected2) throws Exception {
+    private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                final int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0)
+                        .protocolVersion(protocolVersion)
+                        .build()
+                ) {
+                    long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                    long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                    long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                    Instant ts_instant = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+
+                    if (unit != null) {
+                        sender.table("tab1")
+                                .doubleColumn("col1", 1.111)
+                                .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                                .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                                .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                                .timestampColumn("ts_instant", ts_instant)
+                                .at(timestamp, unit);
+                    } else {
+                        sender.table("tab1")
+                                .doubleColumn("col1", 1.111)
+                                .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                                .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                                .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                                .timestampColumn("ts_instant", ts_instant)
+                                .at(Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000));
+                    }
+
+                    sender.flush();
+
+                    serverMain.awaitTable("tab1");
+                    serverMain.assertSql("tab1", "col1\tts_ns\tts_us\tts_ms\tts_instant\ttimestamp\n" + expected + "\n");
+
+                    final CairoEngine engine = serverMain.getEngine();
+                    final TableToken tt = engine.verifyTableName("tab1");
+                    try (TableMetadata metadata = serverMain.getEngine().getTableMetadata(tt)) {
+                        assertEquals(6, metadata.getColumnCount());
+                        assertEquals(ColumnType.DOUBLE, metadata.getColumnType(0));
+                        assertEquals(expectedColumnTypes[0], metadata.getColumnType(1));
+                        assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
+                        assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(3));
+                        assertEquals(expectedColumnTypes[1], metadata.getColumnType(4));
+                        assertEquals(expectedColumnTypes[2], metadata.getColumnType(5));
+                    }
+                }
+            }
+        });
+    }
+
+    private void testTimestampIngest(String timestampType, int protocolVersion, String expected1, String expected2) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
@@ -2024,6 +2177,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
                         .retryTimeoutMillis(0)
+                        .protocolVersion(protocolVersion)
                         .build()
                 ) {
                     long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
@@ -2086,9 +2240,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         if (expected2 == null) {
                             Assert.fail("Exception expected");
                         }
-                    } catch (LineSenderException e) {
+                    } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "error in line 1: long overflow, timestamp: 10441738524834129");
+                            TestUtils.assertContains(e.getMessage(), "long overflow");
                         } else {
                             throw e;
                         }
@@ -2107,9 +2261,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         if (expected2 == null) {
                             Assert.fail("Exception expected");
                         }
-                    } catch (LineSenderException e) {
+                    } catch (LineSenderException | ArithmeticException e) {
                         if (expected2 == null) {
-                            TestUtils.assertContains(e.getMessage(), "error in line 1: long overflow, timestamp: 26123456790123457");
+                            TestUtils.assertContains(e.getMessage(), "long overflow");
                         } else {
                             throw e;
                         }
