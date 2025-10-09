@@ -486,9 +486,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
             CopyExportContext.ExportTaskEntry entry = null;
             try {
-
                 var securityContext = context.getSecurityContext();
-
                 var selectText = state.query;
                 var fileName = state.fileName;
                 var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
