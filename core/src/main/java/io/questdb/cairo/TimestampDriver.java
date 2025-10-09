@@ -168,27 +168,17 @@ public interface TimestampDriver {
      * @return the timestamp in the driver's native value, or 0 if unit is not recognized
      */
     default long from(long value, char unit) {
-        switch (unit) {
-            case 'n':
-                return fromNanos(value);
-            case 'u':
-            case 'U':
-                return fromMicros(value);
-            case 'T':
-                return fromMillis(value);
-            case 's':
-                return fromSeconds(value);
-            case 'm':
-                return fromMinutes((int) value);
-            case 'H':
-            case 'h':
-                return fromHours((int) value);
-            case 'd':
-                return fromDays((int) value);
-            case 'w':
-                return fromWeeks((int) value);
-        }
-        return 0;
+        return switch (unit) {
+            case 'n' -> fromNanos(value);
+            case 'u', 'U' -> fromMicros(value);
+            case 'T' -> fromMillis(value);
+            case 's' -> fromSeconds(value);
+            case 'm' -> fromMinutes((int) value);
+            case 'H', 'h' -> fromHours((int) value);
+            case 'd' -> fromDays((int) value);
+            case 'w' -> fromWeeks((int) value);
+            default -> 0;
+        };
     }
 
     /**
