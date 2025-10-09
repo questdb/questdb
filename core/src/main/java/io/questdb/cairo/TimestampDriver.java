@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cutlass.line.tcp.LineProtocolException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -197,7 +198,7 @@ public interface TimestampDriver {
      * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
      *             supported units: nanos, micros, millis, seconds, minutes, hours
      * @return the timestamp value
-     * @throws ArithmeticException           if the conversion fails because of long overflow
+     * @throws LineProtocolException         if the conversion fails because of long overflow
      * @throws UnsupportedOperationException if the unit is not supported
      */
     long from(long ts, byte unit);
