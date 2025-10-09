@@ -94,6 +94,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected long heartbeatIntervalMs;
     protected long serverFd;
     private long closeListenFdEpochMs;
+    // the final ids are shifted by 1 bit which is reserved to distinguish socket operations (0) and suspend events (1);
+    // id 0 is reserved for operations on the server fd
+    private long idSeq = 1;
     private volatile boolean listening;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     private int port;
@@ -253,6 +256,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
         pending.set(r, OPM_HEARTBEAT_TIMESTAMP, timestamp);
         pending.set(r, OPM_FD, fd);
+        pending.set(r, OPM_ID, nextOpId());
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, context);
         pendingAdded(r);
@@ -439,7 +443,20 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         connectionCountGauge.dec();
     }
 
-    protected abstract void pendingAdded(int index);
+    // returns monotonically growing event identifier;
+    // may be used for suspend event identifiers
+    protected long nextEventId() {
+        return (idSeq++ << 1) + 1;
+    }
+
+    // returns monotonically growing operation identifier
+    protected long nextOpId() {
+        return idSeq++ << 1;
+    }
+
+    protected void pendingAdded(int index) {
+        // no-op
+    }
 
     protected void processDisconnects(long epochMs) {
         disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);

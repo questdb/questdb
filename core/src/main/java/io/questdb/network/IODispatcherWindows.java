@@ -32,8 +32,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     private final FDSet readFdSet;
     private final SelectFacade sf;
     private final FDSet writeFdSet;
-    // used for heartbeats
-    private long idSeq = 1;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -56,10 +54,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         Misc.free(readFdSet);
         Misc.free(writeFdSet);
         LOG.info().$("closed").$();
-    }
-
-    private long nextOpId() {
-        return idSeq++;
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -153,7 +147,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     @Override
     protected void pendingAdded(int index) {
         pending.set(index, OPM_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
-        pending.set(index, OPM_ID, nextOpId());
     }
 
     @Override
@@ -343,6 +336,4 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     protected void unregisterListenerFd() {
         listenerRegistered = false;
     }
-
 }
-
