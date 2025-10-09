@@ -6363,7 +6363,9 @@ public class MatViewTest extends AbstractCairoTest {
         return "select" +
                 " x + " + init + " as n," +
                 columns +
-                " timestamp_sequence(" + startTs + "::" + timestampType.getTypeName() + ", " + step + ") k" +
+                (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                        " timestamp_sequence(" + startTs + ", " + step + ") k" :
+                        " timestamp_sequence_ns(" + startTs + ", " + step + ") k") +
                 " from" +
                 " long_sequence(" + count + ")";
     }
