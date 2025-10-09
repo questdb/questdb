@@ -490,7 +490,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return lastError;
         }
 
-        public KeventWriter readFD(long fd, long id) {
+        public void readFD(long fd, long id) {
             kqueue.setWriteOffset(offset);
             kqueue.readFD(fd, id);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -498,7 +498,6 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
                 register(index);
                 index = offset = 0;
             }
-            return this;
         }
 
         public KeventWriter removeReadFD(long fd) {
