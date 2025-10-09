@@ -5244,7 +5244,8 @@ public class SqlOptimiser implements Mutable {
                 // columns in this loop, that is why there is no auto-increment.
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                    final boolean isFunctionWithTsColumn = tempBoolList.get(i);
+                    // use the original column index "k" when checking for functions with timestamp
+                    final boolean isFunctionWithTsColumn = tempBoolList.get(k);
 
                     if (
                             isFunctionWithTsColumn ||
