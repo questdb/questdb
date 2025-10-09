@@ -1124,13 +1124,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             int httpJsonQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT, -1);
             int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
 
-            // We don't validate default limit of export endpoint for compatibility,
-            // but we set the limit so that parquet exports don't kill web console queries
-            int httpExportConnectionLimitDefault = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
-            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, httpExportConnectionLimitDefault);
 
+            // Set the default as -1000 and if it's not set by the user, we override it later
+            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, -1000);
+            // Check the limits are in valid range, without setting final value of httpExportConnectionLimit
+            // So if someone has the json, ilp limits set the new limit does not throw a new validation exception here when export limit is introduced
             validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpExportConnectionLimit, httpNetConnectionLimit);
 
+            if (httpExportConnectionLimit == -1000) {
+                // We set the limit so that parquet exports don't kill web console queries if the limit is not set by the user
+                int httpExportConnectionLimitDefault = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
+                // We have to use `getInt()` method so that the SHOW PROPERTIES shows the correct default value
+                httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, httpExportConnectionLimitDefault);
+            }
 
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,

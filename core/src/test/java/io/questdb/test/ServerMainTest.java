@@ -180,7 +180,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
-                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count'" +
+                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count'," +
+                                    "'http.export.connection.limit'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -707,7 +708,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.parquet.export.data.page.size\tQDB_CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\t6\tdefault\tfalse\tfalse\n" +
                                     "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
-                                    "http.export.connection.limit\tQDB_HTTP_EXPORT_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
                                     "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t50000\tdefault\tfalse\ttrue\n"
                     )
                             .split("\n");
