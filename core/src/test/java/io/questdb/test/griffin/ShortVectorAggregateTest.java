@@ -295,7 +295,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedNanoHourMax() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0::timestamp_ns, 10000000000) ts from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(
@@ -332,7 +332,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedNanoHourMin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0::timestamp_ns, 10000000000) ts from long_sequence(100000));");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence_ns(0, 10000000000) ts from long_sequence(100000));");
             execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(

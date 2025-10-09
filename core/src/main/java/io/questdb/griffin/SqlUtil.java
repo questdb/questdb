@@ -904,8 +904,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
 
-    public static long implicitCastVarcharAsDate(CharSequence value) {
-        return MillsTimestampDriver.INSTANCE.implicitCast(value, ColumnType.VARCHAR);
+    public static long implicitCastVarcharAsDate(Utf8Sequence value) {
+        return MillsTimestampDriver.INSTANCE.implicitCastVarchar(value);
     }
 
     public static double implicitCastVarcharAsDouble(Utf8Sequence value) {

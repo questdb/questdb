@@ -638,17 +638,17 @@ public class SqlUtilTest {
     @Test
     public void testParseVarcharDate() {
         Assert.assertEquals(Numbers.LONG_NULL, SqlUtil.implicitCastVarcharAsDate(null));
-        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20T10:30:55.123Z")));
-        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 10:30:55Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 Z")));
-        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20")));
-        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("2022-11-20 10:30:55.123Z")));
-        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("200")));
-        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate("-900")));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("2022-11-20T10:30:55.123Z"))));
+        Assert.assertEquals("2022-11-20T10:30:55.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("2022-11-20 10:30:55Z"))));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("2022-11-20 Z"))));
+        Assert.assertEquals("2022-11-20T00:00:00.000Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("2022-11-20"))));
+        Assert.assertEquals("2022-11-20T10:30:55.123Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("2022-11-20 10:30:55.123Z"))));
+        Assert.assertEquals("1970-01-01T00:00:00.200Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("200"))));
+        Assert.assertEquals("1969-12-31T23:59:59.100Z", Dates.toString(SqlUtil.implicitCastVarcharAsDate(new Utf8String("-900"))));
 
         // not a number
         try {
-            SqlUtil.implicitCastVarcharAsDate("hello");
+            SqlUtil.implicitCastVarcharAsDate(new Utf8String("hello"));
             Assert.fail();
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("inconvertible value: `hello` [VARCHAR -> DATE]", e.getFlyweightMessage());
