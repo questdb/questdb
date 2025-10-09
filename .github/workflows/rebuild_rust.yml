@@ -17,7 +17,7 @@ on:
 
 jobs:
   build-rust-windows:
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
