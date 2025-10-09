@@ -87,6 +87,8 @@ public interface CairoConfiguration {
      */
     double autoScaleSymbolCapacityThreshold();
 
+    boolean cairoResourcePoolTracingEnabled();
+
     default boolean disableColumnPurgeJob() {
         return false;
     }

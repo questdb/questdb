@@ -107,6 +107,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
