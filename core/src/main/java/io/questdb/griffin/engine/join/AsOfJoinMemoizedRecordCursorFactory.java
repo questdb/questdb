@@ -170,38 +170,38 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 boolean onlyIfNew
         ) {
             int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
-            if (slaveKeyIndex >= 0) {
-                // nothing remembered so far, store all the data with no further questions
-                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
-                symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
-                return;
-            }
-            if (onlyIfNew) {
-                return;
-            }
-            long periodStart = symKeyToValidityPeriodStart.valueAt(slaveKeyIndex);
-            long periodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
-            if (masterTimestamp >= periodStart && slaveTimestamp <= periodEnd) {
-                // The period to memorize overlaps existing remembered period.
-                // Let's explain under what circumstances we may end up in this branch.
-                // We'll use this notation:
+            if (slaveKeyIndex < 0) {
+                if (onlyIfNew) {
+                    // We remember this symbol, but should memorize it only if new, so return.
+                    return;
+                }
+
+                // This is purely an assertion branch, to make sure our logic holds.
+                // Let's explain the logic! We'll use this notation:
                 //   ! ---- | we found the symbal at the start of this period
                 //   x ---- | we did not find the symbol anywhere within this period
                 //   ? ---- | we may or may not have found the symbol within this period
                 //
-                // We have this invariant: the symbol does not occur anywhere inside either the
-                // remembered or the new period. It may only appear at its very start.
+                // We have these two invariants:
+                //
+                // 1. masterTimestamp (end of the new period) never goes back in time from invocation to invocation
+                //    of performKeyMatching().
+                // 2. The symbol does not occur anywhere inside either the remembered or the new period. It may only
+                //    appear at its very start.
+                //
                 // So, all of these are impossible:
+                //
+                // ? ------------------ | remembered period
+                //     ? ---------- | new period
+                //
+                //          ? --------------- | remembered period
+                // ? ------------ | new period
+                //
+                //                  ? ---------- | remembered period
+                //  ? ---------- | new period
                 //
                 // ! ------------ | remembered period
                 //          ! --------------- | new period
-                //
-                //          ! --------------- | remembered period
-                // ! ------------ | new period
-                //
-                // ! ------------------ | remembered period
-                //     ! ---------- | new period
                 //
                 //     ! ---------- | remembered period
                 // ! ------------------ | new period
@@ -226,24 +226,21 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 //        x --------------- | remembered period
                 // ? ---------------------------- | new period
                 //
-                // So, this is the only way to end up in this branch:
+                // So, the only way to end up here is this:
                 //
-                //          x --------------- | remembered period
-                // ? ------------ | new period
+                // ! ------------ | remembered period
+                //                  ! ------------ | new period
                 //
-                // The master record is in the middle of the remembered period, we skipped it,
-                // continued to search further back, and either found the symbol or failed again.
-                // We must update the period start, and save the rowId of the symbol.
-                assert slaveTimestamp < periodStart : "slaveTimestamp >= periodStart";
-                assert masterTimestamp < periodEnd : "masterTimestamp >= periodEnd";
-                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
-            } else if (masterTimestamp - slaveTimestamp > periodEnd - periodStart) {
-                // Periods aren't overlapping. Let's memorize the new one if it's longer, saving more work.
-                symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-                symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
-                symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
+                // We started the search from a more recent timestamp, went backwards,
+                // and found a new symbol before reaching the remembered period.
+                // We must remember all the new data, same as when the symbol is new.
+                long periodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
+                assert slaveTimestamp > periodEnd : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + periodEnd;
             }
+
+            symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
+            symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
+            symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
         }
 
         @Override
