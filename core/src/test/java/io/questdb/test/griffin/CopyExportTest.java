@@ -108,9 +108,9 @@ public class CopyExportTest extends AbstractCairoTest {
             Thread insertThread = new Thread(() -> {
                 try {
                     for (int batch = 0; batch < 50; batch++) {
-                        StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values ");
+                        StringBuilder batchInsert = new StringBuilder("insert into fuzz_table values (");
                         for (int i = 0; i < 100; i++) {
-                            if (i > 0) batchInsert.append(", ");
+                            if (i > 0) batchInsert.append("), (");
                             long id = 20000 + (batch * 100) + i;
                             batchInsert.append(10000 + i)
                                     .append(", ")
@@ -119,8 +119,10 @@ public class CopyExportTest extends AbstractCairoTest {
                                     .append(id * 2.0)
                                     .append(", 'concurrent")
                                     .append(id)
-                                    .append("')");
+                                    .append('\'');
                         }
+
+                        batchInsert.append(')');
                         execute(batchInsert.toString());
                         drainWalQueue();
                         Os.sleep(10);
