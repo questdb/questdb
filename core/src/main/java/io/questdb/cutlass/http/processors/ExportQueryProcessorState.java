@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.CopyExportResult;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -44,7 +44,8 @@ import java.io.Closeable;
 public class ExportQueryProcessorState implements Mutable, Closeable {
     private static final long PARQUET_BUFFER_SIZE = 8192;
     final StringSink query = new StringSink();
-    private final CopyModel copyModel = new CopyModel();
+    private final CopyExportResult copyExportResult;
+    private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
@@ -71,7 +72,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     boolean waitingForCopy;
-    private final CopyExportResult copyExportResult;
     private boolean queryCacheable = false;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext) {
@@ -117,7 +117,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             Unsafe.free(parquetFileBuffer, PARQUET_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             parquetFileBuffer = 0;
         }
-        copyModel.clear();
+        exportModel.clear();
         copyExportResult.clear();
     }
 
@@ -131,8 +131,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    public CopyModel getCopyModel() {
-        return copyModel;
+    public ExportModel getExportModel() {
+        return exportModel;
     }
 
     public CopyExportResult getExportResult() {

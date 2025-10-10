@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.table.parquet.ParquetCompression.*;
 
-public class CopyModel implements ExecutionModel, Mutable, Sinkable {
+public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public static final int COPY_FORMAT_CSV = 1;
     public static final int COPY_FORMAT_PARQUET = 2;
@@ -56,7 +56,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final int COPY_TYPE_FROM = 1;
     public static final int COPY_TYPE_TO = 2;
     public static final int COPY_TYPE_UNKNOWN = 0;
-    public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
+    public static final ObjectFactory<ExportModel> FACTORY = ExportModel::new;
     public static final int PARQUET_VERSION_V1 = 1;
     public static final int PARQUET_VERSION_V2 = 2;
     private static final LowerCaseCharSequenceIntHashMap copyOptionsNameToEnumMap = new LowerCaseCharSequenceIntHashMap();
@@ -85,7 +85,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int type;
     private boolean userSpecifiedExportOptions;
 
-    public CopyModel() {
+    public ExportModel() {
     }
 
     public static int getExportOption(CharSequence tok) {

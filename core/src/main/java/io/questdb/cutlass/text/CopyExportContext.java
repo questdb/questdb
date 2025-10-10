@@ -182,7 +182,7 @@ public class CopyExportContext {
                 entry.finishedPartitionCount = e.finishedPartitionCount;
                 entry.totalPartitionCount = e.totalPartitionCount;
                 entry.totalRowCount = e.totalRowCount;
-                entry.pricipal = e.securityContext != null ? e.securityContext.getPrincipal() : null;
+                entry.principal = e.securityContext != null ? e.securityContext.getPrincipal() : null;
                 return true;
             }
             return false;
@@ -243,7 +243,7 @@ public class CopyExportContext {
         }
     }
 
-    public synchronized void updateStatus(
+    public void updateStatus(
             CopyExportRequestTask.Phase phase,
             CopyExportRequestTask.Status status,
             CharSequence exportDir,
@@ -367,7 +367,7 @@ public class CopyExportContext {
     }
 
     public static class ExportTaskData {
-        public CharSequence pricipal;
+        public CharSequence principal;
         private int finishedPartitionCount = 0;
         private long id;
         private CharSequence path;
@@ -401,7 +401,7 @@ public class CopyExportContext {
         }
 
         public CharSequence getPrincipal() {
-            return pricipal;
+            return principal;
         }
 
         public CharSequence getSql() {
@@ -423,20 +423,6 @@ public class CopyExportContext {
         public int getWorkerId() {
             return workerId;
         }
-
-        public ExportTaskData of(ExportTaskEntry entry) {
-            this.id = entry.id;
-            this.sql = entry.sql;
-            this.path = entry.path;
-            this.phase = entry.phase;
-            this.startTime = entry.startTime;
-            this.workerId = entry.workerId;
-            this.populatedRowCount = entry.populatedRowCount;
-            this.finishedPartitionCount = entry.finishedPartitionCount;
-            this.totalPartitionCount = entry.totalPartitionCount;
-            this.totalRowCount = entry.totalRowCount;
-            return this;
-        }
     }
 
     public static class ExportTaskEntry implements Mutable {
@@ -448,7 +434,7 @@ public class CopyExportContext {
         long populatedRowCount = 0;
         SqlExecutionCircuitBreaker realCircuitBreaker;
         SecurityContext securityContext;
-        CharSequence sql;
+        StringSink sql = new StringSink();
         long startTime = Numbers.LONG_NULL;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
@@ -459,7 +445,7 @@ public class CopyExportContext {
             this.securityContext = null;
             atomicBooleanCircuitBreaker.clear();
             this.id = INACTIVE_COPY_ID;
-            this.sql = null;
+            this.sql.clear();
             this.path = null;
             this.phase = null;
             this.startTime = Numbers.LONG_NULL;
@@ -479,28 +465,8 @@ public class CopyExportContext {
             return id;
         }
 
-        public CharSequence getPath() {
-            return path;
-        }
-
-        public CopyExportRequestTask.Phase getPhase() {
-            return phase;
-        }
-
         public SecurityContext getSecurityContext() {
             return securityContext;
-        }
-
-        public CharSequence getSql() {
-            return sql;
-        }
-
-        public long getStartTime() {
-            return startTime;
-        }
-
-        public int getWorkerId() {
-            return workerId;
         }
 
         public ExportTaskEntry of(long id,
@@ -510,7 +476,7 @@ public class CopyExportContext {
                                   SqlExecutionCircuitBreaker circuitBreaker) {
             this.id = id;
             this.securityContext = context;
-            this.sql = sql;
+            this.sql.put(sql);
             this.path = path;
             if (circuitBreaker == null) {
                 atomicBooleanCircuitBreaker.reset();

@@ -59,7 +59,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -87,7 +87,7 @@ import io.questdb.std.str.Utf8s;
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static io.questdb.griffin.model.CopyModel.COPY_FORMAT_PARQUET;
+import static io.questdb.griffin.model.ExportModel.COPY_FORMAT_PARQUET;
 
 public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHandler, Closeable {
     private static final String FILE_EXTENSION_CSV = ".csv";
@@ -361,10 +361,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             HttpChunkedResponse response,
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        CopyModel copyModel = state.getCopyModel();
-        copyModel.setParquetDefaults(engine.getConfiguration());
-        copyModel.setPartitionBy(PartitionBy.NONE);
-        copyModel.setSelectText(state.query, 0);
+        ExportModel exportModel = state.getExportModel();
+        exportModel.setParquetDefaults(engine.getConfiguration());
+        exportModel.setPartitionBy(PartitionBy.NONE);
+        exportModel.setSelectText(state.query, 0);
 
         // Handle partition_by option
         DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);
@@ -385,7 +385,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 sendException(response, 0, e.getFlyweightMessage(), state);
                 return false;
             }
-            copyModel.setCompressionCodec(codec);
+            exportModel.setCompressionCodec(codec);
         }
 
         // Handle compression_level option
@@ -393,7 +393,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (compressionLevel != null && compressionLevel.size() > 0) {
             try {
                 int level = Numbers.parseInt(compressionLevel);
-                copyModel.setCompressionLevel(level, 0);
+                exportModel.setCompressionLevel(level, 0);
             } catch (NumericException e) {
                 errSink.clear();
                 errSink.put("invalid compression level:").put(compressionLevel);
@@ -403,7 +403,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         try {
-            copyModel.validCompressOptions();
+            exportModel.validCompressOptions();
         } catch (SqlException e) {
             sendException(response, 0, e.getFlyweightMessage(), state);
             return false;
@@ -414,7 +414,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (rowGroupSize != null && rowGroupSize.size() > 0) {
             try {
                 int size = Numbers.parseInt(rowGroupSize);
-                copyModel.setRowGroupSize(size);
+                exportModel.setRowGroupSize(size);
             } catch (NumericException e) {
                 errSink.clear();
                 errSink.put("invalid row group size:").put(rowGroupSize);
@@ -428,7 +428,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (dataPageSize != null && dataPageSize.size() > 0) {
             try {
                 int size = Numbers.parseInt(dataPageSize);
-                copyModel.setDataPageSize(size);
+                exportModel.setDataPageSize(size);
             } catch (NumericException e) {
                 errSink.clear();
                 errSink.put("invalid data page size:").put(dataPageSize);
@@ -441,7 +441,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         DirectUtf8Sequence statisticsEnabled = request.getUrlParam(EXPORT_PARQUET_OPTION_STATISTICS_ENABLED);
         if (statisticsEnabled != null && statisticsEnabled.size() > 0) {
             boolean enabled = HttpKeywords.isTrue(statisticsEnabled);
-            copyModel.setStatisticsEnabled(enabled);
+            exportModel.setStatisticsEnabled(enabled);
         }
 
         // Handle parquet_version option
@@ -449,16 +449,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (parquetVersion != null && parquetVersion.size() > 0) {
             try {
                 int version = Numbers.parseInt(parquetVersion);
-                if (version != CopyModel.PARQUET_VERSION_V1 && version != CopyModel.PARQUET_VERSION_V2) {
+                if (version != ExportModel.PARQUET_VERSION_V1 && version != ExportModel.PARQUET_VERSION_V2) {
                     errSink.clear();
                     errSink.put("invalid parquet version: ").put(parquetVersion)
                             .put(", supported versions: ")
-                            .put(CopyModel.PARQUET_VERSION_V1).put(", ")
-                            .put(CopyModel.PARQUET_VERSION_V2);
+                            .put(ExportModel.PARQUET_VERSION_V1).put(", ")
+                            .put(ExportModel.PARQUET_VERSION_V2);
                     sendException(response, 0, errSink, state);
                     return false;
                 }
-                copyModel.setParquetVersion(version);
+                exportModel.setParquetVersion(version);
             } catch (NumericException e) {
                 errSink.clear();
                 errSink.put("invalid parquet version:").put(parquetVersion);
@@ -471,7 +471,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         DirectUtf8Sequence rawArrayEncoding = request.getUrlParam(EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING);
         if (rawArrayEncoding != null && rawArrayEncoding.size() > 0) {
             boolean enabled = HttpKeywords.isTrue(rawArrayEncoding);
-            copyModel.setRawArrayEncoding(enabled);
+            exportModel.setRawArrayEncoding(enabled);
         }
 
         return true;
@@ -505,7 +505,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var createOp = copyContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
                         selectText,
-                        state.getCopyModel().getPartitionBy(),
+                        state.getExportModel().getPartitionBy(),
                         tableName,
                         "",
                         0
@@ -517,14 +517,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         exportResult,
                         tableName,
                         fileName,
-                        state.getCopyModel().getCompressionCodec(),
-                        state.getCopyModel().getCompressionLevel(),
-                        state.getCopyModel().getRowGroupSize(),
-                        state.getCopyModel().getDataPageSize(),
-                        state.getCopyModel().isStatisticsEnabled(),
-                        state.getCopyModel().getParquetVersion(),
-                        state.getCopyModel().isRawArrayEncoding(),
-                        state.getCopyModel().isUserSpecifiedExportOptions()
+                        state.getExportModel().getCompressionCodec(),
+                        state.getExportModel().getCompressionLevel(),
+                        state.getExportModel().getRowGroupSize(),
+                        state.getExportModel().getDataPageSize(),
+                        state.getExportModel().isStatisticsEnabled(),
+                        state.getExportModel().getParquetVersion(),
+                        state.getExportModel().isRawArrayEncoding(),
+                        state.getExportModel().isUserSpecifiedExportOptions()
                 );
 
                 parquetExporter.of(task, sqlExecutionCircuitBreaker);
@@ -628,7 +628,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
         final HttpChunkedResponse response = context.getChunkedResponse();
 
-        if (state.getCopyModel().isParquetFormat()) {
+        if (state.getExportModel().isParquetFormat()) {
             doParquetExport(context);
             return;
         }
@@ -877,13 +877,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.delimiter = (char) delimiter.byteAt(0);
         }
 
-        CopyModel copyModel = state.getCopyModel();
-        copyModel.clear();
-        copyModel.setFormat(CopyModel.COPY_FORMAT_CSV);
+        ExportModel exportModel = state.getExportModel();
+        exportModel.clear();
+        exportModel.setFormat(ExportModel.COPY_FORMAT_CSV);
         DirectUtf8Sequence format = request.getUrlParam(URL_PARAM_FMT);
         if (format != null && format.size() > 0) {
             if (SqlKeywords.isParquetKeyword(format.asAsciiCharSequence())) {
-                copyModel.setFormat(COPY_FORMAT_PARQUET);
+                exportModel.setFormat(COPY_FORMAT_PARQUET);
             } else if (!SqlKeywords.isCsvKeyword(format.asAsciiCharSequence())) {
                 errSink.clear();
                 errSink.put("unrecognised format [format=").put(format).put("]");
@@ -891,13 +891,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 return false;
             }
         }
-        if (copyModel.isParquetFormat()) {
+        if (exportModel.isParquetFormat()) {
             if (!configureParquetOptions(request, response, state)) {
                 return false;
             }
         }
 
-        if (copyModel.isParquetFormat()) { // parquet use export timeout
+        if (exportModel.isParquetFormat()) { // parquet use export timeout
             timeout = configuration.getExportTimeout();
         } else { // csv use query timeout
             timeout = circuitBreaker.getDefaultMaxTime();
@@ -1105,7 +1105,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             int statusCode
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        boolean isParquet = state.getCopyModel().isParquetFormat();
+        boolean isParquet = state.getExportModel().isParquetFormat();
         String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
         String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);

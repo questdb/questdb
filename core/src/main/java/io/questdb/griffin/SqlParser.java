@@ -40,10 +40,10 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -93,7 +93,7 @@ public class SqlParser {
     private final CharacterStore characterStore;
     private final CharSequence column;
     private final CairoConfiguration configuration;
-    private final ObjectPool<CopyModel> copyModelPool;
+    private final ObjectPool<ExportModel> copyModelPool;
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
@@ -137,7 +137,7 @@ public class SqlParser {
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
-        this.copyModelPool = new ObjectPool<>(CopyModel.FACTORY, configuration.getCopyPoolCapacity());
+        this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, configuration.getCopyPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
@@ -779,7 +779,7 @@ public class SqlParser {
 
         tok = tok(lexer, "'from' or 'to' or 'cancel'");
 
-        CopyModel model = copyModelPool.next();
+        ExportModel model = copyModelPool.next();
         if (isCancelKeyword(tok)) {
             model.setCancel(true);
             model.setTarget(target);
@@ -814,7 +814,7 @@ public class SqlParser {
             }
             assert target != null;
 
-            model.setType(CopyModel.COPY_TYPE_FROM);
+            model.setType(ExportModel.COPY_TYPE_FROM);
 
             tok = optTok(lexer);
             if (tok != null && isWithKeyword(tok)) {
@@ -887,7 +887,7 @@ public class SqlParser {
             }
 
             tok = optTok(lexer);
-            model.setType(CopyModel.COPY_TYPE_TO);
+            model.setType(ExportModel.COPY_TYPE_TO);
             if (tok == null || isSemicolon(tok)) {
                 return model;
             }
@@ -896,19 +896,19 @@ public class SqlParser {
             }
             tok = tok(lexer, "copy option");
             while (tok != null && !isSemicolon(tok)) {
-                final int optionCode = CopyModel.getExportOption(tok);
+                final int optionCode = ExportModel.getExportOption(tok);
                 switch (optionCode) {
-                    case CopyModel.COPY_OPTION_FORMAT:
+                    case ExportModel.COPY_OPTION_FORMAT:
                         // only support parquet for now
                         tok = tok(lexer, "'parquet'");
                         if (isParquetKeyword(tok)) {
-                            model.setFormat(CopyModel.COPY_FORMAT_PARQUET);
+                            model.setFormat(ExportModel.COPY_FORMAT_PARQUET);
                             model.setParquetDefaults(configuration);
                         } else {
                             throw SqlException.$(lexer.lastTokenPosition(), "unsupported format, only 'parquet' is supported");
                         }
                         break;
-                    case CopyModel.COPY_OPTION_PARTITION_BY:
+                    case ExportModel.COPY_OPTION_PARTITION_BY:
                         final ExpressionNode partitionByExpr = expectLiteral(lexer);
                         final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
                         if (partitionBy < 0) {
@@ -916,10 +916,10 @@ public class SqlParser {
                         }
                         model.setPartitionBy(partitionBy);
                         break;
-                    case CopyModel.COPY_OPTION_SIZE_LIMIT:
+                    case ExportModel.COPY_OPTION_SIZE_LIMIT:
                         // todo: add this when table writer has appropriate support for it
                         throw SqlException.$(lexer.lastTokenPosition(), "size limit is not yet supported");
-                    case CopyModel.COPY_OPTION_COMPRESSION_CODEC:
+                    case ExportModel.COPY_OPTION_COMPRESSION_CODEC:
                         ExpressionNode codecExpr = expectLiteral(lexer);
                         int codec = ParquetCompression.getCompressionCodec(codecExpr.token);
                         if (codec < 0) {
@@ -929,29 +929,29 @@ public class SqlParser {
                         }
                         model.setCompressionCodec(codec);
                         break;
-                    case CopyModel.COPY_OPTION_COMPRESSION_LEVEL:
+                    case ExportModel.COPY_OPTION_COMPRESSION_LEVEL:
                         model.setCompressionLevel(expectInt(lexer), lexer.lastTokenPosition());
                         break;
-                    case CopyModel.COPY_OPTION_ROW_GROUP_SIZE:
+                    case ExportModel.COPY_OPTION_ROW_GROUP_SIZE:
                         model.setRowGroupSize(expectInt(lexer));
                         break;
-                    case CopyModel.COPY_OPTION_DATA_PAGE_SIZE:
+                    case ExportModel.COPY_OPTION_DATA_PAGE_SIZE:
                         model.setDataPageSize(expectInt(lexer));
                         break;
-                    case CopyModel.COPY_OPTION_RAW_ARRAY_ENCODING:
+                    case ExportModel.COPY_OPTION_RAW_ARRAY_ENCODING:
                         model.setRawArrayEncoding(expectBoolean(lexer));
                         break;
-                    case CopyModel.COPY_OPTION_STATISTICS_ENABLED:
+                    case ExportModel.COPY_OPTION_STATISTICS_ENABLED:
                         model.setStatisticsEnabled(expectBoolean(lexer));
                         break;
-                    case CopyModel.COPY_OPTION_PARQUET_VERSION:
+                    case ExportModel.COPY_OPTION_PARQUET_VERSION:
                         int parquetVersion = expectInt(lexer);
-                        if (parquetVersion != CopyModel.PARQUET_VERSION_V1 && parquetVersion != CopyModel.PARQUET_VERSION_V2) {
+                        if (parquetVersion != ExportModel.PARQUET_VERSION_V1 && parquetVersion != ExportModel.PARQUET_VERSION_V2) {
                             throw SqlException.$(lexer.lastTokenPosition(), "invalid parquet version: ").put(parquetVersion).put(", expected 1 or 2");
                         }
                         model.setParquetVersion(parquetVersion);
                         break;
-                    case CopyModel.COPY_OPTION_UNKNOWN:
+                    case ExportModel.COPY_OPTION_UNKNOWN:
                         throw SqlException.$(lexer.lastTokenPosition(), "unrecognised option [option=")
                                 .put(tok).put(']');
                 }

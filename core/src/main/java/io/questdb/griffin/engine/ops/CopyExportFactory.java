@@ -43,7 +43,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -89,7 +89,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     public CopyExportFactory(
             CairoEngine engine,
-            CopyModel model,
+            ExportModel model,
             SecurityContext securityContext,
             CharSequence sqlText
     ) throws SqlException {
@@ -220,7 +220,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private void of(
             MessageBus messageBus,
             CopyExportContext exportContext,
-            CopyModel model,
+            ExportModel model,
             CopyExportResult result,
             SecurityContext securityContext,
             CharSequence sqlText,

@@ -34,7 +34,7 @@ import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -193,7 +193,7 @@ public class CopyImportTest extends AbstractCairoTest {
     public void testDefaultCopyOptions() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
+                ExportModel model = (ExportModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
                 assertEquals("y", model.getTableName().toString());
                 assertEquals("'somefile.csv'", model.getFileName().token.toString());
@@ -1129,12 +1129,12 @@ public class CopyImportTest extends AbstractCairoTest {
                 for (int p = 0; p < partitionBy.length / 2; p += 2) {
                     for (int o = 0; o < onError.length / 2; o += 2) {
 
-                        CopyModel model;
+                        ExportModel model;
                         if (upperCase) {
-                            model = (CopyModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
+                            model = (ExportModel) compiler.testCompileModel("COPY x FROM 'somefile.csv' WITH HEADER TRUE " +
                                     "PARTITION BY " + partitionBy[p] + " TIMESTAMP 'ts1' FORMAT 'yyyy-MM-ddTHH:mm:ss' DELIMITER ';' ON ERROR " + onError[o] + ";'", sqlExecutionContext);
                         } else {
-                            model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
+                            model = (ExportModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true " +
                                     "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
                         }
 

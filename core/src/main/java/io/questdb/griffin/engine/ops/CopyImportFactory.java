@@ -38,7 +38,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
-import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExportModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -74,7 +74,7 @@ public class CopyImportFactory extends AbstractRecordCursorFactory {
             CopyImportContext copyImportContext,
             String tableName,
             String fileName,
-            CopyModel model
+            ExportModel model
     ) {
         super(METADATA);
         this.messageBus = messageBus;
