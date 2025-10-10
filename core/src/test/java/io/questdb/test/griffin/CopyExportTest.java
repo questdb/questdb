@@ -659,8 +659,8 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "jpyusd\t1.321\t2023-11-10T12:00:00.000000000Z\n",
                                 "select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-11.parquet')");
                         assertSql("path\tsize\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t950\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t955\n",
+                                        "price_1h" + File.separator + "2023-09.parquet\t948\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t953\n",
                                 "SELECT path, size from export_files()  order by path");
                     });
 
