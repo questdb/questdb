@@ -67,13 +67,32 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-other:
+        mac-other-cutlass-tcp:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
+          includeTests: "**/cutlass/line/tcp/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-other-cutlass-rest:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cutlass/**"
+          excludeTests: "**/cutlass/line/tcp/**,**/cutlass/pgwire/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-other-core:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin:
@@ -152,13 +171,32 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-other:
+        windows-other-cutlass-tcp:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
+          includeTests: "**/cutlass/line/tcp/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-other-cutlass-rest:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cutlass/**"
+          excludeTests: "**/cutlass/line/tcp/**,**/cutlass/pgwire/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-other-core:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
 
