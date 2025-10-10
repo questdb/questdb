@@ -79,33 +79,44 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
-    public ExportTaskEntry assignExportEntry(SecurityContext securityContext, CharSequence sql, CharSequence path, SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker) throws SqlException {
+    public ExportTaskEntry assignExportEntry(SecurityContext securityContext,
+                                             CharSequence sql,
+                                             CharSequence path,
+                                             SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker,
+                                             CopyTrigger trigger) throws SqlException {
+        assert trigger != CopyTrigger.NONE;
         lock.writeLock().lock();
         try {
-            ExportTaskEntry entry = exportSql.get(sql);
-            if (entry != null) {
-                StringSink sink = Misc.getThreadLocalSink();
-                Numbers.appendHex(sink, entry.id, true);
-                throw SqlException.$(0, "duplicate sql statement: ").put(sql).put(" [id=").put(sink).put(']');
-            }
-            if (path != null) {
-                entry = exportPath.get(path);
+            ExportTaskEntry entry;
+            if (trigger == CopyTrigger.SQL) {
+                entry = exportSql.get(sql);
                 if (entry != null) {
                     StringSink sink = Misc.getThreadLocalSink();
                     Numbers.appendHex(sink, entry.id, true);
-                    throw SqlException.$(0, "duplicate export path: ").put(path).put(" [id=").put(sink).put(']');
+                    throw SqlException.$(0, "duplicate sql statement: ").put(sql).put(" [id=").put(sink).put(']');
+                }
+                if (path != null) {
+                    entry = exportPath.get(path);
+                    if (entry != null) {
+                        StringSink sink = Misc.getThreadLocalSink();
+                        Numbers.appendHex(sink, entry.id, true);
+                        throw SqlException.$(0, "duplicate export path: ").put(path).put(" [id=").put(sink).put(']');
+                    }
                 }
             }
+
             long id;
             int index;
             do {
                 id = copyIDSupplier.getAsLong();
             } while ((index = activeExports.keyIndex(id)) < 0);
-            entry = exportTaskEntryPools.next().of(id, securityContext, sql, path, sqlExecutionCircuitBreaker);
+            entry = exportTaskEntryPools.next().of(id, securityContext, sql, path, sqlExecutionCircuitBreaker, trigger);
             activeExports.putAt(index, id, entry);
-            exportSql.put(sql, entry);
-            if (path != null) {
-                exportPath.put(path, entry);
+            if (trigger == CopyTrigger.SQL) {
+                exportSql.put(sql, entry);
+                if (path != null) {
+                    exportPath.put(path, entry);
+                }
             }
             return entry;
         } finally {
@@ -183,6 +194,8 @@ public class CopyExportContext {
                 entry.totalPartitionCount = e.totalPartitionCount;
                 entry.totalRowCount = e.totalRowCount;
                 entry.principal = e.securityContext != null ? e.securityContext.getPrincipal() : null;
+                entry.sql = e.sql.toString();
+                entry.trigger = e.trigger.name;
                 return true;
             }
             return false;
@@ -366,6 +379,17 @@ public class CopyExportContext {
         return createOp;
     }
 
+    public enum CopyTrigger {
+        NONE(null),
+        SQL("copy sql"),
+        HTTP("http export");
+        private final String name;
+
+        CopyTrigger(String name) {
+            this.name = name;
+        }
+    }
+
     public static class ExportTaskData {
         public CharSequence principal;
         private int finishedPartitionCount = 0;
@@ -377,8 +401,8 @@ public class CopyExportContext {
         private long startTime;
         private int totalPartitionCount = 0;
         private long totalRowCount = 0;
+        private CharSequence trigger;
         private int workerId = -1;
-
 
         public int getFinishedPartitionCount() {
             return finishedPartitionCount;
@@ -420,6 +444,10 @@ public class CopyExportContext {
             return totalRowCount;
         }
 
+        public CharSequence getTrigger() {
+            return trigger;
+        }
+
         public int getWorkerId() {
             return workerId;
         }
@@ -438,6 +466,7 @@ public class CopyExportContext {
         long startTime = Numbers.LONG_NULL;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
+        CopyTrigger trigger = CopyTrigger.NONE;
         int workerId = -1;
 
         @Override
@@ -455,6 +484,7 @@ public class CopyExportContext {
             realCircuitBreaker = null;
             this.totalPartitionCount = 0;
             this.totalRowCount = 0;
+            this.trigger = CopyTrigger.NONE;
         }
 
         public SqlExecutionCircuitBreaker getCircuitBreaker() {
@@ -473,7 +503,8 @@ public class CopyExportContext {
                                   SecurityContext context,
                                   CharSequence sql,
                                   CharSequence path,
-                                  SqlExecutionCircuitBreaker circuitBreaker) {
+                                  SqlExecutionCircuitBreaker circuitBreaker,
+                                  CopyTrigger trigger) {
             this.id = id;
             this.securityContext = context;
             this.sql.put(sql);
@@ -485,6 +516,7 @@ public class CopyExportContext {
                 this.realCircuitBreaker = circuitBreaker;
             }
             this.phase = CopyExportRequestTask.Phase.WAITING;
+            this.trigger = trigger;
             return this;
         }
 

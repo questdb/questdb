@@ -65,9 +65,9 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
     private static class ExportActivityCursor implements NoRandomAccessRecordCursor {
         private final CopyExportContext copyExportContext;
+        private final CopyExportContext.ExportTaskData entry;
         private final LongList entryIds = new LongList();
         private final ExportActivityRecord record = new ExportActivityRecord();
-        private final CopyExportContext.ExportTaskData entry;
         private int entryIndex;
         private boolean isAdmin;
         private CharSequence principal;
@@ -154,39 +154,43 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrA(int col) {
-                if (col == 0) { // export id
-                    idSink.clear();
-                    Numbers.appendHex(idSink, entry.getId(), true);
-                    return idSink;
-                } else if (col == 2) { // username
-                    return entry.getPrincipal();
-                } else if (col == 4) { // phase
-                    return entry.getPhase() != null ? entry.getPhase().getName() : null;
-                } else if (col == 5) { // export path
-                    return entry.getPath();
-                } else if (col == 6) { // export sql
-                    return entry.getSql();
-                } else if (col == 7) { // message
-                    if (entry.getPhase() == null) {
-                        return null;
-                    }
-                    switch (entry.getPhase()) {
-                        case POPULATING_TEMP_TABLE:
-                            msgSink.clear();
-                            msgSink.put("rows: ").put(entry.getPopulatedRowCount());
-                            if (entry.getTotalRowCount() > 0) {
-                                msgSink.put(" / ").put(entry.getTotalRowCount());
-                            }
-                            return msgSink;
-                        case CONVERTING_PARTITIONS:
-                            msgSink.clear();
-                            msgSink.put("finish partition count: ").put(entry.getFinishedPartitionCount()).put(" / ").put(entry.getTotalPartitionCount());
-                            return msgSink;
-                        default:
+                switch (col) {
+                    case 0: // export id
+                        idSink.clear();
+                        Numbers.appendHex(idSink, entry.getId(), true);
+                        return idSink;
+                    case 2: // username
+                        return entry.getPrincipal();
+                    case 4: // phase
+                        return entry.getPhase() != null ? entry.getPhase().getName() : null;
+                    case 5: // request source
+                        return entry.getTrigger();
+                    case 6: // export path
+                        return entry.getPath();
+                    case 7: // export sql
+                        return entry.getSql();
+                    case 8: // message
+                        if (entry.getPhase() == null) {
                             return null;
-                    }
+                        }
+                        switch (entry.getPhase()) {
+                            case POPULATING_TEMP_TABLE:
+                                msgSink.clear();
+                                msgSink.put("rows: ").put(entry.getPopulatedRowCount());
+                                if (entry.getTotalRowCount() > 0) {
+                                    msgSink.put(" / ").put(entry.getTotalRowCount());
+                                }
+                                return msgSink;
+                            case CONVERTING_PARTITIONS:
+                                msgSink.clear();
+                                msgSink.put("finish partition count: ").put(entry.getFinishedPartitionCount()).put(" / ").put(entry.getTotalPartitionCount());
+                                return msgSink;
+                            default:
+                                return null;
+                        }
+                    default:
+                        return Record.super.getStrA(col);
                 }
-                return Record.super.getStrA(col);
             }
 
             @Override
@@ -243,6 +247,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("username", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("start_time", ColumnType.TIMESTAMP_MICRO));
         metadata.add(new TableColumnMetadata("phase", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("request_source", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("export_path", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("export_sql", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("message", ColumnType.STRING));

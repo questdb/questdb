@@ -99,7 +99,8 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText, this.fileName, sqlExecutionCircuitBreaker);
+        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText,
+                this.fileName, sqlExecutionCircuitBreaker, CopyExportContext.CopyTrigger.SQL);
         long copyID = entry.getId();
         try {
             CreateTableOperation createOp = null;

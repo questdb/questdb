@@ -493,7 +493,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 var copyContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
 
-                entry = copyContext.assignExportEntry(securityContext, selectText, fileName, sqlExecutionCircuitBreaker);
+                entry = copyContext.assignExportEntry(securityContext, selectText, fileName, sqlExecutionCircuitBreaker, CopyExportContext.CopyTrigger.HTTP);
                 long copyID = entry.getId();
                 exportResult.setCopyID(copyID);
 

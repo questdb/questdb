@@ -56,7 +56,8 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
                     regularUserContext.getSecurityContext(),
                     "select * from test_table",
                     "test",
-                    null
+                    null,
+                    CopyExportContext.CopyTrigger.SQL
             );
             entry.setStartTime(1000, 1);
             entry.setPopulatedRowCount(2);
@@ -65,9 +66,9 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
 
             try {
                 assertQuery(
-                        "worker_id\tusername\tstart_time\tphase\texport_path\texport_sql\tmessage\n" +
-                                "1\tbob\t1970-01-01T00:00:00.001000Z\tpopulating_data_to_temp_table\ttest\t\trows: 2 / 3\n",
-                        "select worker_id, username, start_time, phase, export_path, export_sql, message from export_activity()",
+                        "worker_id\tusername\tstart_time\tphase\texport_path\trequest_source\texport_sql\tmessage\n" +
+                                "1\tbob\t1970-01-01T00:00:00.001000Z\tpopulating_data_to_temp_table\ttest\tcopy sql\tselect * from test_table\trows: 2 / 3\n",
+                        "select worker_id, username, start_time, phase, export_path, request_source, export_sql, message from export_activity()",
                         null,
                         false,
                         false
@@ -81,7 +82,7 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testEmptyExportActivityWhenNoExports() throws Exception {
         assertQuery(
-                "export_id\tworker_id\tusername\tstart_time\tphase\texport_path\texport_sql\tmessage\n",
+                "export_id\tworker_id\tusername\tstart_time\tphase\trequest_source\texport_path\texport_sql\tmessage\n",
                 "select * from export_activity()",
                 null,
                 false,
@@ -97,23 +98,25 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
                     regularUserContext.getSecurityContext(),
                     "copy test_table to 'user_export.parquet'",
                     "user_export.parquet",
-                    null
+                    null,
+                    CopyExportContext.CopyTrigger.SQL
             );
             userEntry.setStartTime(2000, 1);
             CopyExportContext.ExportTaskEntry adminEntry = copyExportContext.assignExportEntry(
                     adminUserContext.getSecurityContext(),
                     "copy test_table to 'admin_export.parquet'",
                     "admin_export.parquet",
-                    null
+                    null,
+                    CopyExportContext.CopyTrigger.HTTP
             );
             adminEntry.setStartTime(3000, 2);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 assertQueryNoLeakCheck(
                         compiler,
-                        "worker_id\tusername\tstart_time\tphase\texport_path\texport_sql\tmessage\n" +
-                                "1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\t\t\n" +
-                                "2\tadmin\t1970-01-01T00:00:00.003000Z\twait_to_run\tadmin_export.parquet\t\t\n",
-                        "select worker_id, username, start_time, phase, export_path, export_sql, message from export_activity() order by start_time",
+                        "worker_id\tusername\tstart_time\tphase\texport_path\trequest_source\trequest_source1\texport_sql\tmessage\n" +
+                                "1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\tcopy sql\tcopy sql\tcopy test_table to 'user_export.parquet'\t\n" +
+                                "2\tadmin\t1970-01-01T00:00:00.003000Z\twait_to_run\tadmin_export.parquet\thttp export\thttp export\tcopy test_table to 'admin_export.parquet'\t\n",
+                        "select worker_id, username, start_time, phase, export_path, request_source, request_source, export_sql, message from export_activity() order by start_time",
                         "start_time",
                         adminUserContext,
                         true,
@@ -122,9 +125,9 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
 
                 assertQueryNoLeakCheck(
                         compiler,
-                        "worker_id\tusername\tstart_time\tphase\texport_path\texport_sql\tmessage\n" +
-                                "1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\t\t\n",
-                        "select worker_id, username, start_time, phase, export_path, export_sql, message from export_activity()",
+                        "worker_id\tusername\tstart_time\tphase\texport_path\trequest_source\texport_sql\tmessage\n" +
+                                "1\tbob\t1970-01-01T00:00:00.002000Z\twait_to_run\tuser_export.parquet\tcopy sql\tcopy test_table to 'user_export.parquet'\t\n",
+                        "select worker_id, username, start_time, phase, export_path, request_source, export_sql, message from export_activity()",
                         null,
                         regularUserContext,
                         false,
