@@ -71,7 +71,7 @@ import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class SampleByNanoTimestampTest extends AbstractCairoTest {
     public static final String FROM_TO_DDL = "create table fromto as (\n" +
-            "  SELECT timestamp_sequence(\n" +
+            "  SELECT timestamp_sequence_ns(\n" +
             "            to_timestamp_ns('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
             "            1800000000000L) as ts, " +
             "x, " +
@@ -118,7 +118,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000::timestamp_ns, 3600000000) k" +
+                        " timestamp_sequence_ns(172800000000, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -142,7 +142,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
         execute("insert into telem " +
                 "select" +
-                " timestamp_sequence('2025-01-20T13:57:14.000000000Z'::timestamp_ns, 2500000)," +
+                " timestamp_sequence_ns('2025-01-20T13:57:14.000000000Z', 2500000)," +
                 " rnd_int() % 4," +
                 " rnd_int() % 100," +
                 " abs(rnd_double())" +
@@ -509,7 +509,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_geohash(30) g4," +
                         " rnd_geohash(40) g8," +
                         " rnd_symbol(2,3,4,0) s, " +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
@@ -542,7 +542,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_geohash(30) g4," +
                         " rnd_geohash(40) g8," +
                         " rnd_symbol(2,3,4,0) s, " +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
@@ -560,7 +560,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -606,7 +606,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " abs(rnd_int()) Confirmed," +
                         " abs(rnd_int()) Recovered," +
                         " abs(rnd_int()) Deaths," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) LastUpdate" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) LastUpdate" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
@@ -652,7 +652,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " abs(rnd_int()) Confirmed," +
                         " abs(rnd_int()) Recovered," +
                         " abs(rnd_int()) Deaths," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) LastUpdate" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) LastUpdate" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
@@ -696,7 +696,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -710,7 +710,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(277200000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(277200000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -764,7 +764,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000000::timestamp_ns, 1000000000000) k" +
+                        "   timestamp_sequence_ns(172800000000000, 1000000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",
@@ -1328,7 +1328,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-27T23:30:00.00000000Z', 100000000000) k" +
+                        "   timestamp_sequence_ns('2021-03-27T23:30:00.00000000Z', 100000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "),index(s) timestamp(k) partition by DAY",
@@ -1357,7 +1357,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.000000000Z', 60*1000000000L) k" +
+                            "   timestamp_sequence_ns('2021-03-28T00:59:00.000000000Z', 60*1000000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY",
@@ -1443,7 +1443,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
+                            "   timestamp_sequence_ns('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"
@@ -1497,7 +1497,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -1523,7 +1523,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:00:00.00000000Z', 60*1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-28T01:00:00.00000000Z', 60*1000000000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -1550,7 +1550,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T01:59:00.000000000Z', 60*1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-28T01:59:00.000000000Z', 60*1000000000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -1576,7 +1576,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-27T23:01:00.00000000Z', 60*1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-27T23:01:00.00000000Z', 60*1000000000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -1607,7 +1607,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2020-10-23T20:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2020-10-23T20:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         "),index(s) timestamp(k)",
@@ -1639,7 +1639,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b') s," +
-                        "   timestamp_sequence('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)",
@@ -1672,7 +1672,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b') s," +
-                        "   timestamp_sequence('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)",
@@ -1702,7 +1702,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         "),index(s) timestamp(k)",
@@ -1740,7 +1740,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2020-01-01T20:30:00.000000000Z', 35 * 6 * 59 * 1000000000L) k" + // ~3.5 hour interval
+                        "   timestamp_sequence_ns('2020-01-01T20:30:00.000000000Z', 35 * 6 * 59 * 1000000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
                         "),index(s) timestamp(k)",
@@ -1780,7 +1780,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('b',null,'a') s," +
-                        "   timestamp_sequence('2020-01-01 00:30:00'::timestamp_ns, 35 * 6 * 59 * 1000000000L) k" + // ~3.5 hour interval
+                        "   timestamp_sequence_ns('2020-01-01 00:30:00', 35 * 6 * 59 * 1000000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
                         "),index(s) timestamp(k)",
@@ -1808,7 +1808,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         "),index(s) timestamp(k)",
@@ -1840,7 +1840,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b') s," +
-                        "   timestamp_sequence('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-26T20:30:00.000000000Z', 13 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)",
@@ -1868,7 +1868,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2020-10-23T20:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2020-10-23T20:30:00.000000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         "),index(s) timestamp(k)",
@@ -1900,7 +1900,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b') s," +
-                        "   timestamp_sequence('2020-10-23 20:30:00.000000000Z', 259 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2020-10-23 20:30:00.000000000Z', 259 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)",
@@ -1982,7 +1982,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000000::timestamp_ns, 1000000000000) k" +
+                        "   timestamp_sequence_ns(172800000000000, 1000000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",
@@ -2403,7 +2403,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "sample by 10T align to first observation  limit -100\n",
                 "create table sam_by_tst as (\n" +
                         "select rnd_symbol('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g') as s,\n" +
-                        "timestamp_sequence('2021-01-01'::timestamp_ns, rnd_short(1,5) * 10000000L) as k,\n" +
+                        "timestamp_sequence_ns('2021-01-01', rnd_short(1,5) * 10000000L) as k,\n" +
                         "x as lat,\n" +
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
@@ -2538,7 +2538,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000000::timestamp_ns, 1000000000000) k" +
+                        "   timestamp_sequence_ns(172800000000000, 1000000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY",
@@ -2603,7 +2603,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000000::timestamp_ns, 1000000000000) k" +
+                        "   timestamp_sequence_ns(172800000000000, 1000000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY"
@@ -2628,7 +2628,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence(172800000000000::timestamp_ns, 1000000000000) k" +
+                        "   timestamp_sequence_ns(172800000000000, 1000000000000) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY"
@@ -2911,7 +2911,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t20\t2022-02-24T08:00:00.000000000Z\n",
                 "select first(today), count(x), ts " +
                         "from ( " +
-                        "  select today('UTC-06:00') today, x, timestamp_sequence('2022-02-24'::timestamp_ns, 60*1000*1000000) ts " +
+                        "  select today('UTC-06:00') today, x, timestamp_sequence_ns('2022-02-24', 60*1000*1000000) ts " +
                         "  from long_sequence(500) " +
                         ") timestamp(ts) " +
                         "SAMPLE by 1h;"
@@ -2933,7 +2933,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_symbol(5,4,4,1) sym," +
                         " rnd_symbol(5,4,4,1) sym2," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) ts" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day",
                 0,
@@ -2979,7 +2979,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_symbol(5,4,4,1) sym," +
                         " rnd_symbol(5,4,4,1) sym2," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) ts" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day",
                 95,
@@ -3004,7 +3004,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_symbol(5,4,4,1) sym," +
                         " rnd_symbol(5,4,4,1) sym2," +
-                        " timestamp_sequence(172800000000::timestamp_ns, 3600000000000) ts" +
+                        " timestamp_sequence_ns(172800000000, 3600000000000) ts" +
                         " from long_sequence(20)" +
                         ") timestamp(ts) partition by day",
                 145,
@@ -3022,7 +3022,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3041,7 +3041,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3663,7 +3663,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000001001::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000001001, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE", "k",
@@ -3725,7 +3725,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000001::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000001, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -3748,7 +3748,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_geohash(30) b," +
-                        " timestamp_sequence(172800000000001::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000001, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE", "k",
@@ -3794,7 +3794,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " abs(rnd_int()) Confirmed," +
                         " abs(rnd_int()) Recovered," +
                         " abs(rnd_int()) Deaths," +
-                        " timestamp_sequence(172800000000001::timestamp_ns, 3600000000000) LastUpdate" +
+                        " timestamp_sequence_ns(172800000000001, 3600000000000) LastUpdate" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
@@ -3840,7 +3840,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " abs(rnd_int()) Confirmed," +
                         " abs(rnd_int()) Recovered," +
                         " abs(rnd_int()) Deaths," +
-                        " timestamp_sequence(172800000000001::timestamp_ns, 3600000000000) LastUpdate" +
+                        " timestamp_sequence_ns(172800000000001, 3600000000000) LastUpdate" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
@@ -3930,7 +3930,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "create table x as " +
                         "(" +
                         "select" +
-                        " timestamp_sequence(172800000000001::timestamp_ns, 12000000000) k" +
+                        " timestamp_sequence_ns(172800000000001, 12000000000) k" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(k) partition by NONE",
@@ -3958,7 +3958,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)",
@@ -3983,7 +3983,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-27T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-27T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(k) partition by NONE",
@@ -4009,7 +4009,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-30T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-30T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from" +
                         " long_sequence(600)" +
                         ") timestamp(k) partition by NONE",
@@ -4038,7 +4038,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)",
@@ -4202,7 +4202,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a') s," +
-                        "   timestamp_sequence('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-28T00:59:00.00000000Z', 60*1000000000L) k" +
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
@@ -4232,7 +4232,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_symbol('a','b','c') s1," +
                         "   rnd_symbol('foo','bar') s2," +
                         "   rnd_double(1) d1," +
-                        "   timestamp_sequence('2023-05-16T00:00:00.00000000Z', 60*1000000000L) ts" +
+                        "   timestamp_sequence_ns('2023-05-16T00:00:00.00000000Z', 60*1000000000L) ts" +
                         "   from long_sequence(100)" +
                         "), index(s1), index(s2) timestamp(ts) partition by DAY",
                 null,
@@ -4824,7 +4824,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(172800000000000::timestamp_ns, 100000) k" +
+                " timestamp_sequence_ns(172800000000000, 100000) k" +
                 " from" +
                 " long_sequence(0)" +
                 ") timestamp(k) partition by NONE";
@@ -5010,7 +5010,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T00:20:00.000000000Z' as timestamp_ns), 300000000000) k" +
+                        " timestamp_sequence_ns(cast('1970-01-03T00:20:00.000000000Z' as timestamp_ns), 300000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5042,7 +5042,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5076,7 +5076,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
@@ -5108,7 +5108,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5150,7 +5150,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:15:00.000000000Z' as timestamp_ns), 6*60000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5176,7 +5176,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 300000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 300000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5195,7 +5195,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "select" +
                             " rnd_double(0)*100 a," +
                             " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000000::timestamp_ns, 300000000000) k" +
+                            " timestamp_sequence_ns(172800000000000, 300000000000) k" +
                             " from" +
                             " long_sequence(100)" +
                             ") timestamp(k) partition by NONE"
@@ -5288,7 +5288,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 300000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 300000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5315,7 +5315,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T00:01:00.00000Z' as timestamp_ns), 300000000000) k" +
+                        " timestamp_sequence_ns(cast('1970-01-03T00:01:00.00000Z' as timestamp_ns), 300000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -5431,7 +5431,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)",
@@ -5793,8 +5793,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "create table 'nAS_ControlPlane_SIP' as " +
                         "(" +
                         "select" +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) cal_timestamp_time," +
-                        " timestamp_sequence(172000000000000::timestamp_ns, 1800000000000) controlplane_transaction_start_time," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) cal_timestamp_time," +
+                        " timestamp_sequence_ns(172000000000000, 1800000000000) controlplane_transaction_start_time," +
                         " rnd_symbol(2,3,4,0) device_name," +
                         " rnd_symbol(2,3,4,0) application_name," +
                         " rnd_symbol(2,3,4,0) application_group," +
@@ -5821,7 +5821,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "   rnd_double(1)*180 lat," +
                         "   rnd_double(1)*180 lon," +
                         "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
+                        "   timestamp_sequence_ns('2021-03-25T23:30:00.00000000Z', 50 * 60 * 1000000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
                         ") timestamp(k)",
@@ -5855,7 +5855,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_str('btcusdt', 'ethusdt') market_id," +
                         " rnd_double(0) * 100 price," +
                         " rnd_double(0) * 100 amount," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000) created_at" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000) created_at" +
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
@@ -5885,7 +5885,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_varchar('btcusdt', 'ethusdt') market_id," +
                         " rnd_double(0) * 100 price," +
                         " rnd_double(0) * 100 amount," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000) created_at" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000) created_at" +
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
@@ -5952,7 +5952,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_double(0) * 100 price," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) created_at" + // 1 hour step
+                        " timestamp_sequence_ns(0, 3600000000000) created_at" + // 1 hour step
                         " from long_sequence(10)" + // 10 rows
                         ") timestamp(created_at) partition by day",
                 "created_at###DESC",
@@ -6140,7 +6140,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T02:00:00.000000000Z' as timestamp_ns), 360000000000) k" +
+                        " timestamp_sequence_ns('1970-01-03T02:00:00.000000000Z', 360000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -6149,7 +6149,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(CAST('1970-01-03T13:10:00.000000000Z' as timestamp), 360000000) k" +
+                        " timestamp_sequence('1970-01-03T13:10:00.000000000Z', 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
@@ -6248,7 +6248,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T02:00:00.000000000Z' as timestamp_ns), 360000000000) k" +
+                        " timestamp_sequence_ns('1970-01-03T02:00:00.000000000Z', 360000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -6257,7 +6257,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(CAST('1970-01-03T13:10:00.000000000Z' as timestamp), 360000000) k" +
+                        " timestamp_sequence(cast('1970-01-03T13:10:00.000000000Z' as timestamp), 360000000) k" +
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
@@ -6356,7 +6356,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 360000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 360000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -6507,7 +6507,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 360000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 360000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -6657,14 +6657,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(cast('1970-01-03T02:00:00.000000000Z' as timestamp_ns), 360000000000) k" +
+                " timestamp_sequence_ns(cast('1970-01-03T02:00:00.000000000Z' as timestamp_ns), 360000000000) k" +
                 " from" +
                 " long_sequence(100)" +
                 ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
                 "select" +
                 " rnd_double(0)*100 a," +
                 " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(CAST('1970-01-03T13:10:00.000000000Z' as timestamp_ns), 360000000000) k" +
+                " timestamp_sequence_ns(cast('1970-01-03T13:10:00.000000000Z' as timestamp_ns), 360000000000) k" +
                 " from" +
                 " long_sequence(35)" +
                 ") timestamp(k)", "b\tcount\tk\n" +
@@ -6750,7 +6750,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
@@ -6762,7 +6762,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000000Z' as timestamp), 3600000000) k" +
+                        " timestamp_sequence('1970-01-04T05:00:00.000000000Z', 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
@@ -6786,7 +6786,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
@@ -6798,7 +6798,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_byte(2, 50) e," +
                         " abs(rnd_short()) f," +
                         " abs(rnd_long()) g," +
-                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000000Z' as timestamp), 3600000000) k" +
+                        " timestamp_sequence('1970-01-04T05:00:00.000000000Z' , 3600000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)", "b\tsum_t\tsum\tsum1\tsum2\tsum3\tsum4\tk\n" +
@@ -6858,7 +6858,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -6971,7 +6971,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7020,7 +7020,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(10000)" +
                         ") timestamp(k) partition by NONE",
@@ -7076,7 +7076,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "select" +
                     " rnd_double(0)*100 a," +
                     " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(172800000000000::timestamp_ns, 3600000000) k" +
+                    " timestamp_sequence_ns(172800000000000, 3600000000) k" +
                     " from" +
                     " long_sequence(20000000)" +
                     ") timestamp(k) partition by NONE"
@@ -7107,7 +7107,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     "select" +
                     " rnd_double(0)*100 a," +
                     " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(172800000000000::timestamp_ns, 3600000000) k" +
+                    " timestamp_sequence_ns(172800000000000, 3600000000) k" +
                     " from" +
                     " long_sequence(20000000)" +
                     ") timestamp(k) partition by NONE"
@@ -7407,7 +7407,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7495,7 +7495,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7656,7 +7656,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns('1970-01-03T01:20:00.000000000Z', 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7665,7 +7665,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000000Z' as timestamp), 3200000000) k" +
+                        " timestamp_sequence('1970-01-04T05:00:00.000000000Z', 3200000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -7729,7 +7729,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-03T01:20:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns('1970-01-03T01:20:00.000000000Z', 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7738,7 +7738,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('1970-01-04T05:00:00.000000000Z' as timestamp), 3200000000) k" +
+                        " timestamp_sequence('1970-01-04T05:00:00.000000000Z', 3200000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -7804,7 +7804,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:20:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:20:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7824,7 +7824,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -7863,7 +7863,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -7901,7 +7901,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -7966,7 +7966,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8161,7 +8161,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8279,7 +8279,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_byte() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8397,7 +8397,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_float() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8515,7 +8515,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8633,7 +8633,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_short() a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8651,7 +8651,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8669,7 +8669,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8700,7 +8700,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(400)" +
                         ") timestamp(k) partition by NONE",
@@ -8721,7 +8721,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(400)" +
                         ") timestamp(k) partition by NONE",
@@ -8779,7 +8779,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 2*24*3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 2*24*3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -8816,7 +8816,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-01-31T00:15:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -8859,7 +8859,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-01-31T00:15:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-01-31T00:15:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
@@ -8941,8 +8941,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
@@ -8962,7 +8962,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -9004,8 +9004,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_double(2) o," +
                         " rnd_char() z," +
                         " rnd_varchar(5, 16, 2) vch," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
@@ -9035,8 +9035,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                     " rnd_double(2) o," +
                     " rnd_char() z," +
                     " rnd_varchar(5, 16, 2) vch," +
-                    " timestamp_sequence(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
-                    " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                    " timestamp_sequence_ns(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
+                    " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                     " from" +
                     " long_sequence(30)" +
                     ") timestamp(k) partition by NONE");
@@ -9148,7 +9148,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-02-29T00:15:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-02-29T00:15:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(120000)" +
                         ") timestamp(k) partition by NONE",
@@ -9191,7 +9191,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2020-02-29T00:15:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-02-29T00:15:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(30000)" +
                         ") timestamp(k) partition by NONE",
@@ -9245,7 +9245,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -9387,7 +9387,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3100000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -9575,7 +9575,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -9620,8 +9620,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
                         " rnd_varchar(5,16,2) vch," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) p," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(0, 3600000000000) p," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k) partition by NONE",
@@ -9675,7 +9675,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -9822,7 +9822,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -9969,7 +9969,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -10092,8 +10092,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) p," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(0, 3600000000000) p," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k) partition by NONE",
@@ -10156,7 +10156,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(277200000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(277200000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k)",
@@ -10400,7 +10400,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_long256() a," +
                         " rnd_char() b," +
                         " rnd_double() c, " +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -10774,8 +10774,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) p," +
-                        " timestamp_sequence(17280000000::timestamp_ns, 3000000000000) k" +
+                        " timestamp_sequence_ns(0, 3600000000000) p," +
+                        " timestamp_sequence_ns(17280000000, 3000000000000) k" +
                         " from" +
                         " long_sequence(120)" +
                         ") timestamp(k) partition by NONE",
@@ -10860,8 +10860,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2020-03-28T03:20:00.000000000Z' as timestamp_ns), 3600000000000) p," +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
@@ -10954,7 +10954,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -11050,7 +11050,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -11144,7 +11144,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -11174,8 +11174,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) p," +
-                        " timestamp_sequence(172800000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(0, 3600000000000) p," +
+                        " timestamp_sequence_ns(172800000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -11253,7 +11253,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11448,7 +11448,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-11-06T22:10:00.000000000Z' as timestamp_ns), 3100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11516,7 +11516,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) i," +
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) j," +
                         " rnd_boolean() l," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -11575,7 +11575,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11720,7 +11720,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             " rnd_short() e," +
                             " rnd_byte(3,10) f," +
                             " rnd_long() g," +
-                            " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                            " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                             " from" +
                             " long_sequence(20)" +
                             ") timestamp(k) partition by NONE"
@@ -11791,7 +11791,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_str(1,1,2) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11810,7 +11810,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -11859,7 +11859,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -11968,7 +11968,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12005,7 +12005,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_long() j," +
                         " rnd_byte(2,50) l," +
                         " timestamp_sequence(0, 3600000000) p," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)",
                 "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n" +
@@ -12094,14 +12094,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('ABC', 'XYZ') b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         " union " +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('ABC', 'XYZ') b," +
-                        " timestamp_sequence(212400000000000::timestamp_ns, 600000000000) k" +
+                        " timestamp_sequence_ns(212400000000000, 600000000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -12119,7 +12119,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol('ABC', 'XYZ') b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -12167,8 +12167,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
                         " rnd_double(2) o," +
-                        " timestamp_sequence(0::timestamp_ns, 3600000000000) p," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(0, 3600000000000) p," +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         ") timestamp(k) partition by NONE",
@@ -12214,14 +12214,14 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(5)" +
                         " union " +
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(212400000000000::timestamp_ns, 600000000000) k" +
+                        " timestamp_sequence_ns(212400000000000, 600000000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -12244,7 +12244,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         " rnd_short() e," +
                         " rnd_byte(3,10) f," +
                         " rnd_long() g," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
@@ -12282,7 +12282,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
@@ -12375,7 +12375,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172866000000000::timestamp_ns, 3400000000000) k" +
+                        " timestamp_sequence_ns(172866000000000, 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12472,7 +12472,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12566,7 +12566,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12660,7 +12660,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12755,7 +12755,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-31T00:22:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-10-31T00:22:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12774,7 +12774,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -12820,7 +12820,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12838,7 +12838,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
+                        " timestamp_sequence_ns(cast('2021-03-28T00:00:00.000000000Z' as timestamp_ns), 3400000000000) k" +
                         " from" +
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
@@ -12932,7 +12932,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -12955,7 +12955,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -12978,7 +12978,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
@@ -12997,7 +12997,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
@@ -13009,8 +13009,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "time\tsum\tsum1\tsum2\n" +
@@ -13041,8 +13041,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -13073,8 +13073,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\ttime\tsum1\tsum2\n" +
@@ -13105,8 +13105,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "ts\tsum\tsum1\tsum2\n" +
@@ -13137,8 +13137,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\tts\n" +
@@ -13169,8 +13169,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence(0::timestamp_ns, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
@@ -13222,7 +13222,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "from trade\n" +
                         "sample by 1d fill(null, '2019-02-03T12:23:34.123456Z') align to CALENDAR;", // oddly specific date to make sure it's parsed correctly up to microseconds
                 "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000000Z', 3*24*3600*1000000000L) ts from long_sequence(6)" +
+                        "select timestamp_sequence_ns('2021-03-28T01:59:00.00000000Z', 3*24*3600*1000000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
                 "ts",
                 false
@@ -13236,7 +13236,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "from trade " +
                         "sample by 1d fill(null, 1236) align to CALENDAR;",
                 "create table trade as (" +
-                        "select timestamp_sequence('2021-03-28T01:59:00.00000000Z', 3*24*3600*1000000000L) ts from long_sequence(6)" +
+                        "select timestamp_sequence_ns('2021-03-28T01:59:00.00000000Z', 3*24*3600*1000000000L) ts from long_sequence(6)" +
                         ") timestamp(ts)",
                 66,
                 "Invalid fill value: '1236'. Timestamp fill value must be in quotes."
@@ -13463,7 +13463,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         "select" +
                         " rnd_uuid4() u," +
                         " rnd_symbol(2,3,4,0) s, " +
-                        " timestamp_sequence(172800000000000::timestamp_ns, 3600000000000) k" +
+                        " timestamp_sequence_ns(172800000000000, 3600000000000) k" +
                         " from" +
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
@@ -13701,7 +13701,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             "   rnd_double(1)*180 lat," +
                             "   rnd_double(1)*180 lon," +
                             "   rnd_symbol('a') s," +
-                            "   timestamp_sequence('2021-03-28T00:59:00.000000000Z', 60*1000000L) k" +
+                            "   timestamp_sequence_ns('2021-03-28T00:59:00.000000000Z', 60*1000000L) k" +
                             "   from" +
                             "   long_sequence(100)" +
                             "), index(s) timestamp(k) partition by DAY"

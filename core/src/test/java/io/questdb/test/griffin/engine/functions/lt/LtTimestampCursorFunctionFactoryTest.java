@@ -63,7 +63,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             execute("create table y as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(10)" +
+                    "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -98,7 +98,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             execute("create table y as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -117,7 +117,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
             execute("create table y as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(10)" +
+                    "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
             assertSql(
                     "a\tts\n" +
@@ -181,7 +181,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
             execute("create table y as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -230,7 +230,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             execute("create table y as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(10)" +
+                    "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 
             assertSql(
@@ -260,7 +260,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
             execute(
                     "create table y as (" +
-                            "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(100000)" +
+                            "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                             ") timestamp(ts) partition by day"
             );
 
@@ -327,7 +327,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             execute(
                     "create table y as (" +
-                            "select rnd_varchar() a, timestamp_sequence(0::timestamp_ns, 2500000000) ts from long_sequence(2)" +
+                            "select rnd_varchar() a,timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
                             ") timestamp(ts) partition by day"
             );
 
@@ -354,6 +354,34 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPlansWithNano() throws Exception {
         testPlans(ColumnType.TIMESTAMP_NANO);
+    }
+
+    @Test
+    public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (i int)");
+
+            assertException(
+                    "select * from tab where i < (select max(i) from tab)",
+                    24,
+                    "left operand must be a TIMESTAMP, found: INT"
+            );
+        });
+    }
+
+    @Test
+    public void testPreventVarcharImplicitCastingToTimestampInSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            assertException(
+                    "select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)",
+                    22,
+                    "left operand must be a TIMESTAMP, found: VARCHAR"
+            );
+        });
     }
 
     private void testCompareTimestampWithNull(int timestampType) throws Exception {
@@ -493,34 +521,6 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
                     "explain select * from x where ts < (select '2015-03-12'::varchar)"
-            );
-        });
-    }
-
-    @Test
-    public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (i int)");
-
-            assertException(
-                    "select * from tab where i < (select max(i) from tab)",
-                    24,
-                    "left operand must be a TIMESTAMP, found: INT"
-            );
-        });
-    }
-
-    @Test
-    public void testPreventVarcharImplicitCastingToTimestampInSubQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
-                    ") timestamp(ts) partition by day");
-
-            assertException(
-                    "select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)",
-                    22,
-                    "left operand must be a TIMESTAMP, found: VARCHAR"
             );
         });
     }
