@@ -422,7 +422,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
             final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
-            final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            try {
+                final long approxStepDuration = Math.multiplyExact(step, timestampSampler.getApproxBucketSize());
+                if (approxStepDuration > driver.fromMicros(configuration.getMatViewMaxRefreshStepUs())) {
+                    // the step is too large, fallback to step of a single SAMPLE BY interval
+                    step = 1;
+                }
+            } catch (ArithmeticException ignore) {
+                step = 1;
+            }
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
@@ -445,6 +454,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
                     .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
                     .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
+                    .$(", iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
