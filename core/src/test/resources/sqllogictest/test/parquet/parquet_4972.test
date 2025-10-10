@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/parquet_4972.test
+# name: test/parquet/parquet_4972.test
 # description: Issue #4972: QDB Unable to Read Parquet File
 # group: [parquet]
 
