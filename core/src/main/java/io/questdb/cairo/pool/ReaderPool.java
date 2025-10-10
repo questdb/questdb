@@ -30,14 +30,16 @@ import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboardPool;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
-    private final TxnScoreboardPool txnScoreboardPool;
     private final MessageBus messageBus;
     private final PartitionOverwriteControl partitionOverwriteControl;
+    private final TxnScoreboardPool txnScoreboardPool;
     private ReaderListener readerListener;
 
     public ReaderPool(CairoConfiguration configuration, TxnScoreboardPool scoreboardPool, MessageBus messageBus, PartitionOverwriteControl partitionOverwriteControl) {
@@ -254,6 +256,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 close();
                 throw ex;
             }
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.put("ReaderPool.R{index=").put(index).put(", detached=").put(detached).put(", detachedRefCount=").put(detachedRefCount).put('}');
         }
     }
 }
