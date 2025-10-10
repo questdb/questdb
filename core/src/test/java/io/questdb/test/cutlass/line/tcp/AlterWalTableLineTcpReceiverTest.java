@@ -25,7 +25,13 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,7 +41,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -741,17 +753,13 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long waitForTxn
     ) {
         sqlException = null;
-        int countDownCount = 3;
-        SOCountDownLatch releaseAllLatch = new SOCountDownLatch(countDownCount);
-        SOCountDownLatch getFirstLatch = new SOCountDownLatch(1);
+        assert alterAttempts > 0;
+        SOCountDownLatch releaseAllLatch = new SOCountDownLatch(3);
+        AtomicBoolean stopThreads = new AtomicBoolean(false);
 
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (Chars.equalsNc("plug", name.getTableName())) {
                 if (PoolListener.isWalOrWriter(factoryType)) {
-                    if (event == PoolListener.EV_GET) {
-                        LOG.info().$("EV_GET ").$(name).$();
-                        getFirstLatch.countDown();
-                    }
                     if (event == PoolListener.EV_RETURN) {
                         LOG.info().$("EV_RETURN ").$(name).$();
                         releaseAllLatch.countDown();
@@ -760,29 +768,32 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             }
         });
 
+        ObjList<Thread> threads = new ObjList<>();
         for (int at = 0; at < alterAttempts; at++) {
-            new Thread(() -> {
+            threads.add(new Thread(() -> {
                 try {
                     LOG.info().$("Busy waiting for txn notification event").$();
                     // Wait for the next txn notification which would mean an INSERT.
                     int status = engine.getTableStatus("plug");
-                    while (status != TABLE_EXISTS) {
+                    while (status != TABLE_EXISTS && !stopThreads.get()) {
                         Os.pause();
                         status = engine.getTableStatus("plug");
                     }
                     TableToken alterToken = engine.verifyTableName("plug");
-                    while (engine.getTableSequencerAPI().lastTxn(alterToken) < waitForTxn) {
+                    while (engine.getTableSequencerAPI().lastTxn(alterToken) < waitForTxn && !stopThreads.get()) {
                         Os.pause();
                     }
 
-                    execute(alterTableCommand);
+                    if (!stopThreads.get()) {
+                        execute(alterTableCommand);
+                    }
                 } catch (Throwable e) {
                     if (alterAttempts == 1) {
                         if (e instanceof SqlException) {
                             sqlException = (SqlException) e;
                         }
-                        LOG.error().$(e).$();
                     }
+                    LOG.error().$(e).$();
                 } finally {
                     LOG.info().$("Stopped waiting for txn notification event").$();
                     Path.clearThreadLocals();
@@ -790,7 +801,8 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                     // exit this method if alter executed
                     releaseAllLatch.countDown();
                 }
-            }).start();
+            }));
+            threads.getLast().start();
         }
 
         try {
@@ -799,6 +811,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             long fd = Net.socketTcp(true);
             try {
                 TestUtils.assertConnect(fd, sockaddr);
+                Net.setTcpNoDelay(fd, true);
                 byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
                 long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -817,13 +830,15 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
                 } finally {
                     Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
                 }
+                releaseAllLatch.await();
             } finally {
                 Net.close(fd);
                 Net.freeSockAddr(sockaddr);
             }
-            releaseAllLatch.await();
             return sqlException;
         } finally {
+            stopThreads.set(true);
+            waitThreadsJoin(threads);
             engine.setPoolListener(null);
         }
     }
@@ -866,6 +881,16 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             return sqlException;
         } finally {
             engine.setPoolListener(null);
+        }
+    }
+
+    private void waitThreadsJoin(ObjList<Thread> threads) {
+        for (int i = 0; i < threads.size(); i++) {
+            try {
+                threads.get(i).join();
+            } catch (InterruptedException e) {
+                LOG.error().$("interrupted on thread finish: ").$(e).$();
+            }
         }
     }
 

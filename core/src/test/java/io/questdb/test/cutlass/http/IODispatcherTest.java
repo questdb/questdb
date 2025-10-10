@@ -66,7 +66,6 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -233,7 +232,6 @@ public class IODispatcherTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
-        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
         SharedRandom.RANDOM.set(new Rnd());
         testHttpClient.setKeepConnection(false);
         Metrics.ENABLED.clear();

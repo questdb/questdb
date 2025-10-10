@@ -1683,6 +1683,10 @@ public class SqlParser {
                 continue;
             }
 
+            if (isDeclareKeyword(tok)) {
+                throw errUnexpected(lexer, tok, "Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
+            }
+
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
                 lexer.unparseLast();
                 break;
@@ -2068,6 +2072,12 @@ public class SqlParser {
 
         if (isWithKeyword(tok)) {
             return parseWith(lexer, sqlParserCallback, null);
+        }
+
+        if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put(
+                    "'create', 'format', 'insert', 'update', 'select' or 'with'"
+            ).put(" expected");
         }
 
         return parseSelect(lexer, sqlParserCallback, null);
