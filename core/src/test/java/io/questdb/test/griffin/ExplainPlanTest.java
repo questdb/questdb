@@ -25,18 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
@@ -171,13 +175,15 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
+
+import static io.questdb.test.tools.TestUtils.assertContains;
+import static org.junit.Assert.*;
 
 public class ExplainPlanTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(ExplainPlanTest.class);
@@ -1444,6 +1450,64 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainInReadOnlymode() throws Exception {
+        assertMemoryLeak(() -> {
+            // create a table, otherwise EXPLAIN UPDATE and EXPLAIN SELECT fails with "table doesn't exist"
+            execute("CREATE TABLE reference_prices (\n" +
+                    "  venue SYMBOL index ,\n" +
+                    "  symbol SYMBOL index,\n" +
+                    "  instrumentType SYMBOL index,\n" +
+                    "  referencePriceType SYMBOL index,\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  referencePrice DOUBLE\n" +
+                    ") timestamp (ts)");
+
+            try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+                // use the read-only security context
+                executionContext.with(ReadOnlySecurityContext.INSTANCE);
+
+                assertWritePermissionDenied("EXPLAIN CREATE TABLE reference_prices (\n" +
+                        "  venue SYMBOL index ,\n" +
+                        "  symbol SYMBOL index,\n" +
+                        "  instrumentType SYMBOL index,\n" +
+                        "  referencePriceType SYMBOL index,\n" +
+                        "  ts TIMESTAMP,\n" +
+                        "  referencePrice DOUBLE\n" +
+                        ") timestamp (ts)", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN DROP TABLE reference_prices", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN ALTER TABLE reference_prices ADD COLUMN col1 LONG", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN CREATE MATERIALIZED VIEW prices_1h AS (\n" +
+                        "SELECT venue, symbol, avg(referencePrice) FROM reference_prices sample by 1h" +
+                        ") partition by day", executionContext);
+
+                assertNotSupportedByExplain("EXPLAIN REFRESH MATERIALIZED VIEW prices_1h FULL", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN INSERT INTO reference_prices VALUES(\n" +
+                        "'venue1', 'sym1', 'FUT', 'Close', now(), 213.456\n" +
+                        ")", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN INSERT INTO reference_prices\n" +
+                        "SELECT 'venue1', 'sym1', 'FUT', rnd_symbol('Open', 'Close'), x::timestamp, rnd_double()\n" +
+                        "FROM long_sequence(100)", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
+                        "SET referencePrice = 0 WHERE ts IN '2025-09-20'", executionContext);
+
+                assertWritePermissionDenied("EXPLAIN UPDATE reference_prices\n" +
+                        "SET symbol = 'FDXS' WHERE symbol = 'FDAX'", executionContext);
+
+                // SELECT is read-only, it is allowed
+                assertReadOnlyOperationAllowed("EXPLAIN SELECT * FROM reference_prices", executionContext);
+                assertReadOnlyOperationAllowed("EXPLAIN reference_prices", executionContext);
+                assertReadOnlyOperationAllowed("EXPLAIN WITH v AS (select venue from reference_prices) SELECT * FROM v", executionContext);
+            }
+        });
+    }
+
+    @Test
     public void testExplainInsert() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
@@ -2317,20 +2381,89 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a (l long)");
+                String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+                String[] joinFactoryTypes = {"Hash Left Outer Join", "Hash Right Outer Join", "Hash Full Outer Join"};
+
+                for (int i = 0; i < joinTypes.length; i++) {
+                    String joinType = joinTypes[i];
+                    String factoryType = joinFactoryTypes[i];
+                    assertPlanNoLeakCheck(
+                            compiler,
+                            "select * from a " + joinType + " join a a1 on l",
+                            "SelectedRecord\n" +
+                                    "    " + factoryType + "\n" +
+                                    "      condition: a1.l=a.l\n" +
+                                    "        PageFrame\n" +
+                                    "            Row forward scan\n" +
+                                    "            Frame forward scan on: a\n" +
+                                    "        Hash\n" +
+                                    "            PageFrame\n" +
+                                    "                Row forward scan\n" +
+                                    "                Frame forward scan on: a\n",
+                            sqlExecutionContext
+                    );
+                }
+            }
+        });
+    }
+
+    @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
+    public void testFullJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
                 assertPlanNoLeakCheck(
-                        compiler,
-                        "select * from a left join a a1 on l",
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
+                                "where a1+10 < b1 - 10",
                         "SelectedRecord\n" +
-                                "    Hash Outer Join\n" +
-                                "      condition: a1.l=a.l\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: a\n" +
-                                "        Hash\n" +
+                                "    Filter filter: taba.a1+10<tabb.b1-10\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b2=a2 and b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
-                                "                Frame forward scan on: a\n",
-                        sqlExecutionContext
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFullJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
+                        "SelectedRecord\n" +
+                                "    Filter filter: taba.a2=tabb.b2\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
                 );
             }
         });
@@ -2670,7 +2803,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 goodArgsFound = true;
 
-                                Assert.assertFalse("function " + factory.getSignature() +
+                                assertFalse("function " + factory.getSignature() +
                                         " should serialize to text properly. current text: " +
                                         planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
                                 LOG.info().$safe(sink).$safe(planSink.getSink()).$();
@@ -2685,7 +2818,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                                 "negatable flag! Factory: " + factory.getSignature() + " " + function);
                                     }
 
-                                    Assert.assertFalse(
+                                    assertFalse(
                                             "function " + factory.getSignature() + " should serialize to text properly",
                                             Chars.contains(tmpPlanSink.getSink(), "io.questdb")
                                     );
@@ -2696,7 +2829,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
                                 if (memUsedAfter > memUsedBefore) {
                                     LOG.error().$("Memory leak detected in ").$safe(factory.getSignature()).$();
-                                    Assert.fail("Memory leak detected in " + factory.getSignature());
+                                    fail("Memory leak detected in " + factory.getSignature());
                                 }
                             }
                         } catch (Exception t) {
@@ -3718,47 +3851,59 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHashLeftJoin() throws Exception {
+    public void testHashOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int)");
             execute("create table b ( i int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
 
-            assertPlanNoLeakCheck(
-                    "select * from a left join b on i",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b.i=a.i\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: a\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: b\n"
-            );
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from a " + joinType + " join b on i",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: b\n"
+                );
+            }
         });
     }
 
     @Test
-    public void testHashLeftJoin1() throws Exception {
+    public void testHashOuterJoin1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int)");
             execute("create table b ( i int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
 
-            assertPlanNoLeakCheck(
-                    "select * from a left join b on i where b.i is not null",
-                    "SelectedRecord\n" +
-                            "    Filter filter: b.i!=null\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b.i=a.i\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: a\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n"
-            );
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from a " + joinType + " join b on i where b.i is not null",
+                        "SelectedRecord\n" +
+                                "    Filter filter: b.i!=null\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b.i=a.i\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: a\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: b\n"
+                );
+            }
         });
     }
 
@@ -4481,50 +4626,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testLeftJoinWithEquality1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a int)");
-            execute("create table tabb (b int)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a=b",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b=a\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEquality2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
     @Test // FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
@@ -4568,64 +4669,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test // FIXME: ORed predicates should be applied as filter in hash join
-    public void testLeftJoinWithEquality5() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    // left join conditions aren't transitive because left record + null right is produced if they fail
-    // that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
-    @Test
-    public void testLeftJoinWithEquality6() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-            execute("create table tabc (c1 int, c2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1 and a1=5 " +
-                            "join tabc on a1=c1",
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: c1=a1\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b1=a1\n" +
-                            "          filter: taba.a1=5\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabc\n"
-            );
-        });
-    }
-
     @Test
     public void testLeftJoinWithEquality7() throws Exception {
         assertMemoryLeak(() -> {
@@ -4642,218 +4685,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
                 testHashAndAsOfJoin(compiler, false, false);
             }
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: taba.a2+5=tabb.b2+10\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions3() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10 and 1=0",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: false\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            Empty table\n"
-            );
-        });
-    }
-
-    // FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2!=a2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: taba.a2!=taba.a2\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // FIXME: a2=a2 run as past of left join or be optimized away !
-    public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=a2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: taba.a2=taba.a2\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // left join filter must remain intact !
-    public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 string)");
-            execute("create table tabb (b1 int, b2 string)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
-                            "where a1+10 < b1 - 10",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a1+10<tabb.b1-10\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b2=a2 and b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a1=tabb.b1\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b2=a2 and b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a2=tabb.b2\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
         });
     }
 
@@ -4904,191 +4735,194 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
-            String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL", "LT", "ASOF"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
-                // do not push down predicate to the 'right' table of left join but apply it after join
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value<>T2.value",
                         "Count\n" +
                                 "    Filter filter: T2.value=T2.value\n" +
                                 "        " + factoryType + "\n" +
-                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            PageFrame\n" +
-                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                                (i < 3 ? "            Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "            PageFrame\n" +
+                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
 
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value=1",
                         "Count\n" +
                                 "    Filter filter: T2.value!=1\n" +
                                 "        " + factoryType + "\n" +
-                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            PageFrame\n" +
-                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                                (i < 3 ? "            Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "            PageFrame\n" +
+                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
 
                 // push down predicate to the 'left' table of left join
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T1.value=1",
                         "Count\n" +
                                 "    " + factoryType + "\n" +
-                                (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "      condition: T2.created=T1.created\n" : "") +
                                 "        Async JIT Filter workers: 1\n" +
                                 "          filter: value!=1\n" +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "        Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "        PageFrame\n" +
-                                (i == 0 ? "    " : "") + "            Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "            Frame forward scan on: tab\n"
+                                (i < 3 ? "        Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "        PageFrame\n" +
+                                (i < 3 ? "    " : "") + "            Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n"
                 );
             }
 
-
             // two joins
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T1.value=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            Async JIT Filter workers: 1\n" +
-                            "              filter: value=1\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
-            );
+            for (int i = 0; i < 3; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T2.created=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Filter filter: T2.created=1\n" +
-                            "            Hash Outer Join Light\n" +
-                            "              condition: T2.created=T1.created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "                Hash\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T1.value=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            Async JIT Filter workers: 1\n" +
+                                "              filter: value=1\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n"
+                );
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T3.value=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            Async JIT Filter workers: 1\n" +
-                            "              filter: value=1\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T2.created=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        Filter filter: T2.created=1\n" +
+                                "            " + factoryType + "\n" +
+                                "              condition: T2.created=T1.created\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "                Hash\n" +
+                                "                    PageFrame\n" +
+                                "                        Row forward scan\n" +
+                                "                        Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n"
+                );
 
-            // where clause in parent model
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM ( " +
-                            "SELECT * " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
-                            "WHERE not value1<>value1",
-                    "Count\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: T2.value=T2.value\n" +
-                            "            Hash Outer Join Light\n" +
-                            "              condition: T2.created=T1.created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "                Hash\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T3.value=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            Async JIT Filter workers: 1\n" +
+                                "              filter: value=1\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n"
+                );
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM ( " +
-                            "SELECT * " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
-                            "WHERE not value<>value",
-                    "Count\n" +
-                            "    SelectedRecord\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
-            );
+                // where clause in parent model
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM ( " +
+                                "SELECT * " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
+                                "WHERE not value1<>value1",
+                        "Count\n" +
+                                "    SelectedRecord\n" +
+                                "        Filter filter: T2.value=T2.value\n" +
+                                "            " + factoryType + "\n" +
+                                "              condition: T2.created=T1.created\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "                Hash\n" +
+                                "                    PageFrame\n" +
+                                "                        Row forward scan\n" +
+                                "                        Frame forward scan on: tab\n"
+                );
+
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM ( " +
+                                "SELECT * " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
+                                "WHERE not value<>value",
+                        "Count\n" +
+                                "    SelectedRecord\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n"
+                );
+            }
         });
     }
 
@@ -5988,6 +5822,357 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinWithEquality1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a int)");
+            execute("create table tabb (b int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a=b",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b=a\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEquality2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // FIXME: ORed predicates should be applied as filter in hash join
+    public void testOuterJoinWithEquality5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    // left join conditions aren't transitive because left record + null right is produced if they fail
+    // that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
+    @Test
+    public void testOuterJoinWithEquality6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            execute("create table tabc (c1 int, c2 long)");
+
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1 and a1=5 " +
+                                "join tabc on a1=c1",
+                        "SelectedRecord\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: c1=a1\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b1=a1\n" +
+                                "          filter: taba.a1=5\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabc\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "      filter: taba.a2+5=tabb.b2+10\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+
+            assertPlanNoLeakCheck(
+                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Left Outer Join\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            Empty table\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Right Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        Empty table\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Full Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
+        });
+    }
+
+    // FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: taba.a2!=taba.a2\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // FIXME: a2=a2 run as past of left join or be optimized away !
+    public void testOuterJoinWithEqualityAndExpressions5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=a2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: taba.a2=taba.a2\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // outer join filter must remain intact !
+    public void testOuterJoinWithEqualityAndExpressions6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 string)");
+            execute("create table tabb (b1 int, b2 string)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
+                        "SelectedRecord\n" +
+                                "    Filter filter: taba.a1=tabb.b1\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b2=a2 and b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPostJoinConditionColumnsAreResolved() throws Exception {
         assertMemoryLeak(() -> {
             String query = "SELECT count(*)\n" +
@@ -6142,7 +6327,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet");
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path.$()));
+                assertTrue(Files.exists(path.$()));
 
                 assertPlanNoLeakCheck(
                         "select * from read_parquet('x.parquet') where a_long = 42;",
@@ -11839,6 +12024,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    private void assertNotSupportedByExplain(String sql, SqlExecutionContextImpl sqlExecutionContext) {
+        try (RecordCursorFactory ignored = engine.select(sql, sqlExecutionContext)) {
+            fail("Expected exception missing");
+        } catch (SqlException e) {
+            assertEquals(8, e.getPosition());
+            assertContains(e.getFlyweightMessage(), "'create', 'format', 'insert', 'update', 'select' or 'with' expected");
+        }
+    }
+
     private void assertPlan(String ddl, String query, String expectedPlan) throws Exception {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(ddl, query, expectedPlan));
     }
@@ -11854,9 +12048,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(query, expectedPlan);
     }
 
+    private void assertReadOnlyOperationAllowed(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            assertFalse(factory.isProjection());
+        }
+    }
+
     private void assertSqlAndPlanNoLeakCheck(String sql, String expectedPlan, String expectedResult) throws SqlException {
         assertPlanNoLeakCheck(sql, expectedPlan);
         assertSql(expectedResult, sql);
+    }
+
+    private void assertWritePermissionDenied(String sql, SqlExecutionContextImpl sqlExecutionContext) throws SqlException {
+        try (RecordCursorFactory ignored = engine.select(sql, sqlExecutionContext)) {
+            fail("Expected exception missing");
+        } catch (CairoException e) {
+            assertContains(e.getFlyweightMessage(), "Write permission denied");
+        }
     }
 
     private Function getConst(IntObjHashMap<ObjList<Function>> values, int type, int paramNo, int iteration) {
@@ -11928,7 +12136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-        execute("create table tabb (b1 int, b2 long)");
+        execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
@@ -11941,7 +12149,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    AsOf Join" + asofJoinType + "\n" +
                         "      condition: c1=b1\n" +
-                        "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" +
                         "          condition: b1=a1\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
@@ -11953,6 +12161,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "right join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "full join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
                 sqlExecutionContext
         );
     }

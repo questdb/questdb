@@ -60,7 +60,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 2 LONGs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store row ids in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -68,12 +68,13 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMap = null;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             this.toleranceInterval = toleranceInterval;
 
-            Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             this.cursor = new LtJoinLightRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -84,6 +85,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
+            Misc.free(joinKeyMap);
             close();
             throw th;
         }
@@ -217,11 +219,10 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                     }
 
                     // NOTE: unlike full fat LT JOIN, we don't evacuate joinKeyMap here.
-                    // Reasoning: The joinKeyMap here contains only rowNo, so evacuation
-                    // would require to dereference rowNo to record to get a timestamp
-                    // to decide whether to keep the record or not. This could be expensive.
-                    // Given map values are just row IDs, I decided not to evacuate
-                    // maps in Light LT JOINs
+                    // Reasoning: The joinKeyMap here contains only row ID, so evacuation would
+                    // require to dereference row ID to record to get a timestamp to decide
+                    // whether to keep the record or not. This could be expensive. Given map
+                    // values are just row IDs, we don't evacuate maps in Light LT JOINs.
 
                     final Record rec = slaveCursor.getRecord();
                     while (slaveCursor.hasNext()) {

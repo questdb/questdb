@@ -471,22 +471,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 "a\n" +
                         "1.426297242379E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.446081058169E12\n" +
                         "1.434834113022E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.439739868373E12\n" +
                         "1.443957889668E12\n" +
                         "1.440280260964E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.44318380966E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.435298544851E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.447181628184E12\n" +
                         "1.4423615004E12\n" +
                         "1.428165287226E12\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.434999533562E12\n" +
                         "1.423736755529E12\n" +
                         "1.426566352765E12\n",
@@ -499,22 +499,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastDate(
                 "a\n" +
                         "1.42629719E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44608107E12\n" +
                         "1.43483417E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43973981E12\n" +
                         "1.44395783E12\n" +
                         "1.44028022E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44318385E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43529856E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44718168E12\n" +
                         "1.44236151E12\n" +
                         "1.42816523E12\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43499959E12\n" +
                         "1.4237367E12\n" +
                         "1.42656641E12\n",
@@ -1074,22 +1074,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1970-01-01T00:00:00.001Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.022Z\n" +
                         "1970-01-01T00:00:00.022Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.007Z\n" +
                         "1970-01-01T00:00:00.026Z\n" +
                         "1970-01-01T00:00:00.026Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.013Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.025Z\n" +
                         "1970-01-01T00:00:00.021Z\n" +
                         "1970-01-01T00:00:00.023Z\n" +
-                        "1969-12-07T03:28:36.352Z\n" +
+                        "\n" +
                         "1970-01-01T00:00:00.006Z\n" +
                         "1970-01-01T00:00:00.019Z\n" +
                         "1970-01-01T00:00:00.007Z\n",
@@ -1102,22 +1102,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "22.0\n" +
                         "22.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "7.0\n" +
                         "26.0\n" +
                         "26.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "13.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "0.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "25.0\n" +
                         "21.0\n" +
                         "23.0\n" +
-                        "-2.147483648E9\n" +
+                        "null\n" +
                         "6.0\n" +
                         "19.0\n" +
                         "7.0\n",
@@ -1130,22 +1130,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "22.0\n" +
                         "22.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "7.0\n" +
                         "26.0\n" +
                         "26.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "13.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "0.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "25.0\n" +
                         "21.0\n" +
                         "23.0\n" +
-                        "-2.14748365E9\n" +
+                        "null\n" +
                         "6.0\n" +
                         "19.0\n" +
                         "7.0\n",
@@ -1158,22 +1158,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastInt(
                 "a\n" +
                         "1\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "22\n" +
                         "22\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "7\n" +
                         "26\n" +
                         "26\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "13\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "0\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "25\n" +
                         "21\n" +
                         "23\n" +
-                        "-2147483648\n" +
+                        "null\n" +
                         "6\n" +
                         "19\n" +
                         "7\n",
@@ -1214,22 +1214,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     public void testCastIntTimestamp() throws Exception {
         String expectedData = "a\n" +
                 "1970-01-01T00:00:00.000001Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000022Z\n" +
                 "1970-01-01T00:00:00.000022Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000007Z\n" +
                 "1970-01-01T00:00:00.000026Z\n" +
                 "1970-01-01T00:00:00.000026Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000013Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000000Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000025Z\n" +
                 "1970-01-01T00:00:00.000021Z\n" +
                 "1970-01-01T00:00:00.000023Z\n" +
-                "1969-12-31T23:24:12.516352Z\n" +
+                "\n" +
                 "1970-01-01T00:00:00.000006Z\n" +
                 "1970-01-01T00:00:00.000019Z\n" +
                 "1970-01-01T00:00:00.000007Z\n";
@@ -1298,22 +1298,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastLong(
                 "a\n" +
                         "22.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "17.0\n" +
                         "2.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "21.0\n" +
                         "1.0\n" +
                         "20.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "14.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "26.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "23.0\n" +
                         "2.0\n" +
                         "24.0\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "16.0\n" +
                         "10.0\n" +
                         "6.0\n",
@@ -1326,22 +1326,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastLong(
                 "a\n" +
                         "22.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "17.0\n" +
                         "2.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "21.0\n" +
                         "1.0\n" +
                         "20.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "14.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "26.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "23.0\n" +
                         "2.0\n" +
                         "24.0\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "16.0\n" +
                         "10.0\n" +
                         "6.0\n",
@@ -1799,22 +1799,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 "a\n" +
                         "1.451202658992217E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.447217632325101E15\n" +
                         "1.450864540841629E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.425230490549402E15\n" +
                         "1.439268289997654E15\n" +
                         "1.446675695124307E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.43270813337987E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.446796791480192E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.436874860781965E15\n" +
                         "1.440811969345686E15\n" +
                         "1.44089254366482E15\n" +
-                        "-9.223372036854776E18\n" +
+                        "null\n" +
                         "1.440583904609561E15\n" +
                         "1.443915505356062E15\n" +
                         "1.448396353843643E15\n",
@@ -1827,22 +1827,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertCastTimestamp(
                 "a\n" +
                         "1.45120261E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44721768E15\n" +
                         "1.45086451E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.42523054E15\n" +
                         "1.43926824E15\n" +
                         "1.44667571E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43270808E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44679678E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.43687487E15\n" +
                         "1.44081201E15\n" +
                         "1.44089254E15\n" +
-                        "-9.223372E18\n" +
+                        "null\n" +
                         "1.44058384E15\n" +
                         "1.44391553E15\n" +
                         "1.44839638E15\n",
@@ -3782,6 +3782,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinPostMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
+
+            String query = "SELECT count(1) FROM " +
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 0) as T1 " +
+                    "FULL OUTER JOIN tab as T2 ON T1.created<T2.created " +
+                    "FULL OUTER JOIN tab as T3 ON T2.created=T3.created " +
+                    "WHERE T2.created IN (NOW(),NOW()) ";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Count\n" +
+                            "    Hash Full Outer Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Filter filter: T2.created in [now(),now()]\n" +
+                            "            Nested Loop Full Join\n" +
+                            "              filter: T1.created<T2.created\n" +
+                            "                Limit lo: 0 skip-over-rows: 0 limit: 0\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "count\n" +
+                            "2\n",
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFunctionNotIn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
@@ -4578,8 +4624,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)",
-                32,
-                "inconvertible types"
+                "inconvertible value"
         ));
     }
 
@@ -4605,8 +4650,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_date( to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0)" +
                         " from long_sequence(30)",
-                17,
-                "inconvertible types"
+                0,
+                "inconvertible value"
         ));
     }
 
@@ -5254,7 +5299,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "Count\n" +
-                            "    Hash Outer Join Light\n" +
+                            "    Hash Left Outer Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Filter filter: T2.created in [now(),now()]\n" +
                             "            Nested Loop Left Join\n" +
@@ -5454,7 +5499,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "    Filter filter: null=T4.created\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T3.created<T4.created\n" +
-                            "            Hash Outer Join Light\n" +
+                            "            Hash Left Outer Join Light\n" +
                             "              condition: T3.created=T2.created\n" +
                             "                Nested Loop Left Join\n" +
                             "                  filter: T1.created<T2.created\n" +
@@ -5908,6 +5953,263 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                 }
             }
+        });
+    }
+
+    @Test
+    public void testRightJoinPostMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
+
+            String query = "SELECT count(1) FROM " +
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT 0) as T1 " +
+                    "RIGHT OUTER JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT OUTER JOIN tab as T3 ON T2.created=T3.created " +
+                    "WHERE T2.created IN (NOW(),NOW()) ";
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Count\n" +
+                            "    Hash Right Outer Join Light\n" +
+                            "      condition: T3.created=T2.created\n" +
+                            "        Filter filter: T2.created in [now(),now()]\n" +
+                            "            Nested Loop Right Join\n" +
+                            "              filter: T1.created<T2.created\n" +
+                            "                Limit lo: 0 skip-over-rows: 0 limit: 0\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "count\n" +
+                            "2\n",
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRightJoinReorder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1), (2,2)");
+
+            String query1 = "SELECT T1.created FROM " +
+                    "( SELECT * " +
+                    "  FROM tab " +
+                    "  LIMIT -1) as T1 " +
+                    "RIGHT OUTER JOIN tab as T2 ON T1.created<T2.created " +
+                    "WHERE T2.created is null or T2.created::long > 0";
+
+            assertPlanNoLeakCheck(
+                    query1,
+                    "SelectedRecord\n" +
+                            "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
+                            "        Nested Loop Right Join\n" +
+                            "          filter: T1.created<T2.created\n" +
+                            "            Limit lo: -1 skip-over-rows: 2 limit: 1\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "created\n" +
+                            "\n" +
+                            "\n",
+                    query1,
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "created\tvalue\tcreated1\tvalue1\n" +
+                            "1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000001Z\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\t2\n",
+                    "SELECT * FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT -1) as T1 " +
+                            "RIGHT OUTER JOIN tab as T2 ON T1.value::string ~ '[0-9]'  " +
+                            "WHERE T2.created is null or T2.created::long > 0",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "null\tnull\t0\n" +
+                            "null\tnull\t1\n" +
+                            "0\t1\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created<T3.created " +
+                            "WHERE T2.created::long > 0",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "null\t0\t0\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value - T3.value = 0",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "0\t2\t2\n" +
+                            "null\tnull\t1\n" +
+                            "null\tnull\t0\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T2.value = 2 ",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "null\tnull\t2\n" +
+                            "null\tnull\t0\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T3.value = 1 ",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n" +
+                            "null\tnull\t0\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.value = 0 ",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "null\t0\t0\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and 1=1 ",
+                    null,
+                    false,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\n" +
+                            "null\t0\t0\n" +
+                            "0\t1\t1\n" +
+                            "0\t2\t2\n",
+                    "SELECT T1.value, T2.value, T3.value FROM " +
+                            "( SELECT * " +
+                            "  FROM tab " +
+                            "  LIMIT 1) as T1 " +
+                            "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                            "RIGHT JOIN tab as T3 ON T2.created=T3.created and T1.created = T1.created ",
+                    null,
+                    false,
+                    false
+            );
+
+            String query3 = "SELECT T1.value, T2.value, T3.value, T4.value " +
+                    "FROM (SELECT *  FROM tab limit 2) as T1 " +
+                    "RIGHT JOIN tab as T2 ON T1.created<T2.created " +
+                    "RIGHT JOIN (select * from tab limit 3) as T3 ON T2.created=T3.created " +
+                    "RIGHT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
+                    "WHERE T4.created is null";
+
+            assertPlanNoLeakCheck(
+                    query3,
+                    "SelectedRecord\n" +
+                            "    Filter filter: null=T4.created\n" +
+                            "        Nested Loop Right Join\n" +
+                            "          filter: T3.created<T4.created\n" +
+                            "            Hash Right Outer Join Light\n" +
+                            "              condition: T3.created=T2.created\n" +
+                            "                Nested Loop Right Join\n" +
+                            "                  filter: T1.created<T2.created\n" +
+                            "                    Limit lo: 2 skip-over-rows: 0 limit: 2\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: tab\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: tab\n" +
+                            "                Hash\n" +
+                            "                    Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: tab\n" +
+                            "            Limit lo: 4 skip-over-rows: 0 limit: 3\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
+
+            assertQueryNoLeakCheck(
+                    "value\tvalue1\tvalue2\tvalue3\n",
+                    query3,
+                    null,
+                    false,
+                    false
+            );
         });
     }
 

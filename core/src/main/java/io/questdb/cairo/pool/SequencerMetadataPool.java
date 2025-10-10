@@ -34,6 +34,8 @@ import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
@@ -203,6 +205,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
         @Override
         public void refresh(@Nullable ResourcePoolSupervisor<SequencerMetadataTenantImpl> supervisor) {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.put("SequencerMetadataTenantImpl{index=").put(index).put(", tableToken=").put(tableToken).put('}');
         }
 
         public void updateTableToken(TableToken tableToken) {

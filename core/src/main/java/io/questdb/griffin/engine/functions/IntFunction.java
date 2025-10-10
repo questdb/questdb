@@ -38,6 +38,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class IntFunction implements Function {
+
     @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();

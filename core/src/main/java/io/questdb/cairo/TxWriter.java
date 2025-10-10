@@ -266,11 +266,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         throw new IllegalStateException();
     }
 
-    public TxWriter ofRW(@Transient LPSZ path, int timestampType, int partitionBy) {
+    public TxWriter ofRW(@Transient LPSZ path) {
         clear();
         openTxnFile(ff, path);
         try {
-            super.initRO(txMemBase, timestampType, partitionBy);
+            super.initRO(txMemBase);
             unsafeLoadAll();
         } catch (Throwable e) {
             if (txMemBase != null) {
@@ -282,6 +282,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             throw e;
         }
         return this;
+    }
+
+    public TxWriter ofRW(@Transient LPSZ path, int timestampType, int partitionBy) {
+        TxWriter t = ofRW(path);
+        t.initPartitionBy(timestampType, partitionBy);
+        return t;
     }
 
     public void removeAllPartitions() {

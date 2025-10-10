@@ -127,6 +127,7 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
+    public static final String ACCEPTING_WRITES = "accepting.writes";
     public static final String ACL_ENABLED = "acl.enabled";
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT = 64;
     public static final int COLUMN_ALIAS_GENERATED_MAX_SIZE_MINIMUM = 4;
@@ -142,6 +143,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
+    private final String acceptingWrites;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
     private final boolean allowTableRegistrySharedWrite;
     private final DateFormat backupDirTimestampFormat;
@@ -152,6 +154,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
+    private final boolean cairoAutoScaleSymbolCapacity;
+    private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
@@ -164,6 +168,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
+    private final boolean cairoResourcePoolTracingEnabled;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
@@ -457,7 +462,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowTreeKeyMaxPages;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
-    private final long symbolTableAppendPageSize;
+    private final long symbolTableMaxAllocationPageSize;
+    private final long symbolTableMinAllocationPageSize;
     private final int systemO3ColumnMemorySize;
     private final String systemTableNamePrefix;
     private final long systemWalWriterDataAppendPageSize;
@@ -475,7 +481,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
-    private final boolean useFastAsOfJoin;
     private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
@@ -811,6 +816,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .put(PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX.toString()).put("=")
                     .put(tempRenamePendingTablePrefix).put(']');
         }
+        this.cairoResourcePoolTracingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_RESOURCE_POOL_TRACING_ENABLED, false);
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
@@ -859,6 +865,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
         this.cairoCommitLatency = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY, 30_000_000);
+        // opt-in only in this version
+        // when symbol capacity is changed on-the-fly, symbol table files are copy-on-written (if that's a thing) and
+        // this is when their version moves. This new version is stored in a NEW slot, in column version file.
+        // This slot WILL NOT be read by older versions, hence rolling back QuestDB version will be problematic, but not
+        // impossible. Old version will not find new files, the new files will have to be renamed manually. To avoid
+        // possible rollback havoc, we have auto-scaling as opt-in. It will be opt-out in the release after 9.1.0
+        this.cairoAutoScaleSymbolCapacity = getBoolean(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY, false);
+        this.cairoAutoScaleSymbolCapacityThreshold = getDouble(properties, env, PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD, "0.8");
+        if (cairoAutoScaleSymbolCapacityThreshold <= 0 || !Double.isFinite(cairoAutoScaleSymbolCapacityThreshold)) {
+            throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD.getPropertyPath() + " has to be a positive non-zero real number.");
+        }
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
         this.checkpointRecoveryEnabled = getBoolean(
@@ -1348,7 +1365,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
-            this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -1381,7 +1397,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
             this.systemWriterDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, 256 * 1024));
             this.writerMiscAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_MISC_APPEND_PAGE_SIZE, Files.PAGE_SIZE));
-            this.symbolTableAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE, 256 * 1024));
+            this.symbolTableMinAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE, Files.PAGE_SIZE));
+            this.symbolTableMaxAllocationPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE, 8 * 1024 * 1024));
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
@@ -1760,6 +1777,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
         }
         this.ilpProtoTransports = initIlpTransport();
+        this.acceptingWrites = initAcceptingWrites();
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
 
@@ -2005,20 +2023,14 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private byte getLineTimestampUnit(Properties properties, Map<String, String> env, ConfigPropertyKey propNm) {
         final String lineUdpTimestampSwitch = getString(properties, env, propNm, "n");
-        switch (lineUdpTimestampSwitch) {
-            case "u":
-                return CommonUtils.TIMESTAMP_UNIT_MICROS;
-            case "ms":
-                return CommonUtils.TIMESTAMP_UNIT_MILLIS;
-            case "s":
-                return CommonUtils.TIMESTAMP_UNIT_SECONDS;
-            case "m":
-                return CommonUtils.TIMESTAMP_UNIT_MINUTES;
-            case "h":
-                return CommonUtils.TIMESTAMP_UNIT_HOURS;
-            default:
-                return CommonUtils.TIMESTAMP_UNIT_NANOS;
-        }
+        return switch (lineUdpTimestampSwitch) {
+            case "u" -> CommonUtils.TIMESTAMP_UNIT_MICROS;
+            case "ms" -> CommonUtils.TIMESTAMP_UNIT_MILLIS;
+            case "s" -> CommonUtils.TIMESTAMP_UNIT_SECONDS;
+            case "m" -> CommonUtils.TIMESTAMP_UNIT_MINUTES;
+            case "h" -> CommonUtils.TIMESTAMP_UNIT_HOURS;
+            default -> CommonUtils.TIMESTAMP_UNIT_NANOS;
+        };
     }
 
     private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
@@ -2122,6 +2134,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log.advisory().$(validation.message).$();
             }
         }
+    }
+
+    protected String getAcceptingWrites() {
+        return acceptingWrites;
     }
 
     protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
@@ -2304,6 +2320,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
@@ -2318,6 +2335,39 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean dynamic = dynamicProperties != null && dynamicProperties.contains(key);
             allPairs.put(key, new ConfigPropertyValueImpl(unparsedResult, valueSource, dynamic));
         }
+    }
+
+    protected String initAcceptingWrites() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put('[');
+        if (instanceAcceptingWrites()) {
+            boolean addComma = false;
+            if (!httpContextConfiguration.readOnlySecurityContext()) {
+                sink.put("\"http\"");
+                addComma = true;
+            }
+            if (lineTcpReceiverConfiguration.isEnabled()) {
+                // tcp does not have read-only mode
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"tcp\"");
+                addComma = true;
+            }
+            if (pgConfiguration.isEnabled() && !pgConfiguration.readOnlySecurityContext()) {
+                if (addComma) {
+                    sink.put(", ");
+                }
+                sink.put("\"pgwire\"");
+            }
+        }
+        sink.put(']');
+        return sink.toString();
+    }
+
+    protected boolean instanceAcceptingWrites() {
+        // overwritten in Enterprise
+        return !isReadOnlyInstance;
     }
 
     protected PropertyValidator newValidator() {
@@ -2475,6 +2525,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     "cairo.sql.append.page.size",
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
+            registerObsolete("cairo.sql.asof.join.fast");
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
@@ -2621,6 +2672,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
+            registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2786,6 +2838,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean autoScaleSymbolCapacity() {
+            return cairoAutoScaleSymbolCapacity;
+        }
+
+        @Override
+        public double autoScaleSymbolCapacityThreshold() {
+            return cairoAutoScaleSymbolCapacityThreshold;
+        }
+
+        @Override
+        public boolean cairoResourcePoolTracingEnabled() {
+            return cairoResourcePoolTracingEnabled;
+        }
+
+        @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
         }
@@ -2801,6 +2868,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!Chars.empty(httpUsername)) {
                 bool(ACL_ENABLED, true, sink);
             }
+            arrayStr(ACCEPTING_WRITES, getAcceptingWrites(), sink);
             arrayStr(ILP_PROTO_SUPPORT_VERSIONS_NAME, ILP_PROTO_SUPPORT_VERSIONS, sink);
             arrayStr(ILP_PROTO_TRANSPORTS, ilpProtoTransports, sink);
             return true;
@@ -3760,8 +3828,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSymbolTableAppendPageSize() {
-            return symbolTableAppendPageSize;
+        public long getSymbolTableMaxAllocationPageSize() {
+            return symbolTableMaxAllocationPageSize;
+        }
+
+        @Override
+        public long getSymbolTableMinAllocationPageSize() {
+            return symbolTableMinAllocationPageSize;
         }
 
         @Override
@@ -4107,11 +4180,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int maxArrayElementCount() {
             return sqlMaxArrayElementCount;
-        }
-
-        @Override
-        public boolean useFastAsOfJoin() {
-            return useFastAsOfJoin;
         }
 
         @Override
@@ -4580,6 +4648,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean haltOnError() {
             return httpWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isAcceptingWrites() {
+            return !isReadOnlyInstance
+                    && httpServerEnabled
+                    && lineHttpEnabled
+                    && !httpContextConfiguration.readOnlySecurityContext();
         }
 
         @Override

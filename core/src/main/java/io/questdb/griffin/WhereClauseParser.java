@@ -880,18 +880,23 @@ public final class WhereClauseParser implements Mutable {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
 
+        // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
+        // Moreover, it is only populated when "latest on" has a single column.
+        // Q: Why are we checking if we have multi-column latest by here?
+        // A: When using multi-column LATEST BY, we cannot use index-based scans because the indexed column
+        //    alone doesn't provide enough information to determine the "latest" record. The "latest" determination
+        //    requires all columns in the LATEST BY clause, so we must disable index usage in such cases.
         if (columnIsPreferredOrIndexedAndNotPartOfMultiColumnLatestBy(columnName, meta, latestByMultiColumn)) {
             // check if we already have indexed column, and it is of worse selectivity
-            // "preferred" is an unfortunate name, this column is from "latest on" clause,
-            // I should name it better
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, meta, reader, columnIndex)) {
                 return false;
             }
 
-            //if key values contain bind variable then we can't merge it with any other set and have to push this list to filter
-            if (!allKeyValuesAreKnown) {
+            // if key values contain bind variable then we can't merge it with any other set and have to push this list to filter,
+            // we can only create a new list of keys (=newColumn)
+            if (!allKeyValuesAreKnown && !newColumn) {
                 return false;
             }
 
@@ -904,7 +909,7 @@ public final class WhereClauseParser implements Mutable {
             if (i == 1) {
                 if (node.rhs == null ||
                         (node.rhs.type != ExpressionNode.CONSTANT && node.rhs.type != ExpressionNode.BIND_VARIABLE && node.rhs.type != ExpressionNode.FUNCTION) ||
-                        (node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                        (!newColumn && node.rhs.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
                     return false;
                 }
 
@@ -931,8 +936,11 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 for (i--; i > -1; i--) {
                     ExpressionNode c = node.args.getQuick(i);
+                    // Reject if the value is not a constant/bind variable/function.
+                    // Also reject bind variables when merging with existing keys (!newColumn && tempKeyValues.size() > 0),
+                    // since we can't merge bind variables with already collected key values.
                     if ((c.type != ExpressionNode.CONSTANT && c.type != ExpressionNode.BIND_VARIABLE && c.type != ExpressionNode.FUNCTION) ||
-                            (c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
+                            (!newColumn && c.type == ExpressionNode.BIND_VARIABLE && tempKeyValues.size() > 0)) {
                         return false;
                     }
 

@@ -59,9 +59,12 @@ import static io.questdb.std.Chars.isBlank;
 import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
+    public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
+    private static final IntObjHashMap<Utf8Sequence> httpJsonStatusMap = new IntObjHashMap<>();
     private static final IntObjHashMap<Utf8Sequence> httpStatusMap = new IntObjHashMap<>();
     private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
@@ -691,38 +694,28 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
-        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, null, null, null, null, -1L, true);
+            final Utf8Sequence message = httpJsonStatusMap.get(code);
+            sendStatusJsonContent(code, message != null ? message : EMPTY_JSON, true);
         }
 
         public void sendStatusJsonContent(
                 int code,
-                @Nullable Utf8Sequence message
+                @NotNull Utf8Sequence message
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusJsonContent(code, message, true);
         }
 
         public void sendStatusJsonContent(
                 int code,
-                @Nullable Utf8Sequence message,
+                @NotNull Utf8Sequence message,
                 boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, message, null, null, null, message != null ? message.size() : -1L, appendEOL);
-        }
-
-        public void sendStatusJsonContent(
-                int code,
-                @Nullable Utf8Sequence message,
-                @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue,
-                long contentLength,
-                boolean appendEOL
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, contentLength, appendEOL);
+            final long contentLength = message.size();
+            assert contentLength > 0 : "json content is missing";
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, null, null, null, contentLength, appendEOL);
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -863,5 +856,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, new Utf8String("Request range not satisfiable"));
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
+        httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
+    }
+
+    static {
+        httpJsonStatusMap.put(HTTP_OK, new Utf8String("{\"status\":\"OK\"}"));
+        httpJsonStatusMap.put(HTTP_UNAUTHORIZED, new Utf8String("{\"status\":\"Unauthorized\"}"));
+        httpJsonStatusMap.put(HTTP_FORBIDDEN, new Utf8String("{\"status\":\"Forbidden\"}"));
     }
 }

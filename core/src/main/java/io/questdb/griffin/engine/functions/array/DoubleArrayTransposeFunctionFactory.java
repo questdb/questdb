@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DerivedArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -54,16 +55,17 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0));
+        return new Func(args.getQuick(0), position);
     }
 
-    private static class Func extends ArrayFunction implements UnaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements UnaryFunction {
         private final Function arrayArg;
         private final DerivedArrayView borrowedView = new DerivedArrayView();
 
-        public Func(Function arrayArg) {
+        public Func(Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.type = arrayArg.getType();
+            this.position = position;
         }
 
         @Override
@@ -77,6 +79,13 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             borrowedView.of(array);
             borrowedView.transpose();
             return borrowedView;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override

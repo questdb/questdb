@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
 public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
 
@@ -33,6 +35,16 @@ public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
 
     public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
         this.shortCircuits = shortCircuits;
+    }
+
+    @Override
+    public CharSequence getMasterValue(Record masterRecord) {
+        throw new UnsupportedOperationException("ChainedSymbolShortCircuit can't be used to return the master value");
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        throw new UnsupportedOperationException("ChainedSymbolShortCircuit doesn't have a symbol table");
     }
 
     @Override

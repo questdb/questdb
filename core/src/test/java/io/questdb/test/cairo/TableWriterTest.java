@@ -96,10 +96,9 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class TableWriterTest extends AbstractCairoTest {
-
-    public static final String PRODUCT = "product";
     private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(TableWriterTest.class);
+    private static final String PRODUCT = "product";
     private static final Rnd rnd = TestUtils.generateRandom(null);
     public static String PRODUCT_FS;
     private TimestampDriver timestampDriver;
@@ -143,8 +142,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
-        String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
-        class X extends TestFilesFacadeImpl {
+        final String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
+        testUnrecoverableAddColumn(new TestFilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, int opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
@@ -166,8 +165,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(name1, name2);
             }
-        }
-        testUnrecoverableAddColumn(new X());
+        });
     }
 
     @Test
@@ -182,7 +180,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnCannotRenameMetaSwapAndUseIndexedPrevMeta() throws Exception {
-        FilesFacade ff = new SwapMetaRenameDenyingFacade() {
+        TestFilesFacade ff = new SwapMetaRenameDenyingFacade() {
             int count = 5;
 
             @Override
@@ -208,7 +206,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnCommitPartitioned() throws Exception {
+    public void testAddColumnCommitPartitioned() {
         int count = 10000;
         create(FF, PartitionBy.DAY, count);
         Rnd rnd = new Rnd();
@@ -327,7 +325,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnDuplicate() throws Exception {
+    public void testAddColumnDuplicate() {
         long ts = populateTable(FF, PartitionBy.MONTH);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
             try {
@@ -503,7 +501,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnNonPartitioned() throws Exception {
+    public void testAddColumnNonPartitioned() {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -518,7 +516,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnPartitioned() throws Exception {
+    public void testAddColumnPartitioned() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -534,7 +532,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnRepairFail() throws Exception {
-        class X extends FilesFacadeImpl {
+        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
             int counter = 2;
 
             @Override
@@ -555,13 +553,12 @@ public class TableWriterTest extends AbstractCairoTest {
             public boolean removeQuiet(LPSZ name) {
                 return !Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && super.removeQuiet(name);
             }
-        }
-        testAddColumnErrorFollowedByRepairFail(new X());
+        });
     }
 
     @Test
     public void testAddColumnRepairFail2() throws Exception {
-        class X extends FilesFacadeImpl {
+        testAddColumnErrorFollowedByRepairFail(new FilesFacadeImpl() {
             int counter = 1;
 
             @Override
@@ -577,18 +574,16 @@ public class TableWriterTest extends AbstractCairoTest {
                 // But rollback from meta.prev to _meta is ok
                 return super.rename(from, to);
             }
-        }
-        testAddColumnErrorFollowedByRepairFail(new X());
+        });
     }
 
     @Test
     public void testAddColumnSwpFileDelete() throws Exception {
-
         assertMemoryLeak(() -> {
             populateTable();
             // simulate existence of _meta.swp
 
-            class X extends FilesFacadeImpl {
+            final TestFilesFacade ff = new TestFilesFacade() {
                 boolean deleteAttempted = false;
 
                 @Override
@@ -603,9 +598,12 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     return super.removeQuiet(name);
                 }
-            }
 
-            X ff = new X();
+                @Override
+                public boolean wasCalled() {
+                    return deleteAttempted;
+                }
+            };
 
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -616,7 +614,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(20, writer.getColumnCount());
                 writer.addColumn("abc", ColumnType.STRING);
                 Assert.assertEquals(22, writer.getColumnCount());
-                Assert.assertTrue(ff.deleteAttempted);
+                Assert.assertTrue(ff.wasCalled());
             }
         });
     }
@@ -624,28 +622,18 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testAddColumnSwpFileDeleteFail() throws Exception {
         // simulate existence of _meta.swp
-        testAddColumnUnrecoverableFault(new TestFilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                return !Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && super.removeQuiet(name);
-            }
-        });
+        testAddColumnUnrecoverableFault(new FailMetadataSwapFilesFacade());
     }
 
     @Test
-    public void testAddColumnToNonEmptyNonPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyNonPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.NONE, n);
         populateAndColumnPopulate(n);
     }
 
     @Test
-    public void testAddColumnToNonEmptyPartitioned() throws Exception {
+    public void testAddColumnToNonEmptyPartitioned() {
         int n = 10000;
         create(FF, PartitionBy.DAY, n);
         populateAndColumnPopulate(n);
@@ -824,14 +812,13 @@ public class TableWriterTest extends AbstractCairoTest {
             final int N = 47;
             create(FF, PartitionBy.DAY, N);
             Rnd rnd = new Rnd();
-            class X extends FilesFacadeImpl {
+
+            final FilesFacadeImpl ff = new FilesFacadeImpl() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
                     return false;
                 }
-            }
-
-            X ff = new X();
+            };
 
             try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -862,16 +849,12 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testCancelFirstRowFailurePartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            class X extends FilesFacadeImpl {
-                boolean fail = false;
-
+            final LazyTestFilesFacade ff = new LazyTestFilesFacade() {
                 @Override
                 public boolean allocate(long fd, long size) {
-                    return !fail && super.allocate(fd, size);
+                    return !active && super.allocate(fd, size);
                 }
-            }
-
-            X ff = new X();
+            };
             Rnd rnd = new Rnd();
             int N = 94;
             create(ff, PartitionBy.DAY, N);
@@ -892,7 +875,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 r.putSym(3, rnd.nextString(11));
                 r.putDouble(4, rnd.nextDouble());
 
-                ff.fail = true;
+                ff.activate();
                 try {
                     r.cancel();
                     Assert.fail();
@@ -908,7 +891,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "distressed");
                 }
 
-                // test that we cannot rollback
+                // test that we cannot roll back
                 try {
                     writer.rollback();
                     Assert.fail();
@@ -1112,7 +1095,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCancelRowAfterAddColumn() throws Exception {
+    public void testCancelRowAfterAddColumn() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         Rnd rnd = new Rnd();
@@ -1189,9 +1172,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = newOffPoolReader(configuration, PRODUCT);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                String expected = replaceTimestampSuffix("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                        "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
-                        "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n", ColumnType.nameOf(timestampType));
+                String expected = replaceTimestampSuffix("""
+                        productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                        1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z
+                        null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z
+                        """, ColumnType.nameOf(timestampType));
                 assertCursor(expected, cursor, reader.getMetadata(), true);
             }
         });
@@ -1202,19 +1187,15 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final Rnd rnd = new Rnd();
 
-            class X extends FilesFacadeImpl {
-                boolean fail = false;
-
+            final LazyTestFilesFacade ff = new LazyTestFilesFacade() {
                 @Override
                 public boolean rmdir(Path name, boolean lazy) {
-                    if (fail) {
+                    if (active) {
                         return false;
                     }
                     return super.rmdir(name, lazy);
                 }
-            }
-
-            X ff = new X();
+            };
 
             final int N = 10000;
             create(ff, PartitionBy.DAY, N);
@@ -1241,15 +1222,15 @@ public class TableWriterTest extends AbstractCairoTest {
                         r.putSym(3, rnd.nextString(11));
                         r.putDouble(4, rnd.nextDouble());
                         if (rnd.nextPositiveInt() % 50 == 0) {
-                            ff.fail = true;
+                            ff.activate();
                             try {
                                 r.cancel();
                             } catch (CairoException ignored) {
                                 failCount++;
-                                ff.fail = false;
+                                ff.deactivate();
                                 r.cancel();
                             } finally {
-                                ff.fail = false;
+                                ff.deactivate();
                             }
                             cancelCount++;
                         } else {
@@ -1395,7 +1376,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                return !Utf8s.endsWithAscii(path, "category.o") && super.exists(path);
+                return !Utf8s.containsAscii(path, "category.o.2") && super.exists(path);
             }
         }, false);
     }
@@ -1623,7 +1604,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseActivePartitionAndRollback() throws Exception {
+    public void testCloseActivePartitionAndRollback() {
         int N = 10000;
         create(FF, PartitionBy.DAY, N);
         try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
@@ -1747,7 +1728,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDefaultPartition() throws Exception {
+    public void testDefaultPartition() {
         populateTable();
     }
 
@@ -1902,7 +1883,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexIsAddedToTable() throws Exception {
+    public void testIndexIsAddedToTable() {
         int partitionBy = PartitionBy.DAY;
         int N = 1000;
         TableToken tableToken;
@@ -2065,7 +2046,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testO3PartitionTruncate() throws Exception {
+    public void testO3PartitionTruncate() {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
         final String tableName = "testO3PartitionTruncate";
 
@@ -2249,49 +2230,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotOpenSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRemoveAnyMetadataPrev() throws Exception {
-        testRemoveColumnRecoverableFailure(new TestFilesFacade() {
-            int removes = 0;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
-                    removes++;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return removes > 0;
-            }
-        });
-    }
-
-    @Test
     public void testRemoveColumnCannotRemoveFiles() throws Exception {
         removeColumn(new TestFilesFacade() {
             int count = 0;
@@ -2354,45 +2292,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveColumnCannotRemoveSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRemoveColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRenameMeta() throws Exception {
-        testRemoveColumnRecoverableFailure(new MetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testRemoveColumnCannotRenameMetaSwap() throws Exception {
-        testRemoveColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
     public void testRemoveColumnUnrecoverableRenameFailure() throws Exception {
-        class X extends FilesFacadeImpl {
+        testUnrecoverableRemoveColumn(new FilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -2402,12 +2303,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(from, to);
             }
-        }
-        testUnrecoverableRemoveColumn(new X());
+        });
     }
 
     @Test
-    public void testRemoveTimestamp() throws Exception {
+    public void testRemoveTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2484,49 +2384,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotOpenSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public long openRW(LPSZ name, int opts) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return -1;
-                }
-                return super.openRW(name, opts);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRenameColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRenameColumnCannotRemoveAnyMetadataPrev() throws Exception {
-        testRenameColumnRecoverableFailure(new TestFilesFacade() {
-            int removes = 0;
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_PREV_FILE_NAME)) {
-                    removes++;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return removes > 0;
-            }
-        });
-    }
-
-    @Test
     public void testRenameColumnCannotRemoveCFile() throws Exception {
         renameColumn(new TestFilesFacade() {
             int count = 0;
@@ -2589,45 +2446,8 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameColumnCannotRemoveSwap() throws Exception {
-        class X extends TestFilesFacade {
-            boolean hit = false;
-
-            @Override
-            public boolean exists(LPSZ path) {
-                return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
-            }
-
-            @Override
-            public boolean removeQuiet(LPSZ name) {
-                if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    hit = true;
-                    return false;
-                }
-                return super.removeQuiet(name);
-            }
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-        }
-        testRenameColumnRecoverableFailure(new X());
-    }
-
-    @Test
-    public void testRenameColumnCannotRenameMeta() throws Exception {
-        testRenameColumnRecoverableFailure(new MetaRenameDenyingFacade());
-    }
-
-    @Test
-    public void testRenameColumnCannotRenameMetaSwap() throws Exception {
-        testRenameColumnRecoverableFailure(new SwapMetaRenameDenyingFacade());
-    }
-
-    @Test
     public void testRenameColumnUnrecoverableRenameFailure() throws Exception {
-        class X extends FilesFacadeImpl {
+        testUnrecoverableRenameColumn(new FilesFacadeImpl() {
             int count = 2;
 
             @Override
@@ -2637,12 +2457,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.rename(from, to);
             }
-        }
-        testUnrecoverableRenameColumn(new X());
+        });
     }
 
     @Test
-    public void testRenameTimestamp() throws Exception {
+    public void testRenameTimestamp() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2675,7 +2494,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRenameTimestampFromPartitionedTable() throws Exception {
+    public void testRenameTimestampFromPartitionedTable() {
         TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2708,116 +2527,14 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRollbackNonPartitioned() throws Exception {
+    public void testRollbackNonPartitioned() {
         final int N = 20000;
         create(FF, PartitionBy.NONE, N);
         testRollback(N);
     }
 
     @Test
-    public void testRollbackPartitionRemoveFailure() throws Exception {
-        final int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-
-        class X extends FilesFacadeImpl {
-            boolean removeAttempted = false;
-
-            @Override
-            public boolean rmdir(Path from, boolean lazy) {
-                if (Utf8s.endsWithAscii(from, "2013-03-12.0")) {
-                    removeAttempted = true;
-                    return false;
-                }
-                return super.rmdir(from, lazy);
-            }
-        }
-
-        X ff = new X();
-
-        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-        final long increment = 60000L * 1000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-
-            ts = populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            populateProducts(writer, rnd, ts, N, increment);
-
-            Assert.assertEquals(2 * N, writer.size());
-            writer.rollback();
-
-            Assert.assertTrue(ff.removeAttempted);
-
-            // make sure row rollback works after rollback
-            writer.newRow(ts).cancel();
-
-            // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            Assert.assertEquals(2 * N, writer.size());
-        }
-    }
-
-    @Test
-    public void testRollbackPartitionRenameFailure() throws Exception {
-        final int N = 10000;
-        create(FF, PartitionBy.DAY, N);
-
-        class X extends FilesFacadeImpl {
-            boolean removeAttempted = false;
-
-            @Override
-            public boolean rmdir(Path path, boolean lazy) {
-                if (Utf8s.endsWithAscii(path, "2013-03-12.0")) {
-                    removeAttempted = true;
-                    return false;
-                }
-                return super.rmdir(path, lazy);
-            }
-        }
-
-        X ff = new X();
-
-        long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-        final long increment = 60000L * 1000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-        }, PRODUCT)) {
-
-            ts = populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            populateProducts(writer, rnd, ts, N, increment);
-
-            Assert.assertEquals(2 * N, writer.size());
-            writer.rollback();
-
-            Assert.assertTrue(ff.removeAttempted);
-
-            // make sure row rollback works after rollback
-            writer.newRow(ts).cancel();
-
-            // we should be able to repeat timestamps
-            populateProducts(writer, rnd, ts, N, increment);
-            writer.commit();
-
-            Assert.assertEquals(2 * N, writer.size());
-        }
-    }
-
-    @Test
-    public void testRollbackPartitioned() throws Exception {
+    public void testRollbackPartitioned() {
         int N = 20000;
         create(FF, PartitionBy.DAY, N);
         testRollback(N);
@@ -2851,22 +2568,24 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             assertTable(
-                    replaceTimestampSuffix("productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
-                            "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z\n" +
-                            "761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z\n" +
-                            "2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z\n" +
-                            "1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z\n" +
-                            "68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n" +
-                            "null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z\n", ColumnType.nameOf(timestampType)),
+                    replaceTimestampSuffix("""
+                            productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp
+                            1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:01:00.000000Z
+                            761275053\tHBHFOWL\tPDXY\tSBEOUOJSHRU\t0.6761934857077543\tf\t6js\tu0x8u6\twc8jw257kp8b\t2013-03-04T00:02:00.000000Z
+                            2034804966\tYRFBVTM\tHGOO\tZZVDZJMYICC\t0.2282233596526786\tp\tp16\t5ehgu7\tn5f7bnz2wzkr\t2013-03-04T00:03:00.000000Z
+                            1775935667\tEDYYCTG\tQOLY\tXWCKYLSUWDS\t0.2820020716674768\tr\t2q2\tcsded1\tvqnqb4qjen3k\t2013-03-04T00:04:00.000000Z
+                            68027832\tKJSMSSU\tQSRL\tTKVVSJOJIPH\t0.13006100084163252\t2\t06j\tuxnz7u\tpp3dqy3z5fzc\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            null\t\t\t\tnull\t\t\t\t\t2013-03-04T00:05:00.000000Z
+                            """, ColumnType.nameOf(timestampType)),
                     PRODUCT
             );
         });
@@ -3124,17 +2843,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTruncateMidO3Transaction() throws Exception {
+    public void testTruncateMidO3Transaction() {
         testTruncate(TableWriterTest::danglingO3TransactionModifier);
     }
 
     @Test
-    public void testTruncateMidRowAppend() throws Exception {
+    public void testTruncateMidRowAppend() {
         testTruncate(TableWriterTest::danglingRowModifier);
     }
 
     @Test
-    public void testTruncateMidTransaction() throws Exception {
+    public void testTruncateMidTransaction() {
         testTruncate(TableWriterTest::danglingTransactionModifier);
     }
 
@@ -3175,7 +2894,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testTxCannotMap() throws Exception {
         assertMemoryLeak(() -> {
-            class X extends CountingFilesFacade {
+            final CountingFilesFacade ff = new CountingFilesFacade() {
                 @Override
                 public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
@@ -3183,8 +2902,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     return -1;
                 }
-            }
-            X ff = new X();
+            };
             create(ff, PartitionBy.NONE, 4);
             try {
                 ff.count = 0;
@@ -3227,17 +2945,21 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.newRow(timestampDriver.fromHours(1) + 1).append();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("ts\n" +
-                "1970-01-01T00:00:00.000001Z\n" +
-                "1970-01-01T01:00:00.000001Z\n", ColumnType.nameOf(timestampType)), "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T00:00:00.000001Z
+                1970-01-01T01:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
         try (TableWriter writer = newOffPoolWriter(configuration, tango)) {
             writer.newRow(timestampDriver.fromHours(2) + 1).append();
             writer.enforceTtl();
             writer.commit();
         }
-        assertSql(replaceTimestampSuffix("ts\n" +
-                "1970-01-01T01:00:00.000001Z\n" +
-                "1970-01-01T02:00:00.000001Z\n", ColumnType.nameOf(timestampType)), "tango");
+        assertSql(replaceTimestampSuffix("""
+                ts
+                1970-01-01T01:00:00.000001Z
+                1970-01-01T02:00:00.000001Z
+                """, ColumnType.nameOf(timestampType)), "tango");
     }
 
     @Test
@@ -3442,22 +3164,13 @@ public class TableWriterTest extends AbstractCairoTest {
             final Record record = cursor.getRecord();
             final int type = reader.getMetadata().getColumnType(0);
             Assert.assertTrue(cursor.hasNext());
-            final long actual;
+            final long actual = switch (ColumnType.tagOf(type)) {
+                case ColumnType.GEOBYTE -> record.getGeoByte(0);
+                case ColumnType.GEOSHORT -> record.getGeoShort(0);
+                case ColumnType.GEOINT -> record.getGeoInt(0);
+                default -> record.getGeoLong(0);
+            };
 
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    actual = record.getGeoByte(0);
-                    break;
-                case ColumnType.GEOSHORT:
-                    actual = record.getGeoShort(0);
-                    break;
-                case ColumnType.GEOINT:
-                    actual = record.getGeoInt(0);
-                    break;
-                default:
-                    actual = record.getGeoLong(0);
-                    break;
-            }
             Assert.assertEquals(expected, actual);
         }
     }
@@ -3767,6 +3480,10 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(20, writer.getColumnCount());
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
+
+                if (ff instanceof LazyTestFilesFacade) {
+                    ((LazyTestFilesFacade) ff).activate();
+                }
                 try {
                     writer.addColumn("abc", ColumnType.SYMBOL);
                     Assert.fail();
@@ -4058,40 +3775,6 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testRemoveColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            create(FF, PartitionBy.DAY, 10000);
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            }, PRODUCT)) {
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-
-                try {
-                    writer.removeColumn("productName");
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                Assert.assertTrue(ff.wasCalled());
-
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-            }
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                append10KProducts(ts, rnd, writer);
-                writer.commit();
-                Assert.assertEquals(30000, writer.size());
-            }
-        });
-    }
-
     private void testRenameColumn(TableModel model) throws Exception {
         assertMemoryLeak(() -> {
             AbstractCairoTest.create(model);
@@ -4170,40 +3853,6 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private void testRenameColumnRecoverableFailure(TestFilesFacade ff) throws Exception {
-        assertMemoryLeak(() -> {
-            create(FF, PartitionBy.DAY, 10000);
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-            }, PRODUCT)) {
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-
-                try {
-                    writer.renameColumn("productName", "nameOfProduct");
-                    Assert.fail();
-                } catch (CairoException ignore) {
-                }
-
-                Assert.assertTrue(ff.wasCalled());
-
-                ts = append10KProducts(ts, rnd, writer);
-                writer.commit();
-            }
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                append10KProducts(ts, rnd, writer);
-                writer.commit();
-                Assert.assertEquals(30000, writer.size());
-            }
-        });
-    }
-
     private void testRollback(int N) throws NumericException {
         long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
         Rnd rnd = new Rnd();
@@ -4235,7 +3884,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, timestampType);
 
-            class X extends FilesFacadeImpl {
+            final FilesFacadeImpl ff = new FilesFacadeImpl() {
                 long fd = -1;
 
                 @Override
@@ -4253,8 +3902,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     return super.openRW(name, opts);
                 }
-            }
-            final X ff = new X();
+            };
             testAppendNulls(new Rnd(), timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z"));
             try {
                 newOffPoolWriter(new DefaultTestCairoConfiguration(root) {
@@ -4577,13 +4225,51 @@ public class TableWriterTest extends AbstractCairoTest {
         long count = Long.MAX_VALUE;
     }
 
-    private static class MetaRenameDenyingFacade extends TestFilesFacade {
-        boolean hit = false;
+    private static class FailMetadataSwapFilesFacade extends LazyTestFilesFacade {
+        int count = configuration.getMaxSwapFileCount() + 1;
+
+        @Override
+        public boolean exists(LPSZ path) {
+            return Utf8s.containsAscii(path, TableUtils.META_SWAP_FILE_NAME) || super.exists(path);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (active && Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME) && --count > 0) {
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return count != configuration.getMaxSwapFileCount();
+        }
+    }
+
+    private static abstract class LazyTestFilesFacade extends TestFilesFacade {
+        protected boolean active;
+
+        public void activate() {
+            active = true;
+        }
+
+        public void deactivate() {
+            active = false;
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return active;
+        }
+    }
+
+    private static class MetaRenameDenyingFacade extends LazyTestFilesFacade {
+        int counter = configuration.getFileOperationRetryCount() + 1;
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME)) {
-                hit = true;
+            if (active && Utf8s.containsAscii(to, TableUtils.META_PREV_FILE_NAME) && --counter > 0) {
                 return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
@@ -4591,16 +4277,16 @@ public class TableWriterTest extends AbstractCairoTest {
 
         @Override
         public boolean wasCalled() {
-            return hit;
+            return counter < configuration.getFileOperationRetryCount() + 1;
         }
     }
 
-    private static class SwapMetaRenameDenyingFacade extends TestFilesFacade {
+    private static class SwapMetaRenameDenyingFacade extends LazyTestFilesFacade {
         boolean hit = false;
 
         @Override
         public int rename(LPSZ from, LPSZ to) {
-            if (Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME)) {
+            if (active && Utf8s.endsWithAscii(from, TableUtils.META_SWAP_FILE_NAME) && !hit) {
                 hit = true;
                 return Files.FILES_RENAME_ERR_OTHER;
             }
