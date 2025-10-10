@@ -84,6 +84,8 @@
                     <compilerArgs>
                         <arg>${compilerArg1}</arg>
                         <arg>${compilerArg2}</arg>
+                        <arg>-J-XX:-TieredCompilation</arg>
+                        <arg>-J-XX:TieredStopAtLevel=1</arg>
                     </compilerArgs>
                     <fork>true</fork>
                     <source>${javac.compile.source}</source>
