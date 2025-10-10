@@ -467,6 +467,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return getDelegate().getMatViewMaxRefreshStepUs();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }

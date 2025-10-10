@@ -51,6 +51,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -498,6 +499,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return Timestamps.YEAR_MICROS_NONLEAP;
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
@@ -644,11 +650,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportCopyReportFrequencyLines() {
-        return 500_000;
-    }
-
-    @Override
     public int getParquetExportCompressionCodec() {
         return ParquetCompression.COMPRESSION_ZSTD;
     }
@@ -656,6 +657,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParquetExportCompressionLevel() {
         return 9;
+    }
+
+    @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return 500_000;
     }
 
     @Override
@@ -669,13 +675,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getParquetExportVersion() {
-        return ParquetVersion.PARQUET_VERSION_V1;
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
     }
 
     @Override
-    public CharSequence getParquetExportTableNamePrefix() {
-        return "zzz.copy.";
+    public int getParquetExportVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
     }
 
     @Override
