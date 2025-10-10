@@ -168,6 +168,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
+    private final boolean cairoResourcePoolTracingEnabled;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
@@ -815,6 +816,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .put(PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX.toString()).put("=")
                     .put(tempRenamePendingTablePrefix).put(']');
         }
+        this.cairoResourcePoolTracingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_RESOURCE_POOL_TRACING_ENABLED, false);
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
@@ -2843,6 +2845,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double autoScaleSymbolCapacityThreshold() {
             return cairoAutoScaleSymbolCapacityThreshold;
+        }
+
+        @Override
+        public boolean cairoResourcePoolTracingEnabled() {
+            return cairoResourcePoolTracingEnabled;
         }
 
         @Override

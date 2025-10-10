@@ -41,6 +41,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.HashMap;
@@ -159,6 +160,51 @@ public class ServerMainTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(bootstrap)) {
                 Assert.assertFalse(serverMain.getConfiguration().getHttpServerConfiguration().isEnabled());
                 serverMain.start();
+            }
+        });
+    }
+
+    @Test
+    public void testServerUpgradeDoesNotOverrideWebConsoleConfig() throws Exception {
+        assertMemoryLeak(() -> {
+            String nonDefaultConfig = """
+                    {
+                      "ctaBanner": true,
+                      "readOnly": true,
+                      "savedQueries": []
+                    }
+                    """;
+
+            File publicDir = new File(root, "public");
+            File consoleFile = new File(new File(publicDir, "assets"), "console-configuration.json");
+            File versionFile = new File(publicDir, "version.txt");
+            File indexFile = new File(publicDir, "index.html");
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                // test sanity check: our new config differs from the default one
+                Assert.assertNotEquals(nonDefaultConfig, readStringFromFile(consoleFile));
+            }
+
+            // mangle the version file -> this is to force web console upgrade on the next server start
+            writeStringToFile(versionFile, "0"); // timestamp 0 -> everything is newer than this
+
+            // change console config to a non-default value
+            writeStringToFile(consoleFile, nonDefaultConfig);
+
+            // delete index file - after the rest we uses the index file absence or presence
+            // to determine if the web console upgrade procedure was triggered
+            Assert.assertTrue(indexFile.delete());
+
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                // sanity check: we deleted the index file in a previous step
+                // if it exists then it means the web console upgrade procedure was triggered
+                Assert.assertTrue(consoleFile.exists());
+
+                // check that our config is still there and was not overridden by the upgrade procedure
+                Assert.assertEquals(nonDefaultConfig, readStringFromFile(consoleFile));
             }
         });
     }
@@ -690,7 +736,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
                                     "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "cairo.auto.scale.symbol.capacity.threshold\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD\t0.8\tdefault\tfalse\tfalse\n"
+                                    "cairo.auto.scale.symbol.capacity.threshold\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

@@ -373,7 +373,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         final String sql = tableName + " where timestamp > " + timestampMark;
         try (RecordCursorFactory factory = select(sql)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-
                 // Extract vars for safe logging
                 long size = 0;
                 while (cursor.hasNext()) {
@@ -456,17 +455,23 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void handleWriterGetEvent(CharSequence name) {
         final TableData table = tables.get(name);
-        table.obtainPermit();
+        if (table != null) {
+            table.obtainPermit();
+        }
     }
 
     void handleWriterReturnEvent(CharSequence name) {
         final TableData table = tables.get(name);
-        table.returnPermit();
+        if (table != null) {
+            table.returnPermit();
+        }
     }
 
     void handleWriterUnlockEvent(CharSequence name) {
-        final String tableName = name.toString();
-        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+        if (tables.get(name) != null) {
+            final String tableName = name.toString();
+            tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+        }
     }
 
     void ingest(ObjList<Socket> sockets) {
