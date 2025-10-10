@@ -481,14 +481,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix(
-                            "index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n" +
-                                    "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
-                                    "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
-                                    "2\t2024-06-12\tfalse\ttrue\t" + (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? 671 : 674) + "\t\t\n" +
-                                    "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                            "index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
+                                    "2\t2024-06-12\tfalse\ttrue\ttrue\t\t\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
                             timestampType.getTypeName()
                     ),
-                    "select index, name, readOnly, isParquet, parquetFileSize > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
+                    "select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     null,
                     false,
                     true
