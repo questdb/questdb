@@ -94,6 +94,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             }
 
             defaultValueExtraChecker.check(defaultValue);
+            defaultValue.init(null, sqlExecutionContext);
         }
 
         if (offset == 0) {
