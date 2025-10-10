@@ -1858,7 +1858,7 @@ public class SqlOptimiser implements Mutable {
 
             // also search the virtual model and do not register the literal with the
             // translating model if this is a projection only reference.
-            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
+            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
                 return node;
             }
 
