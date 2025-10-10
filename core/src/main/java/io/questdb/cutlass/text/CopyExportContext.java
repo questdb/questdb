@@ -79,11 +79,12 @@ public class CopyExportContext {
         this.copyIDSupplier = engine.getConfiguration().getCopyIDSupplier();
     }
 
-    public ExportTaskEntry assignExportEntry(SecurityContext securityContext,
-                                             CharSequence sql,
-                                             CharSequence path,
-                                             SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker,
-                                             CopyTrigger trigger) throws SqlException {
+    public ExportTaskEntry assignExportEntry(
+            SecurityContext securityContext,
+            CharSequence sql,
+            CharSequence path,
+            SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker,
+            CopyTrigger trigger) throws SqlException {
         assert trigger != CopyTrigger.NONE;
         lock.writeLock().lock();
         try {
