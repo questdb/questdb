@@ -426,7 +426,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 final long approxStepDuration = Math.multiplyExact(step, timestampSampler.getApproxBucketSize());
                 if (approxStepDuration > driver.fromMicros(configuration.getMatViewMaxRefreshStepUs())) {
-                    // the step is too large, fallback to step of a single SAMPLE BY interval
+                    // the step is too large, fallback to step of a single SAMPLE BY interval;
+                    // that's to avoid overflows in the interval iterator
                     step = 1;
                 }
             } catch (ArithmeticException ignore) {
