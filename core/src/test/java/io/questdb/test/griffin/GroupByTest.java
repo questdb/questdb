@@ -1622,6 +1622,7 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithNonConstantSelectClauseExpression() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> {
             execute("create table t as (" +
                     "    select 1 as l, 'a' as s " +

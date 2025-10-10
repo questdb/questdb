@@ -726,6 +726,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_float()::double ",
                 "VirtualRecord\n" +
@@ -1666,6 +1667,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
+        allowFunctionMemoization();
         assertPlan(
                 "create table a ( l long, d double, ts timestamp) timestamp(ts)",
                 "update a set l = 20, d = d+rnd_double() " +
@@ -9560,6 +9562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectRandomBoolean() throws Exception {
+        allowFunctionMemoization();
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
@@ -10432,11 +10435,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
+        // Async filter function doesn't support memoization.
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: memoize(l=rnd_long()) [pre-touch]\n" +
+                        "  filter: l=rnd_long() [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
