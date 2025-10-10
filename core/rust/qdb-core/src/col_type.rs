@@ -287,8 +287,8 @@ impl ColumnType {
     }
 
     pub fn has_flag(&self, flag: i32) -> bool {
-        let flag_shifted = flag << 8;
-        self.code & flag_shifted == flag_shifted
+        let flag_shifted:i32 = flag << 8;
+        self.code.get() & flag_shifted == flag_shifted
     }
 }
 
