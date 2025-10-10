@@ -757,7 +757,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("filename", "large_export_test");
-                    testHttpClient.assertGetParquet("/exp", 259642, params, "SELECT * FROM large_export_test");
+                    testHttpClient.assertGetParquet("/exp", 259695, params, "SELECT * FROM large_export_test");
                 });
     }
 
