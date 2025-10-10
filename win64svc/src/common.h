@@ -10,6 +10,7 @@
 #define E_OPEN_SERVICE 104
 #define E_DELETE_SERVICE 105
 #define E_CONTROL_SERVICE 106
+#define E_PATH_TOO_LONG 107
 
 #define eprintf(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
 #define SVC_NAME_PREFIX "QuestDB"
@@ -22,6 +23,7 @@
 #define ECONFIG_JAVA_HOME         2
 #define ECONFIG_UNKNOWN_COMMAND   3
 #define ECONFIG_TOO_MANY_COMMANDS 4
+#define ECONFIG_PATH_ERROR        5
 
 
 typedef struct {
