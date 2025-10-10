@@ -133,7 +133,6 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
-    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     // list of group-by-model-level expressions with prefixes
@@ -150,7 +149,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
-    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
+    private final CharSequenceHashSet missingDependentTokens = new CharSequenceHashSet();
     private final AtomicInteger nonAggSelectCount = new AtomicInteger(0);
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntSortedList orderingStack = new IntSortedList();
@@ -2343,20 +2342,19 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    private void fixAndCollectExprToken(
+    private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
-            CharSequence old,
-            CharSequence newToken,
-            CharSequenceHashSet set,
-            CharSequenceHashSet set2
+            CharSequence timestampColumn,
+            CharSequence timestampAlias,
+            CharSequenceHashSet missingTokens
     ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, old)) {
-                    node.token = newToken;
-                } else if (!set.contains(node.token)) {
-                    set2.add(node.token);
+                if (Chars.equalsIgnoreCase(node.token, timestampColumn)) {
+                    node.token = timestampAlias;
+                } else {
+                    missingTokens.add(node.token);
                 }
             }
 
@@ -2378,7 +2376,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (!sqlNodeStack.isEmpty()) {
-                node = this.sqlNodeStack.poll();
+                node = sqlNodeStack.poll();
             } else {
                 node = null;
             }
@@ -5205,8 +5203,6 @@ public class SqlOptimiser implements Mutable {
                 tempColumns.clear();
                 tempIntList.clear();
                 tempBoolList.clear();
-                existsDependedTokens.clear();
-                existsDependedTokens.add(timestampColumn);
                 int needRemoveColumns = 0;
                 boolean timestampOnly = true;
 
@@ -5365,12 +5361,12 @@ public class SqlOptimiser implements Mutable {
                 nested.setSampleByFromTo(null, null);
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    missingDependedTokens.clear();
+                    missingDependentTokens.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixAndCollectExprToken(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, existsDependedTokens, missingDependedTokens);
+                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, missingDependentTokens);
                     }
-                    for (int i = 0, size = missingDependedTokens.size(); i < size; i++) {
-                        final CharSequence dependentToken = missingDependedTokens.get(i);
+                    for (int i = 0, size = missingDependentTokens.size(); i < size; i++) {
+                        final CharSequence dependentToken = missingDependentTokens.get(i);
                         if (model.getAliasToColumnMap().excludes(dependentToken)) {
                             model.addBottomUpColumn(nextColumn(dependentToken));
                             needRemoveColumns++;
