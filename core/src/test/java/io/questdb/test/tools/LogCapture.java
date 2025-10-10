@@ -29,14 +29,14 @@ public class LogCapture {
     public void assertLogged(String message) {
         final int idx = sink.indexOf(message);
         if (idx < 0) {
-            Assert.fail("Message '" + message + "' was not logged");
+            Assert.fail("Message '" + message + "' was not logged, captured log: " + sink);
         }
     }
 
     public void assertLoggedRE(String regex) {
         Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
         if (!matcher.find()) {
-            Assert.fail("Message '" + regex + "' was not logged");
+            Assert.fail("Message '" + regex + "' was not logged, captured log: " + sink);
         }
     }
 

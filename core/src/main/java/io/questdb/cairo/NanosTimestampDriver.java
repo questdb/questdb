@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.groupby.MonthTimestampNanosSampler;
@@ -547,6 +548,14 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public int getNanosOfSecond(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            return Numbers.INT_NULL;
+        }
+        return Nanos.getNanosOfSecond(timestamp);
+    }
+
+    @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
         switch (partitionBy) {
             case DAY:
@@ -689,7 +698,7 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public TimestampConstant getTimestampConstantNull() {
+    public ConstantFunction getTimestampConstantNull() {
         return TimestampConstant.TIMESTAMP_NANO_NULL;
     }
 

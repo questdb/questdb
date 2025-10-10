@@ -147,7 +147,7 @@ public class TimestampDiffFunctionFactoryTest extends AbstractFunctionFactoryTes
                 "select " +
                 "rnd_symbol('u', 'n', 'T') as s," +
                 "timestamp_sequence(0, 1000000) as ts, " +
-                "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                 "from long_sequence(10)" +
                 ") timestamp(ts)");
         assertQuery(

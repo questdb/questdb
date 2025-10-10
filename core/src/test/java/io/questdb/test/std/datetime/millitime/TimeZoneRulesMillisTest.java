@@ -24,11 +24,11 @@
 
 package io.questdb.test.std.datetime.millitime;
 
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
 import io.questdb.test.tools.TestUtils;
@@ -100,27 +100,27 @@ public class TimeZoneRulesMillisTest {
         final TimeZoneRulesMillis rules = new TimeZoneRulesMillis(zone.getRules());
 
         Assert.assertEquals(0, rules.getDstGapOffset(0));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1888-05-12T23:45:51.045Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1888-05-12T23:45:51.045Z")));
 
         // DST
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-03-28T01:00:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-03-28T02:00:00.000Z")));
-        Assert.assertEquals(60000, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-03-28T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-03-28T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-03-28T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-10-31T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-10-31T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("2021-10-31T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-03-28T01:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-03-28T02:00:00.000Z")));
+        Assert.assertEquals(60000, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-03-28T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-03-28T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-03-28T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-10-31T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-10-31T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("2021-10-31T03:01:00.000Z")));
 
         // historical
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-03-30T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-03-30T02:00:00.000Z")));
-        Assert.assertEquals(60000, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-03-30T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-03-30T03:00:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-03-30T03:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-10-26T01:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-10-26T02:01:00.000Z")));
-        Assert.assertEquals(0, rules.getDstGapOffset(DateFormatUtils.parseDate("1997-10-26T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-03-30T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-03-30T02:00:00.000Z")));
+        Assert.assertEquals(60000, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-03-30T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-03-30T03:00:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-03-30T03:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-10-26T01:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-10-26T02:01:00.000Z")));
+        Assert.assertEquals(0, rules.getDstGapOffset(MillsTimestampDriver.floor("1997-10-26T03:01:00.000Z")));
     }
 
     @Test

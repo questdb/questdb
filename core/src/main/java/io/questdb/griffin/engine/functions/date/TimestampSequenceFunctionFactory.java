@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -40,9 +41,12 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class TimestampSequenceFunctionFactory implements FunctionFactory {
+    private static final String NAME = "timestamp_sequence";
+    private static final String SIGNATURE = NAME + "(NL)";
+
     @Override
     public String getSignature() {
-        return "timestamp_sequence(NL)";
+        return SIGNATURE;
     }
 
     @Override
@@ -53,28 +57,31 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(0).getType()), ColumnType.TIMESTAMP_MICRO);
-        if (args.getQuick(0).isConstant()) {
-            final long start = args.getQuick(0).getTimestamp(null);
+        int timestampType = ColumnType.TIMESTAMP_MICRO;
+        Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final long start = MicrosTimestampDriver.INSTANCE.from(arg.getTimestamp(null), arg.getType());
             if (start == Numbers.LONG_NULL) {
-                return ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
+                return MicrosTimestampDriver.INSTANCE.getTimestampConstantNull();
             }
-            return new TimestampSequenceFunction(start, args.getQuick(1), timestampType);
+            return new TimestampSequenceFunctionFactory.TimestampSequenceFunction(NAME, start, args.getQuick(1), timestampType);
         } else {
-            return new TimestampSequenceVariableFunction(args.getQuick(0), args.getQuick(1), timestampType);
+            return new TimestampSequenceFunctionFactory.TimestampSequenceVariableFunction(NAME, args.getQuick(0), args.getQuick(1), timestampType);
         }
     }
 
-    private static class TimestampSequenceFunction extends TimestampFunction {
+    public static class TimestampSequenceFunction extends TimestampFunction {
         private final Function longIncrement;
+        private final String name;
         private final long start;
         private long next;
 
-        public TimestampSequenceFunction(long start, Function longIncrement, int timestampType) {
+        public TimestampSequenceFunction(String name, long start, Function longIncrement, int timestampType) {
             super(timestampType);
             this.start = start;
             this.next = start;
             this.longIncrement = longIncrement;
+            this.name = name;
         }
 
         @Override
@@ -107,7 +114,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
+            sink.val(name).val("(").val(start).val(',').val(longIncrement).val(')');
         }
 
         @Override
@@ -116,16 +123,18 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static final class TimestampSequenceVariableFunction extends TimestampFunction {
+    public static final class TimestampSequenceVariableFunction extends TimestampFunction {
         private final Function longIncrement;
+        private final String name;
         private final Function start;
         private long next;
 
-        public TimestampSequenceVariableFunction(Function start, Function longIncrement, int timestampType) {
+        public TimestampSequenceVariableFunction(String name, Function start, Function longIncrement, int timestampType) {
             super(timestampType);
             this.start = start;
             this.next = 0;
             this.longIncrement = longIncrement;
+            this.name = name;
         }
 
         @Override
@@ -160,7 +169,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_sequence(").val(start).val(',').val(longIncrement).val(')');
+            sink.val(name).val("(").val(start).val(',').val(longIncrement).val(')');
         }
 
         @Override

@@ -524,7 +524,7 @@ public class ParquetTest extends AbstractTest {
                 " to_long128(rnd_long(), rnd_long()) a_long128," +
                 " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                 " timestamp_sequence(500000000000, 600) a_ts," +
-                " timestamp_sequence(500000000000::timestamp_ns, 600000) a_ns," +
+                " timestamp_sequence_ns(500000000000, 600000) a_ns," +
                 " timestamp_sequence(400000000000, 500)::" + designedTimestampType + " designated_ts" +
                 " from long_sequence(" + INITIAL_ROWS + ")) timestamp(designated_ts) partition by " + PartitionBy.toString(partitionBy) + ";";
 
@@ -592,7 +592,7 @@ public class ParquetTest extends AbstractTest {
                     "    to_timestamp('2022', 'yyyy')," +
                     "    to_timestamp('2027', 'yyyy')," +
                     "    2) a_ts_top," +
-                    " rnd_timestamp(" +
+                    " rnd_timestamp_ns(" +
                     "    to_timestamp_ns('2022', 'yyyy')," +
                     "    to_timestamp_ns('2027', 'yyyy')," +
                     "    2) a_ns_top," +

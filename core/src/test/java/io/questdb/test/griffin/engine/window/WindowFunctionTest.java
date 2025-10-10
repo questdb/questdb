@@ -4102,7 +4102,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     execute("create table x as (" +
                             "select " +
                             "timestamp_sequence(0, 1000000) as ts, " +
-                            "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                            "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                             "from long_sequence(5)" +
                             ") timestamp(ts)");
                     assertQuery(
@@ -6439,7 +6439,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6468,7 +6468,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6497,7 +6497,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " 42 price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6526,7 +6526,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -6555,7 +6555,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6584,7 +6584,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6613,7 +6613,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6642,7 +6642,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6671,7 +6671,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6700,7 +6700,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_int(1,2,3) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6729,7 +6729,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6821,7 +6821,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 7,
@@ -6852,7 +6852,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_symbol('ETH','BTC') sym," +
                         " rnd_symbol('user1','user2') author," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -6904,7 +6904,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -6933,7 +6933,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6962,7 +6962,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -6989,7 +6989,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "create table tab as " +
                         "(" +
                         "select" +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
                         " rnd_symbol('a','b','c') s" +
                         " from long_sequence(10)" +
                         "), index(s) timestamp(ts) partition by month",
@@ -7017,7 +7017,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "create table tab as " +
                         "(" +
                         "select" +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
                         " rnd_symbol('a','b','c') s" +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by month",
@@ -7047,7 +7047,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " 42 price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -7076,7 +7076,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 null,
@@ -7105,7 +7105,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -7134,7 +7134,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select" +
                         " rnd_double(42) price," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -7162,7 +7162,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 "ts",
@@ -7182,7 +7182,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         " rnd_double(100) price," +
                         " rnd_symbol('XX','YY','ZZ') side," +
                         " rnd_symbol('AA','BB','CC') symbol," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day",
                 0,
@@ -7691,7 +7691,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select" +
                     " rnd_int(1,2,3) price," +
                     " rnd_symbol('AA','BB','CC') symbol," +
-                    (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts") +
+                    (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by day", sqlExecutionContext);
 
@@ -7922,7 +7922,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_double(42) total_amount," +
-                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) pickup_datetime" : " timestamp_sequence(0::timestamp_ns, 100000000000000) pickup_datetime") +
+                        (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) pickup_datetime" : " timestamp_sequence_ns(0, 100000000000000) pickup_datetime") +
                         " from long_sequence(10)" +
                         ") timestamp(pickup_datetime) partition by day",
                 56,
@@ -8083,7 +8083,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     " rnd_int(1,2,3) price," +
                     " rnd_symbol('AA','BB','CC') symbol," +
                     (timestampType == TestTimestampType.MICRO ?
-                            " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence(0::timestamp_ns, 100000000000000) ts,") +
+                            " timestamp_sequence(0, 100000000000) ts," : " timestamp_sequence_ns(0, 100000000000000) ts,") +
                     " from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
 

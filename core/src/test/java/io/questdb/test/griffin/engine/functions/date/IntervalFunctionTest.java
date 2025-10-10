@@ -376,6 +376,28 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNowNsInInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "result\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now_ns() in tomorrow()"
+            );
+            assertSql(
+                    "result\n" +
+                            "true\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now_ns() in today()"
+            );
+            assertSql(
+                    "result\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now_ns() in yesterday()"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampInInterval() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(

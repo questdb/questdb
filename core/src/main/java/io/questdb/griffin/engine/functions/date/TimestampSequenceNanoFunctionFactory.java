@@ -22,24 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class CastVarcharToDateFunctionFactory implements FunctionFactory {
+public class TimestampSequenceNanoFunctionFactory implements FunctionFactory {
+    private static final String NAME = "timestamp_sequence_ns";
+    private static final String SIGNATURE = NAME + "(NL)";
 
     @Override
     public String getSignature() {
-        return "cast(Øm)";
+        return SIGNATURE;
     }
 
     @Override
@@ -50,24 +51,16 @@ public class CastVarcharToDateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
-    }
-
-    private static class Func extends AbstractCastToDateFunction {
-        public Func(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
-            // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
-            final CharSequence value = arg.getStrA(rec);
-            try {
-                return value == null ? Numbers.LONG_NULL : MillsTimestampDriver.floor(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NULL;
+        int timestampType = ColumnType.TIMESTAMP_NANO;
+        Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final long start = NanosTimestampDriver.INSTANCE.from(arg.getTimestamp(null), arg.getType());
+            if (start == Numbers.LONG_NULL) {
+                return NanosTimestampDriver.INSTANCE.getTimestampConstantNull();
             }
+            return new TimestampSequenceFunctionFactory.TimestampSequenceFunction(NAME, start, args.getQuick(1), timestampType);
+        } else {
+            return new TimestampSequenceFunctionFactory.TimestampSequenceVariableFunction(NAME, args.getQuick(0), args.getQuick(1), timestampType);
         }
     }
 }

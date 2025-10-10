@@ -40,7 +40,7 @@ public class TimestampConstant extends TimestampFunction implements ConstantFunc
         this.value = value;
     }
 
-    public static TimestampConstant newInstance(long value, int timestampType) {
+    public static ConstantFunction newInstance(long value, int timestampType) {
         return value != Numbers.LONG_NULL ? new TimestampConstant(value, timestampType) : ColumnType.getTimestampDriver(timestampType).getTimestampConstantNull();
     }
 

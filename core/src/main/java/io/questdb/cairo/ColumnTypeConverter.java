@@ -54,7 +54,6 @@ public class ColumnTypeConverter {
     private static final Fixed2VarConverter converterFromBoolean2String = ColumnTypeConverter::stringFromBoolean;
     private static final Fixed2VarConverter converterFromByte2String = ColumnTypeConverter::stringFromByte;
     private static final Fixed2VarConverter converterFromChar2String = ColumnTypeConverter::stringFromChar;
-    private static final Fixed2VarConverter converterFromDate2String = ColumnTypeConverter::stringFromDate;
     private static final Fixed2VarConverter converterFromDouble2String = ColumnTypeConverter::stringFromDouble;
     private static final Fixed2VarConverter converterFromFloat2String = ColumnTypeConverter::stringFromFloat;
     private static final Fixed2VarConverter converterFromIPv42String = ColumnTypeConverter::stringFromIPv4;
@@ -65,7 +64,6 @@ public class ColumnTypeConverter {
     private static final Var2FixedConverter<CharSequence> converterStr2Boolean = ColumnTypeConverter::str2Boolean;
     private static final Var2FixedConverter<CharSequence> converterStr2Byte = ColumnTypeConverter::str2Byte;
     private static final Var2FixedConverter<CharSequence> converterStr2Char = ColumnTypeConverter::str2Char;
-    private static final Var2FixedConverter<CharSequence> converterStr2Date = ColumnTypeConverter::str2Date;
     private static final Var2FixedConverter<CharSequence> converterStr2Double = ColumnTypeConverter::str2Double;
     private static final Var2FixedConverter<CharSequence> converterStr2Float = ColumnTypeConverter::str2Float;
     private static final Var2FixedConverter<CharSequence> converterStr2IPv4 = ColumnTypeConverter::str2IpV4;
@@ -150,7 +148,7 @@ public class ColumnTypeConverter {
             case ColumnType.FLOAT:
                 return converterStr2Float;
             case ColumnType.DATE:
-                return converterStr2Date;
+                return MillsTimestampDriver.INSTANCE.getConverterStr2Timestamp();
             case ColumnType.TIMESTAMP:
                 return ColumnType.getTimestampDriver(dstColumnType).getConverterStr2Timestamp();
             case ColumnType.BOOLEAN:
@@ -878,7 +876,7 @@ public class ColumnTypeConverter {
             case ColumnType.FLOAT:
                 return converterFromFloat2String;
             case ColumnType.DATE:
-                return converterFromDate2String;
+                return MillsTimestampDriver.INSTANCE.getConverterTimestamp2Str();
             case ColumnType.TIMESTAMP:
                 return ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
             case ColumnType.BOOLEAN:
@@ -900,18 +898,6 @@ public class ColumnTypeConverter {
 
     private static void str2Char(CharSequence str, MemoryA mem) {
         mem.putChar(str == null || str.length() == 0 ? 0 : str.charAt(0));
-    }
-
-    private static void str2Date(CharSequence str, MemoryA mem) {
-        if (str != null) {
-            try {
-                mem.putLong(MicrosTimestampDriver.floor(str) / 1000);
-                return;
-            } catch (NumericException e) {
-                // Fall through
-            }
-        }
-        mem.putLong(Numbers.LONG_NULL);
     }
 
     private static void str2Double(CharSequence str, MemoryA mem) {
@@ -1014,15 +1000,6 @@ public class ColumnTypeConverter {
         char value = Unsafe.getUnsafe().getChar(srcAddr);
         if (value != 0) {
             sink.put(value);
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {
-        long value = Unsafe.getUnsafe().getLong(srcAddr);
-        if (value != Numbers.LONG_NULL) {
-            sink.putISODateMillis(value);
             return true;
         }
         return false;

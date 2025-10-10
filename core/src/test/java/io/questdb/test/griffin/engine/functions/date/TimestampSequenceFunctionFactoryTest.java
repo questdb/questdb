@@ -78,7 +78,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 expected,
-                "SELECT timestamp_sequence(\n" +
+                "SELECT timestamp_sequence_ns(\n" +
                         "         to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
                         "         rnd_long(1,10,0) * 100000000L\n" +
                         ") ts from long_sequence(10, 900, 800)"
@@ -101,7 +101,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 expected,
-                "select x ac, timestamp_sequence(0::timestamp_ns, 1000) ts from long_sequence(10)"
+                "select x ac, timestamp_sequence_ns(0, 1000) ts from long_sequence(10)"
         );
     }
 
@@ -147,7 +147,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 expected,
-                "SELECT timestamp_sequence(\n" +
+                "SELECT timestamp_sequence_ns(\n" +
                         "         to_timestamp_ns('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
                         "         300_000_000_000L\n" +
                         ") ts, dateadd('h', 1, ts) from long_sequence(10)"
@@ -187,7 +187,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 expected,
-                "select x ac, timestamp_sequence(systimestamp_ns(), 1000) ts from long_sequence(10)"
+                "select x ac, timestamp_sequence_ns(systimestamp_ns(), 1000) ts from long_sequence(10)"
         );
     }
 

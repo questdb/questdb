@@ -42,7 +42,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                     "create table test_tab as (" +
                             "select" +
                             " timestamp_sequence(0, 10000) ts," +
-                            " timestamp_sequence(0::timestamp_ns, 10000000) ts_ns," +
+                            " timestamp_sequence_ns(0, 10000000) ts_ns," +
                             " rnd_symbol('h', 'M', 'y', 'x', null) period," +
                             " rnd_symbol('08:00', 'Europe/Bratislava', 'unknown/unknown', null) tz," +
                             " rnd_int(0,10,1) stride from long_sequence(100)" +

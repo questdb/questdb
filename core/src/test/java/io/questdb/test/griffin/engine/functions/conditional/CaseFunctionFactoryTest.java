@@ -1770,7 +1770,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " timestamp_sequence(0, 10) a," +
-                        " timestamp_sequence(3000::timestamp_ns, 100000) b," +
+                        " timestamp_sequence_ns(3000, 100000) b," +
                         " timestamp_sequence(6, 100) c" +
                         " from long_sequence(20)" +
                         ")",
@@ -1814,9 +1814,9 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "from tanc",
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
-                        " timestamp_sequence(0::timestamp_ns, 10000) a," +
+                        " timestamp_sequence_ns(0, 10000) a," +
                         " timestamp_sequence(3, 100) b," +
-                        " timestamp_sequence(6000::timestamp_ns, 100000) c" +
+                        " timestamp_sequence_ns(6000, 100000) c" +
                         " from long_sequence(20)" +
                         ")",
                 null,

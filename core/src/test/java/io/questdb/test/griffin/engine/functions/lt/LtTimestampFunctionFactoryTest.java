@@ -128,7 +128,7 @@ public class LtTimestampFunctionFactoryTest extends AbstractFunctionFactoryTest 
             execute("create table x as (" +
                     "select " +
                     "timestamp_sequence(1000000, 1000000) as ts, " +
-                    "timestamp_sequence(0::timestamp_ns, 2000000000) as ts_ns " +
+                    "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                     "from long_sequence(4)" +
                     ") timestamp(ts)");
             assertQuery("ts\tts_ns\tcolumn\n" +

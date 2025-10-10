@@ -50,6 +50,34 @@ public class DatesTest {
     }
 
     @Test
+    public void testAddHours() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addHours(millis, 5));
+        TestUtils.assertEquals("2008-05-13T04:45:51.045Z", sink);
+    }
+
+    @Test
+    public void testAddMicros() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addMicros(millis, 500000));
+        TestUtils.assertEquals("2008-05-12T23:45:51.545Z", sink);
+    }
+
+    @Test
+    public void testAddMillis() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addMillis(millis, 500));
+        TestUtils.assertEquals("2008-05-12T23:45:51.545Z", sink);
+    }
+
+    @Test
+    public void testAddMinutes() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addMinutes(millis, 15));
+        TestUtils.assertEquals("2008-05-13T00:00:51.045Z", sink);
+    }
+
+    @Test
     public void testAddMonths() throws Exception {
         long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
         DateFormatUtils.appendDateTime(sink, Dates.addMonths(millis, -10));
@@ -64,30 +92,51 @@ public class DatesTest {
     }
 
     @Test
+    public void testAddNanos() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addNanos(millis, 500000000));
+        TestUtils.assertEquals("2008-05-12T23:45:51.545Z", sink);
+    }
+
+    @Test
+    public void testAddSeconds() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addSeconds(millis, 30));
+        TestUtils.assertEquals("2008-05-12T23:46:21.045Z", sink);
+    }
+
+    @Test
+    public void testAddWeeks() throws NumericException {
+        long millis = DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addWeeks(millis, 2));
+        TestUtils.assertEquals("2008-05-26T23:45:51.045Z", sink);
+    }
+
+    @Test
     public void testAddYears() throws Exception {
         long millis = DateFormatUtils.parseUTCDate("1988-05-12T23:45:51.045Z");
-        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 10));
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYears3() throws Exception {
         long millis = DateFormatUtils.parseUTCDate("2014-01-01T00:00:00.000Z");
-        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 1));
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsNonLeapToLeap() throws Exception {
         long millis = DateFormatUtils.parseUTCDate("2015-01-01T00:00:00.000Z");
-        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 1));
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 1));
         TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsPrevEpoch() throws Exception {
         long millis = DateFormatUtils.parseUTCDate("1888-05-12T23:45:51.045Z");
-        DateFormatUtils.appendDateTime(sink, Dates.addYear(millis, 10));
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 
@@ -224,6 +273,51 @@ public class DatesTest {
     public void testFormatHTTP2() throws Exception {
         DateFormatUtils.formatHTTP(sink, DateFormatUtils.parseUTCDate("2015-12-05T12:04:55.332Z"));
         TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
+    }
+
+    @Test
+    public void testGetCentury() throws NumericException {
+        Assert.assertEquals(21, Dates.getCentury(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(20, Dates.getCentury(DateFormatUtils.parseUTCDate("1999-12-31T23:59:59.999Z")));
+        Assert.assertEquals(19, Dates.getCentury(DateFormatUtils.parseUTCDate("1899-12-31T23:59:59.999Z")));
+        Assert.assertEquals(1, Dates.getCentury(DateFormatUtils.parseUTCDate("0001-01-01T00:00:00.000Z")));
+    }
+
+    @Test
+    public void testGetDecade() throws NumericException {
+        Assert.assertEquals(200, Dates.getDecade(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(199, Dates.getDecade(DateFormatUtils.parseUTCDate("1999-12-31T23:59:59.999Z")));
+        Assert.assertEquals(190, Dates.getDecade(DateFormatUtils.parseUTCDate("1900-01-01T00:00:00.000Z")));
+    }
+
+    @Test
+    public void testGetDow() throws NumericException {
+        Assert.assertEquals(1, Dates.getDow(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(0, Dates.getDow(DateFormatUtils.parseUTCDate("2008-05-11T00:00:00.000Z")));
+        Assert.assertEquals(6, Dates.getDow(DateFormatUtils.parseUTCDate("2008-05-17T00:00:00.000Z")));
+    }
+
+    @Test
+    public void testGetDoy() throws NumericException {
+        Assert.assertEquals(133, Dates.getDoy(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(1, Dates.getDoy(DateFormatUtils.parseUTCDate("2008-01-01T00:00:00.000Z")));
+        Assert.assertEquals(366, Dates.getDoy(DateFormatUtils.parseUTCDate("2008-12-31T23:59:59.999Z")));
+        Assert.assertEquals(365, Dates.getDoy(DateFormatUtils.parseUTCDate("2009-12-31T23:59:59.999Z")));
+    }
+
+    @Test
+    public void testGetIsoYear() throws NumericException {
+        Assert.assertEquals(2008, Dates.getIsoYear(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(2009, Dates.getIsoYear(DateFormatUtils.parseUTCDate("2008-12-29T00:00:00.000Z")));
+        Assert.assertEquals(2009, Dates.getIsoYear(DateFormatUtils.parseUTCDate("2009-01-01T00:00:00.000Z")));
+    }
+
+    @Test
+    public void testGetMillennium() throws NumericException {
+        Assert.assertEquals(3, Dates.getMillennium(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z")));
+        Assert.assertEquals(2, Dates.getMillennium(DateFormatUtils.parseUTCDate("1999-12-31T23:59:59.999Z")));
+        Assert.assertEquals(2, Dates.getMillennium(DateFormatUtils.parseUTCDate("1001-01-01T00:00:00.000Z")));
+        Assert.assertEquals(1, Dates.getMillennium(DateFormatUtils.parseUTCDate("1000-12-31T23:59:59.999Z")));
     }
 
     @Test
@@ -381,6 +475,12 @@ public class DatesTest {
         long millis = DateFormatUtils.parseUTCDate("2017-04-06T00:00:00.000Z");
         DateFormatUtils.appendDateTime(sink, Dates.previousOrSameDayOfWeek(millis, 4));
         TestUtils.assertEquals("2017-04-06T00:00:00.000Z", sink);
+    }
+
+    @Test
+    public void testToUSecString() throws NumericException {
+        String result = Dates.toUSecString(DateFormatUtils.parseUTCDate("2008-05-12T23:45:51.045Z"));
+        Assert.assertEquals("2008-05-12T23:45:51.045Z", result);
     }
 
     @Test

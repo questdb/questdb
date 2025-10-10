@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import org.junit.Assume;
@@ -432,6 +433,19 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNanosecondsNull() throws Exception {
+        assertQuery(
+                "extract\n" +
+                        "null\n",
+                "select extract(nanoseconds from null)",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testNonLiteralPart() throws Exception {
         assertException(
                 "select extract(1+1 from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
@@ -759,6 +773,32 @@ public class ExtractFunctionTest extends AbstractCairoTest {
                 "extract\n" +
                         "3\n",
                 "select extract(month from '2022-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVanillaNanoseconds() throws Exception {
+        assertQuery(
+                "extract\n" +
+                        (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "555555000\n" : "555555123\n"),
+                "select extract(nanoseconds from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVanillaNanosecondsPreEpoch() throws Exception {
+        assertQuery(
+                "extract\n" +
+                        (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "555555000\n" : "555555123\n"),
+                "select extract(nanoseconds from '1917-03-11T22:00:40.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
                 true,
