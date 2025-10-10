@@ -12,14 +12,41 @@ jobs:
           includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-cairo:
+        mac-cairo-o3:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/o3/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo-mv:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/mv/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo-wal-etc:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo-core:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/cairo/fuzz/**"
+          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-fuzz:
@@ -78,14 +105,42 @@ jobs:
           excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo:
+        windows-cairo-o3:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/o3/**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-mv:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/mv/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-wal-etc:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-core:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
