@@ -584,13 +584,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_CHUNK:
                         sendParquetFileChunk(response, state);
-
                         if (state.parquetFileOffset >= state.parquetFileSize) {
                             state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE;
                         }
                         break;
                     case JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_COMPLETE:
-                        response.sendChunk(true);
                         sendDone(response, state);
                         break OUT;
                     default:
