@@ -60,6 +60,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -210,6 +211,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+        Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -1440,6 +1442,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
+            Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());

@@ -24,16 +24,14 @@
 use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
+use std::num::NonZeroI32;
 
-pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 18;
+pub const QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG: i32 = 1 << 8;
 
 // Don't forget to update VALUES when modifying this list.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
-    /// Placeholder for unsupported/unknown types.
-    /// Note: ColumnType::try_from(i32) rejects code <= 0, so Undefined is not a valid serialized code.
-    Undefined = 0,
     Boolean = 1,
     Byte = 2,
     Short = 3,
@@ -61,8 +59,7 @@ pub enum ColumnTypeTag {
 
 impl ColumnTypeTag {
     #[cfg(test)]
-    const VALUES: [Self; 24] = [
-        Self::Undefined,
+    const VALUES: [Self; 23] = [
         Self::Boolean,
         Self::Byte,
         Self::Short,
@@ -124,7 +121,6 @@ impl ColumnTypeTag {
 
     pub const fn name(self) -> &'static str {
         match self {
-            ColumnTypeTag::Undefined => "undefined",
             ColumnTypeTag::Boolean => "boolean",
             ColumnTypeTag::Byte => "byte",
             ColumnTypeTag::Short => "short",
@@ -165,7 +161,6 @@ impl TryFrom<u8> for ColumnTypeTag {
 
     fn try_from(col_tag_num: u8) -> Result<Self, Self::Error> {
         match col_tag_num {
-            0 => Ok(ColumnTypeTag::Undefined),
             1 => Ok(ColumnTypeTag::Boolean),
             2 => Ok(ColumnTypeTag::Byte),
             3 => Ok(ColumnTypeTag::Short),
@@ -214,22 +209,24 @@ const ARRAY_NDIMS_FIELD_POS: i32 = 14;
 #[serde(transparent)]
 pub struct ColumnType {
     // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
-    code: i32,
+    code: NonZeroI32,
 }
 
 impl ColumnType {
     pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
-        let code = tag as i32 | extra_type_info;
+        let shifted_extra_type_info = extra_type_info << 8;
+        let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
+            .expect("column type code should never be zero");
         Self { code }
     }
 
     pub fn code(&self) -> i32 {
-        self.code
+        self.code.get()
     }
 
     pub fn is_designated(&self) -> bool {
         (self.tag() == ColumnTypeTag::Timestamp)
-            && ((self.code & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
+            && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
     pub fn into_designated(self) -> CoreResult<ColumnType> {
@@ -240,7 +237,19 @@ impl ColumnType {
                 self
             ));
         }
-        let code = self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP;
+        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        Ok(Self { code })
+    }
+
+    pub fn into_non_designated(self) -> CoreResult<ColumnType> {
+        if self.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only timestamp columns can have designated flag",
+                self
+            ));
+        }
+        let code = NonZeroI32::new(self.code() & !TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
         Ok(Self { code })
     }
 
@@ -278,7 +287,8 @@ impl ColumnType {
     }
 
     pub fn has_flag(&self, flag: i32) -> bool {
-        self.code & flag == flag
+        let flag_shifted = flag << 8;
+        self.code & flag_shifted == flag_shifted
     }
 }
 
@@ -310,7 +320,8 @@ impl TryFrom<i32> for ColumnType {
         let _tag: ColumnTypeTag = col_tag_num
             .try_into()
             .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
-        Ok(Self { code: v })
+        let code = NonZeroI32::new(v).expect("column type code should never be zero");
+        Ok(Self { code })
     }
 }
 
@@ -338,7 +349,7 @@ pub fn encode_array_type(elem_type: ColumnTypeTag, dim: i32) -> CoreResult<Colum
     let extra = ((dim - 1) & ARRAY_NDIMS_FIELD_MASK)
         << (ARRAY_NDIMS_FIELD_POS - ARRAY_ELEMTYPE_FIELD_POS)
         | ((elem_type as i32) & ARRAY_ELEMTYPE_FIELD_MASK);
-    Ok(ColumnType::new(ColumnTypeTag::Array, extra << 8))
+    Ok(ColumnType::new(ColumnTypeTag::Array, extra))
 }
 
 #[cfg(test)]
@@ -414,6 +425,32 @@ mod tests {
         let dim = typ.unwrap().array_dimensionality();
         assert!(dim.is_ok());
         assert_eq!(dim.unwrap(), 3);
+    }
+
+    #[test]
+    fn test_designated() {
+        for tag in ColumnTypeTag::VALUES {
+            if tag != ColumnTypeTag::Timestamp {
+                assert!(!ColumnType::new(tag, 0).is_designated());
+                assert!(ColumnType::new(tag, 0).into_designated().is_err());
+                assert!(ColumnType::new(tag, 0).into_non_designated().is_err());
+            }
+        }
+
+        let typ = ColumnType::new(ColumnTypeTag::Timestamp, 0).into_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(typ.is_designated());
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
+        assert_eq!(typ, ColumnType::new(ColumnTypeTag::Timestamp, 0));
+        // into_non_designated must be idempotent
+        let typ = typ.into_non_designated();
+        assert!(typ.is_ok());
+        let typ = typ.unwrap();
+        assert!(!typ.is_designated());
     }
 
     #[test]
