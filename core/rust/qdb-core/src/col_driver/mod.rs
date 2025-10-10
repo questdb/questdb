@@ -31,7 +31,7 @@ mod string;
 mod varchar;
 
 use crate::col_type::{ColumnType, ColumnTypeTag};
-use crate::error::{CoreResult, fmt_err};
+use crate::error::CoreResult;
 
 pub use array::*;
 pub use binary::*;
@@ -83,7 +83,6 @@ pub fn try_lookup_driver(col_type: ColumnType) -> CoreResult<&'static dyn Column
         (ColumnTypeTag::IPv4, _) => Ok(&IPv4Driver),
         (ColumnTypeTag::Varchar, _) => Ok(&VarcharDriver),
         (ColumnTypeTag::Array, _) => Ok(&ArrayDriver),
-        _ => Err(fmt_err!(InvalidType, "unexpected column type {}", col_type,)),
     }
 }
 
@@ -130,12 +129,5 @@ mod tests {
             let actual_descr = driver.descr();
             assert_eq!(actual_descr, exp_descr);
         }
-    }
-
-    #[test]
-    fn test_lookup_driver_undefined_errors() {
-        // Undefined via code 0 should error
-        let undefined = ColumnType::new(ColumnTypeTag::Undefined, 0);
-        assert!(try_lookup_driver(undefined).is_err());
     }
 }

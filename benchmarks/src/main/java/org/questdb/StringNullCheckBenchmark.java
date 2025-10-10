@@ -65,7 +65,6 @@ import java.util.concurrent.TimeUnit;
 @Timeout(time = 5)
 @Fork(1)
 public class StringNullCheckBenchmark {
-
     private static final int NUM_ROWS = 10_000_000;
     private static final CairoConfiguration configuration =
             new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
@@ -104,16 +103,17 @@ public class StringNullCheckBenchmark {
                                     -1,
                                     null
                             );
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.compile("drop table if exists x", sqlExecutionContext);
-                compiler.compile("create table x as (select" +
-                        " rnd_str(70, 140, " + a_nullFreq + ") string_value," +
-                        " rnd_varchar(70, 140, " + a_nullFreq + ") varchar_value," +
-                        " rnd_long(1, 10, 0) long_value1," +
-                        " rnd_long(1, 10, 0) long_value2," +
-                        " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
-                        " from long_sequence(" + NUM_ROWS + ")) timestamp(ts)", sqlExecutionContext);
-            }
+            engine.execute("drop table if exists x", sqlExecutionContext);
+            engine.execute(
+                    "create table x as (select" +
+                            " rnd_str(70, 140, " + a_nullFreq + ") string_value," +
+                            " rnd_varchar(70, 140, " + a_nullFreq + ") varchar_value," +
+                            " rnd_long(1, 10, 0) long_value1," +
+                            " rnd_long(1, 10, 0) long_value2," +
+                            " timestamp_sequence(to_timestamp('2024-02-04', 'yyyy-MM-dd'), 100000L) ts" +
+                            " from long_sequence(" + NUM_ROWS + ")) timestamp(ts) partition by year bypass wal",
+                    sqlExecutionContext
+            );
         }
     }
 

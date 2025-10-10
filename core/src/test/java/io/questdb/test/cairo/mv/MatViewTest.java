@@ -3660,6 +3660,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeSampleByIntervalButFewRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day wal;");
+            execute("insert into x values('2000-01-01T12:00'),('2010-01-01T12:00'),('2020-01-01T12:00')");
+            drainQueues();
+
+            final String expected = """
+                    ts\tfirst_ts
+                    2000-01-01T00:00:00.000000Z\t2000-01-01T12:00:00.000000Z
+                    2010-01-01T00:00:00.000000Z\t2010-01-01T12:00:00.000000Z
+                    2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                    """;
+            final String viewSql = "select ts, first(ts) as first_ts from x sample by 10y";
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts", true, true);
+
+            execute("create materialized view x_1y as (" + viewSql + ") partition by year");
+            drainQueues();
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1y", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testManualDeferredMatView() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4329,10 +4352,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "sample by 10y";
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts");
 
-            execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
+            execute("create materialized view exchanges_10y as (" + viewSql + ") partition by year");
             drainQueues();
 
-            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_100y", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_10y", "ts", true, true);
         });
     }
 

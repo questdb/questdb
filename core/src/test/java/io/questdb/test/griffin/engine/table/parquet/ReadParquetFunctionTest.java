@@ -162,6 +162,56 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 100;
+            execute(
+                    "create table x as (select" +
+                            " x id," +
+                            " (x*1000000)::timestamp ts" +
+                            " from long_sequence(" + rows + ")" +
+                            ") timestamp(ts) partition by day"
+            );
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // No sorting is needed since we recognize the designated timestamp.
+                final String query = "select * from read_parquet('x.parquet') order by ts";
+                final String expectedPlan = parallel ? "parquet page frame scan\n" : "parquet file sequential scan\n";
+                assertPlanNoLeakCheck(
+                        query,
+                        expectedPlan
+                );
+                assertQueryNoLeakCheck(
+                        "id\tts\n" +
+                                "1\t1970-01-01T00:00:01.000000Z\n" +
+                                "2\t1970-01-01T00:00:02.000000Z\n" +
+                                "3\t1970-01-01T00:00:03.000000Z\n" +
+                                "4\t1970-01-01T00:00:04.000000Z\n" +
+                                "5\t1970-01-01T00:00:05.000000Z\n" +
+                                "6\t1970-01-01T00:00:06.000000Z\n" +
+                                "7\t1970-01-01T00:00:07.000000Z\n" +
+                                "8\t1970-01-01T00:00:08.000000Z\n" +
+                                "9\t1970-01-01T00:00:09.000000Z\n" +
+                                "10\t1970-01-01T00:00:10.000000Z\n",
+                        query + " limit 10",
+                        "ts",
+                        parallel,
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testFileDeleted() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
@@ -418,7 +468,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                                 "10\t2013697528\t\t\t[0.15274858078119136,0.7887510806568455,0.7468602267994937,0.23567419576658333,0.9976896430755934]\ttrue\t12861\t120\tI\ta0cd12e6-d39f-469a-9f88-06288f4b53ad\t0.9316283568969537\t0.8791439\tGPGW\t2015-03-04T04:42:20.407Z\t0x8ca81bb363d7ac4585afb517c8aee023d107b1affff76a2c79189b578191a8f6\t248.76.18.163\t0011\t11001010\t1101000010010101\t10101011110101111111110000001011\t00000000 87 28 92 a3 9b e3 cb c2 64 8a b0 35\t2015-01-10T00:00:00.000000Z\t2015-01-10T00:00:00.000000000Z\n",
                         sink,
                         null,
-                        null,
+                        "a_ts",
                         parallel,
                         true
                 );
