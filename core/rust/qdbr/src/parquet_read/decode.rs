@@ -1923,12 +1923,12 @@ mod tests {
     }
 
     fn generate_random_unicode_string(len: usize) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         // 0x00A0..0xD7FF generates a random Unicode scalar value in a range that includes non-ASCII characters
-        let range = if rng.gen_bool(0.5) {
+        let range = if rng.random_bool(0.5) {
             0x00A0..0xD7FF
         } else {
             33..126
@@ -1936,7 +1936,7 @@ mod tests {
 
         let random_string: String = (0..len)
             .map(|_| {
-                let c = rng.gen_range(range.clone());
+                let c = rng.random_range(range.start..range.end);
                 char::from_u32(c).unwrap_or('�') // Use a replacement character for invalid values
             })
             .collect();
@@ -1945,13 +1945,13 @@ mod tests {
     }
 
     fn generate_random_binary(len: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         let random_bin: Vec<u8> = (0..len)
             .map(|_| {
-                let u: u8 = rng.gen();
+                let u: u8 = rng.random();
                 u
             })
             .collect();
