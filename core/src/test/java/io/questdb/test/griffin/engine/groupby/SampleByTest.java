@@ -6150,7 +6150,6 @@ public class SampleByTest extends AbstractCairoTest {
                     true,
                     true
             );
-
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -6158,6 +6157,38 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts1]
                                 VirtualRecord
                                   functions: [ts1,ts2,ts1-ts2,count]
+                                    Async Group By workers: 1
+                                      keys: [ts1,ts2]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            final String query2 = "select ts1, ts1 - ts2 as ts_diff, count() " +
+                    "from x " +
+                    "sample by 2m";
+            assertQueryNoLeakCheck(
+                    """
+                            ts1\tts_diff\tcount
+                            2020-01-01T00:00:00.000000Z\t-1000000\t2
+                            2020-01-01T00:00:00.000000Z\t-61000000\t1
+                            2020-01-01T00:02:00.000000Z\t-1000000\t1
+                            """,
+                    query2,
+                    "ts1",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query2,
+                    """
+                            Radix sort light
+                              keys: [ts1]
+                                VirtualRecord
+                                  functions: [ts1,ts1-ts2,count]
                                     Async Group By workers: 1
                                       keys: [ts1,ts2]
                                       values: [count(*)]
