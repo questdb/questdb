@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
@@ -184,7 +183,7 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
                 GroupByArraySink sink = new GroupByArraySink(type);
                 sink.setAllocator(allocator);
 
-                ArrayView array = create2DArray(allocator, 2, 3, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+                ArrayView array = create2DArray(allocator, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
                 sink.put(array);
 
                 TestUtils.assertEquals(array, sink.getArray());
@@ -193,31 +192,32 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     }
 
     private ArrayView createArray(GroupByAllocator allocator, double... values) {
-        long dataSize = 4 + 4 + (values.length * 8L);
-        long ptr = allocator.malloc(8 + dataSize);
+        int nDims = ColumnType.decodeArrayDimensionality(TYPE);
+        long ptr = allocator.malloc((long) nDims * Integer.BYTES + (values.length * 8L));
 
-        Unsafe.getUnsafe().putLong(ptr, dataSize);
-        Unsafe.getUnsafe().putInt(ptr + 8, TYPE);
-        Unsafe.getUnsafe().putInt(ptr + 12, values.length);
+        Unsafe.getUnsafe().putInt(ptr, values.length);
+
+        long arrayPtr = ptr + (long) nDims * Integer.BYTES;
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(ptr + 16 + i * 8L, values[i]);
+            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
         }
 
-        return ArrayTypeDriver.getPlainValue(ptr, new BorrowedArray());
+        return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);
     }
 
-    private ArrayView create2DArray(GroupByAllocator allocator, int dim0, int dim1, double[] values) {
-        long dataSize = 4 + 4 + 4 + (values.length * 8L);
-        long ptr = allocator.malloc(8 + dataSize);
+    private ArrayView create2DArray(GroupByAllocator allocator, double[] values) {
+        int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2, true);
+        int nDims = 2;
+        long ptr = allocator.malloc((long) nDims * Integer.BYTES + (values.length * 8L));
 
-        Unsafe.getUnsafe().putLong(ptr, dataSize);
-        Unsafe.getUnsafe().putInt(ptr + 8, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2, true));
-        Unsafe.getUnsafe().putInt(ptr + 12, dim0);
-        Unsafe.getUnsafe().putInt(ptr + 16, dim1);
+        Unsafe.getUnsafe().putInt(ptr, 2);
+        Unsafe.getUnsafe().putInt(ptr + 4, 3);
+
+        long arrayPtr = ptr + nDims * Integer.BYTES;
         for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(ptr + 20 + i * 8L, values[i]);
+            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
         }
 
-        return ArrayTypeDriver.getPlainValue(ptr, new BorrowedArray());
+        return new BorrowedArray().of(type, ptr, arrayPtr, values.length * 8);
     }
 }
