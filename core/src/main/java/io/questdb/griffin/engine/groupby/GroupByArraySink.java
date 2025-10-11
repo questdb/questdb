@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -47,12 +48,16 @@ public class GroupByArraySink implements Mutable {
     private static final long INT_SIZE = Integer.BYTES;
     private final BorrowedArray borrowedArray = new BorrowedArray();
     private final int type;
+    private final int dims;
+    private final long headerSize;
     private GroupByAllocator allocator;
     private long ptr;
     private long allocatedSize;
 
     public GroupByArraySink(int type) {
         this.type = type;
+        this.dims = ColumnType.decodeArrayDimensionality(type);
+        this.headerSize = Integer.BYTES + (long) dims * Integer.BYTES;
     }
 
     @Override
@@ -69,7 +74,7 @@ public class GroupByArraySink implements Mutable {
         if (totalSize <= 0)
             return null;
 
-        return ArrayTypeDriver.getCompactPlainArray(ptr, type, borrowedArray);
+        return ArrayTypeDriver.getCompactPlainArray(ptr, type, dims, borrowedArray);
     }
 
     public GroupByArraySink of(long ptr) {
@@ -89,9 +94,9 @@ public class GroupByArraySink implements Mutable {
     }
 
     public void put(ArrayView array) {
-        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type);
+        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type, dims, headerSize);
         ensureCapacity(requiredSize);
-        ArrayTypeDriver.appendCompactPlainArray(ptr, array, type);
+        ArrayTypeDriver.appendCompactPlainArray(ptr, array, type, dims, headerSize);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
