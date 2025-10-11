@@ -164,7 +164,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return bytesWritten;
     }
 
-    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int type, int nDims, long headerSize) {
+    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, long headerSize, int elemSize) {
         if (arrayView == null || arrayView.isNull()) {
             Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
             return;
@@ -172,9 +172,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
         long startAddress = addr;
 
-        int totalSize = (int) (getCompactPlainArraySize(arrayView, type, headerSize) - Integer.BYTES);
+        int dataSize = (int) (headerSize - Integer.BYTES + (long) arrayView.getFlatViewLength() * elemSize);
 
-        Unsafe.getUnsafe().putInt(addr, totalSize);
+        Unsafe.getUnsafe().putInt(addr, dataSize);
         addr += Integer.BYTES;
 
         for (int i = 0; i < nDims; i++) {
@@ -313,15 +313,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     public static BorrowedArray getCompactPlainArray(long addr, int type, int nDims, @NotNull BorrowedArray array) {
-        final int totalSize = Unsafe.getUnsafe().getInt(addr);
-        if (totalSize <= 0) {
+        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        if (dataSize <= 0) {
             array.ofNull();
             return array;
         }
 
         addr += Integer.BYTES;
         int shapeLen = nDims * Integer.BYTES;
-        array.of(type, addr, addr + shapeLen, totalSize - shapeLen);
+        array.of(type, addr, addr + shapeLen, dataSize - shapeLen);
         return array;
     }
 
@@ -331,15 +331,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static long getPlainValueSize(@NotNull ArrayView value) {
         return Long.BYTES + value.getVanillaMemoryLayoutSize();
-    }
-
-    public static long getCompactPlainArraySize(ArrayView arrayView, int type, long headerSize) {
-        if (arrayView == null || arrayView.isNull()) {
-            return Integer.BYTES;
-        }
-        short elemType = ColumnType.decodeArrayElementType(type);
-        long dataSize = (long) arrayView.getFlatViewLength() * ColumnType.sizeOf(elemType);
-        return headerSize + dataSize;
     }
 
     @Override

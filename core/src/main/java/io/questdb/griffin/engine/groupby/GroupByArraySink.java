@@ -38,7 +38,7 @@ import io.questdb.std.Unsafe;
  * <p>
  * Buffer layout is the following:
  * <pre>
- * | totalSize |   dim0  |  dim1  | ... |     dimN-1     | array data |
+ * | dataSize  |   dim0  |  dim1  | ... |     dimN-1     | array data |
  * +-----------+---------+--------+-----+----------------+------------+
  * |  4 bytes  |                 N * 4 bytes             |     -      |
  * +-----------+-----------------------------------------+------------+
@@ -49,6 +49,7 @@ public class GroupByArraySink implements Mutable {
     private final BorrowedArray borrowedArray = new BorrowedArray();
     private final int type;
     private final int dims;
+    private final int elemSize;
     private final long headerSize;
     private GroupByAllocator allocator;
     private long ptr;
@@ -57,6 +58,8 @@ public class GroupByArraySink implements Mutable {
     public GroupByArraySink(int type) {
         this.type = type;
         this.dims = ColumnType.decodeArrayDimensionality(type);
+        short elemType = ColumnType.decodeArrayElementType(type);
+        this.elemSize = ColumnType.sizeOf(elemType);
         this.headerSize = Integer.BYTES + (long) dims * Integer.BYTES;
     }
 
@@ -70,8 +73,8 @@ public class GroupByArraySink implements Mutable {
         if (ptr == 0)
             return null;
 
-        int totalSize = Unsafe.getUnsafe().getInt(ptr);
-        if (totalSize <= 0)
+        int dataSize = Unsafe.getUnsafe().getInt(ptr);
+        if (dataSize <= 0)
             return null;
 
         return ArrayTypeDriver.getCompactPlainArray(ptr, type, dims, borrowedArray);
@@ -81,8 +84,8 @@ public class GroupByArraySink implements Mutable {
         this.ptr = ptr;
 
         if (ptr != 0) {
-            int totalSize = Unsafe.getUnsafe().getInt(ptr);
-            this.allocatedSize = INT_SIZE + totalSize;
+            int dataSize = Unsafe.getUnsafe().getInt(ptr);
+            this.allocatedSize = INT_SIZE + dataSize;
         } else
             this.allocatedSize = 0;
 
@@ -94,13 +97,20 @@ public class GroupByArraySink implements Mutable {
     }
 
     public void put(ArrayView array) {
-        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type, headerSize);
+        long requiredSize = computeRequiredSize(array);
         ensureCapacity(requiredSize);
-        ArrayTypeDriver.appendCompactPlainArray(ptr, array, type, dims, headerSize);
+        ArrayTypeDriver.appendCompactPlainArray(ptr, array, dims, headerSize, elemSize);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
         this.allocator = allocator;
+    }
+
+    private long computeRequiredSize(ArrayView array) {
+        if (array == null || array.isNull()) {
+            return Integer.BYTES;
+        }
+        return headerSize + (long) array.getFlatViewLength() * elemSize;
     }
 
     private void ensureCapacity(long requiredSize) {

@@ -193,10 +193,10 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     }
 
     private ArrayView createArray(GroupByAllocator allocator, double... values) {
-        long totalSize = 4 + 4 + (values.length * 8L);
-        long ptr = allocator.malloc(8 + totalSize);
+        long dataSize = 4 + 4 + (values.length * 8L);
+        long ptr = allocator.malloc(8 + dataSize);
 
-        Unsafe.getUnsafe().putLong(ptr, totalSize);
+        Unsafe.getUnsafe().putLong(ptr, dataSize);
         Unsafe.getUnsafe().putInt(ptr + 8, TYPE);
         Unsafe.getUnsafe().putInt(ptr + 12, values.length);
         for (int i = 0; i < values.length; i++) {
@@ -207,10 +207,10 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     }
 
     private ArrayView create2DArray(GroupByAllocator allocator, int dim0, int dim1, double[] values) {
-        long totalSize = 4 + 4 + 4 + (values.length * 8L);
-        long ptr = allocator.malloc(8 + totalSize);
+        long dataSize = 4 + 4 + 4 + (values.length * 8L);
+        long ptr = allocator.malloc(8 + dataSize);
 
-        Unsafe.getUnsafe().putLong(ptr, totalSize);
+        Unsafe.getUnsafe().putLong(ptr, dataSize);
         Unsafe.getUnsafe().putInt(ptr + 8, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2, true));
         Unsafe.getUnsafe().putInt(ptr + 12, dim0);
         Unsafe.getUnsafe().putInt(ptr + 16, dim1);
