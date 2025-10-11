@@ -172,7 +172,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
         long startAddress = addr;
 
-        int totalSize = (int) (getCompactPlainArraySize(arrayView, type, nDims, headerSize) - Integer.BYTES);
+        int totalSize = (int) (getCompactPlainArraySize(arrayView, type, headerSize) - Integer.BYTES);
 
         Unsafe.getUnsafe().putInt(addr, totalSize);
         addr += Integer.BYTES;
@@ -333,7 +333,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return Long.BYTES + value.getVanillaMemoryLayoutSize();
     }
 
-    public static long getCompactPlainArraySize(ArrayView arrayView, int type, int nDims, long headerSize) {
+    public static long getCompactPlainArraySize(ArrayView arrayView, int type, long headerSize) {
         if (arrayView == null || arrayView.isNull()) {
             return Integer.BYTES;
         }

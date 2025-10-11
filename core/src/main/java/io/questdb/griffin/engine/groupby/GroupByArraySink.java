@@ -94,7 +94,7 @@ public class GroupByArraySink implements Mutable {
     }
 
     public void put(ArrayView array) {
-        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type, dims, headerSize);
+        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type, headerSize);
         ensureCapacity(requiredSize);
         ArrayTypeDriver.appendCompactPlainArray(ptr, array, type, dims, headerSize);
     }
