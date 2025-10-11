@@ -47,10 +47,12 @@ import io.questdb.std.Unsafe;
 public class GroupByArraySink implements Mutable {
     private static final long INT_SIZE = Integer.BYTES;
     private final BorrowedArray borrowedArray = new BorrowedArray();
+
     private final int type;
     private final int dims;
     private final int elemSize;
     private final long headerSize;
+
     private GroupByAllocator allocator;
     private long ptr;
     private long allocatedSize;
@@ -58,9 +60,8 @@ public class GroupByArraySink implements Mutable {
     public GroupByArraySink(int type) {
         this.type = type;
         this.dims = ColumnType.decodeArrayDimensionality(type);
-        short elemType = ColumnType.decodeArrayElementType(type);
-        this.elemSize = ColumnType.sizeOf(elemType);
-        this.headerSize = Integer.BYTES + (long) dims * Integer.BYTES;
+        this.headerSize = INT_SIZE + (long) dims * INT_SIZE;
+        this.elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
     }
 
     @Override
@@ -70,11 +71,7 @@ public class GroupByArraySink implements Mutable {
     }
 
     public ArrayView getArray() {
-        if (ptr == 0)
-            return null;
-
-        int dataSize = Unsafe.getUnsafe().getInt(ptr);
-        if (dataSize <= 0)
+        if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0)
             return null;
 
         return ArrayTypeDriver.getCompactPlainArray(ptr, type, dims, borrowedArray);
@@ -108,7 +105,7 @@ public class GroupByArraySink implements Mutable {
 
     private long computeRequiredSize(ArrayView array) {
         if (array == null || array.isNull()) {
-            return Integer.BYTES;
+            return INT_SIZE;
         }
         return headerSize + (long) array.getFlatViewLength() * elemSize;
     }

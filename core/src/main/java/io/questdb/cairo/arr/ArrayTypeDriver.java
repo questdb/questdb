@@ -170,9 +170,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             return;
         }
 
-        long startAddress = addr;
-
-        int dataSize = (int) (headerSize - Integer.BYTES + (long) arrayView.getFlatViewLength() * elemSize);
+        int dataSize = (int) ((long) arrayView.getFlatViewLength() * elemSize);
 
         Unsafe.getUnsafe().putInt(addr, dataSize);
         addr += Integer.BYTES;
@@ -182,10 +180,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             addr += Integer.BYTES;
         }
 
-        addr = appendToMemRecursive(arrayView, 0, 0, addr);
-
-        long bytesWritten = addr - startAddress;
-        assert bytesWritten > 0;
+        appendToMemRecursive(arrayView, 0, 0, addr);
     }
 
     public static void appendValue(
@@ -314,14 +309,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static BorrowedArray getCompactPlainArray(long addr, int type, int nDims, @NotNull BorrowedArray array) {
         final int dataSize = Unsafe.getUnsafe().getInt(addr);
-        if (dataSize <= 0) {
+        if (dataSize < 0) {
             array.ofNull();
             return array;
         }
 
         addr += Integer.BYTES;
         int shapeLen = nDims * Integer.BYTES;
-        array.of(type, addr, addr + shapeLen, dataSize - shapeLen);
+        array.of(type, addr, addr + shapeLen, dataSize);
         return array;
     }
 
