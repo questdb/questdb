@@ -164,6 +164,25 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return bytesWritten;
     }
 
+    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, long headerSize, int elemSize) {
+        if (arrayView == null || arrayView.isNull()) {
+            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
+            return;
+        }
+
+        int dataSize = (int) ((long) arrayView.getFlatViewLength() * elemSize);
+
+        Unsafe.getUnsafe().putInt(addr, dataSize);
+        addr += Integer.BYTES;
+
+        for (int i = 0; i < nDims; i++) {
+            Unsafe.getUnsafe().putInt(addr, arrayView.getDimLen(i));
+            addr += Integer.BYTES;
+        }
+
+        appendToMemRecursive(arrayView, 0, 0, addr);
+    }
+
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -286,6 +305,19 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         int headerLen = Integer.BYTES + shapeLen;
         value.of(type, addr, addr + shapeLen, (int) (totalSize - headerLen));
         return value;
+    }
+
+    public static BorrowedArray getCompactPlainArray(long addr, int type, int nDims, @NotNull BorrowedArray array) {
+        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        if (dataSize < 0) {
+            array.ofNull();
+            return array;
+        }
+
+        addr += Integer.BYTES;
+        int shapeLen = nDims * Integer.BYTES;
+        array.of(type, addr, addr + shapeLen, dataSize);
+        return array;
     }
 
     public static long getPlainValueSize(long arrayAddress) {
