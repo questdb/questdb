@@ -24,14 +24,11 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
-
-import static io.questdb.cairo.TableUtils.NULL_LEN;
 
 /**
  * Specialized flyweight array sink used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -72,12 +69,7 @@ public class GroupByArraySink implements Mutable {
         if (totalSize <= 0)
             return null;
 
-        int nDims = ColumnType.decodeArrayDimensionality(type);
-        int dimLen = nDims * Integer.BYTES;
-        long dimPtr = ptr + INT_SIZE;
-        borrowedArray.of(type, dimPtr, dimPtr + dimLen, totalSize - dimLen);
-
-        return borrowedArray;
+        return ArrayTypeDriver.getCompactPlainArray(ptr, type, borrowedArray);
     }
 
     public GroupByArraySink of(long ptr) {
@@ -97,53 +89,9 @@ public class GroupByArraySink implements Mutable {
     }
 
     public void put(ArrayView array) {
-        if (array == null || array.isNull()) {
-            putNull();
-            return;
-        }
-
-        long requiredSize = calculateRequiredSize(array);
+        long requiredSize = ArrayTypeDriver.getCompactPlainArraySize(array, type);
         ensureCapacity(requiredSize);
-
-        long offset = putHeader(requiredSize);
-        offset = putShape(array, offset);
-        putData(array, offset);
-    }
-
-    private long calculateRequiredSize(ArrayView array) {
-        int nDims = array.getDimCount();
-        int elemSize = ColumnType.sizeOf(array.getElemType());
-        return INT_SIZE + nDims * INT_SIZE + (long) array.getFlatViewLength() * elemSize;
-    }
-
-    private long putHeader(long requiredSize) {
-        int totalSize = (int) (requiredSize - INT_SIZE);
-        Unsafe.getUnsafe().putInt(ptr, totalSize);
-        return ptr + Integer.BYTES;
-    }
-
-    private void putNull() {
-        ensureCapacity(INT_SIZE);
-        Unsafe.getUnsafe().putInt(ptr, NULL_LEN);
-    }
-
-    private long putShape(ArrayView array, long offset) {
-        int nDims = array.getDimCount();
-        for (int i = 0; i < nDims; i++) {
-            long dimPos = offset + i * INT_SIZE;
-            Unsafe.getUnsafe().putInt(dimPos, array.getDimLen(i));
-        }
-        return offset + nDims * INT_SIZE;
-    }
-
-    private void putData(ArrayView array, long offset) {
-        int elemSize = ColumnType.sizeOf(array.getElemType());
-        long srcOffset = array.getFlatViewOffset();
-        long length = array.getFlatViewLength();
-
-        long srcPtr = array.borrowedFlatView().ptr() + srcOffset * elemSize;
-        long dataSize = length * elemSize;
-        Vect.memcpy(offset, srcPtr, dataSize);
+        ArrayTypeDriver.appendCompactPlainArray(ptr, array, type);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
