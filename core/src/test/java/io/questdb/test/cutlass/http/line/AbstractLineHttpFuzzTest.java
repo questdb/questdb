@@ -527,7 +527,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             addDuplicateColumn(line, colIndex, colName, httpSender);
             addNewColumn(line, httpSender);
         }
-        httpSender.at(line.getTimestamp(), ChronoUnit.NANOS);
+        httpSender.at(line.getTimestamp(), ChronoUnit.MICROS);
         return line;
     }
 

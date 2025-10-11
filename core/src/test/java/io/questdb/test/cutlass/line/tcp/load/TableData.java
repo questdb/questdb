@@ -126,12 +126,9 @@ public class TableData {
     }
 
     private String getDefaultValue(short colType) {
-        switch (colType) {
-            case DOUBLE:
-            case FLOAT:
-                return "null";
-            default:
-                return "";
-        }
+        return switch (colType) {
+            case DOUBLE, FLOAT -> "null";
+            default -> "";
+        };
     }
 }

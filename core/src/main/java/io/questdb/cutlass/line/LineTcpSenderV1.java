@@ -24,14 +24,31 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
 public class LineTcpSenderV1 extends AbstractLineTcpSender {
     public LineTcpSenderV1(LineChannel channel, int bufferCapacity, int maxNameLength) {
         super(channel, bufferCapacity, maxNameLength);
+    }
+
+    @Override
+    public final void at(long timestamp, ChronoUnit unit) {
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
+        atNow();
+    }
+
+    @Override
+    public final void at(Instant timestamp) {
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
+        atNow();
     }
 
     @Override
@@ -78,5 +95,17 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
         throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
+        return this;
+    }
+
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
+        return this;
     }
 }

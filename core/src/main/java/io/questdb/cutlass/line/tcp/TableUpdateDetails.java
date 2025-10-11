@@ -54,6 +54,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Pool;
 import io.questdb.std.Utf8StringIntHashMap;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
@@ -461,10 +462,10 @@ public class TableUpdateDetails implements Closeable {
         private boolean clean = true;
         private String colNameUtf16;
         private Utf8String colNameUtf8;
+        private ColumnVersionReader columnVersionReader;
         private GenericRecordMetadata latestKnownMetadata;
         private String symbolNameTemp;
         private TxReader txReader;
-        private ColumnVersionReader columnVersionReader;
 
         ThreadLocalDetails(
                 Pool<SymbolCache> symbolCachePool
@@ -704,6 +705,9 @@ public class TableUpdateDetails implements Closeable {
                 colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
                 if (colType == ColumnType.ARRAY) {
                     colType = entity.getArray().getType();
+                }
+                if (colType == ColumnType.TIMESTAMP && entity.getUnit() == CommonUtils.TIMESTAMP_UNIT_NANOS) {
+                    colType = ColumnType.TIMESTAMP_NANO;
                 }
                 columnTypeByNameUtf8.put(colName, colType);
             }

@@ -28,8 +28,11 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -66,6 +69,7 @@ import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
 import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.test.AbstractCairoTest.parseFloorPartialTimestamp;
+import static org.junit.Assert.assertEquals;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
@@ -141,7 +145,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table("ex_tbl")
                             .stringColumn("u", "foo")
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -152,7 +156,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl")
                             .doubleColumn("b", 1234)
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -163,7 +167,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl")
                             .longColumn("b", 1024)
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -174,7 +178,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl")
                             .doubleColumn("i", 1024.2)
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -185,7 +189,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl")
                             .doubleColumn("str", 1024.2)
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -663,7 +667,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table("table_with_long________________________________name")
                             .longColumn("column_with_long________________________________name", 1)
-                            .at(100000, ChronoUnit.MICROS);
+                            .at(100000L, ChronoUnit.MICROS);
                 }
                 serverMain.awaitTable("table_with_long________________________________name");
                 serverMain.assertSql("select * from 'table_with_long________________________________name'",
@@ -722,7 +726,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table("foo")
                             .stringColumn("d", "0xAB")
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
                     sender.flush();
 
                     serverMain.awaitTxn("foo", 1);
@@ -732,7 +736,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("foo")
                             .stringColumn("d", "0xABC")
-                            .at(1233456, ChronoUnit.NANOS);
+                            .at(1233456L, ChronoUnit.NANOS);
 
                     flushAndAssertError(
                             sender,
@@ -757,6 +761,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                        .protocolVersion(PROTOCOL_VERSION_V1)
                         .build()) {
 
                     sender.cancelRow(); // this should be no-op
@@ -789,6 +794,62 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                 "true\t3.0\t2024-09-09T14:38:26.361110Z\n");
             }
         });
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedInstantV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123123123Z"), null, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123123123Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMicrosV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z"), ChronoUnit.MICROS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV1() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedMillisV2() throws Exception {
+        testCreateTimestampColumns(MicrosTimestampDriver.floor("2025-11-20T10:55:24.123456Z") / 1000, ChronoUnit.MILLIS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123000Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV1() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V1,
+                new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP},
+                "1.111\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.123456Z");
+    }
+
+    @Test
+    public void testCreateTimestampColumnsWithDesignatedNanosV2() throws Exception {
+        testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V2,
+                new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
+                "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456789Z");
     }
 
     @Test
@@ -1126,7 +1187,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .doubleColumn("a1", 1)
                             .at(100000000001L, ChronoUnit.MICROS);
 
-                    try (DirectUtf8Sink sink = new DirectUtf8Sink(128);) {
+                    try (DirectUtf8Sink sink = new DirectUtf8Sink(128)) {
                         for (int i = 0; i < 10; i++) {
                             sink.clear();
                             double v = 10000 + i;
@@ -1564,7 +1625,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "error in line 1: table: tab, timestamp: -1000; designated timestamp before 1970-01-01 is not allowed"
+                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
                     );
                 }
             }
@@ -1588,7 +1649,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table("ex_tbl")
                             .symbol("a3", "3")
-                            .at(1222233456, ChronoUnit.NANOS);
+                            .at(1222233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -1599,7 +1660,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
-                            .at(1222233456, ChronoUnit.NANOS);
+                            .at(1222233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -1629,7 +1690,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table("ex_tbl")
                             .symbol("a3", "2")
-                            .at(1222233456, ChronoUnit.NANOS);
+                            .at(1222233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -1640,7 +1701,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     sender.table("ex_tbl2")
                             .doubleColumn("d", 2)
-                            .at(1222233456, ChronoUnit.NANOS);
+                            .at(1222233456L, ChronoUnit.NANOS);
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
@@ -1721,25 +1782,143 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testTimestampIngestMicrosV1() throws Exception {
+        testTimestampIngest("TIMESTAMP", PROTOCOL_VERSION_V1, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                        2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                        """,
+                null
+        );
+    }
+
+    @Test
+    public void testTimestampIngestMicrosV2() throws Exception {
+        testTimestampIngest("TIMESTAMP", PROTOCOL_VERSION_V2, """
+                ts\tdts
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                """, """
+                ts\tdts
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834000Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123000Z\t2025-11-20T10:55:24.834129Z
+                2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.834129Z
+                2300-11-19T10:55:24.123456Z\t2300-11-20T10:55:24.834129Z
+                2797-10-26T19:46:29.123456Z\t2797-10-26T19:46:30.123457Z
+                """
+        );
+    }
+
+    @Test
+    public void testTimestampIngestNanosV1() throws Exception {
+        testTimestampIngest("TIMESTAMP_NS", PROTOCOL_VERSION_V1, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129092Z
+                        """,
+                null
+        );
+    }
+
+    @Test
+    public void testTimestampIngestNanosV2() throws Exception {
+        testTimestampIngest("TIMESTAMP_NS", PROTOCOL_VERSION_V2, """
+                        ts\tdts
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834000000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129000Z
+                        2025-11-19T10:55:24.123456789Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123000000Z	2025-11-20T10:55:24.834129082Z
+                        2025-11-19T10:55:24.123456799Z	2025-11-20T10:55:24.834129092Z
+                        """,
+                null
+        );
+    }
+
+    @Test
     public void testTimestampNSAutoCreateTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.LINE_TIMESTAMP_DEFAULT_COLUMN_TYPE.getEnvVarName(), "timestamp_ns"
-            )) {
-                int port = serverMain.getHttpServerPort();
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                final String tab_ns = "tab_ns";
+                final String tab_us = "tab_us";
+                final int port = serverMain.getHttpServerPort();
+
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
                         .build()
                 ) {
-                    long ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.834129081Z");
-                    long ns1 = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
-                    sender.table("tab")
-                            .timestampColumn("ts1", ns, ChronoUnit.NANOS)
-                            .at(ns1, ChronoUnit.NANOS);
+                    long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.834129081Z");
+                    long dts_ns = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                    sender.table(tab_ns)
+                            .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                            .at(dts_ns, ChronoUnit.NANOS);
                     sender.flush();
-                    serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts1\ttimestamp\n" +
-                            "2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z\n");
+                    serverMain.awaitTable(tab_ns);
+                    serverMain.assertSql(tab_ns, """
+                            ts\ttimestamp
+                            2025-11-19T10:55:24.834129081Z\t2025-11-20T10:55:24.834129082Z
+                            """);
+
+                    long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                    long dts_us = MicrosTimestampDriver.floor("2025-11-20T10:55:24.234567Z");
+                    sender.table(tab_us)
+                            .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                            .at(dts_us, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTable(tab_us);
+                    serverMain.assertSql(tab_us, """
+                            ts\ttimestamp
+                            2025-11-19T10:55:24.123456Z\t2025-11-20T10:55:24.234567Z
+                            """);
+                }
+
+                final CairoEngine engine = serverMain.getEngine();
+
+                final TableToken tt_ns = engine.verifyTableName(tab_ns);
+                try (TableMetadata metadata = engine.getTableMetadata(tt_ns)) {
+                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, metadata.getColumnType("ts"));
+                    Assert.assertEquals(ColumnType.TIMESTAMP_NANO, metadata.getColumnType("timestamp"));
+                }
+
+                final TableToken tt_us = engine.verifyTableName(tab_us);
+                try (TableMetadata metadata = engine.getTableMetadata(tt_us)) {
+                    Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType("ts"));
+                    Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType("timestamp"));
                 }
             }
         });
@@ -1929,6 +2108,172 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             }
             sender.flush();
         }
+    }
+
+    private void testCreateTimestampColumns(long timestamp, ChronoUnit unit, int protocolVersion, int[] expectedColumnTypes, String expected) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                final int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0)
+                        .protocolVersion(protocolVersion)
+                        .build()
+                ) {
+                    long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                    long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                    long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                    Instant ts_instant = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+
+                    if (unit != null) {
+                        sender.table("tab1")
+                                .doubleColumn("col1", 1.111)
+                                .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                                .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                                .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                                .timestampColumn("ts_instant", ts_instant)
+                                .at(timestamp, unit);
+                    } else {
+                        sender.table("tab1")
+                                .doubleColumn("col1", 1.111)
+                                .timestampColumn("ts_ns", ts_ns, ChronoUnit.NANOS)
+                                .timestampColumn("ts_us", ts_us, ChronoUnit.MICROS)
+                                .timestampColumn("ts_ms", ts_ms, ChronoUnit.MILLIS)
+                                .timestampColumn("ts_instant", ts_instant)
+                                .at(Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000));
+                    }
+
+                    sender.flush();
+
+                    serverMain.awaitTable("tab1");
+                    serverMain.assertSql("tab1", "col1\tts_ns\tts_us\tts_ms\tts_instant\ttimestamp\n" + expected + "\n");
+
+                    final CairoEngine engine = serverMain.getEngine();
+                    final TableToken tt = engine.verifyTableName("tab1");
+                    try (TableMetadata metadata = serverMain.getEngine().getTableMetadata(tt)) {
+                        assertEquals(6, metadata.getColumnCount());
+                        assertEquals(ColumnType.DOUBLE, metadata.getColumnType(0));
+                        assertEquals(expectedColumnTypes[0], metadata.getColumnType(1));
+                        assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
+                        assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(3));
+                        assertEquals(expectedColumnTypes[1], metadata.getColumnType(4));
+                        assertEquals(expectedColumnTypes[2], metadata.getColumnType(5));
+                    }
+                }
+            }
+        });
+    }
+
+    private void testTimestampIngest(String timestampType, int protocolVersion, String expected1, String expected2) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.execute("create table tab (ts " + timestampType + ", dts " + timestampType + ") timestamp(dts) partition by DAY WAL");
+
+                final int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0)
+                        .protocolVersion(protocolVersion)
+                        .build()
+                ) {
+                    long ts_ns = NanosTimestampDriver.floor("2025-11-19T10:55:24.123456789Z");
+                    long dts_ns = NanosTimestampDriver.floor("2025-11-20T10:55:24.834129082Z");
+                    long ts_us = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123456Z");
+                    long dts_us = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834129Z");
+                    long ts_ms = MicrosTimestampDriver.floor("2025-11-19T10:55:24.123Z") / 1000;
+                    long dts_ms = MicrosTimestampDriver.floor("2025-11-20T10:55:24.834Z") / 1000;
+                    Instant tsInstant_ns = Instant.ofEpochSecond(ts_ns / 1_000_000_000, ts_ns % 1_000_000_000 + 10);
+                    Instant dtsInstant_ns = Instant.ofEpochSecond(dts_ns / 1_000_000_000, dts_ns % 1_000_000_000 + 10);
+
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                            .at(dts_ns, ChronoUnit.NANOS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                            .at(dts_ns, ChronoUnit.NANOS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                            .at(dts_ns, ChronoUnit.NANOS);
+
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                            .at(dts_us, ChronoUnit.MICROS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                            .at(dts_us, ChronoUnit.MICROS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                            .at(dts_us, ChronoUnit.MICROS);
+
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ns, ChronoUnit.NANOS)
+                            .at(dts_ms, ChronoUnit.MILLIS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_us, ChronoUnit.MICROS)
+                            .at(dts_ms, ChronoUnit.MILLIS);
+                    sender.table("tab")
+                            .timestampColumn("ts", ts_ms, ChronoUnit.MILLIS)
+                            .at(dts_ms, ChronoUnit.MILLIS);
+
+                    sender.table("tab")
+                            .timestampColumn("ts", tsInstant_ns)
+                            .at(dtsInstant_ns);
+
+                    sender.flush();
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("tab", expected1);
+
+                    try {
+                        long ts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-19T10:55:24.123456Z");
+                        long dts_tooLargeForNanos_us = MicrosTimestampDriver.floor("2300-11-20T10:55:24.834129Z");
+
+                        sender.table("tab")
+                                .timestampColumn("ts", ts_tooLargeForNanos_us, ChronoUnit.MICROS)
+                                .at(dts_tooLargeForNanos_us, ChronoUnit.MICROS);
+
+                        sender.flush();
+                        if (expected2 == null) {
+                            Assert.fail("Exception expected");
+                        }
+                    } catch (LineSenderException | ArithmeticException e) {
+                        if (expected2 == null) {
+                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                        } else {
+                            throw e;
+                        }
+                    }
+
+                    sender.reset();
+                    try {
+                        Instant tsInstant_tooLargeForNanos_us = Instant.ofEpochSecond(26123456789L, 123456789L);
+                        Instant dtsInstant_tooLargeForNanos_us = Instant.ofEpochSecond(26123456790L, 123457890L);
+
+                        sender.table("tab")
+                                .timestampColumn("ts", tsInstant_tooLargeForNanos_us)
+                                .at(dtsInstant_tooLargeForNanos_us);
+
+                        sender.flush();
+                        if (expected2 == null) {
+                            Assert.fail("Exception expected");
+                        }
+                    } catch (LineSenderException | ArithmeticException e) {
+                        if (expected2 == null) {
+                            TestUtils.assertContains(e.getMessage(), "long overflow");
+                        } else {
+                            throw e;
+                        }
+                    }
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("tab", expected2 == null ? expected1 : expected2);
+                }
+            }
+        });
     }
 
     private enum ArrayDataType {

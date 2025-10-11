@@ -55,7 +55,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "aFFF");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, LineTcpParser.ENTITY_UNIT_NONE, "\"errt\"", "\"errt\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
+        assertType(LineTcpParser.ENTITY_TYPE_TAG, CommonUtils.TIMESTAMP_UNIT_UNSET, "\"errt\"", "\"errt\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
 
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
@@ -68,7 +68,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "tRuE");
 
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
-        assertType(LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_UNIT_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
+        assertType(LineTcpParser.ENTITY_TYPE_STRING, CommonUtils.TIMESTAMP_UNIT_UNSET, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
         assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"); // missing closing '"'
         assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""); // wanted to be a string, missing opening '"'
@@ -115,11 +115,11 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
     }
 
     private static void assertError(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.ERROR);
+        assertType(type, CommonUtils.TIMESTAMP_UNIT_UNSET, value, value, LineTcpParser.ParseResult.ERROR);
     }
 
     private static void assertType(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value);
+        assertType(type, CommonUtils.TIMESTAMP_UNIT_UNSET, value);
     }
 
     private static void assertType(byte type, byte unit, String value) throws Exception {

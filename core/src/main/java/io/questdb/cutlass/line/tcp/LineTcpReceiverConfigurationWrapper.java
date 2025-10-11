@@ -125,8 +125,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getDefaultColumnTypeForTimestamp() {
-        return getDelegate().getDefaultColumnTypeForTimestamp();
+    public int getDefaultCreateTimestampColumnType() {
+        return getDelegate().getDefaultCreateTimestampColumnType();
     }
 
     @Override
@@ -177,11 +177,6 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public int getIOQueueCapacity() {
         return getDelegate().getIOQueueCapacity();
-    }
-
-    @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override
@@ -257,6 +252,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return getDelegate().getNetworkWorkerPoolConfiguration();
     }
 
     @Override

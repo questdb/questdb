@@ -60,6 +60,7 @@ public class CommonUtils {
     public static final byte TIMESTAMP_UNIT_SECONDS = TIMESTAMP_UNIT_MILLIS + 1;
     public static final byte TIMESTAMP_UNIT_MINUTES = TIMESTAMP_UNIT_SECONDS + 1;
     public static final byte TIMESTAMP_UNIT_HOURS = TIMESTAMP_UNIT_MINUTES + 1;
+    public static final byte TIMESTAMP_UNIT_UNSET = 0;
     public static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final String WEEK_PATTERN = "YYYY-Www";

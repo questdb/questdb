@@ -57,8 +57,10 @@ public class LineTcpConnectionContextInvalidSymbolTest extends BaseLineTcpContex
             Assert.assertEquals(disconnectOnError, disconnected);
             closeContext();
 
-            String expected = "ip_address\tcpu\ttimestamp\n" +
-                    "127.0.0.1\t83.0\t2016-06-13T17:43:50.100500Z\n";
+            String expected = """
+                    ip_address\tcpu\ttimestamp
+                    127.0.0.1\t83.0\t2016-06-13T17:43:50.100500Z
+                    """;
             if (!disconnectOnError) {
                 // The very last measurement should be included if we tolerate invalid measurements.
                 expected += "192.168.0.1\t42.0\t2016-06-13T17:43:50.100500Z\n";
