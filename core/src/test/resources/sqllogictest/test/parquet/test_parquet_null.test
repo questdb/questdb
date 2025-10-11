@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/test_parquet_null.test
+# name: test/parquet/test_parquet_null.test
 # description: Parquet file with random NULLs
 # group: [parquet]
 
