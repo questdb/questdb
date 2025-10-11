@@ -1,3 +1,4 @@
+#TODO: rename this file, it's vmss, not hosted by Azure Pipelines
 jobs:
   - job: RunOn
     displayName: "on"
@@ -5,7 +6,7 @@ jobs:
       matrix:
         linux-griffin:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
           testset: "coverage-griffin"
@@ -14,7 +15,7 @@ jobs:
           javadoc_profile: ""
         linux-fuzz:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
           testset: "coverage-fuzz"
@@ -23,7 +24,7 @@ jobs:
           javadoc_profile: ""
         linux-cairo:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cairo"
@@ -33,7 +34,7 @@ jobs:
           javadoc_profile: ""
         linux-pgwire:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cutlass"
@@ -42,7 +43,7 @@ jobs:
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"
