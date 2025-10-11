@@ -110,15 +110,11 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     }
 
     static IntervalConstant getIntervalNull(int intervalType) {
-        switch (intervalType) {
-            case ColumnType.INTERVAL_TIMESTAMP_MICRO:
-                return TIMESTAMP_MICRO_NULL;
-            case ColumnType.INTERVAL_TIMESTAMP_NANO:
-                return TIMESTAMP_NANO_NULL;
-            case ColumnType.INTERVAL_RAW:
-                return RAW_NULL;
-            default:
-                return null;
-        }
+        return switch (intervalType) {
+            case ColumnType.INTERVAL_TIMESTAMP_MICRO -> TIMESTAMP_MICRO_NULL;
+            case ColumnType.INTERVAL_TIMESTAMP_NANO -> TIMESTAMP_NANO_NULL;
+            case ColumnType.INTERVAL_RAW -> RAW_NULL;
+            default -> null;
+        };
     }
 }

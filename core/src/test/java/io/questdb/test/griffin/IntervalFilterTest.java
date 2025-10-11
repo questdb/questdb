@@ -536,6 +536,50 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInConstantInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "  select" +
+                            "    rnd_double(0)*100 a," +
+                            "    timestamp_sequence(0, 1000000)::" + timestampType.getTypeName() + " ts" +
+                            "  from long_sequence(4)" +
+                            ") timestamp(ts) partition by day"
+            );
+            assertSql(
+                    replaceTimestampSuffix("a\tts\n" +
+                            "8.486964232560668\t1970-01-01T00:00:01.000000Z\n" +
+                            "8.43832076262595\t1970-01-01T00:00:02.000000Z\n" +
+                            "65.08594025855301\t1970-01-01T00:00:03.000000Z\n", timestampType.getTypeName()),
+                    "select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where ts in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
+                    "PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000Z\",\"1970-01-01T00:00:03.000000Z\")]\n" :
+                                    "      intervals: [(\"1970-01-01T00:00:01.000000000Z\",\"1970-01-01T00:00:03.000000000Z\")]\n")
+            );
+            assertSql(
+                    replaceTimestampSuffix("a\tts\n" +
+                            "80.43224099968394\t1970-01-01T00:00:00.000000Z\n", timestampType.getTypeName()),
+                    "select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from x where ts not in interval('1970-01-01T00:00:01', '1970-01-01T00:00:03')",
+                    "PageFrame\n" +
+                            "    Row forward scan\n" +
+                            "    Interval forward scan on: x\n" +
+                            (timestampType == TestTimestampType.MICRO ?
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999Z\"),(\"1970-01-01T00:00:03.000001Z\",\"MAX\")]\n" :
+                                    "      intervals: [(\"MIN\",\"1970-01-01T00:00:00.999999999Z\"),(\"1970-01-01T00:00:03.000000001Z\",\"MAX\")]\n")
+            );
+        });
+    }
+
+    @Test
     public void testInInterval() throws Exception {
         assertMemoryLeak(() -> {
             execute(

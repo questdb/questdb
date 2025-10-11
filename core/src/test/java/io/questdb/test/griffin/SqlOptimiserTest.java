@@ -2048,6 +2048,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    // issue 6256
+    @Test
+    public void testOrderByJoinCursorFuncNpe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP);");
+            execute("insert into tango values(100000)");
+            execute("insert into tango values(100001)");
+            assertQueryNoLeakCheck("column\n" +
+                            "1970-01-01T00:00:00.100001Z\n" +
+                            "1970-01-01T00:00:00.100002Z\n",
+                    "SELECT ts + x  FROM tango CROSS JOIN (SELECT x FROM long_sequence(1)) ORDER BY x;",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     @Test
     public void testOrderByNotChooseByParent() throws Exception {
         assertMemoryLeak(() -> {
