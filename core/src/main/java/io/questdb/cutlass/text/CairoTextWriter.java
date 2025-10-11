@@ -259,7 +259,8 @@ public class CairoTextWriter implements Closeable, Mutable {
                 path,
                 false,
                 tableStructureAdapter.of(names, detectedTypes),
-                false
+                false,
+                TableUtils.TABLE_KIND_DATA
         );
         this.types = detectedTypes;
         return tableToken;

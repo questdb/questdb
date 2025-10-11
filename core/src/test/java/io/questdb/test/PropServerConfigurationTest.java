@@ -508,6 +508,16 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+        Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getExportPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertFalse(configuration.getExportPoolConfiguration().haltOnError());
+        Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+        Assert.assertEquals(10, configuration.getExportPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getExportPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getExportPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
+
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
@@ -818,6 +828,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "Json query connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.json.query.connection.limit=11, http.net.connection.limit=10]");
@@ -832,6 +843,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "HTTP over ILP connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.ilp.connection.limit=11, http.net.connection.limit=10]");
@@ -841,27 +853,67 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "6");
-        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "1");
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
-                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
-                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit " +
+                    "[http.json.query.connection.limit=7, http.ilp.connection.limit=4, http.net.connection.limit=10]");
         }
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "6");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
                     "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=5, " +
                     "http.ilp.connection.limit=6, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "20");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP export connection limit cannot be greater than " +
+                    "the overall HTTP connection limit [http.export.connection.limit=20, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "3");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "1");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits" +
+                    " cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=3, http.export.connection.limit=1, http.net.connection.limit=10]");
         }
     }
 
@@ -1442,6 +1494,16 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getExportPoolConfiguration().haltOnError());
+            Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getExportPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getExportPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getExportPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getExportPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getExportPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getExportPoolConfiguration().getYieldThreshold());
 
             Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }

@@ -281,6 +281,11 @@ public class ParquetTest extends AbstractTest {
         assertSchema(descriptor, expectedName, expectedType, 1);
     }
 
+    private static void assertSchemaNullable(ColumnDescriptor descriptor, String expectedName, String expectedLogicTypeAnnotation, PrimitiveType.PrimitiveTypeName expectedType) {
+        assertSchema(descriptor, expectedName, expectedType, 1);
+        Assert.assertEquals(expectedLogicTypeAnnotation, descriptor.getPrimitiveType().getLogicalTypeAnnotation().toString());
+    }
+
     private static void assertUuid(StringSink sink, long expectedLo, long expectedHi, Object actual) {
         if (actual == null) {
             Assert.assertEquals(Long.MIN_VALUE, expectedLo);
@@ -781,11 +786,10 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(20), "a_long256", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(21), "a_long128", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(22), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(23), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(23), "a_ts", "TIMESTAMP(MICROS,true)", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(24), "a_ns", "TIMESTAMP(NANOS,true)", PrimitiveType.PrimitiveTypeName.INT64);
             // designated ts is non-nullable
-            assertSchemaNullable(columns.get(24), "a_ns", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNonNullable(columns.get(25), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
-
             assertSchemaNonNullable(columns.get(26), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
             assertSchemaNonNullable(columns.get(27), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNonNullable(columns.get(28), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);

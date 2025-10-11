@@ -124,6 +124,8 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_KIND_DATA = 0;
+    public static final int TABLE_KIND_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final int TABLE_TYPE_MAT = 2;
@@ -357,6 +359,12 @@ public final class TableUtils {
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
+    }
+
+    public static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
     }
 
     public static void createTable(
@@ -1962,12 +1970,6 @@ public final class TableUtils {
             if (isSymbol) {
                 denseSymbolIndex++;
             }
-        }
-    }
-
-    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }
 

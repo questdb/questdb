@@ -40,8 +40,10 @@ import org.junit.Assert;
 import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
-    private final HttpClient httpClient;
-    private final Utf8StringSink sink = new Utf8StringSink();
+    protected static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
+    protected final Utf8StringSink sink = new Utf8StringSink();
+    protected int port = 9001;
+    private HttpClient httpClient;
     private boolean keepConnection;
 
     public TestHttpClient() {
@@ -207,6 +209,118 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGetContains(
+            CharSequence url,
+            CharSequence expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        try {
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
+
+            if (queryParams != null) {
+                for (int i = 0, n = queryParams.size(); i < n; i++) {
+                    CharSequence name = queryParams.keys().getQuick(i);
+                    req.query(name, queryParams.get(name));
+                }
+            }
+
+            reqToSink(req, sink, username, password, null, null, null);
+            TestUtils.assertContains(sink.toString(), expectedResponse);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql
+    ) {
+        assertGetParquet(url, expectedResponse, sql, null, null);
+    }
+
+    public void assertGetParquet(
+            int port,
+            CharSequence url,
+            CharSequence expectedResponseCode,
+            int expectedResponseLength,
+            CharSequence sql
+    ) {
+        try {
+            this.port = port;
+            toSink0(url, sql, sink, null, null, null, PARQUET_GET_PARAM, expectedResponseCode);
+            Assert.assertEquals(expectedResponseLength, sink.size());
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            int expectedResponseLength,
+            CharSequence sql
+    ) {
+        try {
+            toSink0(url, sql, sink, null, null, null, PARQUET_GET_PARAM, null);
+            Assert.assertEquals(expectedResponseLength, sink.size());
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            int expectedResponseLength,
+            CharSequenceObjHashMap<String> param,
+            CharSequence sql
+    ) {
+        try {
+            toSink0(url, sql, sink, null, null, null, param, null);
+            Assert.assertEquals(expectedResponseLength, sink.size());
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password
+    ) {
+        assertGetParquet(url, expectedResponse, sql, username, password, null);
+    }
+
+    public void assertGetParquet(
+            CharSequence url,
+            CharSequence expectedResponse,
+            CharSequence sql,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            toSink0(url, sql, sink, username, password, token, PARQUET_GET_PARAM, null);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
     public void assertGetRegexp(
             CharSequence url,
             String expectedResponseRegexp,
@@ -242,7 +356,11 @@ public class TestHttpClient implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.free(httpClient);
+        httpClient = Misc.free(httpClient);
+    }
+
+    public HttpClient getHttpClient() {
+        return httpClient;
     }
 
     public Utf8StringSink getSink() {
@@ -305,7 +423,7 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    private void toSink0(
+    protected void toSink0(
             CharSequence url,
             CharSequence sql,
             Utf8StringSink sink,
@@ -317,7 +435,7 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         toSink0(
                 "localhost",
-                9001,
+                port,
                 url,
                 sql,
                 sink,
@@ -329,7 +447,7 @@ public class TestHttpClient implements QuietCloseable {
         );
     }
 
-    private void toSink0(
+    protected void toSink0(
             String host,
             int port,
             CharSequence url,
@@ -344,5 +462,9 @@ public class TestHttpClient implements QuietCloseable {
         HttpClient.Request req = httpClient.newRequest(host, port);
         req.GET().url(url).query("query", sql);
         reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
+    }
+
+    static {
+        PARQUET_GET_PARAM.put("fmt", "parquet");
     }
 }

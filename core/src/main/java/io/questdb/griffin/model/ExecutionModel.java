@@ -24,6 +24,8 @@
 
 package io.questdb.griffin.model;
 
+import org.jetbrains.annotations.Nullable;
+
 public interface ExecutionModel {
     int QUERY = 1;                          // 1
     int CREATE_TABLE = QUERY + 1;           // 2
@@ -38,6 +40,10 @@ public interface ExecutionModel {
     int getModelType();
 
     default QueryModel getQueryModel() {
+        return null;
+    }
+
+    default @Nullable CharSequence getSelectText() {
         return null;
     }
 

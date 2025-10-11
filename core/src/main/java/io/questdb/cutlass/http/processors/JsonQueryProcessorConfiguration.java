@@ -49,4 +49,6 @@ public interface JsonQueryProcessorConfiguration {
     default byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
+
+    long getExportTimeout();
 }

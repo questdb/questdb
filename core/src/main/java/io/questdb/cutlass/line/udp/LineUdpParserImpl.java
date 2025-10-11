@@ -292,7 +292,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 path,
                 true,
                 tableStructureAdapter.of(cache),
-                false
+                false,
+                TableUtils.TABLE_KIND_DATA
         );
         appendFirstRowAndCacheWriter(cache);
     }

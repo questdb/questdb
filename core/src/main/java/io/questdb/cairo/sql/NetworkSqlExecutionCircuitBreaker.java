@@ -119,6 +119,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return configuration;
     }
 
+    public long getDefaultMaxTime() {
+        return defaultMaxTime;
+    }
+
     @Override
     public long getFd() {
         return fd;

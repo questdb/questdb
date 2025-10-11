@@ -30,7 +30,7 @@ public interface DdlListener {
 
     void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
 
-    void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken);
+    void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
     void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
 }
