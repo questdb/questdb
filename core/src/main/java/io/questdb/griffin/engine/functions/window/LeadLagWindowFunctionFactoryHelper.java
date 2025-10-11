@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -176,6 +177,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void close() {
             super.close();
             buffer.close();
+            Misc.free(defaultValue);
         }
 
         @Override
@@ -194,6 +196,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            defaultValue.init(null, executionContext);
         }
 
         @Override
@@ -369,6 +377,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void close() {
             super.close();
             buffer.close();
+            Misc.free(defaultValue);
         }
 
         @Override
@@ -379,6 +388,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            defaultValue.init(null, executionContext);
         }
 
         @Override

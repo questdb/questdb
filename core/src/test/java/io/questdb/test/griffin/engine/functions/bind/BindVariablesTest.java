@@ -35,6 +35,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
@@ -524,6 +525,26 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt(0, 11);
         bindVariableService.setInt(1, 33);
         Assert.assertEquals(44, func.getInt(builder.getRecord()));
+    }
+
+    @Test
+    public void testLeadWindowFunction() throws SqlException {
+        bindVariableService.setTimestamp("ts", 123456);
+
+        try (SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1)) {
+            executionContext.with(bindVariableService);
+            TestUtils.assertSql(engine,
+                    executionContext,
+                    "SELECT LEAD(generate_series, 1, :ts) OVER (ORDER BY generate_series) FROM generate_series('1970-01-01T00:00:00Z', '1970-01-01T00:00:05Z', '1s');",
+                    sink,
+                    "LEAD\n" +
+                            "1970-01-01T00:00:01.000000Z\n" +
+                            "1970-01-01T00:00:02.000000Z\n" +
+                            "1970-01-01T00:00:03.000000Z\n" +
+                            "1970-01-01T00:00:04.000000Z\n" +
+                            "1970-01-01T00:00:05.000000Z\n" +
+                            "1970-01-01T00:00:00.123456Z\n");
+        }
     }
 
     @Test
