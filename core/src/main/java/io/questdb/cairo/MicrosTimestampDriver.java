@@ -253,8 +253,10 @@ public class MicrosTimestampDriver implements TimestampDriver {
     @Override
     public Interval fixInterval(Interval interval, int intervalType) {
         if (intervalType == ColumnType.INTERVAL_TIMESTAMP_NANO) {
-            long lo = interval.getLo() / Micros.MICRO_NANOS;
-            long hi = interval.getHi() / Micros.MICRO_NANOS;
+            long lo = interval.getLo();
+            long hi = interval.getHi();
+            lo = (lo == Numbers.LONG_NULL ? lo : lo / Micros.MICRO_NANOS);
+            hi = (hi == Numbers.LONG_NULL ? hi : hi / Micros.MICRO_NANOS);
             interval.of(lo, hi);
         }
         return interval;

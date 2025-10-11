@@ -241,7 +241,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             CairoConfiguration config = engine.getConfiguration();
             try (TxWriter txWriter = new TxWriter(config.getFilesFacade(), config)) {
                 Path p = Path.getThreadLocal(config.getDbRoot());
-                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                txWriter.ofRW(p.concat(token).concat(TableUtils.TXN_FILE_NAME).$());
 
                 txWriter.setLagRowCount(100);
                 txWriter.setLagTxnCount(1);

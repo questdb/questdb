@@ -73,13 +73,12 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
 
             drainWalAndMatViewQueues();
             assertSql(
-                    replaceExpectedTimestamp(
-                            "ts\tx\tv\n" +
-                                    "2022-02-24T00:00:00.000000Z\t1\t123\n" +
-                                    "2022-02-24T01:00:00.000000Z\t2\t\n" +
-                                    "2022-02-24T02:00:00.000000Z\t3\t2345567\n"),
-                    "test_mv"
-            );
+                    replaceExpectedTimestamp("""
+                            ts\tx\tv
+                            2022-02-24T00:00:00.000000Z\t1\t123
+                            2022-02-24T01:00:00.000000Z\t2\t
+                            2022-02-24T02:00:00.000000Z\t3\t2345567
+                            """), "test_mv");
 
             try (WalWriter ww = engine.getWalWriter(engine.verifyTableName("test"))) {
                 var row = ww.newRow(timestampType.getDriver().parseFloorLiteral("2022-02-24"));
@@ -107,10 +106,13 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertSql(
                     replaceExpectedTimestamp(
-                            "ts\tx\tv\n" +
-                                    "2022-02-24T00:00:00.000000Z\t1\t123\n" +
-                                    "2022-02-24T00:55:00.000000Z\t2\t\n" +
-                                    "2022-02-24T02:00:00.000000Z\t3\t2345567\n"),
+                            """
+                                    ts\tx\tv
+                                    2022-02-24T00:00:00.000000Z\t1\t123
+                                    2022-02-24T00:55:00.000000Z\t2\t
+                                    2022-02-24T02:00:00.000000Z\t3\t2345567
+                                    """
+                    ),
                     "test_mv"
             );
 
@@ -161,7 +163,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {
-        sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType.getTypeName());
+        sqlText = sqlText.toString().replace("#TIMESTAMP", timestampType.getTypeName());
         engine.execute(sqlText, sqlExecutionContext);
     }
 
@@ -196,7 +198,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
             );
 
             TableToken tt = engine.verifyTableName("test_mv");
-            String partitionsTxnFile = readTxnToString(tt, false, true, true);
+            String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
 
             // Insert same values
             execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
@@ -209,7 +211,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
                             "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
                     "test_mv"
             );
-            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true));
+            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
             // Insert same values recorded
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
@@ -222,7 +224,7 @@ public class MatViewIdenticalReplaceTest extends AbstractCairoTest {
                             "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n"),
                     "test_mv"
             );
-            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true));
+            Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
             // Change one varchar
             execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");

@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 public abstract class TestFilesFacade extends TestFilesFacadeImpl {
+
     public int called() {
         return wasCalled() ? 1 : 0;
     }

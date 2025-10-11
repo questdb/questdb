@@ -67,6 +67,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return getDelegate().autoScaleSymbolCapacity();
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityThreshold() {
+        return getDelegate().autoScaleSymbolCapacityThreshold();
+    }
+
+    @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return getDelegate().cairoResourcePoolTracingEnabled();
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
     }
@@ -464,6 +479,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
+    }
+
+    @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return getDelegate().getMatViewMaxRefreshStepUs();
     }
 
     @Override
@@ -1032,8 +1052,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return getDelegate().getSymbolTableAppendPageSize();
+    public long getSymbolTableMaxAllocationPageSize() {
+        return getDelegate().getSymbolTableMaxAllocationPageSize();
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return getDelegate().getSymbolTableMinAllocationPageSize();
     }
 
     @Override
@@ -1382,11 +1407,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
-    }
-
-    @Override
-    public boolean useFastAsOfJoin() {
-        return getDelegate().useFastAsOfJoin();
     }
 
     @Override

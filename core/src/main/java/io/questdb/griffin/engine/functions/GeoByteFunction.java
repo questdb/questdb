@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.sql.Record;
 
 public abstract class GeoByteFunction extends AbstractGeoHashFunction {
+
     protected GeoByteFunction(int type) {
         super(type);
     }

@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -40,6 +41,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
@@ -48,25 +50,26 @@ import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.HttpRequestValidator.*;
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.ENCODING_NOT_SUPPORTED;
-import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.PRECISION_NOT_SUPPORTED;
+import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.*;
 
 public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, HttpRequestHandler {
     private static final Utf8String CONTENT_ENCODING = new Utf8String("Content-Encoding");
     private static final Log LOG = LogFactory.getLog(LineHttpProcessorImpl.class);
     private static final LocalValue<LineHttpProcessorState> LV = new LocalValue<>();
     private static final Utf8String URL_PARAM_PRECISION = new Utf8String("precision");
-    private final LineHttpProcessorConfiguration configuration;
     private final CairoEngine engine;
+    private final HttpFullFatServerConfiguration httpConfiguration;
+    private final LineHttpProcessorConfiguration lineConfiguration;
     private final int maxResponseContentLength;
     private final int recvBufferSize;
     private LineHttpProcessorState state;
 
-    public LineHttpProcessorImpl(CairoEngine engine, int recvBufferSize, int maxResponseContentLength, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessorImpl(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
-        this.recvBufferSize = recvBufferSize;
-        this.maxResponseContentLength = maxResponseContentLength;
-        this.configuration = configuration;
+        this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
+        this.lineConfiguration = httpConfiguration.getLineHttpProcessorConfiguration();
+        this.httpConfiguration = httpConfiguration;
     }
 
     @Override
@@ -91,7 +94,11 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
     @Override
     public void onChunk(long lo, long hi) {
-        this.state.parse(lo, hi);
+        if (state.isGzipEncoded()) {
+            state.inflateAndParse(lo, hi);
+        } else {
+            state.parse(lo, hi);
+        }
     }
 
     @Override
@@ -106,7 +113,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
     public void onHeadersReady(HttpConnectionContext context) {
         state = LV.get(context);
         if (state == null) {
-            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, configuration);
+            state = new LineHttpProcessorState(recvBufferSize, maxResponseContentLength, engine, lineConfiguration);
             LV.set(context, state);
         } else {
             state.clear();
@@ -114,11 +121,21 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
 
+        if (!httpConfiguration.isAcceptingWrites()) {
+            state.reject(NOT_ACCEPTING_WRITES, "this instance cannot receive writes", context.getFd());
+            return;
+        }
+
         // Encoding
         Utf8Sequence encoding = requestHeader.getHeader(CONTENT_ENCODING);
-        if (encoding != null && Utf8s.endsWithAscii(encoding, "gzip")) {
-            state.reject(ENCODING_NOT_SUPPORTED, "gzip encoding is not supported", context.getFd());
-            return;
+        state.setGzipEncoded(encoding != null && Utf8s.equalsIgnoreCaseAscii("gzip", encoding));
+        if (state.isGzipEncoded()) {
+            long inflateStream = Zip.inflateInitGzip();
+            if (inflateStream < 0) {
+                state.reject(ENCODING_NOT_SUPPORTED, "failed to initialise gzip decompression", context.getFd());
+                return;
+            }
+            state.setInflateStream(inflateStream);
         }
 
         byte timestampPrecision;
@@ -179,6 +196,7 @@ public class LineHttpProcessorImpl implements HttpMultipartContentProcessor, Htt
             sendErrorContent(context);
         }
         engine.getMetrics().lineMetrics().totalIlpHttpBytesGauge().add(context.getTotalReceived());
+        state.cleanupGzip();
     }
 
     @Override

@@ -398,6 +398,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+            return baseCursor.getIndexReaderForCurrentFrame(columnCrossIndex.getQuick(columnIndex), direction);
+        }
+
+        @Override
         public Record getRecord() {
             return recordA;
         }

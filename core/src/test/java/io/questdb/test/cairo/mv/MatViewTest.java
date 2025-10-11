@@ -59,6 +59,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -107,7 +108,6 @@ public class MatViewTest extends AbstractCairoTest {
     public static Collection<Object[]> testParams() {
         // only run a single combination per CI run
         final Rnd rnd = generateRandom(LOG);
-
         if (rnd.nextInt(100) > 50) {
             return Arrays.asList(new Object[][]{{-1, TestTimestampType.MICRO}, {-1, TestTimestampType.NANO}});
         }
@@ -2466,6 +2466,66 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEstimateRowsPerBucket() {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+
+        // Basic case: 1 billion rows, hourly bucket, daily partitions, 30 partitions
+        // Expected: (1B * 1hour) / (24hours * 30 partitions) = 1B / 720 ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1_000_000, 2_000_000);
+
+        // Small table: 1000 rows
+        testEstimateRowsPerBucket(1_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 1, 100);
+
+        // Large table: 5 billion rows
+        // Expected: (5B * 1hour) / (24hours * 30 partitions) ≈ 6,944,444
+        testEstimateRowsPerBucket(5_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 30, 5_000_000, 10_000_000);
+
+        // Daily bucket
+        // Expected: (1B * 24hours) / (24hours * 30 partitions) = 1B / 30 ≈ 33,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.DAY_MICROS, Micros.DAY_MICROS, 30, 30_000_000, 40_000_000);
+
+        // Weekly bucket
+        // Expected: (1B * 168hours) / (24hours * 30 partitions) = 1B * 7 / 30 ≈ 233,333,333
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 30, 200_000_000, 300_000_000);
+
+        // Monthly bucket (30 days)
+        // Expected: (1B * 720hours) / (24hours * 30 partitions) = 1B * 30 / 30 = 1B
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.MONTH_MICROS_APPROX, Micros.DAY_MICROS, 30, 900_000_000, 1_100_000_000);
+
+        // Edge case: Weekly partitions with hourly bucket
+        // Expected: (1B * 1hour) / (168hours * 4 partitions) ≈ 1,488,095
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.WEEK_MICROS, 4, 1_000_000, 2_000_000);
+
+        // Edge case: Single partition
+        // Expected: (1B * 1hour) / (720hours * 1 partition) ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.MONTH_MICROS_APPROX, 1, 1_000_000, 2_000_000);
+
+        // Edge case: Many partitions (1000)
+        // Expected: (1B * 1hour) / (24hours * 1000 partitions) ≈ 41,666
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1000, 30_000, 50_000);
+
+        // Edge case: Zero partition count (should return 1)
+        final long result = MatViewRefreshJob.estimateRowsPerBucket(1_000_000_000L, Micros.HOUR_MICROS, Micros.HOUR_MICROS, 0);
+        Assert.assertEquals("expected 1 for zero partitions", 1, result);
+
+        // Overflow prevention test: Very large rows and bucket that would overflow with naive multiplication
+        // Should not overflow, should return a reasonable positive value
+        testEstimateRowsPerBucket(Long.MAX_VALUE / 2, Micros.HOUR_MICROS, Micros.DAY_MICROS, 1, 1, Long.MAX_VALUE / 2);
+
+        // Test with nanoseconds (1000x microseconds)
+        // Expected: same ratio as microseconds ≈ 1,388,888
+        testEstimateRowsPerBucket(1_000_000_000L, Nanos.HOUR_NANOS, Nanos.DAY_NANOS, 30, 1_000_000, 2_000_000);
+
+        // Very small bucket compared to partition
+        // Expected: very small number, but at least 1
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.MILLI_MICROS, Micros.DAY_MICROS, 30, 1, 1000);
+
+        // Bucket larger than partition duration (unusual but possible)
+        // Expected: (1B * 168hours) / (24hours * 1) = 1B * 7 = 7B
+        testEstimateRowsPerBucket(1_000_000_000L, Micros.WEEK_MICROS, Micros.DAY_MICROS, 1, 6_000_000_000L, 8_000_000_000L);
+    }
+
+    @Test
     public void testFullRefresh() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3600,6 +3660,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeSampleByIntervalButFewRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day wal;");
+            execute("insert into x values('2000-01-01T12:00'),('2010-01-01T12:00'),('2020-01-01T12:00')");
+            drainQueues();
+
+            final String expected = """
+                    ts\tfirst_ts
+                    2000-01-01T00:00:00.000000Z\t2000-01-01T12:00:00.000000Z
+                    2010-01-01T00:00:00.000000Z\t2010-01-01T12:00:00.000000Z
+                    2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                    """;
+            final String viewSql = "select ts, first(ts) as first_ts from x sample by 10y";
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts", true, true);
+
+            execute("create materialized view x_1y as (" + viewSql + ") partition by year");
+            drainQueues();
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1y", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testManualDeferredMatView() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4232,6 +4315,50 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryTimestampMixedWithAggregates() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            drainWalQueue();
+
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW x_view AS
+                            SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
+                            FROM 'x'
+                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
+                            """
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit\n" +
+                            "x_view\timmediate\tx\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t\t1\t1\t0\t\t0\t\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                            "from materialized_views",
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tCoverage
+                            2009-12-31T23:00:00.000000Z\t0.08333333333333333
+                            2019-12-31T23:00:00.000000Z\t0.041666666666666664
+                            2029-12-31T23:00:00.000000Z\t0.041666666666666664
+                            """,
+                    "x_view",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testQueryWithCte() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4269,10 +4396,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "sample by 10y";
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts");
 
-            execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
+            execute("create materialized view exchanges_10y as (" + viewSql + ") partition by year");
             drainQueues();
 
-            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_100y", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_10y", "ts", true, true);
         });
     }
 
@@ -6565,6 +6692,11 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
         });
+    }
+
+    private void testEstimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount, long expectedLo, long expectedHi) {
+        long result = MatViewRefreshJob.estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
+        Assert.assertTrue("Expected from " + expectedLo + " to " + expectedHi + ", got " + result, result >= expectedLo && result < expectedHi);
     }
 
     private void testIncrementalRefreshTransactionLogV2(String viewSql) throws Exception {

@@ -536,6 +536,16 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
         if (value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE) {
             return (int) value;
@@ -594,6 +604,36 @@ public class SqlUtil {
 
     @SuppressWarnings("unused")
     // used by the row copier
+    public static double implicitCastIntAsDouble(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Double.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastIntAsFloat(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Float.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static long implicitCastIntAsLong(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Long.MIN_VALUE;
+        } else {
+            return value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
     public static short implicitCastIntAsShort(int value) {
         if (value != Numbers.INT_NULL) {
             return implicitCastAsShort(value, ColumnType.INT);
@@ -617,6 +657,27 @@ public class SqlUtil {
         }
         return 0;
     }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static double implicitCastLongAsDouble(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Double.NaN;
+        } else {
+            return (double) value;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used by the row copier
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
@@ -799,7 +860,8 @@ public class SqlUtil {
 
     public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
         try {
-            parser.of(value, ColumnType.decodeArrayDimensionality(expectedType));
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value, ColumnType.decodeWeakArrayDimensionality(expectedType));
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
         }
@@ -858,7 +920,8 @@ public class SqlUtil {
 
     public static ArrayView implicitCastVarcharAsDoubleArray(Utf8Sequence value, DoubleArrayParser parser, int expectedType) {
         try {
-            parser.of(value.asAsciiCharSequence(), ColumnType.decodeArrayDimensionality(expectedType));
+            // the parser will handle the weak dimensionality case (-1)
+            parser.of(value.asAsciiCharSequence(), ColumnType.decodeWeakArrayDimensionality(expectedType));
         } catch (IllegalArgumentException e) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, expectedType);
         }

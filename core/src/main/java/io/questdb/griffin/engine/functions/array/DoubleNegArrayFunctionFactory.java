@@ -28,9 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -38,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class DoubleNegArrayFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
@@ -48,18 +50,25 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0), configuration);
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return new Func(configuration, args.getQuick(0), position);
     }
 
-    private static class Func extends ArrayFunction implements UnaryFunction {
+    private static class Func extends WeakDimsArrayFunction implements UnaryFunction {
         private final DirectArray array;
         private final Function arrayArg;
 
-        public Func(Function arrayArg, CairoConfiguration configuration) {
+        public Func(CairoConfiguration configuration, Function arrayArg, int position) {
             this.arrayArg = arrayArg;
             this.array = new DirectArray(configuration);
             this.type = arrayArg.getType();
+            this.position = position;
         }
 
         @Override
@@ -95,6 +104,13 @@ public class DoubleNegArrayFunctionFactory implements FunctionFactory {
 
         public String getName() {
             return OPERATOR_NAME;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            this.type = arrayArg.getType();
+            validateAssignedType();
         }
 
         @Override
