@@ -34,22 +34,22 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.Numbers;
 
-public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final GroupByLongList list;
-    private final GroupByLongHashSet setA;
-    private final GroupByLongHashSet setB;
-    private int valueIndex;
+public abstract class AbstractCountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    protected final Function arg;
+    protected final GroupByLongList list;
+    protected final GroupByIntHashSet setA;
+    protected final GroupByIntHashSet setB;
+    protected int valueIndex;
 
-    public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor, int workerCount) {
+    public AbstractCountDistinctIntGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB, GroupByLongList list) {
         this.arg = arg;
-        setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        list = new GroupByLongList(Math.max(workerCount, 4));
+        this.setA = setA;
+        this.setB = setB;
+        this.list = list;
     }
 
     @Override
@@ -57,46 +57,6 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         setA.resetPtr();
         setB.resetPtr();
         list.resetPtr();
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            mapValue.putLong(valueIndex, 1);
-            mapValue.putLong(valueIndex + 1, value);
-        } else {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
-            final long cnt = mapValue.getLong(valueIndex);
-            if (cnt == 0) {
-                mapValue.putLong(valueIndex, 1);
-                mapValue.putLong(valueIndex + 1, value);
-            } else if (cnt == 1) { // inlined value
-                final long valueB = mapValue.getLong(valueIndex + 1);
-                if (value != valueB) {
-                    setA.of(0).add(value);
-                    setA.add(valueB);
-                    mapValue.putLong(valueIndex, 2);
-                    mapValue.putLong(valueIndex + 1, setA.ptr());
-                }
-            } else { // non-empty set
-                final long ptr = mapValue.getLong(valueIndex + 1);
-                final long index = setA.of(ptr).keyIndex(value);
-                if (index >= 0) {
-                    setA.addAt(index, value);
-                    mapValue.putLong(valueIndex, cnt + 1);
-                    mapValue.putLong(valueIndex + 1, setA.ptr());
-                }
-            }
-        }
     }
 
     @Override
@@ -174,7 +134,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         }
 
         if (srcCount == 1) { // inlined src value
-            final long srcVal = srcValue.getLong(valueIndex + 1);
+            final int srcVal = (int) srcValue.getLong(valueIndex + 1);
             if (destCount == -1) { // dest holds accumulated sets
                 // pick up the first set and add the value there
                 final long destPtr = destValue.getLong(valueIndex + 1);
@@ -182,7 +142,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
                 setA.of(list.get(0)).add(srcVal);
                 list.set(0, setA.ptr());
             } else if (destCount == 1) { // dest holds inlined value
-                final long destVal = destValue.getLong(valueIndex + 1);
+                final int destVal = (int) destValue.getLong(valueIndex + 1);
                 if (destVal == srcVal) {
                     return;
                 }
@@ -206,7 +166,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
             list.of(destPtr).add(srcPtr);
             destValue.putLong(valueIndex + 1, list.ptr());
         } else if (destCount == 1) { // dest holds inlined value
-            final long destVal = destValue.getLong(valueIndex + 1);
+            final int destVal = (int) destValue.getLong(valueIndex + 1);
             setA.of(srcPtr).add(destVal);
             destValue.putLong(valueIndex, setA.size());
             destValue.putLong(valueIndex + 1, setA.ptr());
@@ -240,7 +200,6 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void setNull(MapValue mapValue) {
-        this.supportsParallelism();
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
