@@ -189,28 +189,22 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // 2. The symbol does not occur anywhere inside either the remembered or the new period. It may only
                 //    appear at its very start.
                 //
-                // So, all of these are impossible:
+                // So, we have these possibilities:
                 //
-                // ? ------------------ | remembered period
-                //     ? ---------- | new period
+                //         x ------------ | remembered period
+                //  ? ------------------------ | new period
                 //
-                //          ? --------------- | remembered period
-                // ? ------------ | new period
+                // ? ------------ | remembered period
+                //          x ------------ | new period
                 //
-                //                  ? ---------- | remembered period
-                //  ? ---------- | new period
-                //
-                // ! ------------ | remembered period
-                //          ! --------------- | new period
-                //
-                //     ! ---------- | remembered period
-                // ! ------------------ | new period
+                //  ? --------- | remembered period
+                //                   ? ---------- | new period
                 //
                 // Furthermore, since our search never rescans the remembered period, it will never give up
                 // in the middle of it and try to memorize it didn't find anything. So, this is impossible:
                 //
-                // ! ------------ | remembered period
-                //          x --------------- | new period
+                // ? ------------ | remembered period
+                //          x ------------ | new period
                 //
                 // Also, in this case:
                 //
@@ -223,16 +217,16 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // This also won't occur, since it would imply we searched beyond the end of the search
                 // space:
                 //
-                //        x --------------- | remembered period
-                // ? ---------------------------- | new period
+                //         x ------------ | remembered period
+                //  ? ------------------------ | new period
                 //
                 // So, the only way to end up here is this:
                 //
-                // ! ------------ | remembered period
-                //                  ! ------------ | new period
+                //  ? --------- | remembered period
+                //                   ? ---------- | new period
                 //
                 // We started the search from a more recent timestamp, went backwards,
-                // and found a new symbol before reaching the remembered period.
+                // and either found a new symbol or gave up, before reaching the remembered period.
                 // We must remember all the new data, same as when the symbol is new.
                 long periodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
                 assert slaveTimestamp > periodEnd : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + periodEnd;
