@@ -168,6 +168,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceShardCount;
+    private final boolean cairoResourcePoolTracingEnabled;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
     private final int cairoSqlCopyLogRetentionDays;
@@ -299,6 +300,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
+    private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
@@ -779,6 +781,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
+        this.matViewMaxRefreshStepUs = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_STEP, Micros.YEAR_MICROS_NONLEAP);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -815,6 +818,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .put(PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX.toString()).put("=")
                     .put(tempRenamePendingTablePrefix).put(']');
         }
+        this.cairoResourcePoolTracingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_RESOURCE_POOL_TRACING_ENABLED, false);
 
         this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
@@ -2846,6 +2850,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean cairoResourcePoolTracingEnabled() {
+            return cairoResourcePoolTracingEnabled;
+        }
+
+        @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
         }
@@ -3258,6 +3267,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewMaxRefreshRetries() {
             return matViewMaxRefreshRetries;
+        }
+
+        @Override
+        public long getMatViewMaxRefreshStepUs() {
+            return matViewMaxRefreshStepUs;
         }
 
         @Override
