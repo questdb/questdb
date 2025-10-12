@@ -343,16 +343,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         for (int i = 0; i < 50; i++) {
                             final int prob = rnd.nextInt(100);
                             if (prob < 25) {
-                                // Add partition with 1 row (for inlined value branch)
+                                // Add partition with 1 row (for inlined value branch).
                                 execute(
                                         compiler,
-                                        "insert into tab " +
-                                                "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
-                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp",
+                                        "insert into tab values(rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
+                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp)",
                                         sqlExecutionContext
                                 );
                             } else if (prob < 50) {
-                                // Add partitions with a varying row counts
+                                // Add partition with a varying row counts.
                                 final int rows = rnd.nextInt(100) + 1;
                                 execute(
                                         compiler,
@@ -363,7 +362,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         sqlExecutionContext
                                 );
                             } else if (prob < 75) {
-                                // Add a partition with exactly PAGE_FRAME_MAX_ROWS
+                                // Add partition with exactly PAGE_FRAME_MAX_ROWS.
                                 execute(
                                         compiler,
                                         "insert into tab " +
@@ -373,7 +372,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         sqlExecutionContext
                                 );
                             } else {
-                                // Add a partition with PAGE_FRAME_MAX_ROWS + 1 rows
+                                // Add partition with PAGE_FRAME_MAX_ROWS + 1 rows.
                                 execute(
                                         compiler,
                                         "insert into tab " +
