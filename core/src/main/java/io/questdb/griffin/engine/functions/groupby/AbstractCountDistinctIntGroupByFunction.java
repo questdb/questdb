@@ -143,13 +143,12 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
                 list.set(0, setA.ptr());
             } else if (destCount == 1) { // dest holds inlined value
                 final int destVal = (int) destValue.getLong(valueIndex + 1);
-                if (destVal == srcVal) {
-                    return;
+                if (destVal != srcVal) {
+                    setA.of(0).add(srcVal);
+                    setA.add(destVal);
+                    destValue.putLong(valueIndex, 2);
+                    destValue.putLong(valueIndex + 1, setA.ptr());
                 }
-                setA.of(0).add(srcVal);
-                setA.add(destVal);
-                destValue.putLong(valueIndex, 2);
-                destValue.putLong(valueIndex + 1, setA.ptr());
             } else { // dest holds a set
                 final long destPtr = destValue.getLong(valueIndex + 1);
                 setA.of(destPtr).add(srcVal);
