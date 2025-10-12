@@ -50,6 +50,24 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
+    /**
+     * A fast hash function based on Rust compiler's FxHasher. It's of worse quality than
+     * {@link #hashInt64(int)}, so make sure to compensate that with a low load factor,
+     * e.g. 0.5, when used in a hash table.
+     */
+    public static long fastHashInt64(int k) {
+        return Integer.toUnsignedLong(k) * M2;
+    }
+
+    /**
+     * A fast hash function based on Rust compiler's FxHasher. It's of worse quality than
+     * {@link #hashLong64(long)}, so make sure to compensate that with a low load factor,
+     * e.g. 0.5, when used in a hash table.
+     */
+    public static long fastHashLong64(long k) {
+        return k * M2;
+    }
+
     public static long hashInt64(int k) {
         return fmix64(Integer.toUnsignedLong(k));
     }
