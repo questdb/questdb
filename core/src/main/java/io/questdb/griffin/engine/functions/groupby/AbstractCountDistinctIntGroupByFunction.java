@@ -105,7 +105,7 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
         valueIndex = columnTypes.getColumnCount();
         // count
         columnTypes.add(ColumnType.LONG);
-        // inlined single value (count=1) or GroupByLongHashSet (count>1) or GroupByLongList pointer (count=-1)
+        // inlined single value (count=1) or GroupByIntHashSet (count>1) or GroupByLongList pointer (count=-1)
         columnTypes.add(ColumnType.LONG);
     }
 
