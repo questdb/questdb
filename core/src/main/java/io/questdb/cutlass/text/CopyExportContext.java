@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
@@ -55,6 +56,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -67,8 +69,8 @@ public class CopyExportContext {
     private final LongObjHashMap<ExportTaskEntry> activeExports = new LongObjHashMap<>();
     private final LongSupplier copyIDSupplier;
     private final CairoEngine engine;
-    private final CharSequenceObjHashMap<ExportTaskEntry> exportPath = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<ExportTaskEntry> exportSql = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ExportTaskEntry> exportBySqlText = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ExportTaskEntry> exportEntriesByFileName = new CharSequenceObjHashMap<>();
     private final ObjectPool<ExportTaskEntry> exportTaskEntryPools = new ObjectPool<>(ExportTaskEntry::new, 6);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
     private boolean initialized = false;
@@ -81,27 +83,33 @@ public class CopyExportContext {
 
     public ExportTaskEntry assignExportEntry(
             SecurityContext securityContext,
-            CharSequence sql,
-            CharSequence path,
+            @NotNull CharSequence sqlText,
+            @NotNull CharSequence fileName,
             SqlExecutionCircuitBreaker sqlExecutionCircuitBreaker,
             CopyTrigger trigger) throws SqlException {
         assert trigger != CopyTrigger.NONE;
+        // This context acts as the registry for exports in-flight. It will contain all requests
+        // that were submitted via SQL execution in order to prevent duplicate exports. Ideally this is
+        // to disallow repeated exports by the same user, but in OSS we are not able to tell users apart, so
+        // the key is SQL, and it would be global across the server for now.
+
+        // The requests triggered by REST API are not verified on duplicates, so it is less of a friction.
         lock.writeLock().lock();
         try {
             ExportTaskEntry entry;
             if (trigger == CopyTrigger.SQL) {
-                entry = exportSql.get(sql);
+                entry = exportBySqlText.get(sqlText);
                 if (entry != null) {
                     StringSink sink = Misc.getThreadLocalSink();
                     Numbers.appendHex(sink, entry.id, true);
-                    throw SqlException.$(0, "duplicate sql statement: ").put(sql).put(" [id=").put(sink).put(']');
+                    throw SqlException.$(0, "duplicate sql statement: ").put(sqlText).put(" [id=").put(sink).put(']');
                 }
-                if (path != null) {
-                    entry = exportPath.get(path);
+                if (!fileName.isEmpty()) {
+                    entry = exportEntriesByFileName.get(fileName);
                     if (entry != null) {
                         StringSink sink = Misc.getThreadLocalSink();
                         Numbers.appendHex(sink, entry.id, true);
-                        throw SqlException.$(0, "duplicate export path: ").put(path).put(" [id=").put(sink).put(']');
+                        throw SqlException.$(0, "duplicate export path: ").put(fileName).put(" [id=").put(sink).put(']');
                     }
                 }
             }
@@ -111,12 +119,23 @@ public class CopyExportContext {
             do {
                 id = copyIDSupplier.getAsLong();
             } while ((index = activeExports.keyIndex(id)) < 0);
-            entry = exportTaskEntryPools.next().of(engine, id, securityContext, sql, path, sqlExecutionCircuitBreaker, trigger);
+
+            entry = exportTaskEntryPools.next().of(
+                    engine,
+                    id,
+                    securityContext,
+                    sqlText,
+                    fileName,
+                    sqlExecutionCircuitBreaker,
+                    trigger
+            );
+
             activeExports.putAt(index, id, entry);
+
             if (trigger == CopyTrigger.SQL) {
-                exportSql.put(sql, entry);
-                if (path != null) {
-                    exportPath.put(path, entry);
+                exportBySqlText.put(sqlText, entry);
+                if (!fileName.isEmpty()) {
+                    exportEntriesByFileName.put(fileName, entry);
                 }
             }
             return entry;
@@ -186,7 +205,8 @@ public class CopyExportContext {
             ExportTaskEntry e = activeExports.get(id);
             if (e != null) {
                 entry.id = e.id;
-                entry.path = e.path;
+                entry.fileName.clear();
+                entry.fileName.put(e.fileName);
                 entry.phase = e.phase;
                 entry.populatedRowCount = e.populatedRowCount;
                 entry.startTime = e.startTime;
@@ -195,7 +215,8 @@ public class CopyExportContext {
                 entry.totalPartitionCount = e.totalPartitionCount;
                 entry.totalRowCount = e.totalRowCount;
                 entry.principal = e.securityContext != null ? e.securityContext.getPrincipal() : null;
-                entry.sql = e.sql.toString();
+                entry.sqlText.clear();
+                entry.sqlText.put(e.sqlText);
                 entry.trigger = e.trigger.name;
                 return true;
             }
@@ -247,9 +268,9 @@ public class CopyExportContext {
         lock.writeLock().lock();
         try {
             activeExports.remove(entry.id);
-            exportSql.remove(entry.sql);
-            if (entry.path != null) {
-                exportPath.remove(entry.path);
+            exportBySqlText.remove(entry.sqlText);
+            if (!entry.fileName.isEmpty()) {
+                exportEntriesByFileName.remove(entry.fileName);
             }
             exportTaskEntryPools.release(entry);
         } finally {
@@ -352,7 +373,7 @@ public class CopyExportContext {
                     partitionBy = PartitionBy.NONE;
                 }
                 createOp = new CreateTableOperationImpl(
-                        selectText,
+                        Chars.toString(selectText),
                         tableName,
                         partitionBy,
                         false,
@@ -391,18 +412,22 @@ public class CopyExportContext {
     }
 
     public static class ExportTaskData {
+        private final StringSink fileName = new StringSink();
+        private final StringSink sqlText = new StringSink();
         public CharSequence principal;
         private int finishedPartitionCount = 0;
         private long id;
-        private CharSequence path;
         private CopyExportRequestTask.Phase phase;
         private long populatedRowCount = 0;
-        private CharSequence sql;
         private long startTime;
         private int totalPartitionCount = 0;
         private long totalRowCount = 0;
         private CharSequence trigger;
         private int workerId = -1;
+
+        public CharSequence getFileName() {
+            return fileName;
+        }
 
         public int getFinishedPartitionCount() {
             return finishedPartitionCount;
@@ -410,10 +435,6 @@ public class CopyExportContext {
 
         public long getId() {
             return id;
-        }
-
-        public CharSequence getPath() {
-            return path;
         }
 
         public CopyExportRequestTask.Phase getPhase() {
@@ -428,8 +449,8 @@ public class CopyExportContext {
             return principal;
         }
 
-        public CharSequence getSql() {
-            return sql;
+        public CharSequence getSqlText() {
+            return sqlText;
         }
 
         public long getStartTime() {
@@ -454,15 +475,15 @@ public class CopyExportContext {
     }
 
     public static class ExportTaskEntry implements Mutable {
+        final StringSink fileName = new StringSink();
+        final StringSink sqlText = new StringSink();
         AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
         int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
-        CharSequence path;
         CopyExportRequestTask.Phase phase;
         long populatedRowCount = 0;
         SqlExecutionCircuitBreaker realCircuitBreaker;
         SecurityContext securityContext;
-        StringSink sql = new StringSink();
         long startTime = Numbers.LONG_NULL;
         int totalPartitionCount = 0;
         long totalRowCount = 0;
@@ -476,8 +497,8 @@ public class CopyExportContext {
                 atomicBooleanCircuitBreaker.clear();
             }
             this.id = INACTIVE_COPY_ID;
-            this.sql.clear();
-            this.path = null;
+            this.sqlText.clear();
+            this.fileName.clear();
             this.phase = null;
             this.startTime = Numbers.LONG_NULL;
             this.workerId = -1;
@@ -505,8 +526,8 @@ public class CopyExportContext {
                 CairoEngine engine,
                 long id,
                 SecurityContext context,
-                CharSequence sql,
-                CharSequence path,
+                CharSequence sqlText,
+                CharSequence fileName,
                 SqlExecutionCircuitBreaker circuitBreaker,
                 CopyTrigger trigger) {
             if (atomicBooleanCircuitBreaker == null) {
@@ -514,8 +535,10 @@ public class CopyExportContext {
             }
             this.id = id;
             this.securityContext = context;
-            this.sql.put(sql);
-            this.path = path;
+            this.sqlText.clear();
+            this.sqlText.put(sqlText);
+            this.fileName.clear();
+            this.fileName.put(fileName);
             if (circuitBreaker == null) {
                 atomicBooleanCircuitBreaker.reset();
                 this.realCircuitBreaker = atomicBooleanCircuitBreaker;

@@ -42,7 +42,8 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
-    final StringSink query = new StringSink();
+    final StringSink fileName = new StringSink();
+    final StringSink sqlText = new StringSink();
     private final CopyExportResult copyExportResult;
     private final ExportModel exportModel = new ExportModel();
     private final FilesFacade filesFacade;
@@ -55,7 +56,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
-    String fileName;
     boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
@@ -83,20 +83,20 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     @Override
     public void clear() {
         delimiter = ',';
-        fileName = null;
+        fileName.clear();
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
         if (recordCursorFactory != null) {
             if (queryCacheable) {
-                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
+                httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
             } else {
                 recordCursorFactory.close();
             }
             recordCursorFactory = null;
         }
         queryCacheable = false;
-        query.clear();
+        sqlText.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         skip = 0;

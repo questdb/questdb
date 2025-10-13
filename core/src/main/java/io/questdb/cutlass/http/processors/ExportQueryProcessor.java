@@ -104,10 +104,10 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
-    private final SerialParquetExporter parquetExporter;
     private final byte requiredAuthType;
+    private final SerialParquetExporter serialParquetExporter;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    CopyExportRequestTask task = new CopyExportRequestTask();
+    private final CopyExportRequestTask task = new CopyExportRequestTask();
     private long timeout;
 
     public ExportQueryProcessor(
@@ -117,7 +117,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        parquetExporter = new SerialParquetExporter(engine);
+        serialParquetExporter = new SerialParquetExporter(engine);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
@@ -129,7 +129,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     @Override
     public void close() {
         Misc.free(circuitBreaker);
-        Misc.free(parquetExporter);
+        Misc.free(serialParquetExporter);
     }
 
     public void execute(
@@ -141,7 +141,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
             circuitBreaker.setTimeout(timeout);
             circuitBreaker.resetTimer();
-            state.recordCursorFactory = context.getSelectCache().poll(state.query);
+            state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
@@ -153,7 +153,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             sqlExecutionContext.initNow();
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
@@ -183,7 +183,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                cc = compiler.compile(state.query, sqlExecutionContext);
+                                cc = compiler.compile(state.sqlText, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
@@ -350,7 +350,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         ExportModel exportModel = state.getExportModel();
         exportModel.setParquetDefaults(engine.getConfiguration());
         exportModel.setPartitionBy(PartitionBy.NONE);
-        exportModel.setSelectText(state.query, 0);
+        // this is ok to assign, the exportModel belongs to state and so is the sqlText sink
+        exportModel.setSelectText(state.sqlText, 0);
 
         // Handle partition_by option
         DirectUtf8Sequence partitionBy = request.getUrlParam(EXPORT_PARQUET_OPTION_PARTITION_BY);
@@ -468,13 +469,17 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CopyExportContext.ExportTaskEntry entry = null;
             try {
                 var securityContext = context.getSecurityContext();
-                var selectText = state.query;
-                var fileName = state.fileName;
                 var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
-                var copyContext = engine.getCopyExportContext();
+                var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
 
-                entry = copyContext.assignExportEntry(securityContext, selectText, fileName, sqlExecutionCircuitBreaker, CopyExportContext.CopyTrigger.HTTP);
+                entry = copyExportContext.assignExportEntry(
+                        securityContext,
+                        state.sqlText,
+                        state.fileName,
+                        sqlExecutionCircuitBreaker,
+                        CopyExportContext.CopyTrigger.HTTP
+                );
                 long copyID = entry.getId();
                 exportResult.setCopyID(copyID);
 
@@ -483,9 +488,9 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 Numbers.appendHex(sink, copyID, true);
                 String tableName = sink.toString();
 
-                var createOp = copyContext.validateAndCreateParquetExportTableOp(
+                var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
                         sqlExecutionContext,
-                        selectText,
+                        state.sqlText,
                         state.getExportModel().getPartitionBy(),
                         tableName,
                         "",
@@ -497,7 +502,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         createOp,
                         exportResult,
                         tableName,
-                        fileName,
+                        state.fileName,
                         state.getExportModel().getCompressionCodec(),
                         state.getExportModel().getCompressionLevel(),
                         state.getExportModel().getRowGroupSize(),
@@ -507,8 +512,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().isRawArrayEncoding()
                 );
 
-                parquetExporter.of(task, sqlExecutionCircuitBreaker);
-                parquetExporter.process();
+                serialParquetExporter.of(task, sqlExecutionCircuitBreaker);
+                serialParquetExporter.process();
             } finally {
                 if (entry != null) {
                     engine.getCopyExportContext().releaseEntry(entry);
@@ -759,30 +764,29 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void logInternalError(Throwable e, ExportQueryProcessorState state) {
-        if (e instanceof CairoException) {
-            CairoException ce = (CairoException) e;
+        if (e instanceof CairoException ce) {
             if (ce.isInterruption()) {
-                info(state).$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
-                        .$("`, q=`").$safe(state.query)
+                info(state).$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
+                        .$("`, q=`").$safe(state.sqlText)
                         .$("`]").$();
             } else if (ce.isCritical()) {
                 critical(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").$safe(state.query)
+                        .$("`, q=`").$safe(state.sqlText)
                         .$("`]").$();
             } else {
                 error(state).$("error [msg=`").$safe(ce.getFlyweightMessage())
                         .$("`, errno=").$(ce.getErrno())
-                        .$("`, q=`").$safe(state.query)
+                        .$("`, q=`").$safe(state.sqlText)
                         .$("`]").$();
             }
         } else if (e instanceof HttpException) {
             error(state).$("internal HTTP server error [reason=`").$safe(((HttpException) e).getFlyweightMessage())
-                    .$("`, q=`").$safe(state.query)
+                    .$("`, q=`").$safe(state.sqlText)
                     .$("`]").$();
         } else {
             critical(state).$("internal error [ex=").$(e)
-                    .$(", q=`").$safe(state.query)
+                    .$(", q=`").$safe(state.sqlText)
                     .$("`]").$();
             // This is a critical error, so we treat it as an unhandled one.
             metrics.healthMetrics().incrementUnhandledErrors();
@@ -834,16 +838,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             stop = skip + configuration.getMaxQueryResponseRowLimit();
         }
 
-        state.query.clear();
-        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.query)) {
+        state.sqlText.clear();
+        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), state.sqlText)) {
             info(state).$("Bad UTF8 encoding").$();
             sendException(response, 0, "Bad UTF8 encoding in query text", state);
             return false;
         }
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
-        state.fileName = null;
+        state.fileName.clear();
         if (fileName != null && fileName.size() > 0) {
-            state.fileName = fileName.toString();
+            state.fileName.put(fileName);
         }
 
         DirectUtf8Sequence delimiter = request.getUrlParam(URL_PARAM_DELIMITER);
@@ -1045,7 +1049,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         headerJsonError(response);
-        JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
+        JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.sqlText);
     }
 
     private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -1068,7 +1072,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             FlyweightMessageContainer container
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state).$("syntax-error [q=`").$safe(state.query)
+        info(state).$("syntax-error [q=`").$safe(state.sqlText)
                 .$("`, at=").$(container.getPosition())
                 .$(", message=`").$safe(container.getFlyweightMessage()).$('`').I$();
         sendException(response, container.getPosition(), container.getFlyweightMessage(), state);
@@ -1083,7 +1087,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
         String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);
-        if (state.fileName != null && !state.fileName.isEmpty()) {
+        if (!state.fileName.isEmpty()) {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();
         } else {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();

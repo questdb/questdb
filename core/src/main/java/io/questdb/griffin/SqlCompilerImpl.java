@@ -3400,7 +3400,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            CopyDataProgressReporter reporter,
+            @NotNull CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
@@ -4620,7 +4620,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             configuration.getCreateTableModelBatchSize(),
                                             configuration.getO3MaxLag(),
                                             SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER,
-                                            null,
+                                            CopyDataProgressReporter.NOOP,
                                             configuration.getParquetExportCopyReportFrequencyLines()
                                     );
                                     break;

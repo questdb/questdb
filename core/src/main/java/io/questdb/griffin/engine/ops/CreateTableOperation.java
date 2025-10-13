@@ -48,7 +48,7 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     OperationFuture getOperationFuture();
 
-    CharSequence getSelectText();
+    String getSelectText();
 
     int getSelectTextPosition();
 

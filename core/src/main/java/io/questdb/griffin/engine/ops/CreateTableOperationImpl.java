@@ -71,7 +71,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
-    private final CharSequence selectText;
+    private final String selectText;
     private final String sqlText;
     private long batchO3MaxLag;
     private long batchSize;
@@ -101,7 +101,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
-            CharSequence selectText,
+            String selectText,
             String tableName,
             int partitionBy,
             boolean walEnabled,
@@ -229,7 +229,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
-     * @param tableKind                   table kind, DATA, PARQUET_EXPORT see TableUtils.TABLE_KIND_* constants
+     * @param tableKind                   table kind, REGULAR_TABLE, TEMP_PARQUET_EXPORT see TableUtils.TABLE_KIND_* constants
      */
     public CreateTableOperationImpl(
             String sqlText,
@@ -375,7 +375,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public CharSequence getSelectText() {
+    public String getSelectText() {
         return selectText;
     }
 

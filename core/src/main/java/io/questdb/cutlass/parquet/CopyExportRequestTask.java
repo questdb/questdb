@@ -39,7 +39,7 @@ public class CopyExportRequestTask implements Mutable {
     private CreateTableOperation createOp;
     private int dataPageSize;
     private CopyExportContext.ExportTaskEntry entry;
-    private String fileName;
+    private CharSequence fileName;
     private int parquetVersion;
     private boolean rawArrayEncoding;
     private CopyExportResult result;
@@ -90,7 +90,7 @@ public class CopyExportRequestTask implements Mutable {
         return entry;
     }
 
-    public String getFileName() {
+    public CharSequence getFileName() {
         return fileName;
     }
 
@@ -127,7 +127,7 @@ public class CopyExportRequestTask implements Mutable {
             CreateTableOperation createOp,
             CopyExportResult result,
             String tableName,
-            String fileName,
+            CharSequence fileName,
             int compressionCodec,
             int compressionLevel,
             int rowGroupSize,

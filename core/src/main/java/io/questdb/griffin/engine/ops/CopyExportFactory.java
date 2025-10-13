@@ -48,6 +48,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -96,8 +97,13 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(securityContext, this.tableName != null ? this.tableName : this.selectText,
-                this.fileName, null, CopyExportContext.CopyTrigger.SQL);
+        CopyExportContext.ExportTaskEntry entry = copyContext.assignExportEntry(
+                securityContext,
+                this.tableName != null ? this.tableName : this.selectText,
+                this.fileName,
+                null,
+                CopyExportContext.CopyTrigger.SQL
+        );
         long copyID = entry.getId();
         try {
             CreateTableOperation createOp = null;
@@ -233,11 +239,9 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         }
 
         final ExpressionNode fileNameExpr = model.getFileName();
-        this.fileName = fileNameExpr != null ? GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position).toString() : null;
+        this.fileName = fileNameExpr != null ? Chars.toString(GenericLexer.assertNoDots(unquote(fileNameExpr.token), fileNameExpr.position)) : null;
         this.securityContext = securityContext;
-        if (model.getSelectText() != null) {
-            this.selectText = model.getSelectText().toString();
-        }
+        this.selectText = Chars.toString(model.getSelectText());
         this.partitionBy = model.getPartitionBy();
         this.compressionCodec = model.getCompressionCodec();
         this.compressionLevel = model.getCompressionLevel();

@@ -165,9 +165,9 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
                     case 5: // request source
                         return entry.getTrigger();
                     case 6: // export path
-                        return entry.getPath();
+                        return entry.getFileName();
                     case 7: // export sql
-                        return entry.getSql();
+                        return entry.getSqlText();
                     case 8: // message
                         if (entry.getPhase() == null) {
                             return null;

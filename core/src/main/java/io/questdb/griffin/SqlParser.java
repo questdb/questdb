@@ -255,37 +255,21 @@ public class SqlParser {
             throw SqlException.position(pos).put("delay cannot be negative");
         }
 
-        int lengthMinutes;
-        switch (lengthUnit) {
-            case 'm':
-                lengthMinutes = length;
-                break;
-            case 'h':
-                lengthMinutes = length * 60;
-                break;
-            case 'd':
-                lengthMinutes = length * 24 * 60;
-                break;
-            default:
-                throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
-                        .put(", supported units are 'm', 'h', 'd'");
-        }
+        int lengthMinutes = switch (lengthUnit) {
+            case 'm' -> length;
+            case 'h' -> length * 60;
+            case 'd' -> length * 24 * 60;
+            default -> throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
+                    .put(", supported units are 'm', 'h', 'd'");
+        };
 
-        int delayMinutes;
-        switch (delayUnit) {
-            case 'm':
-                delayMinutes = delay;
-                break;
-            case 'h':
-                delayMinutes = delay * 60;
-                break;
-            case 'd':
-                delayMinutes = delay * 24 * 60;
-                break;
-            default:
-                throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
-                        .put(", supported units are 'm', 'h', 'd'");
-        }
+        int delayMinutes = switch (delayUnit) {
+            case 'm' -> delay;
+            case 'h' -> delay * 60;
+            case 'd' -> delay * 24 * 60;
+            default -> throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
+                    .put(", supported units are 'm', 'h', 'd'");
+        };
 
         if (delayMinutes >= lengthMinutes) {
             throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
@@ -368,28 +352,18 @@ public class SqlParser {
 
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
-        switch (token.charAt(0)) {
-            case 'n':
-                // nanos
-            case 'U':
-                // micros
-            case 'T':
-                // millis
-            case 's':
-                // seconds
-            case 'm':
-                // minutes
-            case 'h':
-                // hours
-            case 'd':
-                // days
-            case 'M':
-                // months
-            case 'y':
-                return true;
-            default:
-                return false;
-        }
+        return switch (token.charAt(0)) {
+            // nanos
+            // micros
+            // millis
+            // seconds
+            // minutes
+            // hours
+            // days
+            // months
+            case 'n', 'U', 'T', 's', 'm', 'h', 'd', 'M', 'y' -> true;
+            default -> false;
+        };
     }
 
     private static CreateMatViewOperationBuilder parseCreateMatViewExt(
@@ -2464,7 +2438,7 @@ public class SqlParser {
                 }
 
                 if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token))
-                        || (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
+                        || (n.type == ExpressionNode.LITERAL && n.token.isEmpty())) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
 
@@ -3349,7 +3323,7 @@ public class SqlParser {
                 }
 
                 if (alias != null) {
-                    if (alias.length() == 0) {
+                    if (alias.isEmpty()) {
                         throw err(lexer, null, "column alias cannot be a blank string");
                     }
                     col.setAlias(alias, aliasPosition);
@@ -3637,7 +3611,7 @@ public class SqlParser {
     ) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
-            if (name.token.length() == 0) {
+            if (name.token.isEmpty()) {
                 throw SqlException.$(name.position, "empty common table expression name");
             }
 
@@ -3991,7 +3965,7 @@ public class SqlParser {
             if (isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
             }
-            if (tok.length() == 0 || isEmptyAlias(tok)) {
+            if (tok.isEmpty() || isEmptyAlias(tok)) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Empty table alias");
             }
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
@@ -4099,7 +4073,7 @@ public class SqlParser {
     }
 
     private void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (tok == null || tok.length() == 0) {
+        if (tok == null || tok.isEmpty()) {
             throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
         }
 

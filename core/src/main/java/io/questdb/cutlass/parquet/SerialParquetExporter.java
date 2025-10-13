@@ -93,10 +93,7 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
-    public void of(
-            CopyExportRequestTask task,
-            SqlExecutionCircuitBreaker circuitBreaker
-    ) {
+    public void of(CopyExportRequestTask task, SqlExecutionCircuitBreaker circuitBreaker) {
         this.copyExportRoot = configuration.getSqlCopyExportRoot();
         this.task = task;
         this.circuitBreaker = circuitBreaker;
@@ -135,7 +132,9 @@ public class SerialParquetExporter implements Closeable {
             entry.setPhase(phase);
             copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
             final String tableName = task.getTableName();
-            final String fileName = task.getFileName() != null ? task.getFileName() : tableName;
+            // we can lift file name from the task as CharSequence (without materializing it) because this task was
+            // and always is assigned to this instance of the exporter
+            final CharSequence fileName = task.getFileName() != null ? task.getFileName() : tableName;
             tableToken = cairoEngine.getTableTokenIfExists(tableName);
             if (tableToken == null) {
                 throw CopyExportException.instance(phase, TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
@@ -326,7 +325,7 @@ public class SerialParquetExporter implements Closeable {
         });
     }
 
-    private void moveExportFiles(int tempBaseDirLen, String fileName) {
+    private void moveExportFiles(int tempBaseDirLen, CharSequence fileName) {
         if (numOfFiles == 0) {
             return;
         }
@@ -367,7 +366,7 @@ public class SerialParquetExporter implements Closeable {
         }
     }
 
-    private void moveFile(String fileName) {
+    private void moveFile(CharSequence fileName) {
         if (!ff.exists(tempPath.$())) {
             return;
         }
