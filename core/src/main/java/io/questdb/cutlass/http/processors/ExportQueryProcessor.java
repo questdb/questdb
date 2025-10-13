@@ -158,7 +158,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
                         // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
-                        Misc.free(cc);
+                        cc.closeAllButSelect();
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
@@ -181,15 +181,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             }
                             info(state).$safe(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
-                            CompiledQuery cc = null;
+                            CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                                 cc = compiler.compile(state.query, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                    // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
+                                    cc.closeAllButSelect();
                                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                                 }
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
-                            } finally {
-                                Misc.free(cc);
                             }
                         }
                     }

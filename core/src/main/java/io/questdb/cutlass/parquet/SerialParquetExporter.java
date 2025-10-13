@@ -400,17 +400,6 @@ public class SerialParquetExporter implements Closeable {
         return numOfFiles;
     }
 
-    @FunctionalInterface
-    public interface PhaseStatusReporter {
-        void report(CopyExportRequestTask.Phase phase,
-                    CopyExportRequestTask.Status status,
-                    CopyExportRequestTask task,
-                    CharSequence export_dir,
-                    int numOfFiles,
-                    CharSequence msg,
-                    long errors);
-    }
-
     private static class ProgressReporter implements CopyDataProgressReporter {
         private final StringSink copyIdHex = new StringSink();
         private SqlExecutionCircuitBreaker circuitBreaker;

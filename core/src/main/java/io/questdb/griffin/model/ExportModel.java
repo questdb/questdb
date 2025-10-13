@@ -333,25 +333,25 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         }
         if (format == COPY_FORMAT_PARQUET && compressionCodec >= 0) {
             switch (compressionCodec) {
-                case 0: // COMPRESSION_UNCOMPRESSED
-                case 1: // COMPRESSION_SNAPPY
-                case 3: // COMPRESSION_LZO
-                case 5: // COMPRESSION_LZ4
-                case 7: // COMPRESSION_LZ4_RAW
+                case COMPRESSION_UNCOMPRESSED:
+                case COMPRESSION_SNAPPY:
+                case COMPRESSION_LZO:
+                case COMPRESSION_LZ4:
+                case COMPRESSION_LZ4_RAW:
                     // These codecs don't use compression level
                     break;
-                case 2: // COMPRESSION_GZIP
+                case COMPRESSION_GZIP:
                     // GZIP actually uses levels 0-9, where 0=fastest, 9=best compression
                     if (compressionLevel < GZIP_MIN_COMPRESSION_LEVEL || compressionLevel > GZIP_MAX_COMPRESSION_LEVEL) {
                         throw SqlException.$(compressionLevelPos, "GZIP compression level must be between 0 and 9");
                     }
                     break;
-                case 4: // COMPRESSION_BROTLI
+                case COMPRESSION_BROTLI:
                     if (compressionLevel < BROTLI_MIN_COMPRESSION_LEVEL || compressionLevel > BROTLI_MAX_COMPRESSION_LEVEL) {
                         throw SqlException.$(compressionLevelPos, "Brotli compression level must be between 0 and 11");
                     }
                     break;
-                case 6: // COMPRESSION_ZSTD
+                case COMPRESSION_ZSTD:
                     if (compressionLevel != -1 && (compressionLevel < ZSTD_MIN_COMPRESSION_LEVEL || compressionLevel > ZSTD_MAX_COMPRESSION_LEVEL)) {
                         throw SqlException.$(compressionLevelPos, "ZSTD compression level must be between 1 and 22");
                     }

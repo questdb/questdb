@@ -43,8 +43,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.IOException;
-
 public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
@@ -98,7 +96,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void closeAllButSelect() {
         switch (getType()) {
             case CompiledQuery.INSERT:
             case CompiledQuery.INSERT_AS_SELECT:

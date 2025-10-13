@@ -340,10 +340,11 @@ public class CopyExportContext {
     ) throws SqlException {
         CreateTableOperationImpl createOp = null;
         final CairoEngine engine = executionContext.getCairoEngine();
-        CompiledQuery selectQuery = null;
+        CompiledQuery selectQuery;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             selectQuery = compiler.compile(selectText, executionContext);
             if (selectQuery.getType() != CompiledQuery.SELECT) {
+                selectQuery.closeAllButSelect();
                 throw SqlException.$(0, "Copy command only accepts SELECT queries");
             }
             try (RecordCursorFactory rcf = selectQuery.getRecordCursorFactory()) {
@@ -373,8 +374,6 @@ public class CopyExportContext {
         } catch (Throwable ex) {
             Misc.free(createOp);
             throw ex;
-        } finally {
-            Misc.free(selectQuery);
         }
 
         return createOp;
