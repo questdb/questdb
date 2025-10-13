@@ -201,7 +201,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(null, executionContext);
+            defaultValue.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -274,6 +274,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void close() {
             super.close();
             Misc.free(memory);
+            Misc.free(defaultValue);
         }
 
         @Override
@@ -312,6 +313,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            defaultValue.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -393,7 +400,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(null, executionContext);
+            defaultValue.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -511,6 +518,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void close() {
             super.close();
             Misc.free(memory);
+            Misc.free(defaultValue);
         }
 
         @Override
@@ -521,6 +529,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            defaultValue.init(symbolTableSource, executionContext);
         }
 
         @Override
