@@ -154,7 +154,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
-                    if (cc.getType() == CompiledQuery.SELECT) {
+                    if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
                         // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
