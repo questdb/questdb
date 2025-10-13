@@ -110,7 +110,7 @@ public class GroupByDoubleList {
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
 
-            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, oldCapacity);
+            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, 8L * oldCapacity);
 
             allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
         }
@@ -180,5 +180,400 @@ public class GroupByDoubleList {
                 Unsafe.getUnsafe().putDouble(p, noEntryValue);
             }
         }
+    }
+
+    /**
+     * Sorts the specified range of the list using Dual-Pivot Quicksort.
+     * The sort is performed in-place.
+     *
+     * @param lo the index of the first element, inclusive, to be sorted
+     * @param hi the index of the last element, inclusive, to be sorted
+     */
+    public void sort(int lo, int hi) {
+        if (lo < 0 || hi >= size()) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
+        }
+        if (lo < hi) {
+            sort(lo, hi, true);
+        }
+    }
+
+    /**
+     * If the length of an array to be sorted is less than this
+     * constant, insertion sort is used in preference to Quicksort.
+     */
+    private static final int INSERTION_SORT_THRESHOLD = 47;
+
+    /**
+     * Sorts the specified range of the list by Dual-Pivot Quicksort.
+     *
+     * @param left     the index of the first element, inclusive, to be sorted
+     * @param right    the index of the last element, inclusive, to be sorted
+     * @param leftmost indicates if this part is the leftmost in the range
+     */
+    private void sort(int left, int right, boolean leftmost) {
+        int length = right - left + 1;
+
+        // Use insertion sort on tiny arrays
+        if (length < INSERTION_SORT_THRESHOLD) {
+            if (leftmost) {
+                /*
+                 * Traditional (without sentinel) insertion sort,
+                 * optimized for server VM, is used in case of
+                 * the leftmost part.
+                 */
+                for (int i = left, j = i; i < right; j = ++i) {
+                    double ai = getQuick(i + 1);
+                    while (ai < getQuick(j)) {
+                        setValueAt(j + 1, getQuick(j));
+                        if (j-- == left) {
+                            break;
+                        }
+                    }
+                    setValueAt(j + 1, ai);
+                }
+            } else {
+                /*
+                 * Skip the longest ascending sequence.
+                 */
+                do {
+                    if (left >= right) {
+                        return;
+                    }
+                } while (getQuick(++left) >= getQuick(left - 1));
+
+                /*
+                 * Every element from adjoining part plays the role
+                 * of sentinel, therefore this allows us to avoid the
+                 * left range check on each iteration. Moreover, we use
+                 * the more optimized algorithm, so called pair insertion
+                 * sort, which is faster (in the context of Quicksort)
+                 * than traditional implementation of insertion sort.
+                 */
+                for (int k = left; ++left <= right; k = ++left) {
+                    double a1 = getQuick(k), a2 = getQuick(left);
+
+                    if (a1 < a2) {
+                        a2 = a1;
+                        a1 = getQuick(left);
+                    }
+                    while (a1 < getQuick(--k)) {
+                        setValueAt(k + 2, getQuick(k));
+                    }
+                    setValueAt(++k + 1, a1);
+
+                    while (a2 < getQuick(--k)) {
+                        setValueAt(k + 1, getQuick(k));
+                    }
+                    setValueAt(k + 1, a2);
+                }
+                double last = getQuick(right);
+
+                while (last < getQuick(--right)) {
+                    setValueAt(right + 1, getQuick(right));
+                }
+                setValueAt(right + 1, last);
+            }
+            return;
+        }
+
+        // Inexpensive approximation of length / 7
+        int seventh = (length >> 3) + (length >> 6) + 1;
+
+        /*
+         * Sort five evenly spaced elements around (and including) the
+         * center element in the range. These elements will be used for
+         * pivot selection as described below. The choice for spacing
+         * these elements was empirically determined to work well on
+         * a wide variety of inputs.
+         */
+        int e3 = (left + right) >>> 1; // The midpoint
+        int e2 = e3 - seventh;
+        int e1 = e2 - seventh;
+        int e4 = e3 + seventh;
+        int e5 = e4 + seventh;
+
+        // Sort these elements using insertion sort
+        if (getQuick(e2) < getQuick(e1)) {
+            swap(e2, e1);
+        }
+
+        if (getQuick(e3) < getQuick(e2)) {
+            double t = getQuick(e3);
+            setValueAt(e3, getQuick(e2));
+            setValueAt(e2, t);
+            if (t < getQuick(e1)) {
+                setValueAt(e2, getQuick(e1));
+                setValueAt(e1, t);
+            }
+        }
+        if (getQuick(e4) < getQuick(e3)) {
+            double t = getQuick(e4);
+            setValueAt(e4, getQuick(e3));
+            setValueAt(e3, t);
+            if (t < getQuick(e2)) {
+                setValueAt(e3, getQuick(e2));
+                setValueAt(e2, t);
+                if (t < getQuick(e1)) {
+                    setValueAt(e2, getQuick(e1));
+                    setValueAt(e1, t);
+                }
+            }
+        }
+        if (getQuick(e5) < getQuick(e4)) {
+            double t = getQuick(e5);
+            setValueAt(e5, getQuick(e4));
+            setValueAt(e4, t);
+            if (t < getQuick(e3)) {
+                setValueAt(e4, getQuick(e3));
+                setValueAt(e3, t);
+                if (t < getQuick(e2)) {
+                    setValueAt(e3, getQuick(e2));
+                    setValueAt(e2, t);
+                    if (t < getQuick(e1)) {
+                        setValueAt(e2, getQuick(e1));
+                        setValueAt(e1, t);
+                    }
+                }
+            }
+        }
+
+        // Pointers
+        int less = left;  // The index of the first element of center part
+        int great = right; // The index before the first element of right part
+
+        if (getQuick(e1) != getQuick(e2) && getQuick(e2) != getQuick(e3) && getQuick(e3) != getQuick(e4) && getQuick(e4) != getQuick(e5)) {
+            /*
+             * Use the second and fourth of the five sorted elements as pivots.
+             * These values are inexpensive approximations of the first and
+             * second terciles of the array. Note that pivot1 <= pivot2.
+             */
+            double pivot1 = getQuick(e2);
+            double pivot2 = getQuick(e4);
+
+            /*
+             * The first and the last elements to be sorted are moved to the
+             * locations formerly occupied by the pivots. When partitioning
+             * is complete, the pivots are swapped back into their final
+             * positions, and excluded from subsequent sorting.
+             */
+            setValueAt(e2, getQuick(left));
+            setValueAt(e4, getQuick(right));
+
+            /*
+             * Skip elements, which are less or greater than pivot values.
+             */
+            //noinspection StatementWithEmptyBody
+            while (getQuick(++less) < pivot1) ;
+            //noinspection StatementWithEmptyBody
+            while (getQuick(--great) > pivot2) ;
+
+            /*
+             * Partitioning:
+             *
+             *   left part           center part                   right part
+             * +--------------------------------------------------------------+
+             * |  < pivot1  |  pivot1 <= && <= pivot2  |    ?    |  > pivot2  |
+             * +--------------------------------------------------------------+
+             *               ^                          ^       ^
+             *               |                          |       |
+             *              less                        k     great
+             *
+             * Invariants:
+             *
+             *              all in (left, less)   < pivot1
+             *    pivot1 <= all in [less, k)     <= pivot2
+             *              all in (great, right) > pivot2
+             *
+             * Pointer k is the first index of ?-part.
+             */
+            outer:
+            for (int k = less - 1; ++k <= great; ) {
+                double ak = getQuick(k);
+                if (ak < pivot1) { // Move a[k] to left part
+                    setValueAt(k, getQuick(less));
+                    /*
+                     * Here and below we use "a[i] = b; i++;" instead
+                     * of "a[i++] = b;" due to performance issue.
+                     */
+                    setValueAt(less, ak);
+                    ++less;
+                } else if (ak > pivot2) { // Move a[k] to right part
+                    while (getQuick(great) > pivot2) {
+                        if (great-- == k) {
+                            break outer;
+                        }
+                    }
+                    if (getQuick(great) < pivot1) { // a[great] <= pivot2
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else { // pivot1 <= a[great] <= pivot2
+                        setValueAt(k, getQuick(great));
+                    }
+                    /*
+                     * Here and below we use "a[i] = b; i--;" instead
+                     * of "a[i--] = b;" due to performance issue.
+                     */
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            // Swap pivots into their final positions
+            setValueAt(left, getQuick(less - 1));
+            setValueAt(less - 1, pivot1);
+            setValueAt(right, getQuick(great + 1));
+            setValueAt(great + 1, pivot2);
+
+            // Sort left and right parts recursively, excluding known pivots
+            sort(left, less - 2, leftmost);
+            sort(great + 2, right, false);
+
+            /*
+             * If center part is too large (comprises > 4/7 of the array),
+             * swap internal pivot values to ends.
+             */
+            if (less < e1 && e5 < great) {
+                /*
+                 * Skip elements, which are equal to pivot values.
+                 */
+                while (getQuick(less) == pivot1) {
+                    ++less;
+                }
+
+                while (getQuick(great) == pivot2) {
+                    --great;
+                }
+
+                /*
+                 * Partitioning:
+                 *
+                 *   left part         center part                  right part
+                 * +----------------------------------------------------------+
+                 * | == pivot1 |  pivot1 < && < pivot2  |    ?    | == pivot2 |
+                 * +----------------------------------------------------------+
+                 *              ^                        ^       ^
+                 *              |                        |       |
+                 *             less                      k     great
+                 *
+                 * Invariants:
+                 *
+                 *              all in (*,  less) == pivot1
+                 *     pivot1 < all in [less,  k)  < pivot2
+                 *              all in (great, *) == pivot2
+                 *
+                 * Pointer k is the first index of ?-part.
+                 */
+                outer:
+                for (int k = less - 1; ++k <= great; ) {
+                    double ak = getQuick(k);
+                    if (ak == pivot1) { // Move a[k] to left part
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, ak);
+                        ++less;
+                    } else if (ak == pivot2) { // Move a[k] to right part
+                        while (getQuick(great) == pivot2) {
+                            if (great-- == k) {
+                                break outer;
+                            }
+                        }
+                        if (getQuick(great) == pivot1) { // a[great] < pivot2
+                            setValueAt(k, getQuick(less));
+                            /*
+                             * Even though a[great] equals to pivot1, the
+                             * assignment a[less] = pivot1 may be incorrect,
+                             * if a[great] and pivot1 are floating-point zeros
+                             * of different signs. Therefore in float and
+                             * double sorting methods we have to use more
+                             * accurate assignment a[less] = a[great].
+                             */
+                            setValueAt(less, getQuick(great));
+                            ++less;
+                        } else { // pivot1 < a[great] < pivot2
+                            setValueAt(k, getQuick(great));
+                        }
+                        setValueAt(great, ak);
+                        --great;
+                    }
+                }
+            }
+
+            // Sort center part recursively
+            sort(less, great, false);
+        } else { // Partitioning with one pivot
+            /*
+             * Use the third of the five sorted elements as pivot.
+             * This value is inexpensive approximation of the median.
+             */
+            double pivot = getQuick(e3);
+
+            /*
+             * Partitioning degenerates to the traditional 3-way
+             * (or "Dutch National Flag") schema:
+             *
+             *   left part    center part              right part
+             * +-------------------------------------------------+
+             * |  < pivot  |   == pivot   |     ?    |  > pivot  |
+             * +-------------------------------------------------+
+             *              ^              ^        ^
+             *              |              |        |
+             *             less            k      great
+             *
+             * Invariants:
+             *
+             *   all in (left, less)   < pivot
+             *   all in [less, k)     == pivot
+             *   all in (great, right) > pivot
+             *
+             * Pointer k is the first index of ?-part.
+             */
+            for (int k = less; k <= great; ++k) {
+                if (getQuick(k) == pivot) {
+                    continue;
+                }
+                double ak = getQuick(k);
+                if (ak < pivot) { // Move a[k] to left part
+                    setValueAt(k, getQuick(less));
+                    setValueAt(less, ak);
+                    ++less;
+                } else { // a[k] > pivot - Move a[k] to right part
+                    while (getQuick(great) > pivot) {
+                        --great;
+                    }
+                    if (getQuick(great) < pivot) { // a[great] <= pivot
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else { // a[great] == pivot
+                        /*
+                         * Even though a[great] equals to pivot, the
+                         * assignment a[k] = pivot may be incorrect,
+                         * if a[great] and pivot are floating-point
+                         * zeros of different signs. Therefore in float
+                         * and double sorting methods we have to use
+                         * more accurate assignment a[k] = a[great].
+                         */
+                        setValueAt(k, getQuick(great));
+                    }
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            /*
+             * Sort left and right parts recursively.
+             * All elements from center part are equal
+             * and, therefore, already sorted.
+             */
+            sort(left, less - 1, leftmost);
+            sort(great + 1, right, false);
+        }
+    }
+
+    private void swap(int a, int b) {
+        double tmp = getQuick(a);
+        setValueAt(a, getQuick(b));
+        setValueAt(b, tmp);
     }
 }

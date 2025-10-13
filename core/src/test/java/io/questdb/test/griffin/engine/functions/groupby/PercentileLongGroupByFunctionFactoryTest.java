@@ -33,11 +33,11 @@ import org.junit.Test;
  */
 public class PercentileLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
-    const String txDdl = """
+    private static final String txDdl = """
             CREATE TABLE tx_traffic (timestamp TIMESTAMP, value VALUE);
             """;
 
-    const String txDml = """
+    private static final String txDml = """
             INSERT INTO tx_traffic (timestamp, value) VALUES
             ('2022-05-02T14:51:28Z', '10.978'),
             ('2022-05-02T14:52:28Z', '85.063'),

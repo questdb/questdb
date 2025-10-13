@@ -67,7 +67,7 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
-            listA.of(0).add(Double.doubleToRawLongBits(value));
+            listA.of(0).add(value);
             mapValue.putLong(valueIndex, listA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -79,7 +79,7 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             listA.of(mapValue.getLong(valueIndex));
-            listA.add(Double.doubleToRawLongBits(value));
+            listA.add(value);
             mapValue.putLong(valueIndex, listA.ptr());
         }
     }
@@ -93,12 +93,22 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
     public double getDouble(Record record) {
         long listPtr = record.getLong(valueIndex);
         if (listPtr <= 0) {
-            return LONG_NULL;
+            return Double.NaN;
         }
         listA.of(listPtr);
-        listA.sortAsUnsigned();
+        int size = listA.size();
+        if (size == 0) {
+            return Double.NaN;
+        }
+        listA.sort(0, size - 1);
         double percentile = percentileFunc.getDouble(record);
-        int N = (int) Math.ceil(listA.size() * percentile);
+        int N = (int) Math.ceil(size * percentile) - 1;
+        if (N < 0) {
+            N = 0;
+        }
+        if (N >= size) {
+            N = size - 1;
+        }
         return listA.getQuick(N);
     }
 
