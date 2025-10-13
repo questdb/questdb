@@ -152,18 +152,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             );
             sqlExecutionContext.initNow();
             if (state.recordCursorFactory == null) {
-                CompiledQuery cc = null;
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    cc = compiler.compile(state.query, sqlExecutionContext);
-                    if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
+                    CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                    if (cc.getType() == CompiledQuery.SELECT) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
+                        // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
+                        Misc.free(cc);
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
-                } finally {
-                    // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER etc. unsupported operations
-                    Misc.free(cc);
                 }
             } else {
                 sqlExecutionContext.setCacheHit(true);
