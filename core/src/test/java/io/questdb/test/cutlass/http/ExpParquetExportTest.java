@@ -87,7 +87,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     SOCountDownLatch latch = new SOCountDownLatch(1);
-                    AtomicBoolean exists = new AtomicBoolean(false);
+                    AtomicBoolean exists = new AtomicBoolean(true);
                     Thread thread = new Thread(() -> {
                         try {
                             long copyID;
