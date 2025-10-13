@@ -13,13 +13,23 @@ jobs:
           includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-fuzz:
+        linux-fuzz1:
           imageName: "ubuntu-latest"
           poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-fuzz"
+          testset: "coverage-fuzz1"
+          includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz2:
+          imageName: "ubuntu-latest"
+          poolName: "vmss-uksouth-spot"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz2"
           includeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo:
