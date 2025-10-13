@@ -110,6 +110,18 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void test25thPercentileInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            assertSql(
+                    "percentile_cont\n1.75\n",
+                    "select percentile_cont(x, 0.25) from test"
+            );
+        });
+    }
+
+    @Test
     public void test50thPercentileDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) x from long_sequence(100))");
@@ -143,25 +155,43 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void test25thPercentileInterpolation() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
-            assertSql(
-                    "percentile_cont\n1.75\n",
-                    "select percentile_cont(x, 0.25) from test"
-            );
-        });
-    }
-
-    @Test
     public void test75thPercentileInterpolation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x double)");
             execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
             assertSql(
-                    "percentile_cont\n3.25\n",
+                    "percentile_cont\n" +
+                            "3.25\n",
                     "select percentile_cont(x, 0.75) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareDiscVsCont() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (2.0), (3.0), (4.0), (5.0)");
+            assertSql(
+                    "percentile_cont\tpercentile_disc\n" +
+                            "3.0\t3.0\n",
+                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testCompareDiscVsContInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            // For 4 values (indices 0-3):
+            // percentile_cont(0.5): position = 0.5 * 3 = 1.5, interpolates between index 1 (2.0) and 2 (3.0) = 2.5
+            // percentile_disc(0.5): ceil(4 * 0.5) - 1 = 1, returns value at index 1 = 2.0
+            assertSql(
+                    "percentile_cont\tpercentile_disc\n" +
+                            "2.5\t2.0\n",
+                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
             );
         });
     }
@@ -287,44 +317,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute(txDdl);
             execute(txDml);
-            // For percentile_cont with 50 values, 0.95 * 49 = 46.55
-            // This means we interpolate between index 46 (242.04) and 47 (289.615)
-            // Result: 242.04 + (289.615 - 242.04) * 0.55 = 268.20625
             assertSql("percentile_cont\n" +
                             "268.20624999999984\n",
                     "select percentile_cont(value, 0.95) from tx_traffic");
-        });
-    }
-
-    @Test
-    public void testCompareDiscVsCont() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0), (5.0)");
-            // For 5 values (indices 0-4):
-            // percentile_cont(0.5): position = 0.5 * 4 = 2.0, returns value at index 2 = 3.0
-            // percentile_disc(0.5): ceil(5 * 0.5) - 1 = 2, returns value at index 2 = 3.0
-            assertSql(
-                    "percentile_cont\tpercentile_disc\n" +
-                            "3.0\t3.0\n",
-                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareDiscVsContInterpolation() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
-            // For 4 values (indices 0-3):
-            // percentile_cont(0.5): position = 0.5 * 3 = 1.5, interpolates between index 1 (2.0) and 2 (3.0) = 2.5
-            // percentile_disc(0.5): ceil(4 * 0.5) - 1 = 1, returns value at index 1 = 2.0
-            assertSql(
-                    "percentile_cont\tpercentile_disc\n" +
-                            "2.5\t2.0\n",
-                    "select percentile_cont(x, 0.5), percentile_disc(x, 0.5) from test"
-            );
         });
     }
 }

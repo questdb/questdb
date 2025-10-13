@@ -48,12 +48,12 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final GroupByDoubleList listA;
-    private final GroupByDoubleList listB;
-    private final Function percentileFunc;
-    private final int percentilePos;
-    private int valueIndex;
+    protected final Function arg;
+    protected final GroupByDoubleList listA;
+    protected final GroupByDoubleList listB;
+    protected final Function percentileFunc;
+    protected final int percentilePos;
+    protected int valueIndex;
 
     public PercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
