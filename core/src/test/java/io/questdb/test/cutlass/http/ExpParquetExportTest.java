@@ -654,7 +654,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_TCP_ENABLED.toString(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true",
-                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
+                    PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), ""
             )) {
                 serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
                         "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
