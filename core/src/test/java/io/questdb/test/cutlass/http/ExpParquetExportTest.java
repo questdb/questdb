@@ -346,10 +346,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
                     // Test CSV export (explicit format)
-                    String expectedCsv = "\"x\"\r\n" +
-                            "1\r\n" +
-                            "2\r\n" +
-                            "3\r\n";
+                    String expectedCsv = """
+                            "x"\r
+                            1\r
+                            2\r
+                            3\r
+                            """;
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM csv_export_test");
@@ -369,9 +371,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
                     // Test without format parameter (should default to CSV)
-                    String expectedCsv = "\"x\"\r\n" +
-                            "1\r\n" +
-                            "2\r\n";
+                    String expectedCsv = """
+                            "x"\r
+                            1\r
+                            2\r
+                            """;
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM default_format_test");
