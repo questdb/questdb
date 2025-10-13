@@ -162,7 +162,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     }
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 } finally {
-                    // Free CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER etc. unsupported operations
+                    // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER etc. unsupported operations
                     Misc.free(cc);
                 }
             } else {
