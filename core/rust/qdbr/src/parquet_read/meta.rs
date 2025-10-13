@@ -2,6 +2,7 @@ use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
+use nonmax::NonMaxU32;
 use parquet2::metadata::{ColumnDescriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
@@ -37,7 +38,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let metadata = read_metadata_with_size(&mut reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
-        let mut row_group_sizes: AcVec<i32> =
+        let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
@@ -47,11 +48,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         for row_group in metadata.row_groups.iter() {
             row_group_sizes_acc.push(accumulated_size)?;
             let row_group_size = row_group.num_rows();
-            row_group_sizes.push(row_group_size as i32)?;
+            row_group_sizes.push(row_group_size as u32)?;
             accumulated_size += row_group_size;
         }
 
         assert_eq!(accumulated_size, metadata.num_rows);
+
+        let mut timestamp_index: Option<NonMaxU32> = None;
 
         for (index, column) in metadata.schema_descr.columns().iter().enumerate() {
             // Arrays have column name and id stored in the base group type.
@@ -63,25 +66,70 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
             name.extend(name_str.encode_utf16())?;
 
-            if let Some(column_type) =
+            if let Some(mut column_type) =
                 Self::descriptor_to_column_type(column, index, qdb_meta.as_ref())
             {
+                if column_type.is_designated() {
+                    timestamp_index = NonMaxU32::new(index as u32);
+                    // Clear the bit as designated timestamp is reported in timestamp_index.
+                    column_type = column_type.into_non_designated()?;
+                }
                 columns.push(ColumnMeta {
-                    column_type,
+                    column_type: Some(column_type),
                     id: base_field.id.unwrap_or(-1_i32),
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
                 })?;
             } else {
-                // The type is not supported, Java code will have to skip it.
+                // The column is not supported, Java code will have to skip it.
                 columns.push(ColumnMeta {
-                    column_type: ColumnType::new(ColumnTypeTag::Undefined, 0),
+                    column_type: None,
                     id: -1,
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
                 })?;
+            }
+        }
+
+        if timestamp_index.is_none() {
+            // There was no designated timestamp flag in the metadata, so let's detect it.
+            // First, find the first ASC order column, if it's the same across all row groups.
+            let mut asc_column_index = -1_i32;
+            for row_group in &metadata.row_groups {
+                if let Some(sorting_columns) = row_group.sorting_columns() {
+                    if let Some(sorting_column) = sorting_columns.first() {
+                        if !sorting_column.descending
+                            && (asc_column_index == -1
+                                || asc_column_index == sorting_column.column_idx)
+                        {
+                            asc_column_index = sorting_column.column_idx;
+                            continue;
+                        }
+                    }
+                }
+                asc_column_index = -1;
+                break;
+            }
+            if asc_column_index > -1 {
+                // We have a candidate, let's check its type and nullability.
+                if let Some(column) = columns.get(asc_column_index as usize) {
+                    if let Some(column_descr) = metadata
+                        .schema_descr
+                        .columns()
+                        .get(asc_column_index as usize)
+                    {
+                        if let Some(column_type) = column.column_type {
+                            if column_type.tag() == ColumnTypeTag::Timestamp
+                                && column_descr.descriptor.primitive_type.field_info.repetition
+                                    == Repetition::Required
+                            {
+                                timestamp_index = NonMaxU32::new(asc_column_index as u32);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -93,6 +141,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             row_group_count: metadata.row_groups.len() as u32,
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
+            timestamp_index,
             reader,
             metadata,
             qdb_meta,
@@ -337,7 +386,8 @@ mod tests {
 
         for (i, col) in meta.columns.iter().enumerate() {
             let (col_type, _, name) = cols[i];
-            assert_eq!(col.column_type, col_type);
+            assert!(col.column_type.is_some());
+            assert_eq!(col.column_type.unwrap(), col_type);
             let actual_name: String = String::from_utf16(&col.name_vec).unwrap();
             assert_eq!(actual_name, name);
         }

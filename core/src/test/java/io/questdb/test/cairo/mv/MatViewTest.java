@@ -3660,6 +3660,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeSampleByIntervalButFewRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table x (ts #TIMESTAMP) timestamp(ts) partition by day wal;");
+            execute("insert into x values('2000-01-01T12:00'),('2010-01-01T12:00'),('2020-01-01T12:00')");
+            drainQueues();
+
+            final String expected = """
+                    ts\tfirst_ts
+                    2000-01-01T00:00:00.000000Z\t2000-01-01T12:00:00.000000Z
+                    2010-01-01T00:00:00.000000Z\t2010-01-01T12:00:00.000000Z
+                    2020-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                    """;
+            final String viewSql = "select ts, first(ts) as first_ts from x sample by 10y";
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts", true, true);
+
+            execute("create materialized view x_1y as (" + viewSql + ") partition by year");
+            drainQueues();
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "x_1y", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testManualDeferredMatView() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4292,6 +4315,50 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryTimestampMixedWithAggregates() throws Exception {
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            drainWalQueue();
+
+            execute(
+                    """
+                            CREATE MATERIALIZED VIEW x_view AS
+                            SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
+                            FROM 'x'
+                            SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
+                            """
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit\n" +
+                            "x_view\timmediate\tx\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t\t1\t1\t0\t\t0\t\n",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                            "period_length, period_length_unit, refresh_limit, refresh_limit_unit " +
+                            "from materialized_views",
+                    null
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tCoverage
+                            2009-12-31T23:00:00.000000Z\t0.08333333333333333
+                            2019-12-31T23:00:00.000000Z\t0.041666666666666664
+                            2029-12-31T23:00:00.000000Z\t0.041666666666666664
+                            """,
+                    "x_view",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testQueryWithCte() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4329,10 +4396,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "sample by 10y";
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewSql, "ts");
 
-            execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
+            execute("create materialized view exchanges_10y as (" + viewSql + ") partition by year");
             drainQueues();
 
-            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_100y", "ts", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), "exchanges_10y", "ts", true, true);
         });
     }
 
