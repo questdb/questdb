@@ -66,13 +66,16 @@ public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction i
         listA = new GroupByDoubleList(initialCapacity, Double.NaN);
         listB = new GroupByDoubleList(initialCapacity, Double.NaN);
         this.percentilePos = percentilePos;
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
     }
 
     @Override
     public void clear() {
         listA.resetPtr();
         listB.resetPtr();
-        out.clear();
+        if (out != null) {
+            out.clear();
+        }
     }
 
     @Override
@@ -112,33 +115,43 @@ public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction i
     public ArrayView getArray(Record record) {
         long listPtr = record.getLong(valueIndex);
         if (listPtr <= 0) {
+            if (out == null) {
+                out = new DirectArray();
+            }
             out.ofNull();
             return out;
         }
         listA.of(listPtr);
         int size = listA.size();
         if (size == 0) {
+            if (out == null) {
+                out = new DirectArray();
+            }
             out.ofNull();
             return out;
         }
         listA.sort(0, size - 1);
 
-
         ArrayView percentiles = percentileFunc.getArray(record);
         FlatArrayView view = percentiles.flatView();
         int view_length = view.length();
-        if (out.isNull()) {
+
+        if (out == null) {
+            out = new DirectArray();
             out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
             out.setDimLen(0, view_length);
             out.applyShape();
         }
 
         for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = percentileFunc.getDouble(record);
+            double percentile = view.getDoubleAtAbsIndex(i);
             if (percentile < 0.0d || percentile > 1.0d) {
                 throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
             }
             int N = (int) Math.ceil(size * percentile) - 1;
+            if (N < 0) {
+                N = 0;
+            }
             out.putDouble(i, listA.getQuick(N));
         }
         return out;
