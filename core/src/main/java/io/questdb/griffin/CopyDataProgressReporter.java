@@ -26,6 +26,9 @@ package io.questdb.griffin;
 
 @FunctionalInterface
 public interface CopyDataProgressReporter {
+    CopyDataProgressReporter NOOP = (stage, rows) -> {
+    };
+
     void onProgress(Stage stage, long rows);
 
     enum Stage {

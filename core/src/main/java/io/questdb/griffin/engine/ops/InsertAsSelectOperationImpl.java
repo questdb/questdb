@@ -91,12 +91,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 
@@ -148,7 +148,7 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (timestampIndex == -1) {
-                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker, null, -1);
+                        rowCount = SqlCompilerImpl.copyUnordered(cursor, writer, copier, circuitBreaker);
                     } else {
                         if (batchSize != -1) {
                             rowCount = SqlCompilerImpl.copyOrderedBatched(
@@ -159,12 +159,10 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
                                     timestampIndex,
                                     batchSize,
                                     o3MaxLag,
-                                    circuitBreaker,
-                                    null,
-                                    -1
+                                    circuitBreaker
                             );
                         } else {
-                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker, null, -1);
+                            rowCount = SqlCompilerImpl.copyOrderedBatched(writer, factory.getMetadata(), cursor, copier, timestampIndex, Long.MAX_VALUE, 0, circuitBreaker);
                         }
                     }
                 } catch (Throwable e) {

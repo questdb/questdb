@@ -285,6 +285,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        return copyOrderedBatched(writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+    }
+
+    public static long copyOrderedBatched(
+            TableWriterAPI writer,
+            RecordMetadata metadata,
+            RecordCursor cursor,
+            RecordToRowCopier copier,
+            int cursorTimestampIndex,
+            long batchSize,
+            long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter,
             int reportFrequency
@@ -301,6 +314,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    public static long copyUnordered(
+            RecordCursor cursor,
+            TableWriterAPI writer,
+            RecordToRowCopier copier,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        return copyUnordered(cursor, writer, copier, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+    }
+
     /**
      * Returns number of copied rows.
      */
@@ -314,22 +336,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             TableWriter.Row row = writer.newRow();
             copier.copy(record, row);
             row.append();
             rowCount++;
-            if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
+            if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         return rowCount;
     }
 
@@ -605,9 +623,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
@@ -619,7 +635,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writer.ic(o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
-                if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
+                if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
                     reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
@@ -633,14 +649,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     writer.ic(o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
-                if (reporter != null && reportFrequency > 0 && rowCount % reportFrequency == 0) {
+                if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
                     reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
                 }
             }
         }
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
 
         return rowCount;
     }
@@ -660,9 +674,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long rowCount = 0;
         final Record record = cursor.getRecord();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // It's allowed to insert ISO formatted string to timestamp column
@@ -673,13 +685,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 writer.ic(o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
-            if (reporter != null && rowCount % 50000 == 0) {
+            if (rowCount % 50000 == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
 
         return rowCount;
     }
@@ -699,9 +709,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // It's allowed to insert ISO formatted string to timestamp column
@@ -712,13 +720,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 writer.ic(o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
-            if (rowCount % 50000 == 0 && reporter != null) {
+            if (rowCount % 50000 == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
-        if (reporter != null) {
-            reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
-        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
         return rowCount;
     }
 
