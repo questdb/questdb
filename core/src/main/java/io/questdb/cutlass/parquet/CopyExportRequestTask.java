@@ -46,7 +46,6 @@ public class CopyExportRequestTask implements Mutable {
     private int rowGroupSize;
     private boolean statisticsEnabled;
     private String tableName;
-    private boolean userSpecifiedExportOptions;
 
     @Override
     public void clear() {
@@ -60,7 +59,6 @@ public class CopyExportRequestTask implements Mutable {
         this.rowGroupSize = -1;
         this.statisticsEnabled = true;
         this.createOp = Misc.free(createOp);
-        userSpecifiedExportOptions = false;
         result = null;
     }
 
@@ -124,10 +122,6 @@ public class CopyExportRequestTask implements Mutable {
         return statisticsEnabled;
     }
 
-    public boolean isUserSpecifiedExportOptions() {
-        return userSpecifiedExportOptions;
-    }
-
     public void of(
             CopyExportContext.ExportTaskEntry entry,
             CreateTableOperation createOp,
@@ -140,8 +134,7 @@ public class CopyExportRequestTask implements Mutable {
             int dataPageSize,
             boolean statisticsEnabled,
             int parquetVersion,
-            boolean rawArrayEncoding,
-            boolean userSpecifiedExportOptions
+            boolean rawArrayEncoding
     ) {
         this.entry = entry;
         this.result = result;
@@ -155,7 +148,6 @@ public class CopyExportRequestTask implements Mutable {
         this.parquetVersion = parquetVersion;
         this.rawArrayEncoding = rawArrayEncoding;
         this.createOp = createOp;
-        this.userSpecifiedExportOptions = userSpecifiedExportOptions;
     }
 
     public enum Phase {

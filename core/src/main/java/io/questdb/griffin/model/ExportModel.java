@@ -83,7 +83,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     private CharSequence timestampColumnName;
     private CharSequence timestampFormat;
     private int type;
-    private boolean userSpecifiedExportOptions;
 
     public ExportModel() {
     }
@@ -115,7 +114,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         parquetVersion = -1;
         statisticsEnabled = true;
         rawArrayEncoding = false;
-        userSpecifiedExportOptions = false;
         compressionLevelPos = 0;
     }
 
@@ -233,10 +231,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         return statisticsEnabled;
     }
 
-    public boolean isUserSpecifiedExportOptions() {
-        return userSpecifiedExportOptions;
-    }
-
     public void setAtomicity(int atomicity) {
         this.atomicity = atomicity;
     }
@@ -247,19 +241,16 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setCompressionCodec(int compressionCodec) {
         this.compressionCodec = compressionCodec;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setCompressionLevel(int compressionLevel, int pos) {
         this.compressionLevel = compressionLevel;
-        this.userSpecifiedExportOptions = true;
         this.compressionLevelPos = pos;
         this.compressionLevelSet = true;
     }
 
     public void setDataPageSize(int dataPageSize) {
         this.dataPageSize = dataPageSize;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setDelimiter(byte delimiter) {
@@ -292,22 +283,18 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setParquetVersion(int parquetVersion) {
         this.parquetVersion = parquetVersion;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setRawArrayEncoding(boolean rawArrayEncoding) {
         this.rawArrayEncoding = rawArrayEncoding;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setRowGroupSize(int rowGroupSize) {
         this.rowGroupSize = rowGroupSize;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setSelectText(@Nullable CharSequence selectText, int startPos) {
@@ -317,7 +304,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public void setStatisticsEnabled(boolean statisticsEnabled) {
         this.statisticsEnabled = statisticsEnabled;
-        this.userSpecifiedExportOptions = true;
     }
 
     public void setTarget(ExpressionNode tableName) {

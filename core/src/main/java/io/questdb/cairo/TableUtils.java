@@ -124,7 +124,9 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    // Regular data table kind
     public static final int TABLE_KIND_DATA = 0;
+    // Parquet export table kind - allows table creation in read-only mode for parquet exports
     public static final int TABLE_KIND_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;

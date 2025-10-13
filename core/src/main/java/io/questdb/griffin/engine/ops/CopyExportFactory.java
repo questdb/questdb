@@ -85,7 +85,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private boolean statisticsEnabled;
     private @Nullable String tableName = null;
     private int tableOrSelectTextPos = 0;
-    private boolean userSpecifiedExportOptions;
 
     public CopyExportFactory(
             CairoEngine engine,
@@ -180,8 +179,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                         dataPageSize,
                         statisticsEnabled,
                         parquetVersion,
-                        rawArrayEncoding,
-                        userSpecifiedExportOptions
+                        rawArrayEncoding
                 );
             } finally {
                 copyRequestPubSeq.done(processingCursor);
@@ -251,7 +249,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.statisticsEnabled = model.isStatisticsEnabled();
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
-        this.userSpecifiedExportOptions = model.isUserSpecifiedExportOptions();
         this.sqlText = sqlText;
         this.copyExportResult = result;
         this.sqlExecutionCircuitBreaker = circuitBreaker;

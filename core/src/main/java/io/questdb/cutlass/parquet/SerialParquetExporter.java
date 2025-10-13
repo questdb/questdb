@@ -105,7 +105,6 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
-
     public void of(
             CopyExportRequestTask task,
             SqlExecutionCircuitBreaker circuitBreaker
@@ -188,11 +187,6 @@ public class SerialParquetExporter implements Closeable {
                         // skip parquet conversion if the partition is already in parquet format
                         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                             numOfFiles++;
-                            if (task.isUserSpecifiedExportOptions()) {
-                                LOG.info().$("ignoring user-specified export options for parquet partition, re-encoding not yet supported [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
-                                        .$(", partition=").$(partitionTimestamp)
-                                        .$(", using direct file copy instead]").$();
-                            }
                             if (fromParquetBaseLen == 0) {
                                 fromParquetBaseLen = fromParquet.trimTo(0).concat(configuration.getDbRoot()).size();
                             } else {

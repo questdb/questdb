@@ -63,7 +63,6 @@ import io.questdb.griffin.model.ExportModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.ConcurrentPool;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -105,7 +104,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
-    private final ConcurrentPool<SerialParquetExporter> parquetExporterPool;
+    private final SerialParquetExporter parquetExporter;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
     CopyExportRequestTask task = new CopyExportRequestTask();
@@ -113,13 +112,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     public ExportQueryProcessor(
             JsonQueryProcessorConfiguration configuration,
-            ConcurrentPool<SerialParquetExporter> parquetExporterPool,
             CairoEngine engine,
             int sharedQueryWorkerCount
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
-        this.parquetExporterPool = parquetExporterPool;
+        parquetExporter = new SerialParquetExporter(engine);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
@@ -131,6 +129,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     @Override
     public void close() {
         Misc.free(circuitBreaker);
+        Misc.free(parquetExporter);
     }
 
     public void execute(
@@ -163,6 +162,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     }
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 } finally {
+                    // Free CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER etc. unsupported operations
                     Misc.free(cc);
                 }
             } else {
@@ -238,7 +238,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
-            LV.set(context, state = new ExportQueryProcessorState(context));
+            LV.set(context, state = new ExportQueryProcessorState(context, engine.getConfiguration().getFilesFacade()));
         }
 
         HttpChunkedResponse response = context.getChunkedResponse();
@@ -343,18 +343,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
-    private void cleanupParquetState(ExportQueryProcessorState state) {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        if (state.parquetFileFd != -1) {
-            ff.close(state.parquetFileFd);
-            state.parquetFileFd = -1;
-            state.getExportResult().cleanUpTempPath(ff);
-        }
-        if (state.parquetFileAddress != 0) {
-            ff.munmap(state.parquetFileAddress, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-            state.parquetFileAddress = 0;
-        }
-    }
 
     private boolean configureParquetOptions(
             HttpRequestHeader request,
@@ -479,11 +467,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     private void copyQueryToParquetFile(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
         if (state.copyID == null) {
-            SerialParquetExporter parquetExporter = parquetExporterPool.pop();
-            if (parquetExporter == null) {
-                parquetExporter = new SerialParquetExporter(engine);
-            }
-
             CopyExportContext.ExportTaskEntry entry = null;
             try {
                 var securityContext = context.getSecurityContext();
@@ -523,8 +506,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().getDataPageSize(),
                         state.getExportModel().isStatisticsEnabled(),
                         state.getExportModel().getParquetVersion(),
-                        state.getExportModel().isRawArrayEncoding(),
-                        state.getExportModel().isUserSpecifiedExportOptions()
+                        state.getExportModel().isRawArrayEncoding()
                 );
 
                 parquetExporter.of(task, sqlExecutionCircuitBreaker);
@@ -532,11 +514,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             } finally {
                 if (entry != null) {
                     engine.getCopyExportContext().releaseEntry(entry);
-                }
-                if (!engine.isClosing()) {
-                    parquetExporterPool.push(parquetExporter);
-                } else {
-                    parquetExporter.close();
                 }
             }
         }
@@ -561,11 +538,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
                             copyQueryToParquetFile(context, state);
-                        } catch (SqlException e) {
+                        } catch (SqlException | CairoException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
-                        } catch (CairoException e) {
-                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
+                        } catch (Throwable e) {
+                            sendException(response, 0, e.getMessage(), state);
                             break OUT;
                         }
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
@@ -575,7 +552,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         try {
                             initParquetFileSending(context, state);
                         } catch (CairoException e) {
-                            cleanupParquetState(state);
                             sendException(response, 0, e.getFlyweightMessage(), state);
                             break OUT;
                         }
@@ -597,12 +573,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             } catch (DataUnavailableException e) {
                 throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
             } catch (NoSpaceLeftInResponseBufferException ignored) {
-                response.sendChunk(false);
+                if (response.resetToBookmark()) {
+                    response.sendChunk(false);
+                } else {
+                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
+                    throw PeerDisconnectedException.INSTANCE;
+                }
             }
         }
 
         // Clean up parquet state when done
-        cleanupParquetState(state);
         readyForNextRequest(context);
     }
 
@@ -1070,7 +1050,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.query);
     }
 
-    private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) {
+    private void sendParquetFileChunk(HttpChunkedResponse response, ExportQueryProcessorState state) throws PeerIsSlowToReadException, PeerDisconnectedException {
         if (state.parquetFileOffset >= state.parquetFileSize) {
             return;
         }
@@ -1080,10 +1060,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         int sendLSize = (int) Math.min(Integer.MAX_VALUE, writeSize);
         state.parquetFileOffset += response.writeBytes(state.parquetFileAddress + state.parquetFileOffset, sendLSize);
         response.bookmark();
-        if (state.parquetFileOffset >= state.parquetFileSize) {
-            cleanupParquetState(state);
-        } else {
-            throw NoSpaceLeftInResponseBufferException.instance(writeSize);
+        if (state.parquetFileOffset < state.parquetFileSize) {
+            response.sendChunk(false);
         }
     }
 

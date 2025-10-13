@@ -79,8 +79,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     task.getDataPageSize(),
                     task.isStatisticsEnabled(),
                     task.getParquetVersion(),
-                    task.isRawArrayEncoding(),
-                    task.isUserSpecifiedExportOptions()
+                    task.isRawArrayEncoding()
             );
             task.clear();
         } finally {

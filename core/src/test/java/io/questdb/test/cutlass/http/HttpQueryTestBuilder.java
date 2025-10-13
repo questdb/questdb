@@ -251,7 +251,6 @@ public class HttpQueryTestBuilder {
                 public HttpRequestHandler newInstance() {
                     return new ExportQueryProcessor(
                             httpConfiguration.getJsonQueryProcessorConfiguration(),
-                            httpServer.getParquetExporterPool(),
                             engine,
                             workerPool.getWorkerCount()
                     );

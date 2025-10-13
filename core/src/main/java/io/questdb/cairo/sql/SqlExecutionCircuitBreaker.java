@@ -141,7 +141,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * - {@link #STATE_BROKEN_CONNECTION} <br>
      * - {@link #STATE_TIMEOUT} <br>
      */
-    // todo: add finished state
     int getState();
 
     /**

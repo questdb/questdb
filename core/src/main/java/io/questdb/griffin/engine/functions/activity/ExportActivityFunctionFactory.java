@@ -84,7 +84,6 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
             isAdmin = false;
             principal = null;
             size = 0;
-            toTop();
         }
 
         @Override
