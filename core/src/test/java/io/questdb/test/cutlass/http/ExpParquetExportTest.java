@@ -102,7 +102,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             Path path = Path.getThreadLocal(root);
                             path.concat("export");
                             path.concat(copyIDStr);
-                            exists.set(Files.exists(path.slash$()));
+                            for (int i = 0; i < 10; i++) {
+                                boolean exist = Files.exists(path.slash$());
+                                if (!exist) {
+                                    exists.set(false);
+                                    break;
+                                }
+                                Os.sleep(50);
+                            }
                         } finally {
                             Path.clearThreadLocals();
                         }
