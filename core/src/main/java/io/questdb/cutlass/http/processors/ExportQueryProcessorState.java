@@ -112,8 +112,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         waitingForCopy = false;
         parquetFileOffset = 0;
         exportModel.clear();
-        copyExportResult.clear();
         cleanupParquetState();
+        copyExportResult.clear();
     }
 
     @Override

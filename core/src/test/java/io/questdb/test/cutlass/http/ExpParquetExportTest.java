@@ -29,7 +29,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -49,6 +51,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
@@ -77,18 +80,44 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration("cairo.sql.copy.export.root", exportRoot));
     }
 
     @Test
     public void testBasicParquetExport() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
+                    SOCountDownLatch latch = new SOCountDownLatch(1);
+                    AtomicBoolean exists = new AtomicBoolean(false);
+                    Thread thread = new Thread(() -> {
+                        try {
+                            long copyID;
+                            do {
+                                copyID = engine.getCopyExportContext().getActiveExportId();
+                            } while (copyID == -1);
+                            StringSink sink = new StringSink();
+                            sink.put("tmp_");
+                            Numbers.appendHex(sink, copyID, true);
+                            String copyIDStr = sink.toString();
+                            latch.await();
+                            Path path = Path.getThreadLocal(root);
+                            path.concat("export");
+                            path.concat(copyIDStr);
+                            exists.set(Files.exists(path.slash$()));
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    thread.start();
                     engine.execute("CREATE TABLE basic_parquet_test AS (" +
                             "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
                     testHttpClient.assertGetParquet("/exp", 1293, "basic_parquet_test");
+                    latch.countDown();
+                    thread.join();
+                    if (exists.get()) {
+                        Assert.fail("Temporary export directory was not cleaned up");
+                    }
                 });
     }
 

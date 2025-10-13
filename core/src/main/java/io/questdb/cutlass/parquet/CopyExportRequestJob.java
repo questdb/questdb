@@ -86,7 +86,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             subSeq.done(cursor);
         }
 
-
         CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         try {
             entry.setStartTime(microsecondClock.getTicks(), workerId);
