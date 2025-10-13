@@ -219,6 +219,7 @@ import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.TimestampLadderRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -1600,6 +1601,96 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    /**
+     * Attempts to detect the "timestamp ladder" pattern in a cross join with ORDER BY.
+     * <p>
+     * The pattern consists of:
+     * 1. A cross join between a table with a timestamp column and an arithmetic sequence
+     * 2. An ORDER BY clause on the sum of the timestamp and the sequence offset
+     *
+     * @param model          The query model containing ORDER BY information
+     * @param masterMetadata Metadata for the LHS of the join
+     * @param slaveMetadata  Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursor    The RHS cursor factory (should produce an arithmetic sequence)
+     * @return TimestampLadderInfo if pattern is detected, null otherwise
+     */
+    private TimestampLadderInfo detectTimestampLadderPattern(
+            QueryModel model,
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata,
+            RecordCursorFactory slaveCursor
+    ) {
+        // Check if we have an ORDER BY clause
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        if (orderBy.size() != 1) {
+            return null; // Pattern requires exactly one ORDER BY expression
+        }
+
+        ExpressionNode orderByExpr = orderBy.getQuick(0);
+
+        // Check if ORDER BY is an addition operation
+        if (orderByExpr.type != ExpressionNode.OPERATION || !"+".contentEquals(orderByExpr.token)) {
+            return null;
+        }
+
+        // The ORDER BY should be: timestamp_column + offset_column
+        ExpressionNode lhs = orderByExpr.lhs;
+        ExpressionNode rhs = orderByExpr.rhs;
+
+        if (lhs == null || rhs == null) {
+            return null;
+        }
+
+        // Try to identify which operand is the timestamp from master and which is from slave
+        int timestampColumnIndex = -1;
+        ExpressionNode slaveColumnNode = null;
+
+        // Check if LHS is a master timestamp column
+        if (lhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
+            if (colIndex >= 0 && ColumnType.isTimestamp(masterMetadata.getColumnType(colIndex))) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = rhs;
+            }
+        }
+
+        // If not found, check if RHS is a master timestamp column and LHS is from slave
+        if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
+            if (colIndex >= 0 && ColumnType.isTimestamp(masterMetadata.getColumnType(colIndex))) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = lhs;
+            }
+        }
+
+        if (slaveColumnNode == null) {
+            return null; // Could not identify the timestamp column
+        }
+
+        // Verify the slave column exists in slave metadata
+        if (slaveColumnNode.type != ExpressionNode.LITERAL) {
+            return null;
+        }
+
+        int slaveColumnIndex = slaveMetadata.getColumnIndexQuiet(slaveColumnNode.token);
+        if (slaveColumnIndex == -1) {
+            return null; // Slave column not found
+        }
+
+        // Try to extract arithmetic sequence information from the slave cursor
+        // For now, we'll make basic assumptions about the sequence pattern
+
+        // TODO: Enhance this to:
+        // 1. Actually inspect the slave query model to determine if it's an arithmetic sequence
+        // 2. Extract the start/step/count from the query (e.g., from long_sequence parameters)
+        // 3. Handle CTE patterns where the sequence is transformed (e.g., x-601)
+        //
+        // For now, we'll only support the simplest case and return null to use CrossJoin
+        // The factory infrastructure is ready when this detection is improved.
+
+        return null; // Disabled for now - need to implement proper sequence detection
+    }
+
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
@@ -2729,12 +2820,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_CROSS:
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
-                                master = new CrossJoinRecordCursorFactory(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                        master,
-                                        slave,
-                                        masterMetadata.getColumnCount()
+
+                                // Try to detect the timestamp ladder pattern
+                                TimestampLadderInfo ladderInfo = detectTimestampLadderPattern(
+                                        model,
+                                        masterMetadata,
+                                        slaveMetadata,
+                                        slave
                                 );
+
+                                if (ladderInfo != null) {
+                                    // Use the optimized TimestampLadderRecordCursorFactory
+                                    master = new TimestampLadderRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            ladderInfo.timestampColumnIndex,
+                                            ladderInfo.sequenceStart,
+                                            ladderInfo.sequenceStep,
+                                            ladderInfo.sequenceCount
+                                    );
+                                } else {
+                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    master = new CrossJoinRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
@@ -7038,6 +7153,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
+        }
+    }
+
+    /**
+     * Container class to hold the detected parameters of a timestamp ladder pattern.
+     */
+    private static class TimestampLadderInfo {
+        long sequenceCount;
+        long sequenceStart;
+        long sequenceStep;
+        int timestampColumnIndex;
+
+        TimestampLadderInfo(int timestampColumnIndex, long sequenceStart, long sequenceStep, long sequenceCount) {
+            this.timestampColumnIndex = timestampColumnIndex;
+            this.sequenceStart = sequenceStart;
+            this.sequenceStep = sequenceStep;
+            this.sequenceCount = sequenceCount;
         }
     }
 
