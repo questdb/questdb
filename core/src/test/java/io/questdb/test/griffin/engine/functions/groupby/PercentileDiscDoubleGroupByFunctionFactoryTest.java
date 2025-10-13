@@ -191,6 +191,19 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
+    public void testNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (-1.0)");
+            assertSql(
+                    "percentile_disc\n" +
+                            "-1.0\n",
+                    "select percentile_disc(x, 0.5) from test"
+            );
+        });
+    }
+
+    @Test
     public void testPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
@@ -284,32 +297,6 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             assertSql(
                     "percentile_disc\n5.0\n",
                     "select percentile_disc(x, $1) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testThrowsOnNegativeValues() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (-1.0)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "-1.0\n",
-                    "select percentile_disc(x, 0.5) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testThrowsOnNegativeValuesPacked() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (-1.0)");
-            assertSql(
-                    "percentile_disc\n" +
-                            "-1.0\n",
-                    "select percentile_disc(x, 0.5) from test"
             );
         });
     }
