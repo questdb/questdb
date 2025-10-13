@@ -9,8 +9,10 @@ steps:
 
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven
-      echo "##vso[task.setvariable variable=JAVA_HOME]/usr/lib/jvm/java-17-openjdk-amd64"
-      echo "JAVA_HOME set to: $JAVA_HOME"
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: eq(variables['poolName'], 'vmss-uksouth-spot')
 
