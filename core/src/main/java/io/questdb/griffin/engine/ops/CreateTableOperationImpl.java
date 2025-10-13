@@ -85,7 +85,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
-    private CopyDataProgressReporter reporter;
+    private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectTextPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
