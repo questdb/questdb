@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.text.CopyExportContext;
-import io.questdb.cutlass.text.CopyExportResult;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -70,7 +69,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
     private int compressionCodec;
     private int compressionLevel;
     private CopyExportContext copyContext;
-    private CopyExportResult copyExportResult;
     private int dataPageSize;
     private String fileName;
     private MessageBus messageBus;
@@ -92,7 +90,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             CharSequence sqlText
     ) throws SqlException {
         super(METADATA);
-        this.of(engine.getMessageBus(), engine.getCopyExportContext(), model, null, securityContext, sqlText);
+        this.of(engine.getMessageBus(), engine.getCopyExportContext(), model, securityContext, sqlText);
     }
 
     @Override
@@ -141,10 +139,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             exportIdSink.clear();
             Numbers.appendHex(exportIdSink, copyID, true);
             record.setValue(exportIdSink);
-            if (copyExportResult != null) {
-                copyExportResult.setCopyID(copyID);
-            }
-
             final RingQueue<CopyExportRequestTask> copyExportRequestQueue = messageBus.getCopyExportRequestQueue();
             final MPSequence copyRequestPubSeq = messageBus.getCopyExportRequestPubSeq();
             long processingCursor;
@@ -158,7 +152,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                     0,
                     tableName,
                     entry.getId(),
-                    copyExportResult
+                    null
             );
 
             do {
@@ -174,7 +168,7 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 task.of(
                         entry,
                         createOp,
-                        copyExportResult,
+                        null,
                         tableName,
                         fileName,
                         compressionCodec,
@@ -224,7 +218,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
             MessageBus messageBus,
             CopyExportContext exportContext,
             ExportModel model,
-            CopyExportResult result,
             SecurityContext securityContext,
             CharSequence sqlText
     ) throws SqlException {
@@ -251,7 +244,6 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         this.parquetVersion = model.getParquetVersion();
         this.rawArrayEncoding = model.isRawArrayEncoding();
         this.sqlText = sqlText;
-        this.copyExportResult = result;
     }
 
     static {
