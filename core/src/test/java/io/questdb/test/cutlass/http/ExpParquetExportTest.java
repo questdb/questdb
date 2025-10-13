@@ -29,7 +29,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -85,14 +84,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testBasicParquetExport() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    SOCountDownLatch latch = new SOCountDownLatch(1);
-
                     engine.execute("CREATE TABLE basic_parquet_test AS (" +
                             "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                             "FROM long_sequence(5)" +
                             ")", sqlExecutionContext);
                     testHttpClient.assertGetParquet("/exp", 1293, "basic_parquet_test");
-                    latch.countDown();
 
                     var sink = new StringSink();
                     printSqlToString(engine, sqlExecutionContext, "SELECT id FROM sys.copy_export_log limit 1", sink);
@@ -104,14 +100,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     sink.put(copyID);
 
                     String copyIDStr = sink.toString();
-                    latch.await();
                     Path path = Path.getThreadLocal(root);
                     path.concat("export");
                     path.concat(copyIDStr);
 
-                    if (Files.exists(path.slash$())) {
-                        Assert.fail("Temporary export directory was not cleaned up");
-                    }
+                    assertEventually(() -> Assert.assertFalse("Temporary export directory was not cleaned up", Files.exists(path.slash$())));
                 });
     }
 
