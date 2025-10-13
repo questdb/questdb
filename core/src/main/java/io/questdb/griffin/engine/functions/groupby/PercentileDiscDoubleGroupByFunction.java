@@ -27,40 +27,53 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByDoubleList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class PercentileDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
+public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final GroupByDoubleList listA;
     private final GroupByDoubleList listB;
     private final Function percentileFunc;
+    private final int percentilePos;
     private int valueIndex;
 
-    public PercentileDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc) {
+    public PercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
         this.percentileFunc = percentileFunc;
         int initialCapacity = 4;
         listA = new GroupByDoubleList(initialCapacity, Double.NaN);
         listB = new GroupByDoubleList(initialCapacity, Double.NaN);
+        this.percentilePos = percentilePos;
     }
 
     @Override
     public void clear() {
         listA.resetPtr();
         listB.resetPtr();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(arg);
+        Misc.free(percentileFunc);
     }
 
     @Override
@@ -102,19 +115,16 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
         }
         listA.sort(0, size - 1);
         double percentile = percentileFunc.getDouble(record);
+        if (percentile < 0.0d || percentile > 1.0d) {
+            throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+        }
         int N = (int) Math.ceil(size * percentile) - 1;
-        if (N < 0) {
-            N = 0;
-        }
-        if (N >= size) {
-            N = size - 1;
-        }
         return listA.getQuick(N);
     }
 
     @Override
     public String getName() {
-        return "percentile";
+        return "percentile_disc";
     }
 
     @Override
@@ -125,6 +135,13 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        super.init(symbolTableSource, sqlExecutionContext);
+        arg.init(symbolTableSource, sqlExecutionContext);
+        percentileFunc.init(symbolTableSource, sqlExecutionContext);
     }
 
     @Override
@@ -178,7 +195,7 @@ public class PercentileDoubleGroupByFunction extends DoubleFunction implements U
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("percentile(").val(arg).val(')');
+        sink.val("percentile_disc(").val(arg).val(')');
     }
 
     @Override
