@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
 
@@ -34,17 +35,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and only allows cancelling statement via CANCEL QUERY command.
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
+    private final CairoEngine engine;
     private final int throttle;
     protected volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
 
-    public AtomicBooleanCircuitBreaker() {
-        this(0);
+    public AtomicBooleanCircuitBreaker(CairoEngine engine) {
+        this(engine, 0);
         cancelledFlag = new AtomicBoolean(false);
     }
 
-    public AtomicBooleanCircuitBreaker(int throttle) {
+    public AtomicBooleanCircuitBreaker(CairoEngine engine, int throttle) {
+        this.engine = engine;
         this.throttle = throttle;
     }
 
@@ -154,6 +157,6 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     private boolean isCancelled() {
-        return cancelledFlag == null || cancelledFlag.get();
+        return cancelledFlag == null || cancelledFlag.get() || engine.isClosing();
     }
 }

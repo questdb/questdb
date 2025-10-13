@@ -43,9 +43,9 @@ public class ExportActivityFunctionFactoryTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         regularUserContext = new SqlExecutionContextImpl(engine, 1).with(new UserContext());
-        regularUserContext.with(new AtomicBooleanCircuitBreaker());
+        regularUserContext.with(new AtomicBooleanCircuitBreaker(engine));
         adminUserContext = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext.with(new AtomicBooleanCircuitBreaker(engine));
     }
 
     @Test

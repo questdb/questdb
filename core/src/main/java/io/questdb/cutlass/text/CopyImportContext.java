@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -36,12 +37,13 @@ import java.util.function.LongSupplier;
 public class CopyImportContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
     private final AtomicLong activeImportID = new AtomicLong(INACTIVE_COPY_ID);
-    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
+    private final AtomicBooleanCircuitBreaker circuitBreaker;
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
     private SecurityContext importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
-    public CopyImportContext(CairoConfiguration configuration) {
+    public CopyImportContext(CairoEngine engine, CairoConfiguration configuration) {
+        this.circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 

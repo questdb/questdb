@@ -157,7 +157,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
             this.metrics = engine.getMetrics();
             this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
             this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();

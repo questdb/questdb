@@ -186,7 +186,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
-            this.copyImportContext = new CopyImportContext(configuration);
+            this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
             this.messageBus = new MessageBusImpl(configuration);

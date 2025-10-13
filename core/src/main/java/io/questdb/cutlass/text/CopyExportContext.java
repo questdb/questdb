@@ -111,7 +111,7 @@ public class CopyExportContext {
             do {
                 id = copyIDSupplier.getAsLong();
             } while ((index = activeExports.keyIndex(id)) < 0);
-            entry = exportTaskEntryPools.next().of(id, securityContext, sql, path, sqlExecutionCircuitBreaker, trigger);
+            entry = exportTaskEntryPools.next().of(engine, id, securityContext, sql, path, sqlExecutionCircuitBreaker, trigger);
             activeExports.putAt(index, id, entry);
             if (trigger == CopyTrigger.SQL) {
                 exportSql.put(sql, entry);
@@ -455,7 +455,7 @@ public class CopyExportContext {
     }
 
     public static class ExportTaskEntry implements Mutable {
-        AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
         int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
         CharSequence path;
@@ -473,7 +473,9 @@ public class CopyExportContext {
         @Override
         public void clear() {
             this.securityContext = null;
-            atomicBooleanCircuitBreaker.clear();
+            if (atomicBooleanCircuitBreaker != null) {
+                atomicBooleanCircuitBreaker.clear();
+            }
             this.id = INACTIVE_COPY_ID;
             this.sql.clear();
             this.path = null;
@@ -500,12 +502,17 @@ public class CopyExportContext {
             return securityContext;
         }
 
-        public ExportTaskEntry of(long id,
-                                  SecurityContext context,
-                                  CharSequence sql,
-                                  CharSequence path,
-                                  SqlExecutionCircuitBreaker circuitBreaker,
-                                  CopyTrigger trigger) {
+        public ExportTaskEntry of(
+                CairoEngine engine,
+                long id,
+                SecurityContext context,
+                CharSequence sql,
+                CharSequence path,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                CopyTrigger trigger) {
+            if (atomicBooleanCircuitBreaker == null) {
+                atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            }
             this.id = id;
             this.securityContext = context;
             this.sql.put(sql);

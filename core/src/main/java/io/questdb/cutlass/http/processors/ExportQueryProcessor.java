@@ -119,7 +119,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         this.clock = configuration.getMillisecondClock();
         parquetExporter = new SerialParquetExporter(engine);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, sharedQueryWorkerCount);
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
