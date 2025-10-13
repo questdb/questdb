@@ -367,7 +367,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "7\tk1\t2779.938130410611\t251820.0\n" +
                         "7\tk2\t2780.6135587838376\t251940.0\n" +
                         "7\tk3\t2781.2892961993175\t252060.0\n" +
-                        "7\tk4\t2781.9653422158776\t252180.0\n"
+                        "7\tk4\t2781.9653422158776\t252180.0\n",
+                null
         );
     }
 
@@ -546,7 +547,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "2804.7427612580973\t7\t20\t51252.0\n" +
                         "2807.4915478694397\t7\t21\t51348.0\n" +
                         "2810.245004276495\t7\t22\t51444.0\n" +
-                        "2813.0031043849435\t7\t23\t51540.0\n"
+                        "2813.0031043849435\t7\t23\t51540.0\n",
+                null
         );
     }
 
@@ -593,7 +595,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "2780.6135587838376\t7\t251940.0\tk2\n" +
                         "2781.2892961993175\t7\t252060.0\tk3\n" +
                         "2781.9653422158776\t7\t252180.0\tk4\n" +
-                        "2779.263011521653\t7\t251700.0\tk42\n"
+                        "2779.263011521653\t7\t251700.0\tk42\n",
+                null
         );
     }
 
@@ -638,7 +641,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "7\tk1\t2779.938130410611\t251820.0\n" +
                         "7\tk2\t2780.6135587838376\t251940.0\n" +
                         "7\tk3\t2781.2892961993175\t252060.0\n" +
-                        "7\tk4\t2781.9653422158776\t252180.0\n"
+                        "7\tk4\t2781.9653422158776\t252180.0\n",
+                null
         );
     }
 
@@ -653,7 +657,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t2683.4065201284266\t1639600.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
                         "k4\t2684.756229953121\t1641200.0\n" +
-                        "k42\t2685.431565967941\t1642000.0\n"
+                        "k42\t2685.431565967941\t1642000.0\n",
+                null
         );
     }
 
@@ -670,7 +675,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1abc\t2682.7321472695826\t1638800.0\n" +
                         "k2abc\t2683.4065201284266\t1639600.0\n" +
                         "k3abc\t2684.081214514935\t1640400.0\n" +
-                        "k4abc\t2684.756229953121\t1641200.0\n"
+                        "k4abc\t2684.756229953121\t1641200.0\n",
+                null
         );
     }
 
@@ -1158,7 +1164,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "7\t7.0\n" +
                         "8\t8.0\n" +
                         "9\t9.0\n" +
-                        "10\t10.0\n"
+                        "10\t10.0\n",
+                "Long Top K lo: 10"
         );
     }
 
@@ -1177,7 +1184,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "7\tfoobar\t7.0\n" +
                         "8\tfoobar\t8.0\n" +
                         "9\tfoobar\t9.0\n" +
-                        "10\tfoobar\t10.0\n"
+                        "10\tfoobar\t10.0\n",
+                "Long Top K lo: 10"
         );
     }
 
@@ -1191,7 +1199,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "4049.0\t3242400\n" +
                         "4048.0\t3240800\n" +
                         "4047.0\t3239200\n" +
-                        "4046.0\t3237600\n"
+                        "4046.0\t3237600\n",
+                "Long Top K lo: 10"
         );
     }
 
@@ -1825,7 +1834,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelSymbolKeyGroupBy(
                 "SELECT min(key), max(key) FROM tab",
                 "min\tmax\n" +
-                        "k0\tk4\n"
+                        "k0\tk4\n",
+                null
         );
     }
 
@@ -1894,7 +1904,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelSymbolKeyGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE key = 'k1'",
                 "vwap\tsum\n" +
-                        "2682.7321472695826\t1638800.0\n"
+                        "2682.7321472695826\t1638800.0\n",
+                null
         );
     }
 
@@ -2006,7 +2017,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab ORDER BY key",
                 "key\tsum\n" +
                         "false\tnull\n" +
-                        "true\t8202000.0\n"
+                        "true\t8202000.0\n",
+                null
         );
     }
 
@@ -3014,7 +3026,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k2\t2683.4065201284266\t1639600.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
-                        "k4\t2684.756229953121\t1641200.0\n"
+                        "k4\t2684.756229953121\t1641200.0\n",
+                null
         );
     }
 
@@ -3025,7 +3038,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "where key in (select key from tab where key in ('k1','k3')) ORDER BY key",
                 "key\tvwap\tsum\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
-                        "k3\t2684.081214514935\t1640400.0\n"
+                        "k3\t2684.081214514935\t1640400.0\n",
+                null
         );
     }
 
@@ -3042,7 +3056,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1\t1641482.7321472696\n" +
                         "k2\t1642283.4065201285\n" +
                         "k3\t1643084.081214515\n" +
-                        "k4\t1643884.7562299531\n"
+                        "k4\t1643884.7562299531\n",
+                null
         );
     }
 
@@ -3056,11 +3071,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k0\t2685.431565967941\t1642000.0\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
                         "k2\t2683.4065201284266\t1639600.0\n",
+                null,
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key LIMIT -3",
                 "key\tvwap\tsum\n" +
                         "k2\t2683.4065201284266\t1639600.0\n" +
                         "k3\t2684.081214514935\t1640400.0\n" +
-                        "k4\t2684.756229953121\t1641200.0\n"
+                        "k4\t2684.756229953121\t1641200.0\n",
+                null
         );
     }
 
@@ -3089,7 +3106,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "57.01805416248746\tk1\t381.0\n" +
                         "57.76545632973504\tk2\t387.0\n" +
                         "58.52353506243996\tk3\t393.0\n" +
-                        "59.29162746942615\tk4\t399.0\n"
+                        "59.29162746942615\tk4\t399.0\n",
+                null
         );
     }
 
@@ -3104,7 +3122,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1\n" +
                         "k2\n" +
                         "k3\n" +
-                        "k4\n"
+                        "k4\n",
+                null
         );
     }
 
@@ -3116,7 +3135,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k0\n" +
                         "k2\n" +
                         "k3\n" +
-                        "k4\n"
+                        "k4\n",
+                null
         );
     }
 
@@ -3124,7 +3144,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelSymbolKeyGroupByWithNoFunctionsAndTooStrictFilter() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT key FROM tab WHERE quantity < 0 GROUP BY key ORDER BY key",
-                "key\n"
+                "key\n",
+                null
         );
     }
 
@@ -3137,7 +3158,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1\t57.01805416248746\t381.0\n" +
                         "k2\t57.76545632973504\t387.0\n" +
                         "k3\t58.52353506243996\t393.0\n" +
-                        "k4\t59.29162746942615\t399.0\n"
+                        "k4\t59.29162746942615\t399.0\n",
+                null
         );
     }
 
@@ -3147,7 +3169,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab WHERE key in ('k1','k2') ORDER BY key",
                 "key\tvwap\tsum\n" +
                         "k1\t2682.7321472695826\t1638800.0\n" +
-                        "k2\t2683.4065201284266\t1639600.0\n"
+                        "k2\t2683.4065201284266\t1639600.0\n",
+                null
         );
     }
 
@@ -3163,14 +3186,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT key, count(*) FROM tab WHERE key like '%0' ORDER BY key",
                 "key\tcount\n" +
                         "k0\t1600\n",
+                null,
                 "SELECT key, count(*) FROM tab WHERE key like 'k%' ORDER BY key",
                 fullResult,
+                null,
                 "SELECT key, count(*) FROM tab WHERE key like 'k_' ORDER BY key",
                 fullResult,
+                null,
                 "SELECT key, count(*) FROM tab WHERE key like '%k%' ORDER BY key",
                 fullResult,
+                null,
                 "SELECT key, count(*) FROM tab WHERE key like '%foobarbaz%' ORDER BY key",
-                "key\tcount\n"
+                "key\tcount\n",
+                null
         );
     }
 
@@ -3182,7 +3210,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k1\t1600\n" +
                         "k2\t1600\n" +
                         "k3\t1600\n" +
-                        "k4\t1600\n"
+                        "k4\t1600\n",
+                null
         );
     }
 
@@ -3197,7 +3226,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "1970-01-02\t199.0\n" +
                         "1970-01-03\t299.0\n" +
                         "1970-01-04\t399.0\n" +
-                        "1970-01-05\t499.0\n"
+                        "1970-01-05\t499.0\n",
+                null
         );
     }
 
@@ -3792,7 +3822,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelSymbolKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+    // unlike other test methods, this one expects triples, not couples of strings;
+    // the third value may contain a fragment of query plan to assert
+    private void testParallelSymbolKeyGroupBy(String... queriesExpectedResultsAndPlans) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -3823,7 +3855,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         if (convertToParquet) {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
-                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                        assertQueriesAndPlans(engine, sqlExecutionContext, queriesExpectedResultsAndPlans);
                     },
                     configuration,
                     LOG
@@ -3846,6 +3878,37 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     sink,
                     expected
             );
+        }
+    }
+
+    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesExpectedResultsAndPlans) throws SqlException {
+        assertQueriesAndPlans(engine, sqlExecutionContext, sink, queriesExpectedResultsAndPlans);
+    }
+
+    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesExpectedResultsAndPlans) throws SqlException {
+        for (int i = 0, n = queriesExpectedResultsAndPlans.length; i < n; i += 3) {
+            final String query = queriesExpectedResultsAndPlans[i];
+            final String expected = queriesExpectedResultsAndPlans[i + 1];
+            sink.clear();
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    query,
+                    sink,
+                    expected
+            );
+
+            // verify the plan, optionally
+            final String expectedPlanFragment = queriesExpectedResultsAndPlans[i + 2];
+            if (expectedPlanFragment != null) {
+                TestUtils.printSql(
+                        engine,
+                        sqlExecutionContext,
+                        "EXPLAIN " + query,
+                        sink
+                );
+                TestUtils.assertContains(sink, expectedPlanFragment);
+            }
         }
     }
 
