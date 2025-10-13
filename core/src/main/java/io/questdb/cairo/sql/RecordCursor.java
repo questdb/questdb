@@ -260,12 +260,12 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * are needed.
      * <p>
      * The method is only supported by certain cursor implementations. Check
-     * {@link RecordCursorFactory#recordCursorSupportsLongTopK()} before calling.
+     * {@link RecordCursorFactory#recordCursorSupportsLongTopK(int)} before calling.
      *
      * @param list        a min or max heap (DirectLongLongSortedList) to store the top K records
      * @param columnIndex the zero-based index of the column to order by
      * @throws UnsupportedOperationException if the cursor does not support top-K optimization
-     * @see RecordCursorFactory#recordCursorSupportsLongTopK()
+     * @see RecordCursorFactory#recordCursorSupportsLongTopK(int)
      */
     default void longTopK(DirectLongLongSortedList list, int columnIndex) {
         throw new UnsupportedOperationException();

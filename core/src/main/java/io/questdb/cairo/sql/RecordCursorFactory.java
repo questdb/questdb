@@ -231,6 +231,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     /**
      * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop
      * for the given LONG column.
+     *
+     * @param columnIndex index of the column to check
+     * @return true if the factory supports the fast path for the column
      */
     default boolean recordCursorSupportsLongTopK(int columnIndex) {
         return false;
