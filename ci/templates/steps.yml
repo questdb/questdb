@@ -8,8 +8,10 @@ steps:
     condition: eq(variables['os'], 'Linux')
 
   - bash: |
-      sudo apt-get update && sudo apt-get install -y maven
-    displayName: "Install Maven"
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven
+      echo "##vso[task.setvariable variable=JAVA_HOME]/usr/lib/jvm/java-17-openjdk-amd64"
+      echo "JAVA_HOME set to: $JAVA_HOME"
+    displayName: "Install JDK and Maven"
     condition: eq(variables['poolName'], 'vmss-uksouth-spot')
 
   - task: Cache@2
