@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized flyweight long list used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -110,7 +111,7 @@ public class GroupByLongList {
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
 
-            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, oldCapacity);
+            Vect.memcpy(ptr + HEADER_SIZE, oldPtr + HEADER_SIZE, oldSize * 8L);
 
             allocator.free(oldPtr, HEADER_SIZE + 8L * oldCapacity);
         }
@@ -139,6 +140,18 @@ public class GroupByLongList {
         return this;
     }
 
+    @TestOnly
+    public void print() {
+        System.out.print("[");
+        for (int i = 0, n = size(); i < n; i++) {
+            System.out.print(valueAt(i));
+            if (i + 1 < n) {
+                System.out.print(',');
+            }
+        }
+        System.out.println("]\n");
+    }
+
     public long ptr() {
         return ptr;
     }
@@ -156,7 +169,7 @@ public class GroupByLongList {
     }
 
     public void sortAsUnsigned() {
-        Vect.sortULongAscInPlace(ptr(), size());
+        Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
     }
 
     private void setCapacity(int newCapacity) {
