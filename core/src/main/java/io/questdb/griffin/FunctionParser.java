@@ -907,9 +907,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
                         short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+
                         if (sigArgTypeTag == argElemTypeTag) {
                             match = mergeWithExactMatch(match);
                             continue;
+                        } else if (argElemTypeTag == ColumnType.UNDEFINED) {
+                            // could be an empty array
+                            if (arg.getArray(null).isEmpty() && sigArgTypeTag == ColumnType.DOUBLE) {
+                                // permit it
+                                match = mergeWithExactMatch(match);
+                                continue;
+                            }
                         } else {
                             match = MATCH_NO_MATCH;
                             break;

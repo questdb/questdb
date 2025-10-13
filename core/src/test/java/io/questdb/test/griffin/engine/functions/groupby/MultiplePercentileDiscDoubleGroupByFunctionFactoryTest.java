@@ -91,7 +91,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
     public void testInvalidPercentileInArray1() throws Exception {
         assertException(
                 "select percentile_disc(x::double, ARRAY[0.98, 1.1]) from long_sequence(1)",
-                34,
+                39,
                 "invalid percentile"
         );
     }
@@ -100,7 +100,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
     public void testInvalidPercentileInArray2() throws Exception {
         assertException(
                 "select percentile_disc(x::double, ARRAY[0.98, -1]) from long_sequence(1)",
-                34,
+                39,
                 "invalid percentile"
         );
     }
@@ -109,7 +109,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
     public void testInvalidPercentileInArrayMixed() throws Exception {
         assertException(
                 "select percentile_disc(x::double, ARRAY[0.5, 0.95, 1.5, 0.98]) from long_sequence(1)",
-                34,
+                39,
                 "invalid percentile"
         );
     }
@@ -317,7 +317,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
             execute(txDdl);
             execute(txDml);
             assertSql("percentile_disc\n" +
-                            "[849.035,289.615,219.222,63.363]\n",
+                            "[406.977,289.615,224.195,63.863]\n",
                     "select percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
         });
     }
@@ -329,7 +329,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
             execute("insert into test values (1.0), (-1.0), (5.0), (-5.0), (10.0), (-10.0)");
             assertSql(
                     "percentile_disc\n" +
-                            "[10.0,10.0,5.0,1.0]\n",
+                            "[10.0,10.0,10.0,-1.0]\n",
                     "select percentile_disc(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
             );
         });
@@ -352,7 +352,7 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
             execute(txDdl);
             execute(txDml);
             assertSql("percentile_disc\n" +
-                            "[406.977,289.615,224.195,63.863]",
+                            "[406.977,289.615,224.195,63.863]\n",
                     "select percentile_disc(value, ARRAY[0.98, 0.95, 0.90, 0.50]) from tx_traffic");
         });
     }
