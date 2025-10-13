@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized flyweight long list used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -138,18 +137,6 @@ public class GroupByLongList {
             this.ptr = ptr;
         }
         return this;
-    }
-
-    @TestOnly
-    public void print() {
-        System.out.print("[");
-        for (int i = 0, n = size(); i < n; i++) {
-            System.out.print(valueAt(i));
-            if (i + 1 < n) {
-                System.out.print(',');
-            }
-        }
-        System.out.println("]\n");
     }
 
     public long ptr() {

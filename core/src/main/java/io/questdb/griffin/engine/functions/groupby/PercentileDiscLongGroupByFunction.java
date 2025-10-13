@@ -112,9 +112,8 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
         if (size == 0) {
             return LONG_NULL;
         }
-        listA.print();
+
         listA.sortAsUnsigned();
-        listA.print();
 
         double percentile = percentileFunc.getDouble(record);
         if (percentile < 0.0d || percentile > 1.0d) {
