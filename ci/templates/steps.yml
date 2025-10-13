@@ -14,8 +14,11 @@ steps:
       echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
-    condition: eq(variables['poolName'], 'vmss-uksouth-spot')
-
+    condition: |
+      or(
+        eq(variables['poolName'], 'vmss-uksouth-spot'),
+        eq(variables['poolName'], 'hetzner')
+      )
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true

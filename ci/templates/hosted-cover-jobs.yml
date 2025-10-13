@@ -73,7 +73,7 @@ jobs:
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "vmss-uksouth-spot"
+          poolName: "hetzner"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"
