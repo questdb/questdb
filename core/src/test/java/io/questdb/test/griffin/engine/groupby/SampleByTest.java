@@ -6227,7 +6227,7 @@ public class SampleByTest extends AbstractCairoTest {
                     query,
                     """
                             VirtualRecord
-                              functions: [ts,count::double/datediff('h',ts1,dateadd('d',1,ts1,'Europe/Copenhagen'))]
+                              functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
                                 Sample By
                                   fill: none
                                   values: [count(*)]

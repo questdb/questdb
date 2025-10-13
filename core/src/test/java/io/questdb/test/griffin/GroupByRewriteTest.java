@@ -30,6 +30,179 @@ import org.junit.Test;
 public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
+    public void testRewriteAggregateDoesNotCreateDuplicateKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym symbol, price double, amount double, ts timestamp) timestamp(ts) partition by day;");
+            execute("CREATE TABLE trades2 (sym symbol, price double, amount double, ts timestamp) timestamp(ts) partition by day;");
+
+            // key first
+            assertPlanNoLeakCheck(
+                    "SELECT ts, price, price / sum(amount) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price,price/sum]
+                                Async Group By workers: 1
+                                  keys: [ts,price]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+            // key first, aliased
+            assertPlanNoLeakCheck(
+                    "SELECT ts, PricE as price0, price / sum(amount) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price0,price0/sum]
+                                Async Group By workers: 1
+                                  keys: [ts,price0]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+            // key first, multiple column occurrences
+            assertPlanNoLeakCheck(
+                    "SELECT ts, price, (price + price) / sum(amount) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price,price+price/sum]
+                                Async Group By workers: 1
+                                  keys: [ts,price]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+            // key first, aliased, multiple column occurrences
+            assertPlanNoLeakCheck(
+                    "SELECT ts, price as price0, (price + price) / sum(amount) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price0,price0+price0/sum]
+                                Async Group By workers: 1
+                                  keys: [ts,price0]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+
+//            // key second
+//            assertPlanNoLeakCheck(
+//                    "SELECT ts, price / sum(amount), price FROM trades;",
+//                    """
+//                            VirtualRecord
+//                              functions: [ts,price,price/sum]
+//                                Async Group By workers: 1
+//                                  keys: [ts,price]
+//                                  values: [sum(amount)]
+//                                  filter: null
+//                                    PageFrame
+//                                        Row forward scan
+//                                        Frame forward scan on: trades
+//                            """
+//            );
+//            // key second, aliased
+//            assertPlanNoLeakCheck(
+//                    "SELECT ts, price / sum(amount), PricE as price0 FROM trades;",
+//                    """
+//                            VirtualRecord
+//                              functions: [ts,price0,price0/sum]
+//                                Async Group By workers: 1
+//                                  keys: [ts,price0]
+//                                  values: [sum(amount)]
+//                                  filter: null
+//                                    PageFrame
+//                                        Row forward scan
+//                                        Frame forward scan on: trades
+//                            """
+//            );
+//            // key second, multiple column occurrences
+//            assertPlanNoLeakCheck(
+//                    "SELECT ts, (price + price) / sum(amount), price FROM trades;",
+//                    """
+//                            VirtualRecord
+//                              functions: [ts,price,price+price/sum]
+//                                Async Group By workers: 1
+//                                  keys: [ts,price]
+//                                  values: [sum(amount)]
+//                                  filter: null
+//                                    PageFrame
+//                                        Row forward scan
+//                                        Frame forward scan on: trades
+//                            """
+//            );
+//            // key second, aliased, multiple column occurrences
+//            assertPlanNoLeakCheck(
+//                    "SELECT ts, (price + price) / sum(amount), price as price0 FROM trades;",
+//                    """
+//                            VirtualRecord
+//                              functions: [ts,price0,price0+price0/sum]
+//                                Async Group By workers: 1
+//                                  keys: [ts,price0]
+//                                  values: [sum(amount)]
+//                                  filter: null
+//                                    PageFrame
+//                                        Row forward scan
+//                                        Frame forward scan on: trades
+//                            """
+//            );
+
+            // joined tables with same column names
+            assertPlanNoLeakCheck(
+                    "SELECT t1.ts, t1.price, t2.price / sum(t1.amount) FROM trades t1 JOIN trades2 t2 ON (sym);",
+                    """
+                            VirtualRecord
+                              functions: [ts,price,price1/sum]
+                                GroupBy vectorized: false
+                                  keys: [ts,price,price1]
+                                  values: [sum(amount)]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: t2.sym=t1.sym
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: trades
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: trades2
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRewriteAggregateExtractsConstantKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price double, amount double, ts timestamp) timestamp(ts) partition by day;");
+            assertPlanNoLeakCheck(
+                    "SELECT 42, 'foobar', amount, sum(price) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [42,'foobar',amount,sum]
+                                Async Group By workers: 1
+                                  keys: [amount]
+                                  values: [sum(price)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testRewriteAggregateOnJoin1() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE taba ( ax int, aid int );");

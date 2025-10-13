@@ -2316,6 +2316,22 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    private CharSequence findExistingGroupByKeyColumnAlias(
+            @NotNull CharSequence baseColumnName,
+            @NotNull QueryModel groupByModel,
+            @NotNull QueryModel translatingModel,
+            @NotNull QueryModel innerVirtualModel
+    ) {
+        CharSequence translatingAlias = translatingModel.getColumnNameToAliasMap().get(baseColumnName);
+        if (translatingAlias != null) {
+            CharSequence virtualAlias = innerVirtualModel.getColumnNameToAliasMap().get(translatingAlias);
+            if (virtualAlias != null) {
+                return groupByModel.getColumnNameToAliasMap().get(virtualAlias);
+            }
+        }
+        return null;
+    }
+
     private QueryColumn findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -4052,16 +4068,46 @@ public class SqlOptimiser implements Mutable {
                 ((node.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) || node.type == LITERAL)) {
             CharSequence alias = findColumnByAst(groupByNodes, groupByAliases, node);
             if (alias == null) {
-                QueryColumn qc = queryColumnPool.next().of(createColumnAlias(node, groupByModel), node);
-                groupByModel.addBottomUpColumn(qc);
-                alias = qc.getAlias();
+                // check if it's an already selected column, so that we don't need to add it as a key
+                if (node.type == LITERAL) {
+                    final CharSequence existingAlias = findExistingGroupByKeyColumnAlias(node.token, groupByModel, translatingModel, innerVirtualModel);
+                    if (existingAlias != null) {
+                        // great! there is a matching column, so let's refer its alias and call it a day
+                        final ExpressionNode replaceNode;
+                        if (Chars.equalsIgnoreCase(existingAlias, node.token)) {
+                            // the alias matches the column name, take the node as is
+                            replaceNode = deepClone(expressionNodePool, node);
+                        } else {
+                            // the alias is different from the column name, so we need to use the alias
+                            replaceNode = nextLiteral(existingAlias);
+                        }
 
-                groupByNodes.add(deepClone(expressionNodePool, node));
+                        // don't forget to add the column to group by lists, if it's not there already
+                        if (findColumnByAst(groupByNodes, groupByAliases, replaceNode) == null) {
+                            groupByNodes.add(replaceNode);
+                            groupByAliases.add(existingAlias);
+                        }
+                        return replaceNode;
+                    }
+                }
+
+                // it's an aggregate function, or a non-selected column, so let's add it to the group by model and lists
+
+                alias = createColumnAlias(node, groupByModel);
                 groupByAliases.add(alias);
 
                 if (node.type == LITERAL) {
+                    // it's a non-selected column, first of all, add it to the inner models
                     doReplaceLiteral(node, translatingModel, innerVirtualModel, true, baseModel, false);
+                    // the column is now present in the inner models under the alias, thus we have to refer to it via the alias
+                    node = nextLiteral(alias);
+                    groupByNodes.add(node);
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(alias, node));
+                    return node;
                 }
+
+                groupByNodes.add(deepClone(expressionNodePool, node));
+                groupByModel.addBottomUpColumn(queryColumnPool.next().of(alias, node));
             }
 
             return nextLiteral(alias);
