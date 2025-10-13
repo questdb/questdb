@@ -1146,8 +1146,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelLongKeyGroupByWithLimit() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
         testParallelSymbolKeyGroupBy(
                 "SELECT quantity, max(price) FROM tab ORDER BY quantity ASC LIMIT 10",
                 "quantity\tmax\n" +
@@ -1161,6 +1159,39 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "8\t8.0\n" +
                         "9\t9.0\n" +
                         "10\t10.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelLongKeyGroupByWithLimit2() throws Exception {
+        // Verifies outer virtual factory scenario.
+        testParallelSymbolKeyGroupBy(
+                "SELECT quantity, 'foobar' k, max(price) FROM tab ORDER BY quantity ASC LIMIT 10",
+                "quantity\tk\tmax\n" +
+                        "1\tfoobar\t1.0\n" +
+                        "2\tfoobar\t2.0\n" +
+                        "3\tfoobar\t3.0\n" +
+                        "4\tfoobar\t4.0\n" +
+                        "5\tfoobar\t5.0\n" +
+                        "6\tfoobar\t6.0\n" +
+                        "7\tfoobar\t7.0\n" +
+                        "8\tfoobar\t8.0\n" +
+                        "9\tfoobar\t9.0\n" +
+                        "10\tfoobar\t10.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelLongKeyGroupByWithLimit3() throws Exception {
+        // Verifies outer selected factory scenario.
+        testParallelSymbolKeyGroupBy(
+                "SELECT max_p, sum_q FROM (SELECT concat(key,'_42'), max(price) max_p, sum(quantity) sum_q FROM tab) ORDER BY sum_q DESC LIMIT 10",
+                "max_p\tsum_q\n" +
+                        "4050.0\t3244000\n" +
+                        "4049.0\t3242400\n" +
+                        "4048.0\t3240800\n" +
+                        "4047.0\t3239200\n" +
+                        "4046.0\t3237600\n"
         );
     }
 

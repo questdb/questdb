@@ -229,9 +229,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop.
+     * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop
+     * for the given LONG column.
      */
-    default boolean recordCursorSupportsLongTopK() {
+    default boolean recordCursorSupportsLongTopK(int columnIndex) {
         return false;
     }
 

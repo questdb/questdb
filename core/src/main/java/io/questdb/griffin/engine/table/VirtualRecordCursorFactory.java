@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -43,12 +44,12 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualFunctionRecordCursor cursor;
     private final ObjList<Function> functions;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
-    private final RecordMetadata priorityMetadata;
+    private final PriorityMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
             RecordMetadata virtualMetadata,
-            RecordMetadata priorityMetadata,
+            PriorityMetadata priorityMetadata,
             ObjList<Function> functions,
             RecordCursorFactory base,
             int virtualColumnReservedSlots,
@@ -76,7 +77,13 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
-        this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, this.supportsRandomAccess, virtualColumnReservedSlots);
+        this.cursor = new VirtualFunctionRecordCursor(
+                priorityMetadata,
+                functions,
+                memoizedFunctions,
+                this.supportsRandomAccess,
+                virtualColumnReservedSlots
+        );
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }
@@ -123,6 +130,15 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
+        if (baseColumnIndex != -1) {
+            return base.recordCursorSupportsLongTopK(baseColumnIndex);
+        }
+        return false;
     }
 
     @Override

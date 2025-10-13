@@ -52,7 +52,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         assert lo > 0;
-        assert base.recordCursorSupportsLongTopK();
+        assert base.recordCursorSupportsLongTopK(columnIndex);
         this.base = base;
         this.columnIndex = columnIndex;
         this.lo = lo;
