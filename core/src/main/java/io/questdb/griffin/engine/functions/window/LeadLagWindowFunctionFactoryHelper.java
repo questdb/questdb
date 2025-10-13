@@ -77,7 +77,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         long offset = 1;
         if (args.size() >= 2) {
             final Function offsetFunc = args.getQuick(1);
-            if (!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant()) {
+            if (!offsetFunc.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
 
@@ -201,7 +201,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
@@ -318,7 +320,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
@@ -400,7 +404,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
@@ -534,7 +540,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            defaultValue.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
