@@ -226,13 +226,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public long getNow(int timestampType) {
         assert ColumnType.isTimestamp(timestampType);
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return nowMicros;
-            case ColumnType.TIMESTAMP_NANO:
-                return nowNanos;
-        }
-        return 0L;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> nowMicros;
+            case ColumnType.TIMESTAMP_NANO -> nowNanos;
+            default -> 0L;
+        };
     }
 
     @Override

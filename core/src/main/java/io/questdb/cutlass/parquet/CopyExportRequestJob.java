@@ -98,7 +98,16 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(localTaskCopy.getCopyID()).$(']').$();
                     throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                 }
-                copyContext.updateStatus(CopyExportRequestTask.Phase.WAITING, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, "", 0, localTaskCopy.getTableName(), localTaskCopy.getCopyID(), localTaskCopy.getResult());
+                copyContext.updateStatus(
+                        CopyExportRequestTask.Phase.WAITING,
+                        CopyExportRequestTask.Status.FINISHED,
+                        null,
+                        Numbers.INT_NULL,
+                        "",
+                        0,
+                        localTaskCopy.getTableName(),
+                        localTaskCopy.getCopyID(),
+                        localTaskCopy.getResult());
                 serialExporter.of(
                         localTaskCopy,
                         circuitBreaker
@@ -106,7 +115,17 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 phase = serialExporter.process(); // throws CopyExportException
 
                 entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
-                copyContext.updateStatus(CopyExportRequestTask.Phase.SUCCESS, CopyExportRequestTask.Status.FINISHED, serialExporter.getExportPath(), serialExporter.getNumOfFiles(), null, 0, localTaskCopy.getTableName(), localTaskCopy.getCopyID(), localTaskCopy.getResult());
+                copyContext.updateStatus(
+                        CopyExportRequestTask.Phase.SUCCESS,
+                        CopyExportRequestTask.Status.FINISHED,
+                        serialExporter.getExportPath(),
+                        serialExporter.getNumOfFiles(),
+                        null,
+                        0,
+                        localTaskCopy.getTableName(),
+                        localTaskCopy.getCopyID(),
+                        localTaskCopy.getResult()
+                );
             } catch (CopyExportException e) {
                 copyContext.updateStatus(
                         e.getPhase(),
@@ -114,7 +133,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         null,
                         Numbers.INT_NULL,
                         e.getFlyweightMessage(),
-                        e.getErrno(), localTaskCopy.getTableName(), localTaskCopy.getCopyID(), localTaskCopy.getResult()
+                        e.getErrno(),
+                        localTaskCopy.getTableName(),
+                        localTaskCopy.getCopyID(),
+                        localTaskCopy.getResult()
                 );
             } catch (NetworkError e) { // SuspendEvent::trigger() may throw
                 copyContext.updateStatus(
@@ -123,7 +145,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         null,
                         Numbers.INT_NULL,
                         e.getFlyweightMessage(),
-                        e.getErrno(), localTaskCopy.getTableName(), localTaskCopy.getCopyID(), localTaskCopy.getResult()
+                        e.getErrno(),
+                        localTaskCopy.getTableName(),
+                        localTaskCopy.getCopyID(),
+                        localTaskCopy.getResult()
                 );
             } catch (Throwable e) {
                 copyContext.updateStatus(
@@ -132,7 +157,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         null,
                         Numbers.INT_NULL,
                         e.getMessage(),
-                        -1, localTaskCopy.getTableName(), localTaskCopy.getCopyID(), localTaskCopy.getResult()
+                        -1,
+                        localTaskCopy.getTableName(),
+                        localTaskCopy.getCopyID(),
+                        localTaskCopy.getResult()
                 );
             } finally {
 

@@ -445,7 +445,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                 throw CairoException.nonCritical().put("unknown column type [columnName=").put(tsa.getColumnName(i)).put(']');
                             }
                         }
-                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_DATA);
+                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
                     }
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there

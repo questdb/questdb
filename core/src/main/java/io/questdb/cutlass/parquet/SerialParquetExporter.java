@@ -160,6 +160,7 @@ public class SerialParquetExporter implements Closeable {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
+
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();

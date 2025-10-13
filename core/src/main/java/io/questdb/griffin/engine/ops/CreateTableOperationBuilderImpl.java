@@ -66,7 +66,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private QueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
-    private int tableKind = TableUtils.TABLE_KIND_DATA;
+    private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
@@ -179,7 +179,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
-        tableKind = TableUtils.TABLE_KIND_DATA;
+        tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
 
     public int getColumnCount() {

@@ -146,7 +146,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.TableUtils.TABLE_KIND_DATA;
+import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExportModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
@@ -304,7 +304,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Returns number of copied rows.
      */
-    public static long copyUnordered(RecordCursor cursor, TableWriterAPI writer, RecordToRowCopier copier, SqlExecutionCircuitBreaker circuitBreaker, CopyDataProgressReporter reporter, int reportFrequency) {
+    public static long copyUnordered(
+            RecordCursor cursor,
+            TableWriterAPI writer,
+            RecordToRowCopier copier,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            CopyDataProgressReporter reporter,
+            int reportFrequency
+    ) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
         if (reporter != null) {
@@ -1323,22 +1330,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isListKeyword(tok)) {
                 alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
             } else if (isWhereKeyword(tok)) {
-                AlterOperationBuilder alterOperationBuilder;
-                switch (action) {
-                    case PartitionAction.DROP:
-                        alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
-                        break;
-                    case PartitionAction.DETACH:
-                        alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
-                        break;
-                    case PartitionAction.CONVERT_TO_PARQUET:
-                    case PartitionAction.CONVERT_TO_NATIVE:
+                AlterOperationBuilder alterOperationBuilder = switch (action) {
+                    case PartitionAction.DROP ->
+                            this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.DETACH ->
+                            this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
+                    case PartitionAction.CONVERT_TO_PARQUET, PartitionAction.CONVERT_TO_NATIVE -> {
                         final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
-                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
-                        break;
-                    default:
-                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
-                }
+                        yield this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
+                    }
+                    default ->
+                            throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
+                };
 
                 final int functionPosition = lexer.getPosition();
                 ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);
@@ -3717,7 +3720,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         createTableOp,
                                         false,
                                         volumeAlias != null,
-                                        TABLE_KIND_DATA
+                                        TABLE_KIND_REGULAR_TABLE
                                 );
                             }
                         } else {
@@ -3729,7 +3732,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp,
                                     false,
                                     volumeAlias != null,
-                                    TABLE_KIND_DATA
+                                    TABLE_KIND_REGULAR_TABLE
                             );
                         }
                         createTableOp.updateOperationFutureTableToken(tableToken);

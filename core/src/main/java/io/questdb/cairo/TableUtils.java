@@ -125,9 +125,9 @@ public final class TableUtils {
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
     // Regular data table kind
-    public static final int TABLE_KIND_DATA = 0;
+    public static final int TABLE_KIND_REGULAR_TABLE = 0;
     // Parquet export table kind - allows table creation in read-only mode for parquet exports
-    public static final int TABLE_KIND_PARQUET_EXPORT = 2;
+    public static final int TABLE_KIND_TEMP_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final int TABLE_TYPE_MAT = 2;
@@ -732,47 +732,27 @@ public final class TableUtils {
     public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-                return 0L;
-            case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
-            case ColumnType.FLOAT:
-                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
-            case ColumnType.DOUBLE:
-                return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.INT:
-                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            case ColumnType.LONG256:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-            case ColumnType.INTERVAL:
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
+            case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
+            case ColumnType.FLOAT ->
+                    Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
+            case ColumnType.DOUBLE -> Double.doubleToLongBits(Double.NaN);
+            case ColumnType.INT -> Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG128,
+                 ColumnType.UUID, ColumnType.INTERVAL ->
                 // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
-                return Numbers.LONG_NULL;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOLONG:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-                return GeoHashes.NULL;
-            case ColumnType.IPv4:
-                return Numbers.IPv4_NULL;
-            case ColumnType.VARCHAR:
-            case ColumnType.BINARY:
-            case ColumnType.ARRAY:
-                return NULL_LEN;
-            case ColumnType.STRING:
-                return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            default:
+                    Numbers.LONG_NULL;
+            case ColumnType.GEOBYTE, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.GEOINT -> GeoHashes.NULL;
+            case ColumnType.IPv4 -> Numbers.IPv4_NULL;
+            case ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> NULL_LEN;
+            case ColumnType.STRING -> Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            default -> {
                 assert false : "Invalid column type: " + columnType;
-                return 0;
-        }
+                yield 0;
+            }
+        };
     }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {

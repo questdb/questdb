@@ -65,14 +65,11 @@ public class SecurityContextTest {
                         method.invoke(sc, NO_PARAM_ARGS);
                         break;
                     case 1:
-                        if (name.equals("authorizeCopyCancel")) {
-                            method.invoke(sc, sc);
-                        } else if (name.equals("authorizeTableBackup")) {
-                            method.invoke(sc, new ObjHashSet<CharSequence>());
-                        } else if (name.equals("authorizeTableCreate")) {
-                            method.invoke(sc, TableUtils.TABLE_KIND_DATA);
-                        } else {
-                            method.invoke(sc, ONE_PARAM_ARGS);
+                        switch (name) {
+                            case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                            case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                            case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                            default -> method.invoke(sc, ONE_PARAM_ARGS);
                         }
                         break;
                     case 2:
@@ -105,14 +102,11 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            if (name.equals("authorizeCopyCancel")) {
-                                method.invoke(sc, sc);
-                            } else if (name.equals("authorizeTableBackup")) {
-                                method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.equals("authorizeTableCreate")) {
-                                method.invoke(sc, TableUtils.TABLE_KIND_DATA);
-                            } else {
-                                method.invoke(sc, ONE_PARAM_ARGS);
+                            switch (name) {
+                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                default -> method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             fail();
                             break;
@@ -156,14 +150,11 @@ public class SecurityContextTest {
                             fail();
                             break;
                         case 1:
-                            if (name.equals("authorizeCopyCancel")) {
-                                method.invoke(sc, sc);
-                            } else if (name.equals("authorizeTableBackup")) {
-                                method.invoke(sc, new ObjHashSet<CharSequence>());
-                            } else if (name.equals("authorizeTableCreate")) {
-                                method.invoke(sc, TableUtils.TABLE_KIND_DATA);
-                            } else {
-                                method.invoke(sc, ONE_PARAM_ARGS);
+                            switch (name) {
+                                case "authorizeCopyCancel" -> method.invoke(sc, sc);
+                                case "authorizeTableBackup" -> method.invoke(sc, new ObjHashSet<CharSequence>());
+                                case "authorizeTableCreate" -> method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                default -> method.invoke(sc, ONE_PARAM_ARGS);
                             }
                             if (name.startsWith("authorizeShow")
                                     || name.startsWith("authorizeSelect")) {

@@ -102,10 +102,10 @@ public interface SecurityContext extends Mutable {
 
     default void authorizeTableCreate(int tableKind) {
         switch (tableKind) {
-            case TableUtils.TABLE_KIND_DATA:
+            case TableUtils.TABLE_KIND_REGULAR_TABLE:
                 authorizeTableCreate();
                 break;
-            case TableUtils.TABLE_KIND_PARQUET_EXPORT:
+            case TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT:
                 // Allowed even in read-only mode
                 return;
             default:

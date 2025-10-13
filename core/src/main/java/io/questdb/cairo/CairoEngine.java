@@ -420,8 +420,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
-                        if (th instanceof CairoException) {
-                            final CairoException ce = (CairoException) th;
+                        if (th instanceof CairoException ce) {
                             rec.$(", msg=").$safe(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {
@@ -514,7 +513,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeMatViewCreate();
         final TableToken matViewToken = createTableOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken, TableUtils.TABLE_KIND_DATA);
+        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -538,7 +537,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_DATA);
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
     }
 
 
@@ -564,7 +563,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume,
             int tableKind
     ) {
-        if (tableKind != TableUtils.TABLE_KIND_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
+        if (tableKind != TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT && Chars.startsWith(struct.getTableName(), configuration.getParquetExportTableNamePrefix())) {
             throw CairoException.nonCritical().put("table name cannot start with reserved prefix [tableName=").put(struct.getTableName())
                     .put(", parquetExportPrefix=").put(configuration.getParquetExportTableNamePrefix())
                     .put(']');

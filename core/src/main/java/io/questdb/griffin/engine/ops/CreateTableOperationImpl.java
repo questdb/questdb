@@ -87,7 +87,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int partitionByPosition;
     private CopyDataProgressReporter reporter;
     private int selectTextPosition;
-    private int tableKind = TableUtils.TABLE_KIND_DATA;
+    private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
     private int tableNamePosition;
     private String timestampColumnName;
