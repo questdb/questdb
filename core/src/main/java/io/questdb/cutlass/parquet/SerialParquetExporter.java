@@ -156,7 +156,7 @@ public class SerialParquetExporter implements Closeable {
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
-            if (circuitBreaker.checkIfTripped() || cairoEngine.isClosing()) {
+            if (circuitBreaker.checkIfTripped()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
@@ -176,7 +176,7 @@ public class SerialParquetExporter implements Closeable {
 
                 try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                     for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                        if (circuitBreaker.checkIfTripped() || cairoEngine.isClosing()) {
+                        if (circuitBreaker.checkIfTripped()) {
                             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                             throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                         }
