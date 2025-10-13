@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -48,10 +49,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
-            RecordMetadata virtualMetadata,
-            PriorityMetadata priorityMetadata,
-            ObjList<Function> functions,
-            RecordCursorFactory base,
+            @NotNull RecordMetadata virtualMetadata,
+            @NotNull PriorityMetadata priorityMetadata,
+            @NotNull ObjList<Function> functions,
+            @NotNull RecordCursorFactory base,
             int virtualColumnReservedSlots,
             boolean allowMemoization
     ) {

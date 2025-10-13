@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
@@ -51,9 +52,9 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     protected RecordCursor baseCursor;
 
     public VirtualFunctionRecordCursor(
-            PriorityMetadata priorityMetadata,
-            ObjList<Function> functions,
-            ObjList<Function> memoizers,
+            @NotNull PriorityMetadata priorityMetadata,
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<Function> memoizers,
             boolean supportsRandomAccess,
             int virtualColumnReservedSlots
     ) {
