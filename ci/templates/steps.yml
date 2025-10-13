@@ -10,7 +10,7 @@ steps:
   - bash: |
       sudo apt-get update && sudo apt-get install -y maven
     displayName: "Install Maven"
-    condition: eq(variables['Agent.Pool'], 'vmss-uksouth-spot')
+    condition: eq(variables['poolName'], 'vmss-uksouth-spot')
 
   - task: Cache@2
     displayName: "Cache non-default Maven"
