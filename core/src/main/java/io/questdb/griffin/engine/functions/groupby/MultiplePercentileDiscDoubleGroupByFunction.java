@@ -51,13 +51,13 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final GroupByDoubleList listA;
-    private final GroupByDoubleList listB;
-    private final Function percentileFunc;
-    private final int percentilePos;
-    private DirectArray out;
-    private int valueIndex;
+    protected final Function arg;
+    protected final GroupByDoubleList listA;
+    protected final GroupByDoubleList listB;
+    protected final Function percentileFunc;
+    protected final int percentilePos;
+    protected DirectArray out;
+    protected int valueIndex;
 
     public MultiplePercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
