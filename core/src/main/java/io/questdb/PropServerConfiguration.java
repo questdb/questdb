@@ -1034,7 +1034,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_NAP_THRESHOLD, 7_000);
             this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10_000);
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
-            this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, 300_000);
 
             this.httpSettingsReadOnly = getBoolean(properties, env, PropertyKey.HTTP_SETTINGS_READONLY, false);
 
@@ -1281,6 +1280,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             // obsolete
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Micros.SECOND_MILLIS);
             this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
+
+            // Make export timeout at least as long as query timeout by default
+            this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, Math.max(queryTimeout, 300_000));
 
             this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);

@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
-import io.questdb.cutlass.parquet.SerialParquetExporter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -51,7 +51,7 @@ public class CopyExportResult {
     public void cleanUpTempPath(FilesFacade ff) {
         if (needCleanUp) {
             path.clear(cleanUpFileLength, path.isAscii());
-            SerialParquetExporter.cleanupDir(ff, path);
+            TableUtils.cleanupDirQuiet(ff, path);
         }
     }
 

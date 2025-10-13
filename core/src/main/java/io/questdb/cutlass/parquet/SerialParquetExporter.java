@@ -52,7 +52,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
@@ -85,17 +84,6 @@ public class SerialParquetExporter implements Closeable {
         this.toParquet = new Path();
         this.fromParquet = new Path();
         this.tempPath = new Path();
-    }
-
-    public static void cleanupDir(FilesFacade ff, Utf8Sequence dir) {
-        try {
-            Path dirPath = Path.getThreadLocal(dir);
-            if (ff.exists(dirPath.slash$())) {
-                ff.rmdir(dirPath);
-            }
-        } catch (Throwable e) {
-            LOG.error().$("error during temp directory cleanup [path=").$(dir).$(" error=").$(e).$(']').$();
-        }
     }
 
     @Override
@@ -300,7 +288,7 @@ public class SerialParquetExporter implements Closeable {
             }
             if (exportResult == null || numOfFiles == 0) {
                 tempPath.trimTo(tempBaseDirLen);
-                cleanupDir(ff, tempPath);
+                TableUtils.cleanupDirQuiet(ff, tempPath, LOG);
             }
         }
         return phase;

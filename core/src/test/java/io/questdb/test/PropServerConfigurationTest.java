@@ -818,6 +818,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testExportTimeoutDependsOnQueryTimeout() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "600s");
+        var propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(600_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+
+        properties = new Properties();
+        propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(300_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+    }
+
+    @Test
     public void testHttpConnectionLimits() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
@@ -2033,15 +2045,7 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private static class FuzzItem {
-        private final Function<HttpFullFatServerConfiguration, ObjList<String>> getter;
-        private final String key;
-        private final String value;
-
-        FuzzItem(String key, String value, Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
-            this.key = key;
-            this.value = value;
-            this.getter = getter;
-        }
+    private record FuzzItem(String key, String value,
+                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
     }
 }

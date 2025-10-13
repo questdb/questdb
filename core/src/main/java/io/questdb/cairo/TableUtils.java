@@ -305,6 +305,23 @@ public final class TableUtils {
         return checksum;
     }
 
+    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
+        cleanupDirQuiet(ff, dir, LOG);
+    }
+
+    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
+        try {
+            Path dirPath = Path.getThreadLocal(dir);
+            if (ff.exists(dirPath.slash$())) {
+                if (!ff.rmdir(dirPath)) {
+                    log.error().$("error during temp directory cleanup [path=").$(dir).$(" errno=").$(Os.errno()).$(']').$();
+                }
+            }
+        } catch (Throwable e) {
+            log.error().$("error during temp directory cleanup [path=").$(dir).$(" error=").$(e).$(']').$();
+        }
+    }
+
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
