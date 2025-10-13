@@ -158,7 +158,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testInvalidPercentile1() throws Exception {
         assertException(
                 "select percentile_disc(x::double, 1.1) from long_sequence(1)",
-                24,
+                34,
                 "invalid percentile"
         );
     }
@@ -167,7 +167,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testInvalidPercentile2() throws Exception {
         assertException(
                 "select percentile_disc(x::double, -1) from long_sequence(1)",
-                24,
+                34,
                 "invalid percentile"
         );
     }
@@ -176,7 +176,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testInvalidPercentilePacked1() throws Exception {
         assertException(
                 "select percentile_disc(x::double, 1.1) from long_sequence(1)",
-                24,
+                34,
                 "invalid percentile"
         );
     }
@@ -185,7 +185,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testInvalidPercentilePacked2() throws Exception {
         assertException(
                 "select percentile_disc(x::double, -1) from long_sequence(1)",
-                24,
+                34,
                 "invalid percentile"
         );
     }

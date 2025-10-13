@@ -29,14 +29,17 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
@@ -47,15 +50,16 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
+public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final GroupByDoubleList listA;
     private final GroupByDoubleList listB;
     private final Function percentileFunc;
     private final int percentilePos;
+    private DirectArray out;
     private int valueIndex;
 
-    public PercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
+    public MultiplePercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
         this.percentileFunc = percentileFunc;
         int initialCapacity = 4;
@@ -68,12 +72,14 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     public void clear() {
         listA.resetPtr();
         listB.resetPtr();
+        out.clear();
     }
 
     @Override
     public void close() {
         Misc.free(arg);
         Misc.free(percentileFunc);
+        Misc.free(out);
     }
 
     @Override
@@ -103,23 +109,39 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
-    public double getDouble(Record record) {
+    public ArrayView getArray(Record record) {
         long listPtr = record.getLong(valueIndex);
         if (listPtr <= 0) {
-            return Double.NaN;
+            out.ofNull();
+            return out;
         }
         listA.of(listPtr);
         int size = listA.size();
         if (size == 0) {
-            return Double.NaN;
+            out.ofNull();
+            return out;
         }
         listA.sort(0, size - 1);
-        double percentile = percentileFunc.getDouble(record);
-        if (percentile < 0.0d || percentile > 1.0d) {
-            throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+
+
+        ArrayView percentiles = percentileFunc.getArray(record);
+        FlatArrayView view = percentiles.flatView();
+        int view_length = view.length();
+        if (out.isNull()) {
+            out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            out.setDimLen(0, view_length);
+            out.applyShape();
         }
-        int N = (int) Math.max(0, Math.ceil(size * percentile) - 1);
-        return listA.getQuick(N);
+
+        for (int i = 0, len = view.length(); i < len; i++) {
+            double percentile = percentileFunc.getDouble(record);
+            if (percentile < 0.0d || percentile > 1.0d) {
+                throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+            }
+            int N = (int) Math.ceil(size * percentile) - 1;
+            out.putDouble(i, listA.getQuick(N));
+        }
+        return out;
     }
 
     @Override
