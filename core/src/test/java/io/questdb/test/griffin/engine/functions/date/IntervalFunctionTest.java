@@ -706,11 +706,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     "select true as bool from x where ts in null::interval",
                     "VirtualRecord\n" +
                             "  functions: [true]\n" +
-                            "    Async Filter workers: 1\n" +
-                            "      filter: ts in (null, null) [pre-touch]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n"
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Interval forward scan on: x\n" +
+                            "          intervals: [(\"MIN\",\"MIN\")]\n"
             );
         });
     }

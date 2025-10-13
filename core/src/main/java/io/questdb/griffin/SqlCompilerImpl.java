@@ -3356,7 +3356,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
-        final long beginNanos = configuration.getMicrosecondClock().getTicks();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
         try {
             final int status = executionContext.getTableStatus(path, createMatViewOp.getTableName());
@@ -3453,7 +3453,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
         final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
-        long beginNanos = configuration.getMicrosecondClock().getTicks();
+        long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
             executionContext.setUseSimpleCircuitBreaker(true);
