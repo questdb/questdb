@@ -4,13 +4,23 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-griffin:
+        linux-griffin-root:
           imageName: "ubuntu-latest"
           poolName: "vmss-uksouth-spot"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-griffin"
-          includeTests: "**/griffin/**"
+          testset: "coverage-griffin-root"
+          includeTests: "**/griffin/*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-griffin-sub:
+          imageName: "ubuntu-latest"
+          poolName: "vmss-uksouth-spot"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-griffin-sub"
+          includeTests: "**/griffin/**/*"
+          excludeTests: "**/griffin/*"
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz1:
