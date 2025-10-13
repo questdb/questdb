@@ -42,6 +42,9 @@ public class GroupByLongListTest extends AbstractCairoTest {
                 list.setAllocator(allocator);
                 list.of(0);
 
+                Assert.assertEquals(0, list.size());
+                Assert.assertEquals(16, list.capacity());
+
                 final int N = 1000;
 
                 for (int i = 0; i < N; i++) {

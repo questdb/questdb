@@ -201,7 +201,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void setNull(MapValue mapValue) {
-        this.supportsParallelism();
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
@@ -227,7 +226,9 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         int maxSize = -1;
         int maxIndex = -1;
         for (int i = 0, n = list.size(); i < n; i++) {
-            if (setA.of(list.get(i)).size() > maxSize) {
+            setA.of(list.get(i));
+            final int size = setA.size();
+            if (size > maxSize) {
                 maxSize = setA.size();
                 maxIndex = i;
             }
