@@ -196,6 +196,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private boolean masterHasNext;
         private TimestampIterator prevIter;
         private long slaveSize;
+        private long firstSlaveOffsetValue;  // Cache the first slave's offset value
 
         public TimestampLadderRecordCursor(
                 CairoConfiguration configuration,
@@ -264,10 +265,13 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-            currentIter.next();
+            // Store the master and slave records index BEFORE any operations that might reposition recordC
+            Record masterForEmit = currentIter.getMasterRecord();
+            int slaveIndexForEmit = currentIter.slaveRecordIndex;
 
-            // Update the JoinRecord to point to current iterator's records
-            record.of(currentIter.getMasterRecord(), currentIter.getSlaveRecord());
+            // Advance current iterator to next position
+            // This will call updateNextTimestamp(), which repositions recordC
+            currentIter.next();
 
             // Determine the next iterator to use
             TimestampIterator nextIter = currentIter.nextIterator();
@@ -282,13 +286,10 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 long nextIterTimestamp = nextIter.peekNext();
                 if (nextIterTimestamp != Long.MIN_VALUE) {
                     // Peek at the next master row's first timestamp
+                    // Use cached firstSlaveOffsetValue to avoid repositioning recordC
                     Record nextMasterRecord = masterCursor.getRecord();
                     long nextMasterTimestamp = nextMasterRecord.getTimestamp(masterTimestampColumnIndex);
-                    // Get first slave offset
-                    long firstSlaveRecordOffset = slaveRecordOffsets.getQuick(0);
-                    Record firstSlaveRecord = slaveRecordArray.getRecordAt(firstSlaveRecordOffset);
-                    long firstSlaveOffset = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
-                    long nextMasterFirstTimestamp = nextMasterTimestamp + firstSlaveOffset;
+                    long nextMasterFirstTimestamp = nextMasterTimestamp + firstSlaveOffsetValue;
 
                     if (nextMasterFirstTimestamp < nextIterTimestamp) {
                         // Activate the new master row by inserting after current iterator
@@ -314,13 +315,24 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 if (nextIter == null) {
                     // Last iterator exhausted, we're done
                     currentIter = null;
-                    return true;  // But return the current row first
+                    // But first emit the row we stored above
+                    long slaveOffset = slaveRecordOffsets.getQuick(slaveIndexForEmit);
+                    Record slaveForEmit = slaveRecordArray.getRecordAt(slaveOffset);
+                    record.of(masterForEmit, slaveForEmit);
+                    return true;
                 }
             } else {
                 prevIter = currentIter;
             }
 
+            // Move to the next iterator in the circular list
             currentIter = nextIter;
+
+            // Update the JoinRecord with the records we stored BEFORE advancing
+            // Position recordC at the stored slave index
+            long slaveOffset = slaveRecordOffsets.getQuick(slaveIndexForEmit);
+            Record slaveForEmit = slaveRecordArray.getRecordAt(slaveOffset);
+            record.of(masterForEmit, slaveForEmit);
             return true;  // We have a row to emit
         }
 
@@ -387,6 +399,13 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
                 // Cache the slave size for iteration
                 slaveSize = slaveRecordOffsets.size();
+
+                // Cache the first slave's offset value to avoid repositioning recordC later
+                if (slaveSize > 0) {
+                    long firstSlaveRecordOffset = slaveRecordOffsets.getQuick(0);
+                    Record firstSlaveRecord = slaveRecordArray.getRecordAt(firstSlaveRecordOffset);
+                    firstSlaveOffsetValue = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
+                }
             }
 
             // Reset iterator state for new execution
