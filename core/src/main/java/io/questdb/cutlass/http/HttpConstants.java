@@ -43,6 +43,7 @@ public final class HttpConstants {
     public static final Utf8String EXPORT_PARQUET_OPTION_PARTITION_BY = new Utf8String("partition_by");
     public static final Utf8String EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING = new Utf8String("raw_array_encoding");
     public static final Utf8String EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE = new Utf8String("row_group_size");
+    public static final Utf8String EXPORT_PARQUET_OPTION_RESPONSE_MODE = new Utf8String("rmode");
     public static final Utf8String EXPORT_PARQUET_OPTION_STATISTICS_ENABLED = new Utf8String("statistics_enabled");
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");

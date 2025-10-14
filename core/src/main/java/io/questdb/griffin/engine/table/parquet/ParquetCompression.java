@@ -30,9 +30,6 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.str.StringSink;
 
 public class ParquetCompression {
-    private static final StringSink CODEC_NAMES = new StringSink(64);
-    private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>(16);
-    private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap(32);
     public static final int BROTLI_MAX_COMPRESSION_LEVEL = 11;
     public static final int BROTLI_MIN_COMPRESSION_LEVEL = 0;
     public static final int COMPRESSION_UNCOMPRESSED = 0; // 0
@@ -43,12 +40,14 @@ public class ParquetCompression {
     public static final int COMPRESSION_LZ4 = COMPRESSION_BROTLI + 1; // 5
     public static final int COMPRESSION_ZSTD = COMPRESSION_LZ4 + 1; // 6
     public static final int COMPRESSION_LZ4_RAW = COMPRESSION_ZSTD + 1; // 7
-    public static final int COMPRESSION_DEFAULT = COMPRESSION_LZ4_RAW;
     static final int MAX_ENUM_INT = COMPRESSION_LZ4_RAW + 1;
     public static final int GZIP_MAX_COMPRESSION_LEVEL = 10;
     public static final int GZIP_MIN_COMPRESSION_LEVEL = 0;
     public static final int ZSTD_MAX_COMPRESSION_LEVEL = 22;
     public static final int ZSTD_MIN_COMPRESSION_LEVEL = 1;
+    private static final StringSink CODEC_NAMES = new StringSink(64);
+    private static final IntObjHashMap<CharSequence> codecToNameMap = new IntObjHashMap<>(16);
+    private static final LowerCaseCharSequenceIntHashMap nameToCodecMap = new LowerCaseCharSequenceIntHashMap(32);
 
     public static void addCodecNamesToException(SqlException e) {
         e.put(CODEC_NAMES);
@@ -65,27 +64,39 @@ public class ParquetCompression {
     static {
         nameToCodecMap.put("uncompressed", COMPRESSION_UNCOMPRESSED);
         nameToCodecMap.put("zstd", COMPRESSION_ZSTD);
-        nameToCodecMap.put("lz4", COMPRESSION_LZ4);
+
+        // lz4 is not supported by parquet writer
+        // nameToCodecMap.put("lz4", COMPRESSION_LZ4);
         nameToCodecMap.put("gzip", COMPRESSION_GZIP);
         nameToCodecMap.put("lz4_raw", COMPRESSION_LZ4_RAW);
-        nameToCodecMap.put("lzo", COMPRESSION_LZO);
+
+        // lzo is not supported by parquet writer
+        // nameToCodecMap.put("lzo", COMPRESSION_LZO);
+
         nameToCodecMap.put("snappy", COMPRESSION_SNAPPY);
         nameToCodecMap.put("brotli", COMPRESSION_BROTLI);
         nameToCodecMap.put("default", COMPRESSION_LZ4_RAW);
 
         codecToNameMap.put(COMPRESSION_UNCOMPRESSED, "uncompressed");
         codecToNameMap.put(COMPRESSION_ZSTD, "zstd");
-        codecToNameMap.put(COMPRESSION_LZ4, "lz4");
+
+        // lz4 is not supported by parquet writer
+        // codecToNameMap.put(COMPRESSION_LZ4, "lz4");
         codecToNameMap.put(COMPRESSION_GZIP, "gzip");
         codecToNameMap.put(COMPRESSION_LZ4_RAW, "lz4_raw");
-        codecToNameMap.put(COMPRESSION_LZO, "lzo");
+
+        // lzo is not supported by parquet writer
+        // codecToNameMap.put(COMPRESSION_LZO, "lzo");
         codecToNameMap.put(COMPRESSION_SNAPPY, "snappy");
         codecToNameMap.put(COMPRESSION_BROTLI, "brotli");
 
         for (int i = 0, n = MAX_ENUM_INT; i < n; i++) {
-            CODEC_NAMES.put(codecToNameMap.get(i));
-            if (i + 1 != n) {
-                CODEC_NAMES.put(", ");
+            var name = codecToNameMap.get(i);
+            if (name != null) {
+                CODEC_NAMES.put(codecToNameMap.get(i));
+                if (i + 1 != n) {
+                    CODEC_NAMES.put(", ");
+                }
             }
         }
     }

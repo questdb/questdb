@@ -90,9 +90,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     // only used in Parquet export
     static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
     static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
-    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
-    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 13
-    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 14
+    static final int QUERY_PARQUET_SEND_HEADER = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
+    static final int QUERY_PARQUET_TO_PARQUET_FILE = QUERY_PARQUET_SEND_HEADER + 1; // 14
+    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_TO_PARQUET_FILE + 1; // 13
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 15
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 15
 
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
@@ -1034,7 +1036,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (sink.length() == 0) {
+                if (sink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);

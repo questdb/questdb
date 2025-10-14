@@ -71,6 +71,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
     private ExpressionNode fileName;
     private int format;
     private boolean header;
+    private boolean noDelay;
     private int parquetVersion;
     private int partitionBy;
     private boolean rawArrayEncoding;
@@ -115,6 +116,7 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         statisticsEnabled = true;
         rawArrayEncoding = false;
         compressionLevelPos = 0;
+        noDelay = false;
     }
 
     public int getAtomicity() {
@@ -165,6 +167,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
 
     public int getSelectTextStartPos() {
         return selectStartPos;
+    }
+
+    public boolean isNoDelay() {
+        return noDelay;
     }
 
     @Override
@@ -269,6 +275,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
         this.header = header;
     }
 
+    public void setNoDelayTo(boolean noDelay) {
+        this.noDelay = noDelay;
+    }
+
     public void setParquetDefaults(CairoConfiguration configuration) {
         compressionCodec = configuration.getParquetExportCompressionCodec();
         compressionLevel = configuration.getParquetExportCompressionLevel();
@@ -335,8 +345,6 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
             switch (compressionCodec) {
                 case COMPRESSION_UNCOMPRESSED:
                 case COMPRESSION_SNAPPY:
-                case COMPRESSION_LZO:
-                case COMPRESSION_LZ4:
                 case COMPRESSION_LZ4_RAW:
                     // These codecs don't use compression level
                     break;
@@ -356,6 +364,10 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
                         throw SqlException.$(compressionLevelPos, "ZSTD compression level must be between 1 and 22");
                     }
                     break;
+                case COMPRESSION_LZO:
+                    throw SqlException.$(compressionLevelPos, "compression LZO is not supported");
+                case COMPRESSION_LZ4:
+                    throw SqlException.$(compressionLevelPos, "compression LZ4 is not supported");
             }
         }
     }

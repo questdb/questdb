@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.CopyExportResult;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -51,7 +52,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     int columnIndex;
     boolean columnValueFullySent = true;
-    CharSequence copyID;
+    long copyID = -1;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
@@ -71,6 +72,8 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long skip;
     long stop;
     boolean waitingForCopy;
+    private CreateTableOperation createParquetOp;
+    private String parquetExportTableName;
     private boolean queryCacheable = false;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, FilesFacade filesFacade) {
@@ -108,7 +111,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
-        copyID = null;
+        copyID = -1;
+        createParquetOp = Misc.free(createParquetOp);
+        parquetExportTableName = null;
         waitingForCopy = false;
         parquetFileOffset = 0;
         exportModel.clear();
@@ -132,6 +137,22 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     public long getFd() {
         return httpConnectionContext.getFd();
+    }
+
+    public String getParquetExportTableName() {
+        return parquetExportTableName;
+    }
+
+    public CreateTableOperation getParquetTempTableCreate() {
+        return createParquetOp;
+    }
+
+    public void setParquetExportTableName(String tableName) {
+        this.parquetExportTableName = tableName;
+    }
+
+    public void setParquetTempTableCreate(CreateTableOperation createOp) {
+        this.createParquetOp = createOp;
     }
 
     private void cleanupParquetState() {

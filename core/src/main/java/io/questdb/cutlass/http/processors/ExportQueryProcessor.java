@@ -82,6 +82,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -341,6 +342,46 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
+    private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
+        assert state.copyID == -1;
+        CopyExportContext.ExportTaskEntry entry = null;
+        try {
+            var securityContext = context.getSecurityContext();
+            var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            var copyExportContext = engine.getCopyExportContext();
+            CopyExportResult exportResult = state.getExportResult();
+
+            entry = copyExportContext.assignExportEntry(
+                    securityContext,
+                    state.sqlText,
+                    state.fileName,
+                    sqlExecutionCircuitBreaker,
+                    CopyExportContext.CopyTrigger.HTTP
+            );
+
+            state.copyID = entry.getId();
+            exportResult.setCopyID(state.copyID);
+            String tableName = getTableName(state.copyID);
+            state.setParquetExportTableName(tableName);
+
+            var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
+                    sqlExecutionContext,
+                    state.sqlText,
+                    state.getExportModel().getPartitionBy(),
+                    tableName,
+                    "",
+                    0
+            );
+
+            state.setParquetTempTableCreate(createOp);
+        } catch (Throwable th) {
+            if (entry != null) {
+                engine.getCopyExportContext().releaseEntry(entry);
+                state.clear();
+            }
+            throw th;
+        }
+    }
 
     private boolean configureParquetOptions(
             HttpRequestHeader request,
@@ -410,6 +451,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
         }
 
+        // Handle rmode
+        DirectUtf8Sequence rmode = request.getUrlParam(EXPORT_PARQUET_OPTION_RESPONSE_MODE);
+        if (rmode != null && Utf8s.equalsIgnoreCaseAscii("nodelay", rmode)) {
+            exportModel.setNoDelayTo(true);
+        }
+
         // Handle data_page_size option
         DirectUtf8Sequence dataPageSize = request.getUrlParam(EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE);
         if (dataPageSize != null && dataPageSize.size() > 0) {
@@ -464,44 +511,20 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return true;
     }
 
-    private void copyQueryToParquetFile(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
-        if (state.copyID == null) {
+    private void copyQueryToParquetFile(ExportQueryProcessorState state) throws SqlException {
+        if (state.copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = null;
             try {
-                var securityContext = context.getSecurityContext();
                 var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
                 var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
-
-                entry = copyExportContext.assignExportEntry(
-                        securityContext,
-                        state.sqlText,
-                        state.fileName,
-                        sqlExecutionCircuitBreaker,
-                        CopyExportContext.CopyTrigger.HTTP
-                );
-                long copyID = entry.getId();
-                exportResult.setCopyID(copyID);
-
-                var sink = Misc.getThreadLocalSink();
-                sink.put(engine.getConfiguration().getParquetExportTableNamePrefix());
-                Numbers.appendHex(sink, copyID, true);
-                String tableName = sink.toString();
-
-                var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
-                        sqlExecutionContext,
-                        state.sqlText,
-                        state.getExportModel().getPartitionBy(),
-                        tableName,
-                        "",
-                        0
-                );
+                entry = copyExportContext.getEntry(state.copyID);
 
                 task.of(
                         entry,
-                        createOp,
+                        state.getParquetTempTableCreate(),
                         exportResult,
-                        tableName,
+                        state.getParquetExportTableName(),
                         state.fileName,
                         state.getExportModel().getCompressionCodec(),
                         state.getExportModel().getCompressionLevel(),
@@ -519,6 +542,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     engine.getCopyExportContext().releaseEntry(entry);
                 }
             }
+        } else {
+            throw CairoException.nonCritical().put("invalid export state, cannot find export id");
         }
     }
 
@@ -540,7 +565,32 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.queryState = JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT;
                     case JsonQueryProcessorState.QUERY_PARQUET_EXPORT_INIT:
                         try {
-                            copyQueryToParquetFile(context, state);
+                            compileParquetExport(context, state);
+                        } catch (SqlException | CairoException e) {
+                            sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
+                            break OUT;
+                        } catch (Throwable e) {
+                            sendException(response, 0, e.getMessage(), state);
+                            break OUT;
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER:
+                        if (state.getExportModel().isNoDelay()) {
+                            try {
+                                sendParquetHeader(response, state);
+                            } catch (CairoException e) {
+                                sendException(response, 0, e.getFlyweightMessage(), state);
+                                break OUT;
+                            }
+                        }
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE;
+                        // fall through
+
+                    case JsonQueryProcessorState.QUERY_PARQUET_TO_PARQUET_FILE:
+                        try {
+                            copyQueryToParquetFile(state);
                         } catch (SqlException | CairoException e) {
                             sendException(response, e.getPosition(), e.getFlyweightMessage(), state);
                             break OUT;
@@ -724,6 +774,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
+    private @NotNull String getTableName(long copyID) {
+        var sink = Misc.getThreadLocalSink();
+        sink.put(engine.getConfiguration().getParquetExportTableNamePrefix());
+        Numbers.appendHex(sink, copyID, true);
+        return sink.toString();
+    }
+
     private LogRecord info(ExportQueryProcessorState state) {
         return LOG.info().$('[').$(state.getFd()).$("] ");
     }
@@ -743,9 +800,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         state.parquetFileSize = ff.length(state.parquetFileFd);
-        state.parquetFileOffset = 0;
         state.parquetFileAddress = TableUtils.mapRO(ff, state.parquetFileFd, state.parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
-        header(context.getChunkedResponse(), state, 200);
+
+        // in Nodelay mode header is sent before parquet file is read
+        // so no need to send it here
+        if (!state.getExportModel().isNoDelay()) {
+            header(context.getChunkedResponse(), state, 200);
+        }
     }
 
     private void internalError(
@@ -1048,6 +1109,15 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             CharSequence message,
             ExportQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.parquetFileOffset > 0) {
+            // We already sent a partial response to the client.
+            // Give up and close the connection.
+            LOG.error().$("partial parquet response sent, closing connection on error [fd=").$(state.getFd())
+                    .$(", parquetFileOffset=").$(state.parquetFileOffset)
+                    .$(", errorMessage=").$safe(message)
+                    .I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
         headerJsonError(response);
         JsonQueryProcessorState.prepareExceptionJson(response, position, message, state.sqlText);
     }
@@ -1065,6 +1135,17 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state.parquetFileOffset < state.parquetFileSize) {
             response.sendChunk(false);
         }
+    }
+
+    private void sendParquetHeader(HttpChunkedResponse response, ExportQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(response, state, 200);
+
+        // We send first 3 byes of parquet file, that is always "PAR" in ascii
+        // as a chunk to trigger download to open file save dialog and start background download browsers.
+        response.put("PAR");
+        state.parquetFileOffset = 3;
+        response.bookmark();
+        response.sendChunk(false);
     }
 
     private void syntaxError(

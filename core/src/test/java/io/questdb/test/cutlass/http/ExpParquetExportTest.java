@@ -26,9 +26,12 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -43,6 +46,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -464,36 +468,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "gzip");
                     params.put("row_group_size", "500");
 
-                    Thread thread = new Thread(() -> {
-                        try {
-                            long copyID;
-                            do {
-                                copyID = engine.getCopyExportContext().getActiveExportId();
-                            } while (copyID == -1);
-                            Os.sleep(500);
-
-                            StringSink sink = new StringSink();
-                            Numbers.appendHex(sink, copyID, true);
-                            String copyIDStr = sink.toString();
-                            sink.clear();
-                            sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
-                            try {
-                                assertSql(engine, sqlExecutionContext, sink.toString(), sink, "id\tstatus\n" +
-                                        copyIDStr + "\tcancelled\n");
-                            } catch (SqlException e) {
-                                throw new RuntimeException(e);
-                            }
-                            // wait cancel finish
-                            do {
-                                copyID = engine.getCopyExportContext().getActiveExportId();
-                            } while (copyID != -1);
-                        } finally {
-                            Path.clearThreadLocals();
-                        }
-                    });
+                    Thread thread = startCancelThread(engine, sqlExecutionContext);
                     thread.start();
                     String expectedError = "cancelled by user";
                     testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
+                    thread.join();
+                });
+    }
+
+    @Test
+    public void testParquetExportCancelNodelay() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    params.clear();
+                    params.put("query", "generate_series(0, '9999-01-01', '1U')");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("row_group_size", "500");
+                    params.put("rmode", "nodelay");
+
+                    Thread thread = startCancelThread(engine, sqlExecutionContext);
+                    thread.start();
+                    String expectedError = "cancelled by user";
+                    try {
+                        testHttpClient.assertGetContains("/exp", expectedError, params, null, null);
+                        Assert.fail("server should disconnect");
+                    } catch (HttpClientException e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                    }
                     thread.join();
                 });
     }
@@ -531,17 +533,81 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     engine.execute("CREATE TABLE codec_zstd_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
                     params.clear();
                     params.put("fmt", "parquet");
+                    params.put("query", "SELECT * FROM codec_zstd_test");
+
                     params.put("compression_codec", "lz4_raw");
-                    testHttpClient.assertGetParquet("/exp", 399, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "PAR1\u0015\u0000\u0015\\\u0015N,\u0015\n" +
+                                    "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+                            params,
+                            null,
+                            null
+                    );
 
                     params.put("compression_codec", "lzo");
-                    testHttpClient.assertGetParquet("/exp", 276, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "{\"query\":\"SELECT * FROM codec_zstd_test\"," +
+                                    "\"error\":\"invalid compression codec[lzo], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\"," +
+                                    "\"position\":0}",
+                            params,
+                            null,
+                            null
+                    );
 
                     params.put("compression_codec", "lz4");
-                    testHttpClient.assertGetParquet("/exp", 276, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "{\"query\":\"SELECT * FROM codec_zstd_test\"," +
+                                    "\"error\":\"invalid compression codec[lz4], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\"," +
+                                    "\"position\":0}",
+                            params,
+                            null,
+                            null
+                    );
 
                     params.put("compression_codec", "brotli");
-                    testHttpClient.assertGetParquet("/exp", 384, params, "SELECT * FROM codec_zstd_test");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "PAR1\u0015\u0000\u0015\\\u00150,\u0015\n" +
+                                    "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+                            params,
+                            null,
+                            null
+                    );
+
+                    // Check nodealy when client sends PAR first produces exactly same output
+                    params.put("rmode", "nodelay");
+                    params.put("compression_codec", "brotli");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "PAR1\u0015\u0000\u0015\\\u00150,\u0015\n" +
+                                    "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+                            params,
+                            null,
+                            null
+                    );
+
+                    params.put("compression_codec", "lz4_raw");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "PAR1\u0015\u0000\u0015\\\u0015N,\u0015\n" +
+                                    "\u0015\u0000\u0015\u0006\u0015\u0006\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+                            params,
+                            null,
+                            null
+                    );
+
+                    params.put("parquet_version", "2");
+                    params.put("compression_codec", "brotli");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "PAR1\u0015\u0006\u0015T\u0015*\\\u0015\n\u0015\u0000\u0015\n\u0015\u0000\u0015\u0004\u0015\u0000\u0011\u001C6\u0000(\b\u0005\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0018\b\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0003\u001F",
+                            params,
+                            null,
+                            null
+                    );
                 });
     }
 
@@ -760,7 +826,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("query", "SELECT * FROM codec_invalid_test");
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "invalid_codec");
-                    String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, lzo, brotli, lz4, zstd, lz4_raw\",\"position\":0}";
+                    String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\",\"position\":0}";
                     testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
     }
@@ -981,6 +1047,26 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportTimeoutNodelay() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    params.clear();
+                    params.put("query", "generate_series(0, '9999-01-01', '1U')");
+                    params.put("fmt", "parquet");
+                    params.put("timeout", "1");
+                    params.put("rmode", "nodelay");
+
+                    try {
+                        testHttpClient.assertGetContains("/exp", "nothing", params, null, null);
+                        Assert.fail();
+                    } catch (HttpClientException e) {
+                        TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                    }
+
+                });
+    }
+
+    @Test
     public void testParquetExportWithMultipleDataTypes() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1000,5 +1086,35 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     testHttpClient.assertGetParquet("/exp", 2075, tableName);
                 });
+    }
+
+    private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
+        return new Thread(() -> {
+            try {
+                long copyID;
+                do {
+                    copyID = engine.getCopyExportContext().getActiveExportId();
+                } while (copyID == -1);
+                Os.sleep(500);
+
+                StringSink sink = new StringSink();
+                Numbers.appendHex(sink, copyID, true);
+                String copyIDStr = sink.toString();
+                sink.clear();
+                sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
+                try {
+                    assertSql(engine, sqlExecutionContext, sink.toString(), sink, "id\tstatus\n" +
+                            copyIDStr + "\tcancelled\n");
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                // wait cancel finish
+                do {
+                    copyID = engine.getCopyExportContext().getActiveExportId();
+                } while (copyID != -1);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
     }
 }
