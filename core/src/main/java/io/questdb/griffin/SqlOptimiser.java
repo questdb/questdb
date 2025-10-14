@@ -5248,63 +5248,47 @@ public class SqlOptimiser implements Mutable {
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
                 tempColumns.clear();
                 tempIntList.clear();
-                tempBoolList.clear();
                 int needRemoveColumns = 0;
                 boolean timestampOnly = true;
 
-                // Check if there are aliased timestamp references mixed with aggregate functions
-                // in the same expression, e.g.
-                // `select timestamp a, count() / timestamp::long b`
-                // While we could deal with these by extracting aggregate functions and using
-                // them in the outer virtual model, for now, we don't bother with this.
-                for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                    final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                    final boolean isFunctionWithTsColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
-                    if (isFunctionWithTsColumn && checkForChildAggregates(qc.getAst())) {
-                        // yes, that's our case, so drop out early
-                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
-
-                        // join models
-                        for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                            QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
-                        }
-
-                        // unions
-                        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
-                        return model;
-                    }
-                    tempBoolList.add(isFunctionWithTsColumn);
-                }
-
                 // Check if there are aliased timestamp-only references, e.g.
                 // `select timestamp a, timestamp b, timestamp c`
+                // or it's an expression with timestamp references and aggregate functions, e.g.
+                // `select timestamp, count() / timestamp::long`
                 // We will remove copies from this model and add them back in the wrapper.
+                // The aggregate functions need to be added to the model and referenced in the wrapper.
 
                 // columnToAlias map is lossy, it only stores "last" alias (non-deterministic)
                 // to find other aliases we have to loop thru all the columns. We are removing
                 // columns in this loop, that is why there is no auto-increment.
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                    // use the original column index "k" when checking for functions with timestamp
-                    final boolean isFunctionWithTsColumn = tempBoolList.get(k);
-
+                    final boolean isFunctionWithTsColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
                     if (
                             isFunctionWithTsColumn ||
-                                    // check all literals that refer timestamp column, except the one
+                                    // also check all literals that refer timestamp column, except the one
                                     // with our chosen timestamp alias
                                     (timestampAlias != null && qc.getAst().type == LITERAL
                                             && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
                                             && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias))
                     ) {
                         model.removeColumn(i);
+                        n--;
+
+                        if (checkForChildAggregates(qc.getAst())) {
+                            // Ok, it's an expression with mixed timestamp references and aggregate functions.
+                            // Replace aggregate functions with aliases and add the functions to the group by model.
+                            // This way an expression like `select timestamp, count() / timestamp::long`
+                            // Is turned into `select timestamp, count / timestamp::long from (select count(), ...`
+                            needRemoveColumns += rewriteTimestampMixedWithAggregates(qc.getAst(), model);
+                        }
+
                         // Collect indexes of the removed columns, as they appear in the original list.
                         // This is a "deleting" loop, the "i" is not representative of the original column
                         // positions, which is why we need another index "k".
                         tempIntList.add(k);
                         tempColumns.add(qc);
-                        n--;
                         wrapAction |= SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
                         if (isFunctionWithTsColumn) {
                             timestampOnly = false;
@@ -6669,6 +6653,62 @@ public class SqlOptimiser implements Mutable {
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteSingleFirstLastGroupBy(joinModels.getQuick(i));
         }
+    }
+
+    private int rewriteTimestampMixedWithAggregates(@NotNull ExpressionNode node, @NotNull QueryModel sampleByModel) throws SqlException {
+        int insertedAggregates = 0;
+
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.rhs != null) {
+                if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
+                    // replace the aggregate with an alias;
+                    final QueryColumn existingColumn = findQueryColumnByAst(sampleByModel.getBottomUpColumns(), node.rhs);
+                    final CharSequence aggregateAlias;
+                    if (existingColumn == null) {
+                        // the aggregate is not already present in group by model, so let's add a column for it
+                        aggregateAlias = createColumnAlias(node.rhs.token, sampleByModel);
+                        final QueryColumn aggregateColumn = queryColumnPool.next().of(aggregateAlias, node.rhs);
+                        sampleByModel.addBottomUpColumn(aggregateColumn);
+                        insertedAggregates++;
+                    } else {
+                        // yay! there is an existing column for the alias
+                        aggregateAlias = existingColumn.getAlias();
+                    }
+                    node.rhs = nextLiteral(aggregateAlias);
+                } else {
+                    sqlNodeStack.push(node.rhs);
+                }
+            }
+
+            if (node.lhs != null) {
+                if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
+                    // replace the aggregate with an alias;
+                    final QueryColumn existingColumn = findQueryColumnByAst(sampleByModel.getBottomUpColumns(), node.lhs);
+                    final CharSequence aggregateAlias;
+                    if (existingColumn == null) {
+                        // the aggregate is not already present in group by model, so let's add a column for it
+                        aggregateAlias = createColumnAlias(node.lhs.token, sampleByModel);
+                        final QueryColumn aggregateColumn = queryColumnPool.next().of(aggregateAlias, node.lhs);
+                        sampleByModel.addBottomUpColumn(aggregateColumn);
+                        insertedAggregates++;
+                    } else {
+                        // yay! there is an existing column for the alias
+                        aggregateAlias = existingColumn.getAlias();
+                    }
+                    node.lhs = nextLiteral(aggregateAlias);
+                } else {
+                    node = node.lhs;
+                }
+            } else {
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return insertedAggregates;
     }
 
     // the intent is to either validate top-level columns in select columns or replace them with function calls

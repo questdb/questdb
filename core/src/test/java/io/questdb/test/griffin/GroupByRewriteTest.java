@@ -80,6 +80,21 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                         Frame forward scan on: trades
                             """
             );
+            // key first, multiple keys, multiple column occurrences
+            assertPlanNoLeakCheck(
+                    "SELECT ts, price, price as price0, (price + price) / sum(amount) FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price,price,price+price/sum]
+                                Async Group By workers: 1
+                                  keys: [ts,price]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
             // key first, aliased, multiple column occurrences
             assertPlanNoLeakCheck(
                     "SELECT ts, price as price0, (price + price) / sum(amount) FROM trades;",
@@ -132,6 +147,21 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [ts,price+price/sum,price]
+                                Async Group By workers: 1
+                                  keys: [ts,price]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
+            // key second, multiple keys, multiple column occurrences
+            assertPlanNoLeakCheck(
+                    "SELECT ts, (price + price) / sum(amount), price, price as price0 FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price+price/sum,price,price]
                                 Async Group By workers: 1
                                   keys: [ts,price]
                                   values: [sum(amount)]

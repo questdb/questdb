@@ -6201,6 +6201,10 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
+    // TODO(puzpuzpuz): test the following cases
+    //  count(), count() / max(ts)::long
+    //  count() / datediff('h', ts, now()) c1, count() / datediff('d', ts, now()) c2
+    //  count(), count() / datediff('h', ts, now()) c1, count() / datediff('d', ts, now()) c2
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
@@ -6220,7 +6224,9 @@ public class SampleByTest extends AbstractCairoTest {
                             2029-12-31T23:00:00.000000Z\t0.041666666666666664
                             """,
                     query,
-                    "ts"
+                    "ts",
+                    true,
+                    true
             );
 
             assertPlanNoLeakCheck(
@@ -6228,12 +6234,17 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             VirtualRecord
                               functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
-                                Sample By
-                                  fill: none
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                                Radix sort light
+                                  keys: [ts]
+                                    VirtualRecord
+                                      functions: [to_utc(ts),count]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
         });
