@@ -55,26 +55,40 @@ public class ArithmeticSequenceMerger {
         }
         final LongList result = new LongList(initialValues.size() * elementCount);
         int initialValueIndex = 0;
-        CircularListNode node = new CircularListNode(initialValues.getQuick(0));
+        SequenceIterator iter = new SequenceIterator(initialValues.getQuick(0));
+        SequenceIterator prevIter = iter;
         while (true) {
-            long value = node.iterator.next();
+            long value = iter.next();
             result.add(value);
-            CircularListNode nextNode = node.next();
+            SequenceIterator nextIter = iter.nextIterator();
             if (initialValueIndex != initialValues.size() - 1) {
-                long nextIterValue = nextNode.iterator.peekNext();
-                long nextInitValue = initialValues.getQuick(initialValueIndex + 1);
-                if (nextInitValue < nextIterValue) {
-                    initialValueIndex++;
-                    nextNode = node.insertAfter(nextInitValue);
+                // There's more iterators waiting to be used. Let's see if it's time to activate the next one.
+                long nextIterValue = nextIter.peekNext();
+                if (nextIterValue != -1) {
+                    long nextInitValue = initialValues.getQuick(initialValueIndex + 1);
+                    if (nextInitValue < nextIterValue) {
+                        initialValueIndex++;
+                        nextIter = iter.insertAfter(nextInitValue);
+                    }
+                } else {
+                    // This only happens when nextIter == iter, it's the last one in the circular list, and
+                    // it's exhausted. Completely ignore its existence and re-initialize everything
+                    // to the new, and now only, iterator.
+                    nextIter = new SequenceIterator(initialValues.getQuick(++initialValueIndex));
+                    prevIter = iter = nextIter;
                 }
             }
-            if (node.iterator.isEmpty()) {
-                nextNode = node.remove();
-                if (nextNode == null) {
+            if (iter.isEmpty()) {
+                // We keep prevIter just to be able to remove the current iter. Without it,
+                // we wouldn't have at hand the iterator whose nextIterator we must update.
+                nextIter = prevIter.removeNextIterator();
+                if (nextIter == null) {
                     break;
                 }
+            } else {
+                prevIter = iter;
             }
-            node = nextNode;
+            iter = nextIter;
         }
         return result;
     }
@@ -103,75 +117,55 @@ public class ArithmeticSequenceMerger {
         return initialValues;
     }
 
-    class CircularListNode {
-        private final long initialValue;
-        SequenceIterator iterator;
-        private CircularListNode next;
-        private CircularListNode prev;
-
-        CircularListNode(long initialValue) {
-            this.iterator = new SequenceIterator(initialValue);
-            next = prev = this;
-            this.initialValue = initialValue;
-        }
-
-        @Override
-        public String toString() {
-            return "[" +
-                    initialValue + ',' +
-                    iterator.remainingCount + ',' +
-                    iterator.peekNext() +
-                    ']';
-        }
-
-        CircularListNode insertAfter(long initialValue) {
-            CircularListNode node = new CircularListNode(initialValue);
-            node.next = this.next;
-            this.next.prev = node;
-            node.prev = this;
-            this.next = node;
-            return node;
-        }
-
-        CircularListNode next() {
-            return next;
-        }
-
-        CircularListNode remove() {
-            if (next == this) {
-                return null;
-            }
-            prev.next = next;
-            next.prev = prev;
-            return next;
-        }
-    }
-
     class SequenceIterator {
-        long nextValue;
-        long remainingCount;
+        private SequenceIterator nextIterator;
+        private long nextValue;
+        private long remainingCount;
 
         SequenceIterator(long initialValue) {
             this.nextValue = initialValue;
             this.remainingCount = elementCount;
+            this.nextIterator = this;
+        }
+
+        SequenceIterator insertAfter(long initialValue) {
+            SequenceIterator iter = new SequenceIterator(initialValue);
+            iter.nextIterator = this.nextIterator;
+            this.nextIterator = iter;
+            return iter;
         }
 
         boolean isEmpty() {
-            return remainingCount <= 0;
+            return remainingCount == 0;
         }
 
         long next() {
-            if (remainingCount == 0) {
-                return -1;
-            }
             long result = nextValue;
-            nextValue += step;
-            remainingCount--;
+            if (result != -1) {
+                remainingCount--;
+                if (remainingCount == 0) {
+                    nextValue = -1;
+                } else {
+                    nextValue += step;
+                }
+            }
             return result;
+        }
+
+        SequenceIterator nextIterator() {
+            return nextIterator;
         }
 
         long peekNext() {
             return nextValue;
+        }
+
+        SequenceIterator removeNextIterator() {
+            if (nextIterator == this) {
+                return null;
+            }
+            nextIterator = nextIterator.nextIterator;
+            return nextIterator;
         }
     }
 }
