@@ -55,12 +55,12 @@ pub enum ColumnTypeTag {
     IPv4 = 25,
     Varchar = 26,
     Array = 27,
-    Decimal8 = 33,
-    Decimal16 = 34,
-    Decimal32 = 35,
-    Decimal64 = 36,
-    Decimal128 = 37,
-    Decimal256 = 38,
+    Decimal8 = 28,
+    Decimal16 = 29,
+    Decimal32 = 30,
+    Decimal64 = 31,
+    Decimal128 = 33,
+    Decimal256 = 34,
 }
 
 impl ColumnTypeTag {
