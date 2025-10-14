@@ -1121,7 +1121,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             drainWalQueue();
 
             // hog table reader and update the table
-            try (TableReader rdr1 = getReader("tab")) {
+            try (TableReader ignore = getReader("tab")) {
                 update("UPDATE tab SET x = 100");
                 drainWalQueue();
 
@@ -1135,7 +1135,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             // drop the table while purge log records still exist
             execute("drop table tab");
 
-            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob ignore = createPurgeJob()) {
                 // if we get here without NPE, the bug is fixed
             }
         });
