@@ -72,7 +72,7 @@ public class GroupByArraySink implements Mutable {
         if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0)
             return null;
 
-        return ArrayTypeDriver.getCompactPlainArray(ptr, type, dims, borrowedArray);
+        return ArrayTypeDriver.getCompactPlainValue(ptr, type, dims, borrowedArray);
     }
 
     public GroupByArraySink of(long ptr) {
@@ -94,7 +94,7 @@ public class GroupByArraySink implements Mutable {
     public void put(ArrayView array) {
         long requiredSize = computeRequiredSize(array);
         ensureCapacity(requiredSize);
-        ArrayTypeDriver.appendCompactPlainArray(ptr, array, dims, elemSize);
+        ArrayTypeDriver.appendCompactPlainValue(ptr, array, dims, elemSize);
     }
 
     public void setAllocator(GroupByAllocator allocator) {

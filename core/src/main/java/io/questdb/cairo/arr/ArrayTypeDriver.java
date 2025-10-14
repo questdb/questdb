@@ -180,35 +180,35 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * uses a 4-byte dataSize instead of 8-byte totalSize.
      *
      * @param addr the memory address to write to
-     * @param arrayView the array to append
+     * @param value the array to append
      * @param nDims the number of dimensions
      * @param elemSize the size of each element in bytes
      */
-    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, int elemSize) {
-        if (arrayView == null || arrayView.isNull()) {
+    public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
+        if (value == null || value.isNull()) {
             Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
             return;
         }
 
-        int dataSize = (int) ((long) arrayView.getFlatViewLength() * elemSize);
+        int dataSize = (int) ((long) value.getFlatViewLength() * elemSize);
 
         Unsafe.getUnsafe().putInt(addr, dataSize);
         addr += Integer.BYTES;
 
         for (int i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(addr, arrayView.getDimLen(i));
+            Unsafe.getUnsafe().putInt(addr, value.getDimLen(i));
             addr += Integer.BYTES;
         }
 
-        if (arrayView.isVanilla()) {
-            short elemType = arrayView.getElemType();
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
             if (elemType == ColumnType.DOUBLE) {
-                arrayView.flatView().appendPlainDoubleValue(addr, arrayView.getFlatViewOffset(), arrayView.getFlatViewLength());
+                value.flatView().appendPlainDoubleValue(addr, value.getFlatViewOffset(), value.getFlatViewLength());
             } else {
                 throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
             }
         } else {
-            appendToMemRecursive(arrayView, 0, 0, addr);
+            appendToMemRecursive(value, 0, 0, addr);
         }
     }
 
@@ -337,28 +337,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Reads an array from "compact plain" format (see {@link #appendCompactPlainArray} for layout).
+     * Reads an array from "compact plain" format (see {@link #appendCompactPlainValue} for layout).
      * <p>
-     * This is the counterpart to {@link #appendCompactPlainArray} and differs from {@link #getPlainValue}
+     * This is the counterpart to {@link #appendCompactPlainValue} and differs from {@link #getPlainValue}
      * which expects an 8-byte size field and a type field in the layout.
      *
      * @param addr the memory address to read from
      * @param type the encoded array type (provided from context)
      * @param nDims the number of dimensions
-     * @param array the borrowed array to populate
+     * @param value the borrowed array to populate
      * @return the populated array
      */
-    public static BorrowedArray getCompactPlainArray(long addr, int type, int nDims, @NotNull BorrowedArray array) {
+    public static BorrowedArray getCompactPlainValue(long addr, int type, int nDims, @NotNull BorrowedArray value) {
         final int dataSize = Unsafe.getUnsafe().getInt(addr);
         if (dataSize < 0) {
-            array.ofNull();
-            return array;
+            value.ofNull();
+            return value;
         }
 
         addr += Integer.BYTES;
         int shapeLen = nDims * Integer.BYTES;
-        array.of(type, addr, addr + shapeLen, dataSize);
-        return array;
+        value.of(type, addr, addr + shapeLen, dataSize);
+        return value;
     }
 
     public static long getPlainValueSize(long arrayAddress) {
