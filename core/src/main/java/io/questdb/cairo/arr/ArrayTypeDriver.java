@@ -165,7 +165,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Appends an array in "compact plain" format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * Appends an array in compact format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
      * <p>
      * Layout:
      * <pre>
@@ -337,7 +337,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     /**
-     * Reads an array from "compact plain" format (see {@link #appendCompactPlainValue} for layout).
+     * Reads an array from compact format (see {@link #appendCompactPlainValue} for layout).
      * <p>
      * This is the counterpart to {@link #appendCompactPlainValue} and differs from {@link #getPlainValue}
      * which expects an 8-byte size field and a type field in the layout.
