@@ -122,11 +122,11 @@ public final class ColumnType {
     // Stored decimal uses the Extra type information to store the precision
     // and scale, giving this layout:
     //       31         30~24    23~16      15~8              7~0
-    // +--------------+--------+--------+-----------+-------------------------+
-    // | Handling bit | Scale  | Used   | Precision | Type discriminant (tag) |
-    // +--------------+--------+--------+-----------+-------------------------+
-    // |    1 bit     | 8 bits | 7 bits |  8 bits   |         8 bits          |
-    // +--------------+--------+--------+-----------+-------------------------+
+    // +--------------+--------+----------+-----------+-------------------------+
+    // | Handling bit | Scale  | Reserved | Precision | Type discriminant (tag) |
+    // +--------------+--------+----------+-----------+-------------------------+
+    // |    1 bit     | 8 bits |  7 bits  |  8 bits   |         8 bits          |
+    // +--------------+--------+----------+-----------+-------------------------+
     public static final short DECIMAL8 = INTERVAL + 1;     // = 33;
     public static final short DECIMAL16 = DECIMAL8 + 1;    // = 34;
     public static final short DECIMAL32 = DECIMAL16 + 1;   // = 35;
