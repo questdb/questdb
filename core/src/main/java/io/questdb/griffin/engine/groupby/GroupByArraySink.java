@@ -48,7 +48,7 @@ public class GroupByArraySink implements Mutable {
     private final BorrowedArray borrowedArray = new BorrowedArray();
 
     private final int type;
-    private final int dims;
+    private final int nDims;
     private final int elemSize;
 
     private GroupByAllocator allocator;
@@ -57,7 +57,7 @@ public class GroupByArraySink implements Mutable {
 
     public GroupByArraySink(int type) {
         this.type = type;
-        this.dims = ColumnType.decodeArrayDimensionality(type);
+        this.nDims = ColumnType.decodeArrayDimensionality(type);
         this.elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
     }
 
@@ -71,7 +71,7 @@ public class GroupByArraySink implements Mutable {
         if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0)
             return null;
 
-        return ArrayTypeDriver.getCompactPlainValue(ptr, type, dims, borrowedArray);
+        return ArrayTypeDriver.getCompactPlainValue(ptr, type, nDims, borrowedArray);
     }
 
     public GroupByArraySink of(long ptr) {
@@ -93,7 +93,7 @@ public class GroupByArraySink implements Mutable {
     public void put(ArrayView array) {
         long requiredSize = computeRequiredSize(array);
         ensureCapacity(requiredSize);
-        ArrayTypeDriver.appendCompactPlainValue(ptr, array, dims, elemSize);
+        ArrayTypeDriver.appendCompactPlainValue(ptr, array, nDims, elemSize);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
