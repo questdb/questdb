@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     private static final String txDdl = """
             CREATE TABLE tx_traffic (timestamp TIMESTAMP, value DOUBLE);
@@ -112,6 +112,218 @@ public class MultiplePercentileDiscDoubleGroupByFunctionFactoryTest extends Abst
                 39,
                 "invalid percentile"
         );
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_disc\n" +
+                            "0\t[4.0,6.0,8.0]\n" +
+                            "1\t[3.0,5.0,7.0]\n",
+                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupByWithAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select 1 as category, null::double as value from long_sequence(5)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_disc\n" +
+                            "1\tnull\n",
+                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupByWithExtremePercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            // cat=0: 2, 4, 6, 8, 10 → [0, 0.5, 1.0] → [2.0, 6.0, 10.0]
+            // cat=1: 1, 3, 5, 7, 9 → [0, 0.5, 1.0] → [1.0, 5.0, 9.0]
+            assertSql(
+                    "category\tpercentile_disc\n" +
+                            "0\t[2.0,6.0,10.0]\n" +
+                            "1\t[1.0,5.0,9.0]\n",
+                    "select category, percentile_disc(value, ARRAY[0.0, 0.5, 1.0]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupByWithMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as cat1, x % 3 as cat2, cast(x as double) as value " +
+                    "from long_sequence(12)" +
+                    ")");
+            // cat1=0, cat2=0: values 6, 12 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 6.0
+            //   50th: ceil(2*0.50)-1 = 0 → 6.0
+            //   75th: ceil(2*0.75)-1 = 1 → 12.0
+            // cat1=0, cat2=1: values 4, 10 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 4.0
+            //   50th: ceil(2*0.50)-1 = 0 → 4.0
+            //   75th: ceil(2*0.75)-1 = 1 → 10.0
+            // cat1=0, cat2=2: values 2, 8 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 2.0
+            //   50th: ceil(2*0.50)-1 = 0 → 2.0
+            //   75th: ceil(2*0.75)-1 = 1 → 8.0
+            // cat1=1, cat2=0: values 3, 9 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 3.0
+            //   50th: ceil(2*0.50)-1 = 0 → 3.0
+            //   75th: ceil(2*0.75)-1 = 1 → 9.0
+            // cat1=1, cat2=1: values 1, 7 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 1.0
+            //   50th: ceil(2*0.50)-1 = 0 → 1.0
+            //   75th: ceil(2*0.75)-1 = 1 → 7.0
+            // cat1=1, cat2=2: values 5, 11 (2 values)
+            //   25th: ceil(2*0.25)-1 = 0 → 5.0
+            //   50th: ceil(2*0.50)-1 = 0 → 5.0
+            //   75th: ceil(2*0.75)-1 = 1 → 11.0
+            assertSql(
+                    "cat1\tcat2\tpercentile_disc\n" +
+                            "0\t0\t[6.0,6.0,12.0]\n" +
+                            "0\t1\t[4.0,4.0,10.0]\n" +
+                            "0\t2\t[2.0,2.0,8.0]\n" +
+                            "1\t0\t[3.0,3.0,9.0]\n" +
+                            "1\t1\t[1.0,1.0,7.0]\n" +
+                            "1\t2\t[5.0,5.0,11.0]\n",
+                    "select cat1, cat2, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) " +
+                            "from test group by cat1, cat2 order by cat1, cat2"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupByWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, " +
+                    "case when x % 4 = 0 then null else cast(x as double) end as value " +
+                    "from long_sequence(10)" +
+                    ")");
+            // cat=0: 2, null, 6, null, 10 → non-null: 2, 6, 10 (3 values)
+            //   25th: ceil(3*0.25)-1 = 0 → 2.0
+            //   50th: ceil(3*0.50)-1 = 1 → 6.0
+            //   75th: ceil(3*0.75)-1 = 2 → 10.0
+            // cat=1: 1, 3, 5, 7, 9 (5 values)
+            //   25th: ceil(5*0.25)-1 = 1 → 3.0
+            //   50th: ceil(5*0.50)-1 = 2 → 5.0
+            //   75th: ceil(5*0.75)-1 = 3 → 7.0
+            assertSql(
+                    "category\tpercentile_disc\n" +
+                            "0\t[2.0,6.0,10.0]\n" +
+                            "1\t[3.0,5.0,7.0]\n",
+                    "select category, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscGroupByWithSingleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x, cast(x as double) as value from long_sequence(5)" +
+                    ")");
+            // Each group has one value, all percentiles should return that value
+            assertSql(
+                    "x\tpercentile_disc\n" +
+                            "1\t[1.0,1.0,1.0]\n" +
+                            "2\t[2.0,2.0,2.0]\n" +
+                            "3\t[3.0,3.0,3.0]\n" +
+                            "4\t[4.0,4.0,4.0]\n" +
+                            "5\t[5.0,5.0,5.0]\n",
+                    "select x, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) from test group by x order by x"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscWithFineGrainedPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(100))");
+            // Test with percentiles that have more decimal places
+            assertSql(
+                    "count\n" +
+                            "100\n",
+                    "select count(*) from (select value, percentile_disc(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) over () from test)"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscWithNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x - 6 as double) value from long_sequence(10))");
+            // Values: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4
+            // 25th: ceil(10*0.25)-1 = 2 → -3.0
+            // 50th: ceil(10*0.50)-1 = 4 → -1.0
+            // 75th: ceil(10*0.75)-1 = 7 → 2.0
+            assertSql(
+                    "value\tpercentile_disc\n" +
+                            "-5.0\t[-3.0,-1.0,2.0]\n" +
+                            "-4.0\t[-3.0,-1.0,2.0]\n" +
+                            "-3.0\t[-3.0,-1.0,2.0]\n" +
+                            "-2.0\t[-3.0,-1.0,2.0]\n" +
+                            "-1.0\t[-3.0,-1.0,2.0]\n" +
+                            "0.0\t[-3.0,-1.0,2.0]\n" +
+                            "1.0\t[-3.0,-1.0,2.0]\n" +
+                            "2.0\t[-3.0,-1.0,2.0]\n" +
+                            "3.0\t[-3.0,-1.0,2.0]\n" +
+                            "4.0\t[-3.0,-1.0,2.0]\n",
+                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscWithSinglePercentileInArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            // Single element array should work like scalar version but return array
+            assertSql(
+                    "value\tpercentile_disc\n" +
+                            "1.0\t[5.0]\n" +
+                            "2.0\t[5.0]\n" +
+                            "3.0\t[5.0]\n" +
+                            "4.0\t[5.0]\n" +
+                            "5.0\t[5.0]\n" +
+                            "6.0\t[5.0]\n" +
+                            "7.0\t[5.0]\n" +
+                            "8.0\t[5.0]\n" +
+                            "9.0\t[5.0]\n" +
+                            "10.0\t[5.0]\n",
+                    "select value, percentile_disc(value, ARRAY[0.5]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscWithVeryLargeArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            // Test with 20 percentiles
+            assertSql(
+                    "count\n" +
+                            "10\n",
+                    "select count(*) from (" +
+                            "select value, percentile_disc(value, ARRAY[" +
+                            "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
+                            "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
+                            "]) over () from test)"
+            );
+        });
     }
 
     @Test

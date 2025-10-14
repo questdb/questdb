@@ -27,12 +27,11 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class MultiplePercentileContDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     private static final String txDdl = """
             CREATE TABLE tx_traffic (timestamp TIMESTAMP, value DOUBLE);
             """;
-
     private static final String txDml = """
             INSERT INTO tx_traffic (timestamp, value) VALUES
             ('2022-05-02T14:51:28Z', '10.978'),
@@ -88,6 +87,22 @@ public class MultiplePercentileContDoubleGroupByFunctionFactoryTest extends Abst
             """;
 
     @Test
+    public void testCompareDiscVsCont() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (x double)");
+            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
+            // For 4 values:
+            // percentile_cont at 0.5: position = 1.5, interpolates to 2.5
+            // percentile_disc at 0.5: ceil(4*0.5)-1 = 1, returns 2.0
+            assertSql(
+                    "percentile_cont\tpercentile_disc\n" +
+                            "[2.5,2.5]\t[2.0,2.0]\n",
+                    "select percentile_cont(x, ARRAY[0.5, 0.5]), percentile_disc(x, ARRAY[0.5, 0.5]) from test"
+            );
+        });
+    }
+
+    @Test
     public void testInvalidPercentileInArray1() throws Exception {
         assertException(
                 "select percentile_cont(x::double, ARRAY[0.98, 1.1]) from long_sequence(1)",
@@ -112,6 +127,205 @@ public class MultiplePercentileContDoubleGroupByFunctionFactoryTest extends Abst
                 39,
                 "invalid percentile"
         );
+    }
+
+    @Test
+    public void testMultiPercentileContGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "0\t[4.0,6.0,8.0]\n" +
+                            "1\t[3.0,5.0,7.0]\n",
+                    "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContGroupByWithAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select 1 as category, null::double as value from long_sequence(5)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "1\tnull\n",
+                    "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContGroupByWithExtremePercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "0\t[2.0,6.0,10.0]\n" +
+                            "1\t[1.0,5.0,9.0]\n",
+                    "select category, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContGroupByWithMultipleColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as cat1, x % 3 as cat2, cast(x as double) as value " +
+                    "from long_sequence(12)" +
+                    ")");
+            // cat1=0, cat2=0: values 6, 12 (2 values), n-1 = 1
+            //   25th: 0.25 * 1 = 0.25 → 6 + 0.25*(12-6) = 7.5
+            //   50th: 0.50 * 1 = 0.50 → 6 + 0.50*(12-6) = 9.0
+            //   75th: 0.75 * 1 = 0.75 → 6 + 0.75*(12-6) = 10.5
+            // cat1=0, cat2=1: values 4, 10 (2 values), n-1 = 1
+            //   25th: 0.25 * 1 = 0.25 → 4 + 0.25*(10-4) = 5.5
+            //   50th: 0.50 * 1 = 0.50 → 4 + 0.50*(10-4) = 7.0
+            //   75th: 0.75 * 1 = 0.75 → 4 + 0.75*(10-4) = 8.5
+            // cat1=0, cat2=2: values 2, 8 (2 values), n-1 = 1
+            //   25th: 0.25 * 1 = 0.25 → 2 + 0.25*(8-2) = 3.5
+            //   50th: 0.50 * 1 = 0.50 → 2 + 0.50*(8-2) = 5.0
+            //   75th: 0.75 * 1 = 0.75 → 2 + 0.75*(8-2) = 6.5
+            // Similar for cat1=1
+            assertSql(
+                    "cat1\tcat2\tpercentile_cont\n" +
+                            "0\t0\t[7.5,9.0,10.5]\n" +
+                            "0\t1\t[5.5,7.0,8.5]\n" +
+                            "0\t2\t[3.5,5.0,6.5]\n" +
+                            "1\t0\t[4.5,6.0,7.5]\n" +
+                            "1\t1\t[2.5,4.0,5.5]\n" +
+                            "1\t2\t[6.5,8.0,9.5]\n",
+                    "select cat1, cat2, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) " +
+                            "from test group by cat1, cat2 order by cat1, cat2"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContGroupByWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, " +
+                    "case when x % 4 = 0 then null else cast(x as double) end as value " +
+                    "from long_sequence(10)" +
+                    ")");
+            // cat=0: 2, null, 6, null, 10 → non-null: 2, 6, 10 (3 values), sorted: [2, 6, 10], n-1 = 2
+            //   25th: 0.25 * 2 = 0.5 → interpolate between index 0 and 1 → 2 + 0.5*(6-2) = 4.0
+            //   50th: 0.50 * 2 = 1.0 → index 1 → 6.0
+            //   75th: 0.75 * 2 = 1.5 → interpolate between index 1 and 2 → 6 + 0.5*(10-6) = 8.0
+            // cat=1: 1, 3, 5, 7, 9 (5 values)
+            //   25th: 0.25 * 4 = 1.0 → index 1 → 3.0
+            //   50th: 0.50 * 4 = 2.0 → index 2 → 5.0
+            //   75th: 0.75 * 4 = 3.0 → index 3 → 7.0
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "0\t[4.0,6.0,8.0]\n" +
+                            "1\t[3.0,5.0,7.0]\n",
+                    "select category, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContGroupByWithSingleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x, cast(x as double) as value from long_sequence(5)" +
+                    ")");
+            // Each group has one value, all percentiles should return that value
+            assertSql(
+                    "x\tpercentile_cont\n" +
+                            "1\t[1.0,1.0,1.0]\n" +
+                            "2\t[2.0,2.0,2.0]\n" +
+                            "3\t[3.0,3.0,3.0]\n" +
+                            "4\t[4.0,4.0,4.0]\n" +
+                            "5\t[5.0,5.0,5.0]\n",
+                    "select x, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) from test group by x order by x"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContWithFineGrainedPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(100))");
+            // Test with percentiles that have more decimal places
+            assertSql(
+                    "count\n" +
+                            "100\n",
+                    "select count(*) from (select value, percentile_cont(value, ARRAY[0.1, 0.25, 0.333, 0.5, 0.667, 0.75, 0.9]) over () from test)"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContWithNegativeValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x - 6 as double) value from long_sequence(10))");
+            // Values: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4
+            // 25th: position = 0.25 * 9 = 2.25 → -2.75
+            // 50th: position = 0.50 * 9 = 4.5 → -0.5
+            // 75th: position = 0.75 * 9 = 6.75 → 1.75
+            assertSql(
+                    "value\tpercentile_cont\n" +
+                            "-5.0\t[-2.75,-0.5,1.75]\n" +
+                            "-4.0\t[-2.75,-0.5,1.75]\n" +
+                            "-3.0\t[-2.75,-0.5,1.75]\n" +
+                            "-2.0\t[-2.75,-0.5,1.75]\n" +
+                            "-1.0\t[-2.75,-0.5,1.75]\n" +
+                            "0.0\t[-2.75,-0.5,1.75]\n" +
+                            "1.0\t[-2.75,-0.5,1.75]\n" +
+                            "2.0\t[-2.75,-0.5,1.75]\n" +
+                            "3.0\t[-2.75,-0.5,1.75]\n" +
+                            "4.0\t[-2.75,-0.5,1.75]\n",
+                    "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContWithTwoPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            // Test with just two percentiles
+            assertSql(
+                    "value\tpercentile_cont\n" +
+                            "1.0\t[3.25,7.75]\n" +
+                            "2.0\t[3.25,7.75]\n" +
+                            "3.0\t[3.25,7.75]\n" +
+                            "4.0\t[3.25,7.75]\n" +
+                            "5.0\t[3.25,7.75]\n" +
+                            "6.0\t[3.25,7.75]\n" +
+                            "7.0\t[3.25,7.75]\n" +
+                            "8.0\t[3.25,7.75]\n" +
+                            "9.0\t[3.25,7.75]\n" +
+                            "10.0\t[3.25,7.75]\n",
+                    "select value, percentile_cont(value, ARRAY[0.25, 0.75]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContWithVeryLargeArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) value from long_sequence(10))");
+            // Test with 20 percentiles
+            assertSql(
+                    "count\n" +
+                            "10\n",
+                    "select count(*) from (" +
+                            "select value, percentile_cont(value, ARRAY[" +
+                            "0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, " +
+                            "0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0" +
+                            "]) over () from test)"
+            );
+        });
     }
 
     @Test
@@ -393,22 +607,6 @@ public class MultiplePercentileContDoubleGroupByFunctionFactoryTest extends Abst
             assertSql(
                     "percentile_cont\n[980.02,950.05,900.1,500.5]\n",
                     "select percentile_cont(x, ARRAY[0.98, 0.95, 0.90, 0.50]) from test"
-            );
-        });
-    }
-
-    @Test
-    public void testCompareDiscVsCont() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test (x double)");
-            execute("insert into test values (1.0), (2.0), (3.0), (4.0)");
-            // For 4 values:
-            // percentile_cont at 0.5: position = 1.5, interpolates to 2.5
-            // percentile_disc at 0.5: ceil(4*0.5)-1 = 1, returns 2.0
-            assertSql(
-                    "percentile_cont\tpercentile_disc\n" +
-                            "[2.5,2.5]\t[2.0,2.0]\n",
-                    "select percentile_cont(x, ARRAY[0.5, 0.5]), percentile_disc(x, ARRAY[0.5, 0.5]) from test"
             );
         });
     }

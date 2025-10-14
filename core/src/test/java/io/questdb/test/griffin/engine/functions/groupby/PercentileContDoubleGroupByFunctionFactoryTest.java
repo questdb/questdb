@@ -226,6 +226,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
         );
     }
 
+
     @Test
     public void testNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
@@ -262,6 +263,39 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             );
         });
     }
+
+    @Test
+    public void testPercentileContGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "0\t6.0\n" +
+                            "1\t5.0\n",
+                    "select category, percentile_cont(value, 0.5) from test group by category order by category"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileContGroupByWithInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (" +
+                    "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
+                    ")");
+            // cat=0: 2, 4, 6, 8, 10 → 75th percentile position = 0.75 * 4 = 3.0 → index 3 → 8.0
+            // cat=1: 1, 3, 5, 7, 9 → 75th percentile position = 0.75 * 4 = 3.0 → index 3 → 7.0
+            assertSql(
+                    "category\tpercentile_cont\n" +
+                            "0\t8.0\n" +
+                            "1\t7.0\n",
+                    "select category, percentile_cont(value, 0.75) from test group by category order by category"
+            );
+        });
+    }
+
 
     @Test
     public void testPercentileEmptyTable() throws Exception {
@@ -322,4 +356,6 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                     "select percentile_cont(value, 0.95) from tx_traffic");
         });
     }
+
+
 }

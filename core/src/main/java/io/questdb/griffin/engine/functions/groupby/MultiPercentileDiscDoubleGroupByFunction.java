@@ -50,7 +50,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
+public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     protected final Function arg;
     protected final GroupByDoubleList listA;
     protected final GroupByDoubleList listB;
@@ -59,7 +59,7 @@ public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction i
     protected DirectArray out;
     protected int valueIndex;
 
-    public MultiplePercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
+    public MultiPercentileDiscDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         this.arg = arg;
         this.percentileFunc = percentileFunc;
         int initialCapacity = 4;

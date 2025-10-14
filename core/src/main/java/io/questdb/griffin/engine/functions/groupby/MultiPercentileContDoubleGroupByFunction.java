@@ -38,8 +38,8 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class MultiplePercentileContDoubleGroupByFunction extends MultiplePercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
-    public MultiplePercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
+public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
+    public MultiPercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         super(configuration, arg, percentileFunc, percentilePos);
     }
 
