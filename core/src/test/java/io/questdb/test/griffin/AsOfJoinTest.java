@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -103,120 +104,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "900.0\t700.0\t200.0\n";
 
             printSqlResult(expected, query, null, false, true);
-        });
-    }
-
-    @Test
-    public void testAsOfJoinBinarySearchHint() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table orders as (\n" +
-                            "  select \n" +
-                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
-                            "    rnd_double() price,\n" +
-                            "    rnd_double() volume,\n" +
-                            "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::" + leftTableTimestampType.getTypeName() + " as ts,\n" +
-                            "  from long_sequence(5)\n" +
-                            ") timestamp(ts) partition by day;\n",
-                    leftTableTimestampType.getTypeName()
-            );
-
-            executeWithRewriteTimestamp("create table market_data as (\n" +
-                            "  select \n" +
-                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
-                            "    rnd_double() bid,\n" +
-                            "    rnd_double() ask,\n" +
-                            "    ('2025'::timestamp + x * 100_000L + rnd_int(0, 10_000, 0))::" + rightTableTimestampType.getTypeName() + " as ts,\n" +
-                            "  from long_sequence(10_000)\n" +
-                            ") timestamp(ts) partition by day;",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            String queryWithoutHint = "select * from (\n" +
-                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
-                    "  asof join (\n" +
-                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
-                    "    where market_data_symbol = 'sym_1' \n" +
-                    "  ) MD  \n" +
-                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
-                    "  and bid > price\n" +
-                    ");";
-
-            // the same query with Use hint
-            String queryWithUseHint = "select /*+ use_asof_binary_search(orders md) */ * from (\n" +
-                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
-                    "  asof join (\n" +
-                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
-                    "    where market_data_symbol = 'sym_1' \n" +
-                    "  ) MD  \n" +
-                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
-                    "  and bid > price\n" +
-                    ");";
-
-            // the same query with Avoid hint
-            String queryWithAvoidHint = "select /*+ avoid_asof_binary_search(orders md) */ * from (\n" +
-                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
-                    "  asof join (\n" +
-                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
-                    "    where market_data_symbol = 'sym_1' \n" +
-                    "  ) MD  \n" +
-                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
-                    "  and bid > price\n" +
-                    ");";
-
-            // plan with the avoid hint should NOT use the FAST ASOF
-            assertQueryNoLeakCheck("QUERY PLAN\n" +
-                            "SelectedRecord\n" +
-                            "    Filter filter: oRdERS.price<MD.bid\n" +
-                            "        AsOf Join\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Interval forward scan on: orders\n" +
-                            (leftTableTimestampType == TestTimestampType.MICRO ?
-                                    "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
-                                    "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
-                            "            SelectedRecord\n" +
-                            "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
-                            "                  filter: market_Data_symbol='sym_1'\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: market_data\n",
-                    "EXPLAIN " + queryWithAvoidHint, null, false, true);
-
-            // with Use hint it generates a plan with the fast asof join
-            String expectedPlan = "QUERY PLAN\n" +
-                    "SelectedRecord\n" +
-                    "    Filter filter: oRdERS.price<MD.bid\n" +
-                    "        Filtered AsOf Join Fast Scan\n" +
-                    "          filter: market_Data_symbol='sym_1'\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: orders\n" +
-                    (leftTableTimestampType == TestTimestampType.MICRO ?
-                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
-                            "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: market_data\n";
-            assertQueryNoLeakCheck(expectedPlan,
-                    "EXPLAIN " + queryWithUseHint, null, false, true);
-
-            // and query without hint should also use the fast asof join
-            assertQueryNoLeakCheck(expectedPlan,
-                    "EXPLAIN " + queryWithoutHint, null, false, true);
-
-            // all three queries must return the same result
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-
-            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
-                    "2025-01-01T00:03:20.003570" + leftSuffix + "\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091" + rightSuffix + "\t0.08486964232560668\n" +
-                    "2025-01-01T00:06:40.006304" + leftSuffix + "\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610" + rightSuffix + "\t0.8423410920883345\n" +
-                    "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
-                    "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
-
-            assertQueryNoLeakCheck(expectedResult, queryWithUseHint, "ts", false, false);
-            assertQueryNoLeakCheck(expectedResult, queryWithAvoidHint, "ts", false, false);
-            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
 
@@ -529,11 +416,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t151.0\t150.5\t151.5\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -569,11 +454,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t155.0\t149.5\t150.5\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -608,11 +491,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "GOOGL\t100.0\tnull\tnull\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -647,11 +528,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t150.0\tnull\tnull\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -693,11 +572,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t160.0\t159.5\t160.5\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -745,11 +622,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "GOOGL\t101.0\t100.5\t101.5\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -786,11 +661,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "TSLA\t250.0\tnull\tnull\n";
 
             String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
         });
     }
 
@@ -832,11 +705,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryBody1 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 1m";
-            assertSql(expected1, "SELECT " + queryBody1);
-            String hintedQuery1 = "SELECT /*+ asof_index_search(t q) */ " + queryBody1;
-            printSql("EXPLAIN " + hintedQuery1);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected1, hintedQuery1);
+
+            assertAlgoAndResult(queryBody1, "", "Fast", expected1);
+            assertAlgoAndResult(queryBody1, "asof_index_search(t q)", "Indexed", expected1);
+            assertAlgoAndResult(queryBody1, "asof_memoized_search(t q)", "Memoized", expected1);
 
             // With 15-minute tolerance: both trades should match
             String expected2 = "symbol\tprice\tbid\task\n" +
@@ -846,8 +718,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryBody2 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
                     "ASOF JOIN quotes q ON t.symbol = q.symbol " +
                     "TOLERANCE 15m";
-            assertSql(expected2, "SELECT " + queryBody2);
-            assertSql(expected2, "SELECT /*+ asof_index_search(t q) */ " + queryBody2);
+            assertAlgoAndResult(queryBody2, "", "Fast", expected2);
+            assertAlgoAndResult(queryBody2, "asof_index_search(t q)", "Indexed", expected2);
+            assertAlgoAndResult(queryBody2, "asof_memoized_search(t q)", "Memoized", expected2);
         });
     }
 
@@ -891,11 +764,99 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "ASOF JOIN (SELECT * FROM quotes WHERE ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z') q " +
                     "ON t.symbol = q.symbol " +
                     "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
-            assertSql(expected, "SELECT " + queryBody);
-            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
-            printSql("EXPLAIN " + hintedQuery);
-            TestUtils.assertContains(sink, "AsOf Join Indexed");
-            assertSql(expected, hintedQuery);
+
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index_search(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized_search(t q)", "Memoized", expected);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinLinearSearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table orders as (\n" +
+                            "  select \n" +
+                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as order_symbol,\n" +
+                            "    rnd_double() price,\n" +
+                            "    rnd_double() volume,\n" +
+                            "    ('2025'::timestamp + x * 200_000_000L + rnd_int(0, 10_000, 0))::" + leftTableTimestampType.getTypeName() + " as ts,\n" +
+                            "  from long_sequence(5)\n" +
+                            ") timestamp(ts) partition by day;\n",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp("create table market_data as (\n" +
+                            "  select \n" +
+                            "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
+                            "    rnd_double() bid,\n" +
+                            "    rnd_double() ask,\n" +
+                            "    ('2025'::timestamp + x * 100_000L + rnd_int(0, 10_000, 0))::" + rightTableTimestampType.getTypeName() + " as ts,\n" +
+                            "  from long_sequence(10_000)\n" +
+                            ") timestamp(ts) partition by day;",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            String queryBody = "* from (\n" +
+                    "  select orders.ts, bid, md.market_data_symbol, orders.order_symbol, md.md_ts as order_ts, price from oRdERS\n" +
+                    "  asof join (\n" +
+                    "    select ts as md_ts, market_Data_symbol, bid from market_data\n" +
+                    "    where market_data_symbol = 'sym_1' \n" +
+                    "  ) MD  \n" +
+                    "  where orders.ts > '2025-01-01T00:00:00.000000000Z' \n" +
+                    "  and bid > price\n" +
+                    ");";
+            String queryWithoutHint = "select " + queryBody;
+            String queryWithLinearHint = "select /*+ asof_linear_search(orders md) */ " + queryBody;
+
+            // plan with the linear search hint should NOT use the FAST ASOF
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    Filter filter: oRdERS.price<MD.bid\n" +
+                            "        AsOf Join\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: orders\n" +
+                            (leftTableTimestampType == TestTimestampType.MICRO ?
+                                    "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                                    "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
+                            "            SelectedRecord\n" +
+                            "                Async " + (JitUtil.isJitSupported() ? "JIT " : "") + "Filter workers: 1\n" +
+                            "                  filter: market_Data_symbol='sym_1'\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: market_data\n",
+                    "EXPLAIN " + queryWithLinearHint, null, false, true);
+
+            String expectedPlan = "QUERY PLAN\n" +
+                    "SelectedRecord\n" +
+                    "    Filter filter: oRdERS.price<MD.bid\n" +
+                    "        Filtered AsOf Join Fast Scan\n" +
+                    "          filter: market_Data_symbol='sym_1'\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: orders\n" +
+                    (leftTableTimestampType == TestTimestampType.MICRO ?
+                            "                  intervals: [(\"2025-01-01T00:00:00.000001Z\",\"MAX\")]\n" :
+                            "                  intervals: [(\"2025-01-01T00:00:00.000000001Z\",\"MAX\")]\n") +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: market_data\n";
+            // query without Linear hint should use the fast asof join
+            assertQueryNoLeakCheck(expectedPlan,
+                    "EXPLAIN " + queryWithoutHint, null, false, true);
+
+            // both queries must return the same result
+            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+            String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
+
+            String expectedResult = "ts\tbid\tmarket_data_symbol\torder_symbol\torder_ts\tprice\n" +
+                    "2025-01-01T00:03:20.003570" + leftSuffix + "\t0.18646912884414946\tsym_1\tsym_4\t2025-01-01T00:03:19.407091" + rightSuffix + "\t0.08486964232560668\n" +
+                    "2025-01-01T00:06:40.006304" + leftSuffix + "\t0.9130994629783138\tsym_1\tsym_2\t2025-01-01T00:06:37.303610" + rightSuffix + "\t0.8423410920883345\n" +
+                    "2025-01-01T00:13:20.002056" + leftSuffix + "\t0.24872951622414008\tsym_1\tsym_4\t2025-01-01T00:13:19.909382" + rightSuffix + "\t0.0367581207471136\n" +
+                    "2025-01-01T00:16:40.009947" + leftSuffix + "\t0.5071618579762882\tsym_1\tsym_6\t2025-01-01T00:16:39.800653" + rightSuffix + "\t0.3100545983862456\n";
+
+            assertQueryNoLeakCheck(expectedResult, queryWithLinearHint, "ts", false, false);
+            assertQueryNoLeakCheck(expectedResult, queryWithoutHint, "ts", false, false);
         });
     }
 
@@ -1218,20 +1179,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
-            // non-keyed join and slave has a filter + use hint -> should use FilteredAsOfJoinNoKeyFastRecordCursorFactory
-            query = "SELECT /*+ use_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
-            printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
-            assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
-
             // non-keyed join, slave has a filter, no hint -> should also use FilteredAsOfJoinNoKeyFastRecordCursorFactory
             query = "SELECT * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast Scan");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
 
-            // non-keyed join, slave has a filter, avoid hint -> should also use AsOfJoinNoKeyRecordCursorFactory
-            query = "SELECT /*+ avoid_asof_binary_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
+            // non-keyed join, slave has a filter, linear hint -> should also use AsOfJoinNoKeyRecordCursorFactory
+            query = "SELECT /*+ asof_linear_search(t1 t2) */ * FROM t1 ASOF JOIN (select * from t2 where t2.id != 1000) t2 TOLERANCE 2s;";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Filtered");
@@ -1535,56 +1490,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join");
             TestUtils.assertNotContains(sink, "Indexed");
             TestUtils.assertNotContains(sink, "Fast");
-        });
-    }
-
-    @Test
-    public void testBackwardCompatibilityWithDeprecatedHints() throws Exception {
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table master as (\n" +
-                            "  select \n" +
-                            "    rnd_symbol('A', 'B') as sym,\n" +
-                            "    cast(x as #TIMESTAMP) as ts\n" +
-                            "  from long_sequence(100)\n" +
-                            ") timestamp(ts) partition by DAY",
-                    leftTableTimestampType.getTypeName()
-            );
-
-            executeWithRewriteTimestamp(
-                    "create table slave as (\n" +
-                            "  select \n" +
-                            "    rnd_symbol('A', 'B') as sym,\n" +
-                            "    cast(x as #TIMESTAMP) as ts\n" +
-                            "  from long_sequence(100)\n" +
-                            "), index(sym) timestamp(ts) partition by DAY",
-                    rightTableTimestampType.getTypeName()
-            );
-
-            // Test deprecated avoid_asof_binary_search hint still works
-            String queryDeprecatedAsOf = "SELECT /*+ avoid_asof_binary_search(master slave) */ * FROM master " +
-                    "ASOF JOIN slave ON (sym)";
-
-            printSql("EXPLAIN " + queryDeprecatedAsOf);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Fast");
-            TestUtils.assertNotContains(sink, "Indexed");
-
-            // Test deprecated avoid_lt_binary_search hint still works
-            String queryDeprecatedLt = "SELECT /*+ avoid_lt_binary_search(master slave) */ * FROM master " +
-                    "LT JOIN slave ON (sym)";
-
-            printSql("EXPLAIN " + queryDeprecatedLt);
-            TestUtils.assertContains(sink, "Lt Join Light");
-
-            // Verify the new asof_linear_search hint has same effect
-            String queryNewLinear = "SELECT /*+ asof_linear_search(master slave) */ * FROM master " +
-                    "ASOF JOIN slave ON (sym)";
-
-            printSql("EXPLAIN " + queryNewLinear);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertNotContains(sink, "Fast");
-            TestUtils.assertNotContains(sink, "Indexed");
         });
     }
 
@@ -3431,6 +3336,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     false
             );
         });
+    }
+
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
+        String hintedQuery;
+        if (!hint.isEmpty()) {
+            hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
+        } else {
+            hintedQuery = "SELECT " + queryBody;
+        }
+        printSql("EXPLAIN " + hintedQuery);
+        TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
+        assertSql(expectedResult, hintedQuery);
     }
 
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {

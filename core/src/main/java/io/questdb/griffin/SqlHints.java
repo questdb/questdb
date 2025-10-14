@@ -32,12 +32,8 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
     public static final String ASOF_INDEX_SEARCH_HINT = "asof_index_search";
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static final String ASOF_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_asof_binary_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
+    public static final String ASOF_MEMOIZED_SEARCH_HINT = "asof_memoized_search";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     /**
      * Deprecated for removal, in favor of `asof_linear_search`.
@@ -60,16 +56,12 @@ public final class SqlHints {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static boolean hasAvoidAsOfJoinBinarySearchHint(
+    public static boolean hasAsofMemoizedSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
-        return hasHintWithParams(queryModel, ASOF_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
+        return hasHintWithParams(queryModel, ASOF_MEMOIZED_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     /**
