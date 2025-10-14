@@ -2301,6 +2301,7 @@ public class SqlKeywords {
     }
 
     static {
+        TIMESTAMP_PART_SET.add("nanoseconds");
         TIMESTAMP_PART_SET.add("microseconds");
         TIMESTAMP_PART_SET.add("milliseconds");
         TIMESTAMP_PART_SET.add("second");

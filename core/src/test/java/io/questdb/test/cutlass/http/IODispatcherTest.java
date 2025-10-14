@@ -6538,7 +6538,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -6655,7 +6655,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -6789,7 +6789,7 @@ public class IODispatcherTest extends AbstractTest {
                             workerPool.halt();
                         }
                     } finally {
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -9918,7 +9918,7 @@ public class IODispatcherTest extends AbstractTest {
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
         if (Files.exists(path.$())) {
-            assertTrue(Files.remove(path.$()));
+            assertTrue(TestUtils.remove(path.$()));
         }
         long fd = Files.openAppend(path.$());
 

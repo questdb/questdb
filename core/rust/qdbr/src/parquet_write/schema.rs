@@ -280,12 +280,7 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        _ => Err(fmt_err!(
-            InvalidType,
-            "unexpected type {} for column {}",
-            column_type,
-            column_name,
-        )),
+        _ => todo!(),
     }
 }
 
@@ -387,24 +382,23 @@ pub fn to_parquet_schema(
         })
         .collect::<ParquetResult<Vec<_>>>()?;
 
-    let mut qdb_meta = QdbMeta::new();
-    qdb_meta.schema = partition
-        .columns
-        .iter()
-        .map(|c| {
-            let format = if c.data_type.tag() == ColumnTypeTag::Symbol {
-                Some(QdbMetaColFormat::LocalKeyIsGlobal)
-            } else {
-                None
-            };
+    let mut qdb_meta = QdbMeta::new(partition.columns.len());
+    for column in partition.columns.iter() {
+        let format = if column.data_type.tag() == ColumnTypeTag::Symbol {
+            Some(QdbMetaColFormat::LocalKeyIsGlobal)
+        } else {
+            None
+        };
 
-            QdbMetaCol {
-                column_type: c.data_type,
-                column_top: c.column_top,
-                format,
-            }
-        })
-        .collect();
+        let column_type = if column.designated_timestamp {
+            column.data_type.into_designated()?
+        } else {
+            column.data_type
+        };
+        qdb_meta
+            .schema
+            .push(QdbMetaCol { column_type, column_top: column.column_top, format });
+    }
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);

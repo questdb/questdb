@@ -127,6 +127,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
+    private static long approxStepDuration(long step, long approxBucketSize) {
+        try {
+            return Math.multiplyExact(step, approxBucketSize);
+        } catch (ArithmeticException ignore) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     /**
      * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
      * it doesn't use exact min/max timestamps for each partition, but it should do the job
@@ -420,9 +428,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
+            final long approxBucketSize = timestampSampler.getApproxBucketSize();
+            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, approxBucketSize);
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
-            final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+
+            int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            final long maxStepDuration = driver.fromMicros(configuration.getMatViewMaxRefreshStepUs());
+            while (step > 1 && approxStepDuration(step, approxBucketSize) > maxStepDuration) {
+                // the step is too large, check the duration of a 2x smaller step;
+                // that's to avoid overflows in the interval iterator
+                step = Math.max(1, step / 2);
+            }
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
@@ -445,6 +461,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
                     .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
                     .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
+                    .$(", iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;

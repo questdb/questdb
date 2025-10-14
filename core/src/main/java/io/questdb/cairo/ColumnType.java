@@ -106,14 +106,6 @@ public final class ColumnType {
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
     public static final short ARRAY = VARCHAR + 1;              // = 27
-    // PG specific types to work with 3rd party software
-    // with canned catalogue queries:
-    // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = ARRAY + 1;            // = 28;
-    public static final short REGPROCEDURE = REGCLASS + 1;     // = 29;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 30;
-    public static final short PARAMETER = ARRAY_STRING + 1;    // = 31;
-    public static final short INTERVAL = PARAMETER + 1;        // = 32;
     // Similarly to GeoHash, Decimal is separated in 2 kinds of type:
     //  - Stored ones with the number of bits used in the suffix (selected from the precision
     // through getStorageSize).
@@ -127,14 +119,22 @@ public final class ColumnType {
     // +--------------+--------+----------+-----------+-------------------------+
     // |    1 bit     | 8 bits |  7 bits  |  8 bits   |         8 bits          |
     // +--------------+--------+----------+-----------+-------------------------+
-    public static final short DECIMAL8 = INTERVAL + 1;     // = 33;
-    public static final short DECIMAL16 = DECIMAL8 + 1;    // = 34;
-    public static final short DECIMAL32 = DECIMAL16 + 1;   // = 35;
-    public static final short DECIMAL64 = DECIMAL32 + 1;   // = 36;
-    public static final short DECIMAL128 = DECIMAL64 + 1;  // = 37;
-    public static final short DECIMAL256 = DECIMAL128 + 1; // = 38;
-    public static final short DECIMAL = DECIMAL256 + 1;    // = 39;
-    public static final short NULL = DECIMAL + 1;          // = 40; ALWAYS the last
+    public static final short DECIMAL8 = ARRAY + 1;     // = 28;
+    public static final short DECIMAL16 = DECIMAL8 + 1;    // = 29;
+    public static final short DECIMAL32 = DECIMAL16 + 1;   // = 30;
+    public static final short DECIMAL64 = DECIMAL32 + 1;   // = 31;
+    public static final short DECIMAL128 = DECIMAL64 + 1;  // = 32;
+    public static final short DECIMAL256 = DECIMAL128 + 1; // = 33;
+    public static final short DECIMAL = DECIMAL256 + 1;    // = 34;
+    // PG specific types to work with 3rd party software
+    // with canned catalogue queries:
+    // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
+    public static final short REGCLASS = DECIMAL + 1;            // = 35;
+    public static final short REGPROCEDURE = REGCLASS + 1;     // = 36;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1; // = 37;
+    public static final short PARAMETER = ARRAY_STRING + 1;    // = 38;
+    public static final short INTERVAL = PARAMETER + 1;        // = 39;
+    public static final short NULL = INTERVAL + 1;          // = 40; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2

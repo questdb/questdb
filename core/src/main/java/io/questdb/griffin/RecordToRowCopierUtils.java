@@ -1450,9 +1450,7 @@ public class RecordToRowCopierUtils {
         if (seq == null) {
             return;
         }
-        StringSink sink = Misc.getThreadLocalSink();
-        sink.put(seq);
-        long date = SqlUtil.implicitCastVarcharAsDate(sink);
+        long date = SqlUtil.implicitCastVarcharAsDate(seq);
         row.putDate(col, date);
     }
 

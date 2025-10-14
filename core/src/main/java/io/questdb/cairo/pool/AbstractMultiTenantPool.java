@@ -54,12 +54,17 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
-    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor = new ThreadLocal<>();
+    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
+        if (configuration.cairoResourcePoolTracingEnabled()) {
+            threadLocalPoolSupervisor = new io.questdb.std.ThreadLocal<>(TracingResourcePoolSupervisor::new);
+        } else {
+            threadLocalPoolSupervisor = new ThreadLocal<>();
+        }
     }
 
     public void configureThreadLocalPoolSupervisor(@NotNull ResourcePoolSupervisor<T> poolSupervisor) {
@@ -400,8 +405,15 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             if (deadline == Long.MAX_VALUE) {
                                 r.goodbye();
                                 Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                                LOG.info().$("shutting down, table is left behind [table=").$(r.getTableToken())
-                                        .I$();
+                                var rec = LOG.info().$("shutting down, table is left behind [table=").$(r.getTableToken()).$(']');
+                                try {
+                                    var supervisor = r.getSupervisor();
+                                    if (supervisor instanceof TracingResourcePoolSupervisor<T>) {
+                                        ((TracingResourcePoolSupervisor<T>) supervisor).printResourceInfo(rec.$(": "), r);
+                                    }
+                                } finally {
+                                    rec.$();
+                                }
                                 leftBehind = r.getTableToken();
                             }
                         }

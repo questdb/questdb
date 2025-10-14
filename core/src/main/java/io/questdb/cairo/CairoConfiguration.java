@@ -87,6 +87,8 @@ public interface CairoConfiguration {
      */
     double autoScaleSymbolCapacityThreshold();
 
+    boolean cairoResourcePoolTracingEnabled();
+
     default boolean disableColumnPurgeJob() {
         return false;
     }
@@ -314,6 +316,8 @@ public interface CairoConfiguration {
     int getMatViewMaxRefreshIntervals();
 
     int getMatViewMaxRefreshRetries();
+
+    long getMatViewMaxRefreshStepUs();
 
     long getMatViewRefreshIntervalsUpdatePeriod();
 
@@ -603,9 +607,9 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
-    long getSymbolTableMinAllocationPageSize();
-
     long getSymbolTableMaxAllocationPageSize();
+
+    long getSymbolTableMinAllocationPageSize();
 
     long getSystemDataAppendPageSize();
 
