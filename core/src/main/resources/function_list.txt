@@ -805,6 +805,8 @@ io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFu
 # 'percentile_disc' and 'percentile_cont' window functions
 io.questdb.griffin.engine.functions.window.PercentileDiscDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.PercentileContDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiPercentileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.MultiPercentileContDoubleWindowFunctionFactory
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory
