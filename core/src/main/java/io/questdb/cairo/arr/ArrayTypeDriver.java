@@ -190,7 +190,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             return;
         }
 
-        int dataSize = (int) ((long) value.getFlatViewLength() * elemSize);
+        int dataSize = value.getCardinality() * elemSize;
 
         Unsafe.getUnsafe().putInt(addr, dataSize);
         addr += Integer.BYTES;
