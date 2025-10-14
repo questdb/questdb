@@ -114,6 +114,7 @@ public class SerialParquetExporter implements Closeable {
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
         final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
         CreateTableOperation createOp = task.getCreateOp();
+        boolean success = false;
 
         try {
             if (createOp != null) {
@@ -255,6 +256,7 @@ public class SerialParquetExporter implements Closeable {
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
             }
             LOG.info().$("finished parquet conversion to temp [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
+            success = true;
         } catch (CopyExportException e) {
             LOG.error().$("parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
             throw e;
@@ -285,7 +287,7 @@ public class SerialParquetExporter implements Closeable {
                     copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FAILED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID(), task.getResult());
                 }
             }
-            if (exportResult == null || numOfFiles == 0) {
+            if (exportResult == null || numOfFiles == 0 || !success) {
                 tempPath.trimTo(tempBaseDirLen);
                 TableUtils.cleanupDirQuiet(ff, tempPath, LOG);
             }
