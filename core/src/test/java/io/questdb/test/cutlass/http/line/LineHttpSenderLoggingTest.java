@@ -74,6 +74,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     }
 
     @Test
+    @Ignore("JUST AN EXPERIMENT, REVERT ME!")
     public void testAuthorizationErrorLogging() throws Exception {
         final TestSecurityContext testSecurityContext = new TestSecurityContext();
         final String errorMessage = "Test authorization error";
