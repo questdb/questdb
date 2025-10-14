@@ -47,7 +47,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class ImportFilesFunctionFactory implements FunctionFactory {
-    private static final RecordMetadata METADATA;
+    public static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
@@ -116,8 +116,9 @@ public class ImportFilesFunctionFactory implements FunctionFactory {
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("path", ColumnType.VARCHAR));
-        metadata.add(new TableColumnMetadata("size", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("modified_time", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("diskSize", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("diskSizeHuman", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("modifiedTime", ColumnType.TIMESTAMP));
         METADATA = metadata;
     }
 }

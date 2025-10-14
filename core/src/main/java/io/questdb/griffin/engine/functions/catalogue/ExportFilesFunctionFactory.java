@@ -26,12 +26,8 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -47,7 +43,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class ExportFilesFunctionFactory implements FunctionFactory {
-    private static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
@@ -84,7 +79,7 @@ public class ExportFilesFunctionFactory implements FunctionFactory {
         private final Path exportPath = new Path(MemoryTag.NATIVE_FUNC_RSS);
 
         public ExportFilesCursorFactory(CairoConfiguration configuration) {
-            super(METADATA);
+            super(ImportFilesFunctionFactory.METADATA);
             exportPath.of(configuration.getSqlCopyExportRoot());
             int rootPathLen = exportPath.size();
             cursor = new FilesRecordCursor(configuration.getFilesFacade(), exportPath, rootPathLen);
@@ -111,13 +106,5 @@ public class ExportFilesFunctionFactory implements FunctionFactory {
             Misc.free(exportPath);
             cursor.close();
         }
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("path", ColumnType.VARCHAR));
-        metadata.add(new TableColumnMetadata("size", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("modified_time", ColumnType.TIMESTAMP));
-        METADATA = metadata;
     }
 }

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntStack;
@@ -35,6 +36,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -47,6 +49,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     private static final int MODIFIED_TIME_COLUMN = 2;
     private static final int PATH_COLUMN = 0;
     private static final int SIZE_COLUMN = 1;
+    private static final int SIZE_HUMAN_COLUMN = 2;
     protected final FilesFacade ff;
     protected final Utf8StringSink fileNameSink = new Utf8StringSink();
     protected final FileRecord record = new FileRecord();
@@ -217,20 +220,31 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     public static class FileRecord implements Record {
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final StringSink sizeSink = new StringSink();
         protected Utf8StringSink fileName;
         protected long modifiedTime;
         protected long size;
 
         @Override
         public long getLong(int col) {
-            switch (col) {
-                case SIZE_COLUMN:
-                    return size;
-                case MODIFIED_TIME_COLUMN:
-                    return modifiedTime;
-                default:
-                    return 0;
+            return switch (col) {
+                case SIZE_COLUMN -> size;
+                case MODIFIED_TIME_COLUMN -> modifiedTime;
+                default -> 0;
+            };
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            if (col == SIZE_HUMAN_COLUMN) {
+                return sizeSink;
             }
+            return null;
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStrA(col);
         }
 
         @Override
@@ -262,6 +276,8 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
             this.fileName = fileName;
             this.size = size;
             this.modifiedTime = modifiedTime;
+            this.sizeSink.clear();
+            SizePrettyFunctionFactory.toSizePretty(sizeSink, size);
         }
     }
 }

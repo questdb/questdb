@@ -27,6 +27,8 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.PropertyKey;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -58,20 +60,20 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testExportFilesBasic() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tsize\n" +
-                            "analytics" + File.separator + "metrics.parquet\t0\n" +
-                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t0\n" +
-                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t0\n" +
-                            "exports" + File.separator + "data" + File.separator + "nested_table.parquet\t0\n" +
-                            "exports" + File.separator + "table1.parquet\t0\n" +
-                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t0\n" +
-                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t0\n" +
-                            "reports" + File.separator + "monthly_report.csv\t0\n" +
-                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t0\n" +
-                            "temp" + File.separator + "backup.sql\t0\n" +
-                            "users_export.parquet\t0\n" +
-                            "users_export2.parquet\t0\n",
-                    "select path, size from export_files() order by path"
+                    "path\tdiskSize\tdiskSizeHuman\n" +
+                            "analytics" + File.separator + "metrics.parquet\t496\t496.0 B\n" +
+                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t496\t496.0 B\n" +
+                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t496\t496.0 B\n" +
+                            "exports" + File.separator + "data" + File.separator + "nested_table.parquet\t496\t496.0 B\n" +
+                            "exports" + File.separator + "table1.parquet\t496\t496.0 B\n" +
+                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t496\t496.0 B\n" +
+                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t496\t496.0 B\n" +
+                            "reports" + File.separator + "monthly_report.csv\t7192\t7.0 KiB\n" +
+                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t496\t496.0 B\n" +
+                            "temp" + File.separator + "backup.sql\t1512\t1.5 KiB\n" +
+                            "users_export.parquet\t496\t496.0 B\n" +
+                            "users_export2.parquet\t496\t496.0 B\n",
+                    "select path, diskSize, diskSizeHuman from export_files() order by path"
             );
         });
     }
@@ -101,17 +103,45 @@ public class ExportFilesFunctionFactoryTest extends AbstractCairoTest {
             }
 
             assertSql(
-                    "path\tsize\tmodified_time\n",
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n",
                     "select * from export_files()"
             );
         });
     }
 
     private void createTestFile(String relativePath) {
+        createTestFile(relativePath, getFileSize(relativePath));
+    }
+
+    private void createTestFile(String relativePath, int size) {
         try (Path path = new Path()) {
             path.of(exportRoot).concat(relativePath);
-            Files.touch(path.$());
+            long fd = Files.openRW(path.$());
+            if (fd > -1) {
+                try {
+                    if (size > 0) {
+                        long mem = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            for (int i = 0; i < size; i++) {
+                                Unsafe.getUnsafe().putByte(mem + i, (byte) ('A' + (i % 26)));
+                            }
+                            Files.write(fd, mem, size, 0);
+                        } finally {
+                            Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
         }
+    }
+
+    private int getFileSize(String relativePath) {
+        if (relativePath.endsWith(".csv")) return 7192;
+        if (relativePath.endsWith(".parquet")) return 496;
+        if (relativePath.endsWith(".sql")) return 1512;
+        return 1024;
     }
 
 
