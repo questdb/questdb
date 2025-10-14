@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.RecordArray;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,7 +45,7 @@ import io.questdb.std.Misc;
  * This pattern occurs when a table with a timestamp column is cross-joined with
  * an arithmetic sequence, and the result is ordered by the sum of the timestamp
  * and the sequence offset.
- *
+ * <p>
  * Example query:
  * <pre>
  * WITH offsets AS (
@@ -52,53 +56,63 @@ import io.questdb.std.Misc;
  * FROM orders CROSS JOIN offsets
  * ORDER BY order_ts + usec_offs
  * </pre>
- *
+ * <p>
  * Instead of materializing all cross-join results and then sorting, this factory
  * emits rows directly in the correct order by leveraging the structure of the pattern.
  */
 public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final int columnSplit;
     private final TimestampLadderRecordCursor cursor;
-    private final long sequenceCount;
-    private final long sequenceStart;
-    private final long sequenceStep;
+    private final int slaveColumnIndex;
     private final int timestampColumnIndex;
 
     /**
      * Creates a new timestamp ladder cursor factory.
      *
-     * @param metadata              the joined record metadata
-     * @param masterFactory         the factory for the LHS table (e.g., orders table)
-     * @param slaveFactory          the factory for the RHS arithmetic sequence
-     * @param columnSplit           the number of columns from the master (where slave columns start)
-     * @param timestampColumnIndex  the index of the timestamp column being modified (in master metadata)
-     * @param sequenceStart         the initial value of the arithmetic sequence
-     * @param sequenceStep          the step size between sequence elements
-     * @param sequenceCount         the number of elements in the sequence
+     * @param configuration        the Cairo configuration
+     * @param metadata             the joined record metadata
+     * @param masterFactory        the factory for the LHS table (e.g., orders table)
+     * @param slaveFactory         the factory for the RHS arithmetic sequence
+     * @param columnSplit          the number of columns from the master (where slave columns start)
+     * @param timestampColumnIndex the index of the timestamp column being modified (in master metadata)
+     * @param slaveColumnIndex     the index of the arithmetic sequence column in slave metadata
+     * @param slaveRecordSink      the RecordSink for materializing slave records
      */
     public TimestampLadderRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit,
             int timestampColumnIndex,
-            long sequenceStart,
-            long sequenceStep,
-            long sequenceCount
+            int slaveColumnIndex,
+            RecordSink slaveRecordSink,
+            RecordSink masterRecordSink
     ) {
         super(metadata, null, masterFactory, slaveFactory);
-        this.columnSplit = columnSplit;
         this.timestampColumnIndex = timestampColumnIndex;
-        this.sequenceStart = sequenceStart;
-        this.sequenceStep = sequenceStep;
-        this.sequenceCount = sequenceCount;
-        this.cursor = new TimestampLadderRecordCursor(
-                columnSplit,
-                timestampColumnIndex,
-                sequenceStart,
-                sequenceStep,
-                sequenceCount
-        );
+        this.slaveColumnIndex = slaveColumnIndex;
+
+        RecordArray slaveRecordArray = null;
+        try {
+            slaveRecordArray = new RecordArray(
+                    slaveFactory.getMetadata(),
+                    slaveRecordSink,
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
+            this.cursor = new TimestampLadderRecordCursor(
+                    configuration,
+                    columnSplit,
+                    masterFactory.getMetadata(),
+                    timestampColumnIndex,
+                    slaveColumnIndex,
+                    slaveRecordArray,
+                    masterRecordSink
+            );
+        } catch (Throwable th) {
+            Misc.free(slaveRecordArray);
+            throw th;
+        }
     }
 
     @Override
@@ -140,9 +154,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Timestamp Ladder Join");
-        sink.meta("start").val(sequenceStart);
-        sink.meta("step").val(sequenceStep);
-        sink.meta("count").val(sequenceCount);
+        sink.meta("timestampColumn").val(timestampColumnIndex);
+        sink.meta("slaveColumn").val(slaveColumnIndex);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -156,85 +169,72 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
     /**
      * Record cursor that emits cross-join results in timestamp order.
-     *
-     * TODO: Implement the optimized algorithm that avoids full materialization and sorting.
-     * For now, this uses a simple cross-join approach as a placeholder.
+     * <p>
+     * The slave cursor (arithmetic sequence) is fully materialized into a RecordArray
+     * for efficient random access during the optimized iteration.
+     * <p>
+     * Uses a merge algorithm similar to ArithmeticSequenceMerger, maintaining a circular
+     * linked list of TimestampIterator objects (one per master row) that emit rows in
+     * sorted timestamp order.
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
+        private final CairoConfiguration configuration;
+        private final RecordMetadata masterMetadata;
+        private final RecordSink masterRecordSink;
+        private final int masterTimestampColumnIndex;
         private final JoinRecord record;
+        private final RecordArray slaveRecordArray;
+        private final int slaveSequenceColumnIndex;
         private final RecordCursor.Counter tmpCounter;
-        private final long sequenceCount;
-        private final long sequenceStart;
-        private final long sequenceStep;
-        private final int timestampColumnIndex;
-
         private SqlExecutionCircuitBreaker circuitBreaker;
+        // Merge algorithm state
+        private TimestampIterator currentIter;
         private boolean isMasterHasNextPending;
-        private boolean isMasterSizeCalculated;
-        private boolean isSlavePartialSizeCalculated;
-        private boolean isSlaveReset;
-        private boolean isSlaveSizeCalculated;
+        private boolean isSlaveMaterialized;
         private boolean masterHasNext;
-        private long masterSize;
-        private long slavePartialSize;
+        private TimestampIterator prevIter;
         private long slaveSize;
 
         public TimestampLadderRecordCursor(
+                CairoConfiguration configuration,
                 int columnSplit,
-                int timestampColumnIndex,
-                long sequenceStart,
-                long sequenceStep,
-                long sequenceCount
+                RecordMetadata masterMetadata,
+                int masterTimestampColumnIndex,
+                int slaveSequenceColumnIndex,
+                RecordArray slaveRecordArray,
+                RecordSink masterRecordSink
         ) {
             super(columnSplit);
+            this.configuration = configuration;
+            this.masterMetadata = masterMetadata;
             this.record = new JoinRecord(columnSplit);
             this.tmpCounter = new Counter();
-            this.timestampColumnIndex = timestampColumnIndex;
-            this.sequenceStart = sequenceStart;
-            this.sequenceStep = sequenceStep;
-            this.sequenceCount = sequenceCount;
+            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
+            this.slaveRecordArray = slaveRecordArray;
+            this.masterRecordSink = masterRecordSink;
         }
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-            if (!isMasterHasNextPending && !masterHasNext) {
-                return;
-            }
+        }
 
-            if (!isSlavePartialSizeCalculated) {
-                slaveCursor.calculateSize(circuitBreaker, tmpCounter);
-                slavePartialSize = tmpCounter.get();
-                isSlavePartialSizeCalculated = true;
-                tmpCounter.clear();
+        @Override
+        public void close() {
+            // Free all iterators in the circular list
+            if (currentIter != null) {
+                TimestampIterator iter = currentIter;
+                TimestampIterator start = currentIter;
+                do {
+                    TimestampIterator next = iter.nextIterator();
+                    iter.close();
+                    iter = next;
+                } while (iter != start && iter != null);
+                currentIter = null;
+                prevIter = null;
             }
-            if (!isMasterSizeCalculated) {
-                masterCursor.calculateSize(circuitBreaker, tmpCounter);
-                masterSize = tmpCounter.get();
-                isMasterSizeCalculated = true;
-                tmpCounter.clear();
-            }
-
-            if (masterSize == 0) {
-                if (!isMasterHasNextPending) {
-                    counter.add(slavePartialSize);
-                }
-            } else {
-                if (!isSlaveSizeCalculated) {
-                    if (!isSlaveReset) {
-                        slaveCursor.toTop();
-                        isSlaveReset = true;
-                    }
-                    slaveCursor.calculateSize(circuitBreaker, tmpCounter);
-                    slaveSize = tmpCounter.get();
-                    isSlaveSizeCalculated = true;
-                }
-
-                long size = masterSize * slaveSize;
-                if (!isMasterHasNextPending) {
-                    size += slavePartialSize;
-                }
-                counter.add(size);
-            }
+            Misc.free(slaveRecordArray);
+            super.close();
         }
 
         @Override
@@ -244,26 +244,80 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public boolean hasNext() {
-            // TODO: Replace with optimized algorithm that emits rows in sorted order
-            // For now, using simple cross-join logic as placeholder
-            while (true) {
+            // Lazy initialization: create first iterator if needed
+            if (currentIter == null) {
                 if (isMasterHasNextPending) {
                     masterHasNext = masterCursor.hasNext();
                     isMasterHasNextPending = false;
                 }
-
                 if (!masterHasNext) {
-                    return false;
+                    return false;  // No master rows at all
                 }
-
-                if (slaveCursor.hasNext()) {
-                    return true;
-                }
-
-                slaveCursor.toTop();
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                isMasterHasNextPending = true;
+                // Create the first iterator
+                currentIter = new TimestampIterator(masterCursor.getRecord());
+                prevIter = currentIter;
+                isMasterHasNextPending = true;  // We consumed a master row
             }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+            currentIter.next();
+
+            // Update the JoinRecord to point to current iterator's records
+            record.of(currentIter.getMasterRecord(), currentIter.getSlaveRecord());
+
+            // Determine the next iterator to use
+            TimestampIterator nextIter = currentIter.nextIterator();
+
+            // Check if we should activate a new iterator from the next master row
+            if (isMasterHasNextPending) {
+                masterHasNext = masterCursor.hasNext();
+                isMasterHasNextPending = false;
+            }
+
+            if (masterHasNext) {
+                long nextIterTimestamp = nextIter.peekNext();
+                if (nextIterTimestamp != Long.MIN_VALUE) {
+                    // Peek at the next master row's first timestamp
+                    Record nextMasterRecord = masterCursor.getRecord();
+                    long nextMasterTimestamp = nextMasterRecord.getTimestamp(masterTimestampColumnIndex);
+                    // Get first slave offset
+                    Record firstSlaveRecord = slaveRecordArray.getRecordAt(0);
+                    long firstSlaveOffset = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
+                    long nextMasterFirstTimestamp = nextMasterTimestamp + firstSlaveOffset;
+
+                    if (nextMasterFirstTimestamp < nextIterTimestamp) {
+                        // Activate the new master row by inserting after current iterator
+                        nextIter = currentIter.insertAfter(nextMasterRecord);
+                        // Mark that we need to check for next master row
+                        isMasterHasNextPending = true;
+                    }
+                } else {
+                    // nextIter is exhausted, and it's the last one in the circular list
+                    // Free the old exhausted iterator
+                    currentIter.close();
+                    // Re-initialize everything to the new master row
+                    nextIter = new TimestampIterator(masterCursor.getRecord());
+                    prevIter = currentIter = nextIter;
+                    // Mark that we need to check for next master row
+                    isMasterHasNextPending = true;
+                }
+            }
+
+            // Remove exhausted iterators from the circular list
+            if (currentIter.isEmpty()) {
+                nextIter = prevIter.removeNextIterator();
+                if (nextIter == null) {
+                    // Last iterator exhausted, we're done
+                    currentIter = null;
+                    return true;  // But return the current row first
+                }
+            } else {
+                prevIter = currentIter;
+            }
+
+            currentIter = nextIter;
+            return true;  // We have a row to emit
         }
 
         @Override
@@ -274,7 +328,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         @Override
         public long size() {
             long sizeA = masterCursor.size();
-            long sizeB = slaveCursor.size();
+            long sizeB = slaveRecordArray.size();
             if (sizeA == -1 || sizeB == -1) {
                 return -1;
             }
@@ -284,75 +338,161 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public void skipRows(Counter rowCount) throws DataUnavailableException {
-            if (rowCount.get() == 0) {
-                return;
-            }
-
-            if (!isSlaveSizeCalculated) {
-                slaveCursor.calculateSize(this.circuitBreaker, tmpCounter);
-                slaveSize = tmpCounter.get();
-                isSlaveSizeCalculated = true;
-                tmpCounter.clear();
-            }
-
-            if (slaveSize == 0) {
-                return;
-            }
-
-            long masterToSkip = rowCount.get() / slaveSize;
-            tmpCounter.set(masterToSkip);
-            try {
-                masterCursor.skipRows(tmpCounter);
-                masterHasNext = masterCursor.hasNext();
-                isMasterHasNextPending = false;
-            } finally {
-                // in case of DataUnavailableException
-                long diff = (masterToSkip - tmpCounter.get()) * slaveSize;
-                rowCount.dec(diff);
-            }
-
-            if (!masterHasNext) {
-                return;
-            }
-
-            if (!isSlaveReset) {
-                slaveCursor.toTop();
-                isSlaveReset = true;
-            }
-            slaveCursor.skipRows(rowCount);
         }
 
         @Override
         public void toTop() {
-            masterCursor.toTop();
-            slaveCursor.toTop();
-            isMasterHasNextPending = true;
+            // Free all existing iterators
+            if (currentIter != null) {
+                TimestampIterator iter = currentIter;
+                TimestampIterator start = currentIter;
+                do {
+                    TimestampIterator next = iter.nextIterator();
+                    iter.close();
+                    iter = next;
+                } while (iter != start && iter != null);
+            }
 
-            isSlavePartialSizeCalculated = false;
-            isSlaveReset = false;
-            isSlaveSizeCalculated = false;
-            isMasterSizeCalculated = false;
+            // Reset state
+            currentIter = null;
+            prevIter = null;
+            isMasterHasNextPending = true;
+            masterHasNext = false;
+            masterCursor.toTop();
+            slaveRecordArray.toTop();
             tmpCounter.clear();
-            masterSize = 0;
-            slaveSize = 0;
-            slavePartialSize = 0;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            record.of(masterCursor.getRecord(), slaveCursor.getRecord());
-            isMasterHasNextPending = true;
             this.circuitBreaker = circuitBreaker;
 
-            isSlavePartialSizeCalculated = false;
-            isSlaveReset = false;
-            isSlaveSizeCalculated = false;
-            isMasterSizeCalculated = false;
+            // Materialize the slave cursor into RecordArray for efficient random access
+            if (!isSlaveMaterialized) {
+                slaveRecordArray.clear();
+                final Record slaveRecord = slaveCursor.getRecord();
+                while (slaveCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    slaveRecordArray.put(slaveRecord);
+                }
+                slaveRecordArray.toTop();
+                isSlaveMaterialized = true;
+
+                // Cache the slave size for iteration
+                tmpCounter.clear();
+                slaveRecordArray.calculateSize(circuitBreaker, tmpCounter);
+                slaveSize = tmpCounter.get();
+                tmpCounter.clear();
+            }
+
+            // Reset iterator state for new execution
+            currentIter = null;
+            prevIter = null;
+            isMasterHasNextPending = true;
+            masterHasNext = false;
+
+            record.of(masterCursor.getRecord(), slaveRecordArray.getRecord());
             tmpCounter.clear();
-            masterSize = 0;
-            slaveSize = 0;
-            slavePartialSize = 0;
+        }
+
+        /**
+         * Iterator for a single master row, iterating through all slave records.
+         * Forms a circular linked list with other iterators for the merge algorithm.
+         */
+        private class TimestampIterator {
+            private final RecordChain masterRecordChain;
+            private TimestampIterator nextIter;
+            private long nextTimestamp;
+            private int slaveRecordIndex;
+
+            TimestampIterator(Record masterRecord) {
+                // Create a RecordChain to hold a single master record
+                this.masterRecordChain = new RecordChain(
+                        masterMetadata,
+                        masterRecordSink,
+                        configuration.getSqlHashJoinValuePageSize(),
+                        configuration.getSqlHashJoinValueMaxPages()
+                );
+                // Store the master record
+                this.masterRecordChain.put(masterRecord, -1);
+                this.masterRecordChain.toTop();
+                this.masterRecordChain.hasNext(); // Position at the record
+
+                // Initialize iteration state
+                this.slaveRecordIndex = 0;
+                this.nextIter = this;  // Initially points to itself (circular list of one)
+
+                // Compute initial timestamp
+                updateNextTimestamp();
+            }
+
+            private void updateNextTimestamp() {
+                if (slaveRecordIndex >= slaveSize) {
+                    nextTimestamp = Long.MIN_VALUE;  // Exhausted
+                } else {
+                    // Get master timestamp
+                    long masterTimestamp = getMasterRecord().getTimestamp(masterTimestampColumnIndex);
+                    // Get slave offset value at current index
+                    Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordIndex);
+                    long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
+                    // Compute combined timestamp
+                    nextTimestamp = masterTimestamp + slaveOffset;
+                }
+            }
+
+            void close() {
+                Misc.free(masterRecordChain);
+            }
+
+            Record getMasterRecord() {
+                return masterRecordChain.getRecord();
+            }
+
+            Record getSlaveRecord() {
+                // Position the slaveRecordArray at our current index and return the record
+                // We need to use getRecordAt since slaveRecordArray is shared
+                return slaveRecordArray.getRecordAt(slaveRecordIndex);
+            }
+
+            TimestampIterator insertAfter(Record masterRecord) {
+                TimestampIterator iter = new TimestampIterator(masterRecord);
+                iter.nextIter = this.nextIter;
+                this.nextIter = iter;
+                return iter;
+            }
+
+            boolean isEmpty() {
+                return slaveRecordIndex >= slaveSize;
+            }
+
+            /**
+             * Advances to the next slave record.
+             */
+            void next() {
+                if (nextTimestamp != Long.MIN_VALUE) {
+                    slaveRecordIndex++;
+                    updateNextTimestamp();
+                }
+            }
+
+            TimestampIterator nextIterator() {
+                return nextIter;
+            }
+
+            long peekNext() {
+                return nextTimestamp;
+            }
+
+            TimestampIterator removeNextIterator() {
+                if (nextIter == this) {
+                    return null;  // Last iterator in the list
+                }
+                // Free the next iterator's resources
+                nextIter.close();
+                nextIter = nextIter.nextIter;
+                return nextIter;
+            }
         }
     }
 }
