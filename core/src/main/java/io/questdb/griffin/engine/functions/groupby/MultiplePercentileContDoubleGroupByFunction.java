@@ -62,7 +62,6 @@ public class MultiplePercentileContDoubleGroupByFunction extends MultiplePercent
             out.ofNull();
             return out;
         }
-        listA.sort(0, size - 1);
 
         ArrayView percentiles = percentileFunc.getArray(record);
         FlatArrayView view = percentiles.flatView();
@@ -75,6 +74,8 @@ public class MultiplePercentileContDoubleGroupByFunction extends MultiplePercent
             out.applyShape();
         }
 
+        // Collect all unique indices needed for interpolation
+        java.util.Set<Integer> indexSet = new java.util.HashSet<>();
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
             if (percentile < 0.0d || percentile > 1.0d) {
@@ -82,6 +83,30 @@ public class MultiplePercentileContDoubleGroupByFunction extends MultiplePercent
             }
 
             // Calculate the continuous percentile position
+            double position = percentile * (size - 1);
+            int lowerIndex = (int) Math.floor(position);
+            int upperIndex = (int) Math.ceil(position);
+
+            indexSet.add(lowerIndex);
+            if (lowerIndex != upperIndex) {
+                indexSet.add(upperIndex);
+            }
+        }
+
+        // Convert to sorted array for quickSelectMultiple
+        int[] indices = new int[indexSet.size()];
+        int idx = 0;
+        for (int index : indexSet) {
+            indices[idx++] = index;
+        }
+        java.util.Arrays.sort(indices);
+
+        // Use optimized multi-select instead of full sorting
+        listA.quickSelectMultiple(0, size - 1, indices, 0, indices.length);
+
+        // Now compute interpolated values
+        for (int i = 0, len = view.length(); i < len; i++) {
+            double percentile = view.getDoubleAtAbsIndex(i);
             double position = percentile * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);

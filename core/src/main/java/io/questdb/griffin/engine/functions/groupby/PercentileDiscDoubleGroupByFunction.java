@@ -113,12 +113,13 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
         if (size == 0) {
             return Double.NaN;
         }
-        listA.sort(0, size - 1);
         double percentile = percentileFunc.getDouble(record);
         if (percentile < 0.0d || percentile > 1.0d) {
             throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
         }
         int N = (int) Math.max(0, Math.ceil(size * percentile) - 1);
+        // Use QuickSelect instead of full sorting - O(n) vs O(n log n)
+        listA.quickSelect(0, size - 1, N);
         return listA.getQuick(N);
     }
 

@@ -130,7 +130,6 @@ public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction i
             out.ofNull();
             return out;
         }
-        listA.sort(0, size - 1);
 
         ArrayView percentiles = percentileFunc.getArray(record);
         FlatArrayView view = percentiles.flatView();
@@ -143,11 +142,29 @@ public class MultiplePercentileDiscDoubleGroupByFunction extends ArrayFunction i
             out.applyShape();
         }
 
+        // Calculate all required indices and validate percentiles
+        int[] indices = new int[view_length];
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
             if (percentile < 0.0d || percentile > 1.0d) {
                 throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
             }
+            int N = (int) Math.ceil(size * percentile) - 1;
+            if (N < 0) {
+                N = 0;
+            }
+            indices[i] = N;
+        }
+
+        // Sort indices to optimize quickSelectMultiple
+        java.util.Arrays.sort(indices);
+
+        // Use optimized multi-select instead of full sorting - much faster for sparse percentiles
+        listA.quickSelectMultiple(0, size - 1, indices, 0, indices.length);
+
+        // Now retrieve the values (they're already in the correct positions)
+        for (int i = 0, len = view.length(); i < len; i++) {
+            double percentile = view.getDoubleAtAbsIndex(i);
             int N = (int) Math.ceil(size * percentile) - 1;
             if (N < 0) {
                 N = 0;

@@ -51,7 +51,6 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         if (size == 0) {
             return Double.NaN;
         }
-        listA.sort(0, size - 1);
         double percentile = percentileFunc.getDouble(record);
         if (percentile < 0.0d || percentile > 1.0d) {
             throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
@@ -64,10 +63,17 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
 
         // If the position is exactly at an index, return that value
         if (lowerIndex == upperIndex) {
+            // Use QuickSelect to find the element - O(n) vs O(n log n)
+            listA.quickSelect(0, size - 1, lowerIndex);
             return listA.getQuick(lowerIndex);
         }
 
-        // Otherwise, perform linear interpolation between the two adjacent values
+        // Need to select both adjacent indices for interpolation
+        // Use quickSelectMultiple for efficiency
+        int[] indices = new int[]{lowerIndex, upperIndex};
+        listA.quickSelectMultiple(0, size - 1, indices, 0, 2);
+
+        // Perform linear interpolation between the two adjacent values
         double lowerValue = listA.getQuick(lowerIndex);
         double upperValue = listA.getQuick(upperIndex);
         double fraction = position - lowerIndex;
