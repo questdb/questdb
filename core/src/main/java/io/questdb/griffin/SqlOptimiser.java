@@ -1543,7 +1543,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel innerVirtualModel,
             QueryModel windowModel,
             QueryModel groupByModel,
-            QueryModel outerModel,
+            QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
         // add duplicate column names only to group-by model
@@ -1568,7 +1568,7 @@ public class SqlOptimiser implements Mutable {
             // case 2: inner model will be sandwiched between the windowModel and the translateModel, while translatedColumn.token already exists as a column in the innerVirtualModel,
             // adding translatedColumn to windowModel is safe.
             windowModel.addBottomUpColumn(translatedColumn);
-            outerModel.addBottomUpColumn(translatedColumn);
+            outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
             }
@@ -1594,9 +1594,9 @@ public class SqlOptimiser implements Mutable {
 
             // create column that references inner alias we just created
             innerVirtualModel.addBottomUpColumn(translatedColumn);
-            windowModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
-            outerModel.addBottomUpColumn(translatedColumn);
+            windowModel.addBottomUpColumn(translatedColumn);
+            outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
             }
@@ -6218,7 +6218,7 @@ public class SqlOptimiser implements Mutable {
                             // The below if-statement will only evaluate to true when using wildcards in a join with duplicate column names.
                             // Because the other column aliases are not known at the time qc's alias gets set, we must wait until this point
                             // (when we know the other column aliases) to alter it if a duplicate has occurred.
-                            if (groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
+                            if (baseModel.getJoinModels().size() > 1 && groupByModel.getAliasToColumnMap().contains(qc.getAlias())) {
                                 CharSequence newAlias = createColumnAlias(qc.getAst(), groupByModel);
                                 qc.setAlias(newAlias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
                             }
@@ -6245,18 +6245,35 @@ public class SqlOptimiser implements Mutable {
                                 rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                                 rewriteStatus |= REWRITE_STATUS_FORCE_INNER_MODEL;
                             } else {
-                                createSelectColumn(
-                                        qc.getAlias(),
-                                        qc.getAst(),
-                                        false,
-                                        baseModel,
-                                        translatingModel,
-                                        innerVirtualModel,
-                                        windowModel,
+                                final CharSequence existingAlias = findExistingGroupByKeyColumnAlias(
+                                        qc.getAst().token,
                                         groupByModel,
-                                        outerVirtualModel,
-                                        (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0 ? distinctModel : null
+                                        translatingModel,
+                                        innerVirtualModel
                                 );
+                                if (existingAlias != null) {
+                                    // the column is already present in group by as a key,
+                                    // so the only thing we need to do is to expose it in the outer model
+                                    final QueryColumn translatedColumn = nextColumn(qc.getAlias(), existingAlias);
+                                    outerVirtualModel.addBottomUpColumn(translatedColumn);
+                                    if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
+                                        distinctModel.addBottomUpColumn(translatedColumn);
+                                    }
+                                } else {
+                                    // the column is not present in group by as a key, let's create it
+                                    createSelectColumn(
+                                            qc.getAlias(),
+                                            qc.getAst(),
+                                            false,
+                                            baseModel,
+                                            translatingModel,
+                                            innerVirtualModel,
+                                            windowModel,
+                                            groupByModel,
+                                            outerVirtualModel,
+                                            (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0 ? distinctModel : null
+                                    );
+                                }
                             }
                         }
                     }
