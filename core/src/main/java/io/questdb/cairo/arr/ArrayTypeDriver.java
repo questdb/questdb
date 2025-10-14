@@ -164,7 +164,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return bytesWritten;
     }
 
-    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, long headerSize, int elemSize) {
+    public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, int elemSize) {
         if (arrayView == null || arrayView.isNull()) {
             Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
             return;
@@ -180,7 +180,16 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             addr += Integer.BYTES;
         }
 
-        appendToMemRecursive(arrayView, 0, 0, addr);
+        if (arrayView.isVanilla()) {
+            short elemType = arrayView.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                arrayView.flatView().appendPlainDoubleValue(addr, arrayView.getFlatViewOffset(), arrayView.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendToMemRecursive(arrayView, 0, 0, addr);
+        }
     }
 
     public static void appendValue(
