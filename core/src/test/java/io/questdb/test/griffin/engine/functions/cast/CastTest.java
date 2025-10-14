@@ -6047,18 +6047,23 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a date)",
                 null,
-                "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)",
+                "insert into tab select cast(rnd_str('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.001456Z', 'ABC', '2019-03-24T14:20:33.002456789Z', null) as date) from long_sequence(15)",
                 "a\n" +
                         "2019-03-11T10:20:33.123Z\n" +
-                        "\n" +
-                        "2019-03-24T14:20:33.123Z\n" +
-                        "\n" +
-                        "2019-03-24T14:20:33.123Z\n" +
-                        "\n" +
-                        "\n" +
+                        "2019-03-24T14:20:33.002Z\n" +
+                        "2019-03-24T14:20:33.002Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
                         "\n" +
                         "\n" +
-                        "2019-03-11T10:20:33.123Z\n",
+                        "2019-03-24T14:20:33.001Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
+                        "2019-03-24T14:20:33.002Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
+                        "\n" +
+                        "\n" +
+                        "2019-03-24T14:20:33.002Z\n" +
+                        "2019-03-24T14:20:33.001Z\n",
                 true,
                 true,
                 false
@@ -7221,7 +7226,7 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a byte)",
                 null,
-                "insert into tab select cast(rnd_timestamp(96::timestamp_ns,100::timestamp_ns, 2) as byte) from long_sequence(10)",
+                "insert into tab select cast(rnd_timestamp_ns(96, 100, 2) as byte) from long_sequence(10)",
                 "a\n" +
                         "97\n" +
                         "0\n" +
@@ -7246,7 +7251,7 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a char)",
                 null,
-                "insert into tab select cast(rnd_timestamp(34::timestamp_ns,66::timestamp_ns,2) as char) from long_sequence(10)",
+                "insert into tab select cast(rnd_timestamp(34,66,2) as char) from long_sequence(10)",
                 "a\n" +
                         "7\n" +
                         "\n" +
@@ -7414,7 +7419,7 @@ public class CastTest extends AbstractCairoTest {
                         "0xc0\n" +
                         "0xc7\n",
                 "select cast(a as long256) x from tt order by x",
-                "create table tt as (select rnd_timestamp(1::timestamp_ns,200::timestamp_ns,1) a from long_sequence(20))",
+                "create table tt as (select rnd_timestamp_ns(1,200,1) a from long_sequence(20))",
                 null,
                 true,
                 true
@@ -7428,7 +7433,7 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a short)",
                 null,
-                "insert into tab select cast(rnd_timestamp(23::timestamp_ns,56::timestamp_ns,2) as short) from long_sequence(10)",
+                "insert into tab select cast(rnd_timestamp(23,56,2) as short) from long_sequence(10)",
                 "a\n" +
                         "31\n" +
                         "0\n" +
@@ -7510,7 +7515,7 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a symbol)",
                 null,
-                "insert into tab select cast(rnd_timestamp(1::timestamp_ns,150::timestamp_ns,2) as symbol) from long_sequence(10)",
+                "insert into tab select cast(rnd_timestamp(1,150,2) as symbol) from long_sequence(10)",
                 "a\n" +
                         "67\n" +
                         "\n" +
@@ -7578,7 +7583,7 @@ public class CastTest extends AbstractCairoTest {
                         "11\t1970-01-01T00:00:00.000000011Z\n" +
                         "15\t1970-01-01T00:00:00.000000015Z\n",
                 "select cast(a as symbol) b, a from tab",
-                "create table tab as (select rnd_timestamp(10::timestamp_ns, 20::timestamp_ns, 2) a from long_sequence(20))",
+                "create table tab as (select rnd_timestamp_ns(10, 20, 2) a from long_sequence(20))",
                 null,
                 true,
                 true
@@ -7592,7 +7597,7 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a varchar)",
                 null,
-                "insert into tab select cast(rnd_timestamp(34::timestamp_ns,66::timestamp_ns,100) as varchar) from long_sequence(10)",
+                "insert into tab select cast(rnd_timestamp_ns(34,66,100) as varchar) from long_sequence(10)",
                 "a\n" +
                         "1970-01-01T00:00:00.000000055Z\n" +
                         "1970-01-01T00:00:00.000000048Z\n" +
@@ -8343,18 +8348,23 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a date)",
                 null,
-                "insert into tab select cast(rnd_varchar('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null) as date) from long_sequence(10)",
+                "insert into tab select cast(rnd_varchar('2019-03-11T10:20:33.123Z', '2019-03-24T14:20:33.123Z', 'ABC', null, '2019-03-24T14:20:33.00123Z', '2019-03-24T14:20:33.00312334Z') as date) from long_sequence(15)",
                 "a\n" +
                         "2019-03-11T10:20:33.123Z\n" +
+                        "2019-03-11T10:20:33.123Z\n" +
+                        "2019-03-24T14:20:33.123Z\n" +
+                        "2019-03-24T14:20:33.003Z\n" +
+                        "2019-03-24T14:20:33.003Z\n" +
+                        "2019-03-24T14:20:33.003Z\n" +
                         "\n" +
                         "2019-03-24T14:20:33.123Z\n" +
+                        "2019-03-11T10:20:33.123Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
                         "\n" +
+                        "2019-03-24T14:20:33.001Z\n" +
                         "2019-03-24T14:20:33.123Z\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "2019-03-11T10:20:33.123Z\n",
+                        "2019-03-24T14:20:33.123Z\n",
                 true,
                 true,
                 false
