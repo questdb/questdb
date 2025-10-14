@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 
 /**
@@ -184,6 +185,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private final int masterTimestampColumnIndex;
         private final JoinRecord record;
         private final RecordArray slaveRecordArray;
+        private final LongList slaveRecordOffsets;
         private final int slaveSequenceColumnIndex;
         private final RecordCursor.Counter tmpCounter;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -212,6 +214,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
             this.slaveRecordArray = slaveRecordArray;
+            this.slaveRecordOffsets = new LongList();
             this.masterRecordSink = masterRecordSink;
         }
 
@@ -282,7 +285,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     Record nextMasterRecord = masterCursor.getRecord();
                     long nextMasterTimestamp = nextMasterRecord.getTimestamp(masterTimestampColumnIndex);
                     // Get first slave offset
-                    Record firstSlaveRecord = slaveRecordArray.getRecordAt(0);
+                    long firstSlaveRecordOffset = slaveRecordOffsets.getQuick(0);
+                    Record firstSlaveRecord = slaveRecordArray.getRecordAt(firstSlaveRecordOffset);
                     long firstSlaveOffset = firstSlaveRecord.getLong(slaveSequenceColumnIndex);
                     long nextMasterFirstTimestamp = nextMasterTimestamp + firstSlaveOffset;
 
@@ -371,19 +375,18 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             // Materialize the slave cursor into RecordArray for efficient random access
             if (!isSlaveMaterialized) {
                 slaveRecordArray.clear();
+                slaveRecordOffsets.clear();
                 final Record slaveRecord = slaveCursor.getRecord();
                 while (slaveCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    slaveRecordArray.put(slaveRecord);
+                    long offset = slaveRecordArray.put(slaveRecord);
+                    slaveRecordOffsets.add(offset);
                 }
                 slaveRecordArray.toTop();
                 isSlaveMaterialized = true;
 
                 // Cache the slave size for iteration
-                tmpCounter.clear();
-                slaveRecordArray.calculateSize(circuitBreaker, tmpCounter);
-                slaveSize = tmpCounter.get();
-                tmpCounter.clear();
+                slaveSize = slaveRecordOffsets.size();
             }
 
             // Reset iterator state for new execution
@@ -434,7 +437,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     // Get master timestamp
                     long masterTimestamp = getMasterRecord().getTimestamp(masterTimestampColumnIndex);
                     // Get slave offset value at current index
-                    Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordIndex);
+                    long slaveRecordOffset = slaveRecordOffsets.getQuick(slaveRecordIndex);
+                    Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
                     long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
                     // Compute combined timestamp
                     nextTimestamp = masterTimestamp + slaveOffset;
@@ -450,9 +454,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
 
             Record getSlaveRecord() {
-                // Position the slaveRecordArray at our current index and return the record
-                // We need to use getRecordAt since slaveRecordArray is shared
-                return slaveRecordArray.getRecordAt(slaveRecordIndex);
+                // Get the offset for this index and return the record at that offset
+                long offset = slaveRecordOffsets.getQuick(slaveRecordIndex);
+                return slaveRecordArray.getRecordAt(offset);
             }
 
             TimestampIterator insertAfter(Record masterRecord) {
