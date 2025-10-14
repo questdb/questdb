@@ -361,25 +361,25 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                     "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
                     ")");
             // cat=0 (even): values 2, 4, 6, 8, 10
-            //   25th percentile index = ceil(5*0.25)-1 = 0 → 2.0
+            //   25th percentile index = ceil(5*0.25)-1 = 1 → 4.0
             //   50th percentile index = ceil(5*0.50)-1 = 2 → 6.0
             //   75th percentile index = ceil(5*0.75)-1 = 3 → 8.0
             // cat=1 (odd): values 1, 3, 5, 7, 9
-            //   25th percentile index = ceil(5*0.25)-1 = 0 → 1.0
+            //   25th percentile index = ceil(5*0.25)-1 = 1 → 3.0
             //   50th percentile index = ceil(5*0.50)-1 = 2 → 5.0
             //   75th percentile index = ceil(5*0.75)-1 = 3 → 7.0
             assertSql(
                     "category\tvalue\tpercentile_disc\n" +
-                            "1\t1.0\t[1.0,5.0,7.0]\n" +
-                            "0\t2.0\t[2.0,6.0,8.0]\n" +
-                            "1\t3.0\t[1.0,5.0,7.0]\n" +
-                            "0\t4.0\t[2.0,6.0,8.0]\n" +
-                            "1\t5.0\t[1.0,5.0,7.0]\n" +
-                            "0\t6.0\t[2.0,6.0,8.0]\n" +
-                            "1\t7.0\t[1.0,5.0,7.0]\n" +
-                            "0\t8.0\t[2.0,6.0,8.0]\n" +
-                            "1\t9.0\t[1.0,5.0,7.0]\n" +
-                            "0\t10.0\t[2.0,6.0,8.0]\n",
+                            "1\t1.0\t[3.0,5.0,7.0]\n" +
+                            "0\t2.0\t[4.0,6.0,8.0]\n" +
+                            "1\t3.0\t[3.0,5.0,7.0]\n" +
+                            "0\t4.0\t[4.0,6.0,8.0]\n" +
+                            "1\t5.0\t[3.0,5.0,7.0]\n" +
+                            "0\t6.0\t[4.0,6.0,8.0]\n" +
+                            "1\t7.0\t[3.0,5.0,7.0]\n" +
+                            "0\t8.0\t[4.0,6.0,8.0]\n" +
+                            "1\t9.0\t[3.0,5.0,7.0]\n" +
+                            "0\t10.0\t[4.0,6.0,8.0]\n",
                     "select category, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test"
             );
         });
