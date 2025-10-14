@@ -140,11 +140,11 @@ public final class ColumnType {
     // slightly bigger than needed to make it a power of 2
     private static final short OVERLOAD_PRIORITY_N = (short) Math.pow(2.0, Numbers.msb(NULL) + 1.0);
     private static final int[] OVERLOAD_PRIORITY_MATRIX = new int[OVERLOAD_PRIORITY_N * OVERLOAD_PRIORITY_N]; // NULL to any is 0
-    public static final int DECIMAL_DEFAULT_TYPE_TAG = DECIMAL64;
-    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
+    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
+    public static final int DECIMAL_DEFAULT_TYPE_TAG = DECIMAL64;
     public static final int TIMESTAMP_MICRO = TIMESTAMP;
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
@@ -323,18 +323,13 @@ public final class ColumnType {
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
-        switch (tagOf(columnType)) {
-            case STRING:
-                return StringTypeDriver.INSTANCE;
-            case BINARY:
-                return BinaryTypeDriver.INSTANCE;
-            case VARCHAR:
-                return VarcharTypeDriver.INSTANCE;
-            case ARRAY:
-                return ArrayTypeDriver.INSTANCE;
-            default:
-                throw CairoException.critical(0).put("no driver for type: ").put(columnType);
-        }
+        return switch (tagOf(columnType)) {
+            case STRING -> StringTypeDriver.INSTANCE;
+            case BINARY -> BinaryTypeDriver.INSTANCE;
+            case VARCHAR -> VarcharTypeDriver.INSTANCE;
+            case ARRAY -> ArrayTypeDriver.INSTANCE;
+            default -> throw CairoException.critical(0).put("no driver for type: ").put(columnType);
+        };
     }
 
     public static int getGeoHashBits(int type) {
@@ -362,14 +357,11 @@ public final class ColumnType {
         }
         assert tag == TIMESTAMP;
 
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return MicrosTimestampDriver.INSTANCE;
-            case TIMESTAMP_NANO:
-                return NanosTimestampDriver.INSTANCE;
-            default:
-                throw new UnsupportedOperationException();
-        }
+        return switch (timestampType) {
+            case TIMESTAMP_MICRO -> MicrosTimestampDriver.INSTANCE;
+            case TIMESTAMP_NANO -> NanosTimestampDriver.INSTANCE;
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
     /**
@@ -392,18 +384,13 @@ public final class ColumnType {
      * for numeric types where the caller should determine the timestamp type
      */
     public static int getTimestampType(int type) {
-        switch (tagOf(type)) {
-            case TIMESTAMP:
-                return type;
-            case VARCHAR:
-            case STRING:
-            case SYMBOL:
-                return TIMESTAMP_NANO;
-            case DATE: // Date
-                return TIMESTAMP_MICRO;
-            default: // Long, Int etc.
-                return UNDEFINED;
-        }
+        return switch (tagOf(type)) {
+            case TIMESTAMP -> type;
+            case VARCHAR, STRING, SYMBOL -> TIMESTAMP_NANO;
+            case DATE -> TIMESTAMP_MICRO;
+            // Long, Int etc.
+            default -> UNDEFINED;
+        };
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -497,36 +484,12 @@ public final class ColumnType {
 
     public static boolean isFixedSize(int columnType) {
         // specified explicitly
-        switch (columnType) {
-            case INT:
-            case LONG:
-            case BOOLEAN:
-            case BYTE:
-            case TIMESTAMP_MICRO:
-            case TIMESTAMP_NANO:
-            case DATE:
-            case DOUBLE:
-            case CHAR:
-            case SHORT:
-            case FLOAT:
-            case LONG128:
-            case LONG256:
-            case GEOBYTE:
-            case GEOSHORT:
-            case GEOINT:
-            case GEOLONG:
-            case UUID:
-            case IPv4:
-            case DECIMAL8:
-            case DECIMAL16:
-            case DECIMAL32:
-            case DECIMAL64:
-            case DECIMAL128:
-            case DECIMAL256:
-                return true;
-            default:
-                return false;
-        }
+        return switch (columnType) {
+            case INT, LONG, BOOLEAN, BYTE, TIMESTAMP_MICRO, TIMESTAMP_NANO, DATE, DOUBLE, CHAR, SHORT, FLOAT, LONG128,
+                 LONG256, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, UUID, IPv4, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256 -> true;
+            default -> false;
+        };
     }
 
     public static boolean isGenericType(int columnType) {
@@ -723,16 +686,12 @@ public final class ColumnType {
 
     private static int getTimestampTypePriority(int timestampType) {
         assert tagOf(timestampType) == TIMESTAMP || timestampType == UNDEFINED;
-        switch (timestampType) {
-            case TIMESTAMP_MICRO:
-                return 1;
-            case TIMESTAMP_NANO:
-                return 2;
-            case UNDEFINED:
-                return 0;
-        }
+        return switch (timestampType) {
+            case TIMESTAMP_MICRO -> 1;
+            case TIMESTAMP_NANO -> 2;
+            default -> 0;
+        };
 
-        return 0;
     }
 
     private static boolean isArrayCast(int fromType, int toType) {
@@ -770,18 +729,15 @@ public final class ColumnType {
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
-        switch (fromType) {
-            case CHAR:
-                return toTag == GEOBYTE && getGeoHashBits(toType) < 6;
-            case STRING:
-            case VARCHAR:
-                return toTag == GEOBYTE || toTag == GEOSHORT || toTag == GEOINT
-                        || toTag == GEOLONG || toTag == TIMESTAMP || toTag == LONG256;
-            case SYMBOL:
-                return toTag == TIMESTAMP;
-            default:
-                return false;
-        }
+        return switch (fromType) {
+            case CHAR -> toTag == GEOBYTE && getGeoHashBits(toType) < 6;
+            case STRING, VARCHAR -> switch (toTag) {
+                case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
+                default -> false;
+            };
+            case SYMBOL -> toTag == TIMESTAMP;
+            default -> false;
+        };
     }
 
     private static boolean isNarrowingCast(int fromType, int toType) {
