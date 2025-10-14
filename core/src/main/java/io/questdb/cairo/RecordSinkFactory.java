@@ -342,6 +342,9 @@ public class RecordSinkFactory {
                     asm.iconst(size);
                     asm.invokeInterface(wSkip, 1);
                     continue;
+                } else {
+                    // Variable-size types (arrays, strings, etc.) - skip them entirely
+                    continue;
                 }
             }
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);

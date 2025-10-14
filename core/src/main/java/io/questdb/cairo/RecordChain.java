@@ -203,6 +203,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
+    public void putArray(long recordOffset, int columnIndex, @NotNull ArrayView value) {
+        // For variable-size columns (like arrays), the pointer is stored at the beginning of the record
+        // Calculate the offset: rowToDataOffset + columnOffsets[columnIndex]
+        // (do NOT add varOffset since array columns are already in the var-size area)
+        long columnOffset = rowToDataOffset(recordOffset) + columnOffsets[columnIndex];
+        // Write the pointer to where the array data will be stored
+        mem.putLong(columnOffset, varAppendOffset);
+        // Write the actual array data
+        long byteCount = ArrayTypeDriver.getPlainValueSize(value);
+        final long appendAddress = mem.appendAddressFor(varAppendOffset, byteCount);
+        ArrayTypeDriver.appendPlainValue(appendAddress, value);
+        varAppendOffset += byteCount;
+    }
+
+    @Override
     public void putBin(BinarySequence value) {
         if (value == null) {
             putNull();

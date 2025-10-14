@@ -60,7 +60,7 @@ import io.questdb.std.Unsafe;
 public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final String NAME = "percentile_cont";
-    private static final String SIGNATURE = NAME + "(D[D])";
+    private static final String SIGNATURE = NAME + "(DD[])";
 
     private static final ArrayColumnTypes COLUMN_TYPES = new ArrayColumnTypes();
 
@@ -265,8 +265,8 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            // For array functions, we can't write to WindowSPI directly since it expects scalars
-            // The array will be retrieved via getArray() when needed
+            // Write the array result to the WindowSPI at the correct column position
+            spi.putArray(recordOffset, columnIndex, getArray(record));
         }
 
         @Override
@@ -468,8 +468,8 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            // For array functions, we can't write to WindowSPI directly
-            // The array will be retrieved via getArray() when needed
+            // Write the array result to the WindowSPI at the correct column position
+            spi.putArray(recordOffset, columnIndex, getArray(record));
         }
 
         @Override

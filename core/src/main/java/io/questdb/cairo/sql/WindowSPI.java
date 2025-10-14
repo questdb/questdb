@@ -24,8 +24,13 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.arr.ArrayView;
+import org.jetbrains.annotations.NotNull;
+
 public interface WindowSPI {
     long getAddress(long recordAddress, int columnIndex);
 
     Record getRecordAt(long recordOffset);
+
+    void putArray(long recordOffset, int columnIndex, @NotNull ArrayView value);
 }
