@@ -164,6 +164,26 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return bytesWritten;
     }
 
+    /**
+     * Appends an array in "compact plain" format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * Layout:
+     * <pre>
+     * | dataSize  |   dim0  |  dim1  | ... |     dimN-1     | array data |
+     * +-----------+---------+--------+-----+----------------+------------+
+     * |  4 bytes  |                 N * 4 bytes             |     -      |
+     * +-----------+-----------------------------------------+------------+
+     * </pre>
+     * <p>
+     * This differs from {@link #appendPlainValue} which includes an 8-byte totalSize field
+     * and a 4-byte type field. This compact format omits the type (known from context) and
+     * uses a 4-byte dataSize instead of 8-byte totalSize.
+     *
+     * @param addr the memory address to write to
+     * @param arrayView the array to append
+     * @param nDims the number of dimensions
+     * @param elemSize the size of each element in bytes
+     */
     public static void appendCompactPlainArray(long addr, ArrayView arrayView, int nDims, int elemSize) {
         if (arrayView == null || arrayView.isNull()) {
             Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
@@ -316,6 +336,18 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return value;
     }
 
+    /**
+     * Reads an array from "compact plain" format (see {@link #appendCompactPlainArray} for layout).
+     * <p>
+     * This is the counterpart to {@link #appendCompactPlainArray} and differs from {@link #getPlainValue}
+     * which expects an 8-byte size field and a type field in the layout.
+     *
+     * @param addr the memory address to read from
+     * @param type the encoded array type (provided from context)
+     * @param nDims the number of dimensions
+     * @param array the borrowed array to populate
+     * @return the populated array
+     */
     public static BorrowedArray getCompactPlainArray(long addr, int type, int nDims, @NotNull BorrowedArray array) {
         final int dataSize = Unsafe.getUnsafe().getInt(addr);
         if (dataSize < 0) {
