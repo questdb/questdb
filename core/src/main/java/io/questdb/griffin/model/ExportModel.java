@@ -364,10 +364,8 @@ public class ExportModel implements ExecutionModel, Mutable, Sinkable {
                         throw SqlException.$(compressionLevelPos, "ZSTD compression level must be between 1 and 22");
                     }
                     break;
-                case COMPRESSION_LZO:
-                    throw SqlException.$(compressionLevelPos, "compression LZO is not supported");
-                case COMPRESSION_LZ4:
-                    throw SqlException.$(compressionLevelPos, "compression LZ4 is not supported");
+                default:
+                    throw SqlException.$(compressionLevelPos, "Unsupported compression codec ").put(compressionCodec);
             }
         }
     }
