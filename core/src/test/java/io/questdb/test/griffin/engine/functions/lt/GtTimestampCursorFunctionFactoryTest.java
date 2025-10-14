@@ -48,16 +48,18 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n" +
-                            "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z\n" +
-                            "\uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z\n" +
-                            "\uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z\n" +
-                            "Z 4xL?4\t1970-01-01T00:00:17.500000Z\n" +
-                            "p-鳓w\t1970-01-01T00:00:20.000000Z\n" +
-                            "h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z
+                            \uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z
+                            \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
+                            Z 4xL?4\t1970-01-01T00:00:17.500000Z
+                            p-鳓w\t1970-01-01T00:00:20.000000Z
+                            h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
+                            """,
                     "select * from x where ts > (select '1970-01-01T00:00')"
             );
 
@@ -66,16 +68,18 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z\n" +
-                            "XK&J\"\t1970-01-01T00:00:05.000000000Z\n" +
-                            "\uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z\n" +
-                            "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z\n" +
-                            "91g>\t1970-01-01T00:00:12.500000000Z\n" +
-                            "l5J\\d;\t1970-01-01T00:00:15.000000000Z\n" +
-                            "LQ+bO\t1970-01-01T00:00:17.500000000Z\n" +
-                            "h볱9\t1970-01-01T00:00:20.000000000Z\n" +
-                            "a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z\n",
+                    """
+                            a\tts
+                            kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
+                            XK&J"\t1970-01-01T00:00:05.000000000Z
+                            \uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z
+                            \uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z
+                            91g>\t1970-01-01T00:00:12.500000000Z
+                            l5J\\d;\t1970-01-01T00:00:15.000000000Z
+                            LQ+bO\t1970-01-01T00:00:17.500000000Z
+                            h볱9\t1970-01-01T00:00:20.000000000Z
+                            a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
+                            """,
                     "select * from y where ts > (select '1970-01-01T00:00')"
             );
         });
@@ -89,8 +93,10 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts <= (select '1970-01-01T00:00:00.000000Z')"
             );
 
@@ -99,8 +105,10 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from y where ts <= (select '1970-01-01T00:00:00.000000000Z')"
             );
         });
@@ -116,55 +124,63 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(10)" +
                     ") timestamp(ts) partition by day");
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n" +
-                            "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z\n" +
-                            "\uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z\n" +
-                            "\uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z\n" +
-                            "Z 4xL?4\t1970-01-01T00:00:17.500000Z\n" +
-                            "p-鳓w\t1970-01-01T00:00:20.000000Z\n" +
-                            "h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z
+                            \uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z
+                            \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
+                            Z 4xL?4\t1970-01-01T00:00:17.500000Z
+                            p-鳓w\t1970-01-01T00:00:20.000000Z
+                            h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
+                            """,
                     "select * from x where ts > (select min(ts) from x)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n" +
-                            "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z\n" +
-                            "\uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z\n" +
-                            "\uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z\n" +
-                            "Z 4xL?4\t1970-01-01T00:00:17.500000Z\n" +
-                            "p-鳓w\t1970-01-01T00:00:20.000000Z\n" +
-                            "h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z
+                            \uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z
+                            \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
+                            Z 4xL?4\t1970-01-01T00:00:17.500000Z
+                            p-鳓w\t1970-01-01T00:00:20.000000Z
+                            h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
+                            """,
                     "select * from x where ts > (select min(ts) from y)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z\n" +
-                            "XK&J\"\t1970-01-01T00:00:05.000000000Z\n" +
-                            "\uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z\n" +
-                            "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z\n" +
-                            "91g>\t1970-01-01T00:00:12.500000000Z\n" +
-                            "l5J\\d;\t1970-01-01T00:00:15.000000000Z\n" +
-                            "LQ+bO\t1970-01-01T00:00:17.500000000Z\n" +
-                            "h볱9\t1970-01-01T00:00:20.000000000Z\n" +
-                            "a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z\n",
+                    """
+                            a\tts
+                            kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
+                            XK&J"\t1970-01-01T00:00:05.000000000Z
+                            \uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z
+                            \uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z
+                            91g>\t1970-01-01T00:00:12.500000000Z
+                            l5J\\d;\t1970-01-01T00:00:15.000000000Z
+                            LQ+bO\t1970-01-01T00:00:17.500000000Z
+                            h볱9\t1970-01-01T00:00:20.000000000Z
+                            a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
+                            """,
                     "select * from y where ts > (select min(ts) from x)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z\n" +
-                            "XK&J\"\t1970-01-01T00:00:05.000000000Z\n" +
-                            "\uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z\n" +
-                            "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z\n" +
-                            "91g>\t1970-01-01T00:00:12.500000000Z\n" +
-                            "l5J\\d;\t1970-01-01T00:00:15.000000000Z\n" +
-                            "LQ+bO\t1970-01-01T00:00:17.500000000Z\n" +
-                            "h볱9\t1970-01-01T00:00:20.000000000Z\n" +
-                            "a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z\n",
+                    """
+                            a\tts
+                            kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
+                            XK&J"\t1970-01-01T00:00:05.000000000Z
+                            \uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z
+                            \uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z
+                            91g>\t1970-01-01T00:00:12.500000000Z
+                            l5J\\d;\t1970-01-01T00:00:15.000000000Z
+                            LQ+bO\t1970-01-01T00:00:17.500000000Z
+                            h볱9\t1970-01-01T00:00:20.000000000Z
+                            a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
+                            """,
                     "select * from y where ts > (select min(ts) from y)"
             );
         });
@@ -181,23 +197,31 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts <= (select min(ts) from x)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts <= (select min(ts) from y)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from y where ts <= (select min(ts) from x)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from y where ts <= (select min(ts) from y)"
             );
         });
@@ -211,16 +235,18 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n" +
-                            "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z\n" +
-                            "\uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z\n" +
-                            "\uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z\n" +
-                            "Z 4xL?4\t1970-01-01T00:00:17.500000Z\n" +
-                            "p-鳓w\t1970-01-01T00:00:20.000000Z\n" +
-                            "h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            \uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t1970-01-01T00:00:10.000000Z
+                            \uDBAE\uDD12ɜ|\t1970-01-01T00:00:12.500000Z
+                            \uDB59\uDF3B룒jᷚ\t1970-01-01T00:00:15.000000Z
+                            Z 4xL?4\t1970-01-01T00:00:17.500000Z
+                            p-鳓w\t1970-01-01T00:00:20.000000Z
+                            h\uDAF5\uDE17qRӽ-\t1970-01-01T00:00:22.500000Z
+                            """,
                     "select * from x where ts > (select '1970-01-01T00:00'::varchar)"
             );
 
@@ -229,16 +255,18 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z\n" +
-                            "XK&J\"\t1970-01-01T00:00:05.000000000Z\n" +
-                            "\uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z\n" +
-                            "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z\n" +
-                            "91g>\t1970-01-01T00:00:12.500000000Z\n" +
-                            "l5J\\d;\t1970-01-01T00:00:15.000000000Z\n" +
-                            "LQ+bO\t1970-01-01T00:00:17.500000000Z\n" +
-                            "h볱9\t1970-01-01T00:00:20.000000000Z\n" +
-                            "a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z\n",
+                    """
+                            a\tts
+                            kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\t1970-01-01T00:00:02.500000000Z
+                            XK&J"\t1970-01-01T00:00:05.000000000Z
+                            \uDA43\uDFF0-㔍x钷Mͱ\t1970-01-01T00:00:07.500000000Z
+                            \uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\t1970-01-01T00:00:10.000000000Z
+                            91g>\t1970-01-01T00:00:12.500000000Z
+                            l5J\\d;\t1970-01-01T00:00:15.000000000Z
+                            LQ+bO\t1970-01-01T00:00:17.500000000Z
+                            h볱9\t1970-01-01T00:00:20.000000000Z
+                            a\uDA76\uDDD4*\uDB87\uDF60-ă堝ᢣ΄B\t1970-01-01T00:00:22.500000000Z
+                            """,
                     "select * from y where ts > (select '1970-01-01T00:00'::varchar)"
             );
         });
@@ -255,37 +283,45 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            """,
                     "select * from x where ts > (select ts::varchar from x limit 2) limit 3",
                     "ts",
                     true
             );
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
-                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
+                            ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
+                            """,
                     "select * from x where ts > (select ts::varchar from y limit 2) limit 3",
                     "ts",
                     true
             );
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z\n" +
-                            "uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z\n" +
-                            "4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z\n",
+                    """
+                            a\tts
+                            5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
+                            uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
+                            4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z
+                            """,
                     "select * from y where ts > (select ts::varchar from x limit 2) limit 3",
                     "ts",
                     true
             );
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z\n" +
-                            "uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z\n" +
-                            "4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z\n",
+                    """
+                            a\tts
+                            5䄛~\uDA5A\uDCB4끻\uDBD9\uDC84\uD8F3\uDE52\uDB96\uDC4Dx\t1970-01-01T00:00:02.500000000Z
+                            uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
+                            4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z
+                            """,
                     "select * from y where ts > (select ts::varchar from y limit 2) limit 3",
                     "ts",
                     true
@@ -303,13 +339,17 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts <= (select '1970-01-01T00:00:00.000000Z'::varchar)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts <= (select '1970-01-01T00:00:00.000000000Z'::varchar)"
             );
 
@@ -320,13 +360,17 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from y where ts <= (select '1970-01-01T00:00:00.000000Z'::varchar)"
             );
             assertSql(
-                    "a\tts\n" +
-                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from y where ts <= (select '1970-01-01T00:00:00.000000000Z'::varchar)"
             );
         });
@@ -404,133 +448,153 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             // thread-safe
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [null]\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] > cursor\s
+                                VirtualRecord
+                                  functions: [null]
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts > (select null)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] <= cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [null]\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] <= cursor\s
+                                VirtualRecord
+                                  functions: [null]
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts <= (select null)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [2026-03-10T00:00:00.000000Z]\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] > cursor\s
+                                VirtualRecord
+                                  functions: [2026-03-10T00:00:00.000000Z]
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts > (select '2026-03-10'::timestamp)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] <= cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['2014-09-03']\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] <= cursor\s
+                                VirtualRecord
+                                  functions: ['2014-09-03']
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts <= (select '2014-09-03'::string)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] > cursor\s
+                                VirtualRecord
+                                  functions: ['2020-02-21']
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts > (select '2020-02-21'::varchar)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] <= cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1 [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts [thread-safe] <= cursor\s
+                                VirtualRecord
+                                  functions: ['2020-02-21']
+                                    long_sequence count: 1 [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts <= (select '2020-02-21'::varchar)"
             );
 
             // non-thread-safe
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts::varchar::timestamp > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [null]\n" +
-                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts::varchar::timestamp > cursor\s
+                                VirtualRecord
+                                  functions: [null]
+                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts::varchar::timestamp > (select null)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts::varchar::timestamp > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [2026-03-10T00:00:00.000000Z]\n" +
-                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts::varchar::timestamp > cursor\s
+                                VirtualRecord
+                                  functions: [2026-03-10T00:00:00.000000Z]
+                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts::varchar::timestamp > (select '2026-03-10'::timestamp)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts::varchar::timestamp > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['2014-09-03']\n" +
-                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts::varchar::timestamp > cursor\s
+                                VirtualRecord
+                                  functions: ['2014-09-03']
+                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts::varchar::timestamp > (select '2014-09-03'::string)"
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts::varchar::timestamp > cursor \n" +
-                            "    VirtualRecord\n" +
-                            "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts::varchar::timestamp > cursor\s
+                                VirtualRecord
+                                  functions: ['2020-02-21']
+                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts::varchar::timestamp > (select '2020-02-21'::varchar)"
             );
         });

@@ -36,33 +36,35 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "  select rnd_varchar() a, rnd_long(30000000, 80000000000, 1)::timestamp_ns ts from long_sequence(100)" +
                     ")");
 
-            String expected = "a\tts\n" +
-                    "ŸO(OFг\uDBAE\uDD12ɜ|\t\n" +
-                    "1CW\t\n" +
-                    "O=I~\t\n" +
-                    "Ǭ\uDB37\uDC95Q\t\n" +
-                    "鏻Ê띘Ѷ>͓\uDA8B\uDFC4︵Ƀ^\t\n" +
-                    "Mw1$c\t\n" +
-                    ";PGY=FU[H\t\n" +
-                    "}L1>ML\t\n" +
-                    "{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3\t\n" +
-                    "g<~%j\uD9D3\uDCEE;+\t\n" +
-                    "JY)xuaN\t\n" +
-                    "V_M\t\n" +
-                    "뮣݇8Y\t\n" +
-                    "^嘢\uD952\uDF63^\t\n" +
-                    "D&9L5BBo,O\t\n" +
-                    "Ɉ\uDAB6\uDF33\uDB00\uDF8AϿ˄礏ɍ\uDB2C\uDD55\t\n" +
-                    "ށڥ[<\uDBCD\uDE09\uDB92\uDC69{UVo\t\n" +
-                    "ʫ\uDACE\uDF0Bǟ\t\n" +
-                    "XBl~ݴ\uD8D6\uDD39!\uDAA9\uDF2C֝\t\n" +
-                    "`^$SJm9h-f\t\n" +
-                    "a Zf\t\n" +
-                    "\uD9A8\uDFFBi⟃2\t\n" +
-                    "<#71^jDS9\t\n" +
-                    "?+$b[Enk\t\n" +
-                    "Wmτ⻱[N`亲\t\n" +
-                    "vCbc&rm{/&\t\n";
+            String expected = """
+                    a\tts
+                    ŸO(OFг\uDBAE\uDD12ɜ|\t
+                    1CW\t
+                    O=I~\t
+                    Ǭ\uDB37\uDC95Q\t
+                    鏻Ê띘Ѷ>͓\uDA8B\uDFC4︵Ƀ^\t
+                    Mw1$c\t
+                    ;PGY=FU[H\t
+                    }L1>ML\t
+                    {ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3\t
+                    g<~%j\uD9D3\uDCEE;+\t
+                    JY)xuaN\t
+                    V_M\t
+                    뮣݇8Y\t
+                    ^嘢\uD952\uDF63^\t
+                    D&9L5BBo,O\t
+                    Ɉ\uDAB6\uDF33\uDB00\uDF8AϿ˄礏ɍ\uDB2C\uDD55\t
+                    ށڥ[<\uDBCD\uDE09\uDB92\uDC69{UVo\t
+                    ʫ\uDACE\uDF0Bǟ\t
+                    XBl~ݴ\uD8D6\uDD39!\uDAA9\uDF2C֝\t
+                    `^$SJm9h-f\t
+                    a Zf\t
+                    \uD9A8\uDFFBi⟃2\t
+                    <#71^jDS9\t
+                    ?+$b[Enk\t
+                    Wmτ⻱[N`亲\t
+                    vCbc&rm{/&\t
+                    """;
 
             assertSql(expected, "select * from x where ts = (select null)");
             assertSql(expected, "select * from x where ts = (select null::timestamp)");
@@ -89,8 +91,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000000Z\n",
+                    """
+                            a\tts
+                            Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000000Z
+                            """,
                     "select * from x where ts = (select '1970-01-03T21:26')"
             );
         });
@@ -104,8 +108,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000000Z
+                            """,
                     "select * from x where ts != (select '1970-01-01T00:00:00.000000Z')"
             );
         });
@@ -119,14 +125,18 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from x where ts != (select max(ts) from x)"
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from x where ts != (select max(ts)::timestamp from x)"
             );
         });
@@ -140,8 +150,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000000Z\n",
+                    """
+                            a\tts
+                            \uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000000Z
+                            """,
                     "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
             );
         });
@@ -155,26 +167,30 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000000Z
+                            """,
                     "select * from x where ts = (select ts::varchar from x limit 2)",
                     "ts",
                     true
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts=cursor \n" +
-                            "    Limit lo: 2\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [ts::varchar]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts=cursor\s
+                                Limit lo: 2
+                                    VirtualRecord
+                                      functions: [ts::varchar]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts = (select ts::varchar from x limit 2)"
             );
         });
@@ -188,8 +204,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000000Z
+                            """,
                     "select * from x where ts != (select '1970-01-01T00:00:00.000000000Z'::varchar)"
             );
         });
@@ -203,14 +221,18 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000000Z\n",
+                    """
+                            a\tts
+                            Qd%ǧ\t1970-01-03T21:26:37.500000000Z
+                            """,
                     "select * from x where ts = (select max(ts) from x)"
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000000Z\n",
+                    """
+                            a\tts
+                            Qd%ǧ\t1970-01-03T21:26:37.500000000Z
+                            """,
                     "select * from x where ts = (select max(ts)::timestamp from x)"
             );
         });
@@ -223,33 +245,35 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "  select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(100)" +
                     ")");
 
-            String expected = "a\tts\n" +
-                    "ŸO(OFг\uDBAE\uDD12ɜ|\t\n" +
-                    "1CW\t\n" +
-                    "O=I~\t\n" +
-                    "Ǭ\uDB37\uDC95Q\t\n" +
-                    "鏻Ê띘Ѷ>͓\uDA8B\uDFC4︵Ƀ^\t\n" +
-                    "Mw1$c\t\n" +
-                    ";PGY=FU[H\t\n" +
-                    "}L1>ML\t\n" +
-                    "{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3\t\n" +
-                    "g<~%j\uD9D3\uDCEE;+\t\n" +
-                    "JY)xuaN\t\n" +
-                    "V_M\t\n" +
-                    "뮣݇8Y\t\n" +
-                    "^嘢\uD952\uDF63^\t\n" +
-                    "D&9L5BBo,O\t\n" +
-                    "Ɉ\uDAB6\uDF33\uDB00\uDF8AϿ˄礏ɍ\uDB2C\uDD55\t\n" +
-                    "ށڥ[<\uDBCD\uDE09\uDB92\uDC69{UVo\t\n" +
-                    "ʫ\uDACE\uDF0Bǟ\t\n" +
-                    "XBl~ݴ\uD8D6\uDD39!\uDAA9\uDF2C֝\t\n" +
-                    "`^$SJm9h-f\t\n" +
-                    "a Zf\t\n" +
-                    "\uD9A8\uDFFBi⟃2\t\n" +
-                    "<#71^jDS9\t\n" +
-                    "?+$b[Enk\t\n" +
-                    "Wmτ⻱[N`亲\t\n" +
-                    "vCbc&rm{/&\t\n";
+            String expected = """
+                    a\tts
+                    ŸO(OFг\uDBAE\uDD12ɜ|\t
+                    1CW\t
+                    O=I~\t
+                    Ǭ\uDB37\uDC95Q\t
+                    鏻Ê띘Ѷ>͓\uDA8B\uDFC4︵Ƀ^\t
+                    Mw1$c\t
+                    ;PGY=FU[H\t
+                    }L1>ML\t
+                    {ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87>\uD8F0\uDF66Ҫb\uDBB1\uDEA3\t
+                    g<~%j\uD9D3\uDCEE;+\t
+                    JY)xuaN\t
+                    V_M\t
+                    뮣݇8Y\t
+                    ^嘢\uD952\uDF63^\t
+                    D&9L5BBo,O\t
+                    Ɉ\uDAB6\uDF33\uDB00\uDF8AϿ˄礏ɍ\uDB2C\uDD55\t
+                    ށڥ[<\uDBCD\uDE09\uDB92\uDC69{UVo\t
+                    ʫ\uDACE\uDF0Bǟ\t
+                    XBl~ݴ\uD8D6\uDD39!\uDAA9\uDF2C֝\t
+                    `^$SJm9h-f\t
+                    a Zf\t
+                    \uD9A8\uDFFBi⟃2\t
+                    <#71^jDS9\t
+                    ?+$b[Enk\t
+                    Wmτ⻱[N`亲\t
+                    vCbc&rm{/&\t
+                    """;
 
             assertSql(expected, "select * from x where ts = (select null)");
             assertSql(expected, "select * from x where ts = (select null::timestamp)");
@@ -276,8 +300,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z\n",
+                    """
+                            a\tts
+                            Eڄ篽\uDB3D\uDF6B,ᵨD\uD939\uDF1E\uD8E5\uDCC3\t1970-01-03T21:26:00.000000Z
+                            """,
                     "select * from x where ts = (select '1970-01-03T21:26')"
             );
         });
@@ -291,8 +317,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            """,
                     "select * from x where ts != (select '1970-01-01T00:00:00.000000000Z')"
             );
         });
@@ -306,14 +334,18 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
+                    """
+                            a\tts
+                            Qd%ǧ\t1970-01-03T21:26:37.500000Z
+                            """,
                     "select * from x where ts = (select max(ts) from x)"
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "Qd%ǧ\t1970-01-03T21:26:37.500000Z\n",
+                    """
+                            a\tts
+                            Qd%ǧ\t1970-01-03T21:26:37.500000Z
+                            """,
                     "select * from x where ts = (select max(ts)::timestamp_ns from x)"
             );
         });
@@ -327,14 +359,18 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts != (select max(ts) from x)"
             );
 
             assertSql(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts != (select max(ts)::timestamp_ns from x)"
             );
         });
@@ -348,8 +384,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "\uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z\n",
+                    """
+                            a\tts
+                            \uD8F9\uDFFC\uD8D2\uDE52p\t1970-01-03T20:14:00.000000Z
+                            """,
                     "select * from x where ts = (select '1970-01-03T20:14'::varchar)"
             );
         });
@@ -363,26 +401,30 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQueryNoLeakCheck(
-                    "a\tts\n" +
-                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    """
+                            a\tts
+                            &\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z
+                            """,
                     "select * from x where ts = (select ts::varchar from x limit 2)",
                     "ts",
                     true
             );
 
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Async Filter workers: 1\n" +
-                            "  filter: ts=cursor \n" +
-                            "    Limit lo: 2\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [ts::varchar]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: x [pre-touch]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            Async Filter workers: 1
+                              filter: ts=cursor\s
+                                Limit lo: 2
+                                    VirtualRecord
+                                      functions: [ts::varchar]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x [pre-touch]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
                     "explain select * from x where ts = (select ts::varchar from x limit 2)"
             );
         });
@@ -396,8 +438,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertSql(
-                    "a\tts\n" +
-                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n",
+                    """
+                            a\tts
+                            8#3TsZ\t1970-01-01T00:00:02.500000Z
+                            """,
                     "select * from x where ts != (select '1970-01-01T00:00:00.000000Z'::varchar)"
             );
         });

@@ -80,32 +80,34 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
             );
 
             assertSql(
-                    "val\tval2\tval3\tts\tperiod\tstride\ttz\n" +
-                            "1970-11-01T00:00:00.010000Z\t\t1970-11-01T00:00:00.010000000Z\t1970-01-01T00:00:00.010000Z\tM\t10\tEurope/Bratislava\n" +
-                            "1975-01-01T00:00:00.060000Z\t\t1975-01-01T00:00:00.060000000Z\t1970-01-01T00:00:00.060000Z\ty\t5\t08:00\n" +
-                            "1975-01-01T00:00:00.140000Z\t\t1975-01-01T00:00:00.140000000Z\t1970-01-01T00:00:00.140000Z\ty\t5\t08:00\n" +
-                            "1970-08-01T00:00:00.160000Z\t\t1970-08-01T00:00:00.160000000Z\t1970-01-01T00:00:00.160000Z\tM\t7\t08:00\n" +
-                            "1977-01-01T00:00:00.210000Z\t\t1977-01-01T00:00:00.210000000Z\t1970-01-01T00:00:00.210000Z\ty\t7\tEurope/Bratislava\n" +
-                            "1970-01-01T02:00:00.230000Z\t\t1970-01-01T02:00:00.230000000Z\t1970-01-01T00:00:00.230000Z\th\t2\tEurope/Bratislava\n" +
-                            "1970-03-01T00:00:00.270000Z\t\t1970-03-01T00:00:00.270000000Z\t1970-01-01T00:00:00.270000Z\tM\t2\tEurope/Bratislava\n" +
-                            "1970-04-01T00:00:00.290000Z\t\t1970-04-01T00:00:00.290000000Z\t1970-01-01T00:00:00.290000Z\tM\t3\t08:00\n" +
-                            "1970-02-01T00:00:00.300000Z\t\t1970-02-01T00:00:00.300000000Z\t1970-01-01T00:00:00.300000Z\tM\t1\tEurope/Bratislava\n" +
-                            "1978-01-01T00:00:00.450000Z\t\t1978-01-01T00:00:00.450000000Z\t1970-01-01T00:00:00.450000Z\ty\t8\t08:00\n" +
-                            "1970-09-01T00:00:00.460000Z\t\t1970-09-01T00:00:00.460000000Z\t1970-01-01T00:00:00.460000Z\tM\t8\tEurope/Bratislava\n" +
-                            "1970-11-01T00:00:00.540000Z\t\t1970-11-01T00:00:00.540000000Z\t1970-01-01T00:00:00.540000Z\tM\t10\tEurope/Bratislava\n" +
-                            "1978-01-01T00:00:00.580000Z\t\t1978-01-01T00:00:00.580000000Z\t1970-01-01T00:00:00.580000Z\ty\t8\tEurope/Bratislava\n" +
-                            "1970-04-01T00:00:00.590000Z\t\t1970-04-01T00:00:00.590000000Z\t1970-01-01T00:00:00.590000Z\tM\t3\t08:00\n" +
-                            "1970-11-01T00:00:00.610000Z\t\t1970-11-01T00:00:00.610000000Z\t1970-01-01T00:00:00.610000Z\tM\t10\t08:00\n" +
-                            "1972-01-01T00:00:00.650000Z\t\t1972-01-01T00:00:00.650000000Z\t1970-01-01T00:00:00.650000Z\ty\t2\t08:00\n" +
-                            "1970-07-01T00:00:00.660000Z\t\t1970-07-01T00:00:00.660000000Z\t1970-01-01T00:00:00.660000Z\tM\t6\t08:00\n" +
-                            "1970-01-01T00:00:00.670000Z\t\t1970-01-01T00:00:00.670000000Z\t1970-01-01T00:00:00.670000Z\tM\t0\t08:00\n" +
-                            "1970-08-01T00:00:00.680000Z\t\t1970-08-01T00:00:00.680000000Z\t1970-01-01T00:00:00.680000Z\tM\t7\tEurope/Bratislava\n" +
-                            "1970-01-01T04:00:00.720000Z\t\t1970-01-01T04:00:00.720000000Z\t1970-01-01T00:00:00.720000Z\th\t4\tEurope/Bratislava\n" +
-                            "1970-01-01T00:00:00.780000Z\t\t1970-01-01T00:00:00.780000000Z\t1970-01-01T00:00:00.780000Z\tM\t0\t08:00\n" +
-                            "1970-10-01T00:00:00.810000Z\t\t1970-10-01T00:00:00.810000000Z\t1970-01-01T00:00:00.810000Z\tM\t9\tEurope/Bratislava\n" +
-                            "1970-01-01T04:00:00.860000Z\t\t1970-01-01T04:00:00.860000000Z\t1970-01-01T00:00:00.860000Z\th\t4\tEurope/Bratislava\n" +
-                            "1970-01-01T02:00:00.910000Z\t\t1970-01-01T02:00:00.910000000Z\t1970-01-01T00:00:00.910000Z\th\t2\tEurope/Bratislava\n" +
-                            "1972-01-01T00:00:00.920000Z\t\t1972-01-01T00:00:00.920000000Z\t1970-01-01T00:00:00.920000Z\ty\t2\t08:00\n",
+                    """
+                            val\tval2\tval3\tts\tperiod\tstride\ttz
+                            1970-11-01T00:00:00.010000Z\t\t1970-11-01T00:00:00.010000000Z\t1970-01-01T00:00:00.010000Z\tM\t10\tEurope/Bratislava
+                            1975-01-01T00:00:00.060000Z\t\t1975-01-01T00:00:00.060000000Z\t1970-01-01T00:00:00.060000Z\ty\t5\t08:00
+                            1975-01-01T00:00:00.140000Z\t\t1975-01-01T00:00:00.140000000Z\t1970-01-01T00:00:00.140000Z\ty\t5\t08:00
+                            1970-08-01T00:00:00.160000Z\t\t1970-08-01T00:00:00.160000000Z\t1970-01-01T00:00:00.160000Z\tM\t7\t08:00
+                            1977-01-01T00:00:00.210000Z\t\t1977-01-01T00:00:00.210000000Z\t1970-01-01T00:00:00.210000Z\ty\t7\tEurope/Bratislava
+                            1970-01-01T02:00:00.230000Z\t\t1970-01-01T02:00:00.230000000Z\t1970-01-01T00:00:00.230000Z\th\t2\tEurope/Bratislava
+                            1970-03-01T00:00:00.270000Z\t\t1970-03-01T00:00:00.270000000Z\t1970-01-01T00:00:00.270000Z\tM\t2\tEurope/Bratislava
+                            1970-04-01T00:00:00.290000Z\t\t1970-04-01T00:00:00.290000000Z\t1970-01-01T00:00:00.290000Z\tM\t3\t08:00
+                            1970-02-01T00:00:00.300000Z\t\t1970-02-01T00:00:00.300000000Z\t1970-01-01T00:00:00.300000Z\tM\t1\tEurope/Bratislava
+                            1978-01-01T00:00:00.450000Z\t\t1978-01-01T00:00:00.450000000Z\t1970-01-01T00:00:00.450000Z\ty\t8\t08:00
+                            1970-09-01T00:00:00.460000Z\t\t1970-09-01T00:00:00.460000000Z\t1970-01-01T00:00:00.460000Z\tM\t8\tEurope/Bratislava
+                            1970-11-01T00:00:00.540000Z\t\t1970-11-01T00:00:00.540000000Z\t1970-01-01T00:00:00.540000Z\tM\t10\tEurope/Bratislava
+                            1978-01-01T00:00:00.580000Z\t\t1978-01-01T00:00:00.580000000Z\t1970-01-01T00:00:00.580000Z\ty\t8\tEurope/Bratislava
+                            1970-04-01T00:00:00.590000Z\t\t1970-04-01T00:00:00.590000000Z\t1970-01-01T00:00:00.590000Z\tM\t3\t08:00
+                            1970-11-01T00:00:00.610000Z\t\t1970-11-01T00:00:00.610000000Z\t1970-01-01T00:00:00.610000Z\tM\t10\t08:00
+                            1972-01-01T00:00:00.650000Z\t\t1972-01-01T00:00:00.650000000Z\t1970-01-01T00:00:00.650000Z\ty\t2\t08:00
+                            1970-07-01T00:00:00.660000Z\t\t1970-07-01T00:00:00.660000000Z\t1970-01-01T00:00:00.660000Z\tM\t6\t08:00
+                            1970-01-01T00:00:00.670000Z\t\t1970-01-01T00:00:00.670000000Z\t1970-01-01T00:00:00.670000Z\tM\t0\t08:00
+                            1970-08-01T00:00:00.680000Z\t\t1970-08-01T00:00:00.680000000Z\t1970-01-01T00:00:00.680000Z\tM\t7\tEurope/Bratislava
+                            1970-01-01T04:00:00.720000Z\t\t1970-01-01T04:00:00.720000000Z\t1970-01-01T00:00:00.720000Z\th\t4\tEurope/Bratislava
+                            1970-01-01T00:00:00.780000Z\t\t1970-01-01T00:00:00.780000000Z\t1970-01-01T00:00:00.780000Z\tM\t0\t08:00
+                            1970-10-01T00:00:00.810000Z\t\t1970-10-01T00:00:00.810000000Z\t1970-01-01T00:00:00.810000Z\tM\t9\tEurope/Bratislava
+                            1970-01-01T04:00:00.860000Z\t\t1970-01-01T04:00:00.860000000Z\t1970-01-01T00:00:00.860000Z\th\t4\tEurope/Bratislava
+                            1970-01-01T02:00:00.910000Z\t\t1970-01-01T02:00:00.910000000Z\t1970-01-01T00:00:00.910000Z\th\t2\tEurope/Bratislava
+                            1972-01-01T00:00:00.920000Z\t\t1972-01-01T00:00:00.920000000Z\t1970-01-01T00:00:00.920000Z\ty\t2\t08:00
+                            """,
                     "select dateadd(period, stride, ts, tz) val," +
                             " dateadd(period, stride, null, tz) val2," +
                             " dateadd(period, stride, ts_ns, tz) val3," +
@@ -135,13 +137,15 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             " and period is not null" +
                             " and tz is not null" +
                             " and period <> 'x'",
-                    "VirtualRecord\n" +
-                            "  functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),dateadd('period',stride,ts_ns,tz),ts,period,stride,tz]\n" +
-                            "    Async JIT Filter workers: 1\n" +
-                            "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x') [pre-touch]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test_tab\n"
+                    """
+                            VirtualRecord
+                              functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),dateadd('period',stride,ts_ns,tz),ts,period,stride,tz]
+                                Async JIT Filter workers: 1
+                                  filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x') [pre-touch]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: test_tab
+                            """
             );
         });
     }
@@ -152,38 +156,50 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
             // Input query performing DATEADD and converting to UTC
             // Validate the result accounts for DST transition correctly
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2024-10-27T23:00:00.000000Z\n",
+                    """
+                            utc_time
+                            2024-10-27T23:00:00.000000Z
+                            """,
                     "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time"
             );
 
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2021-03-28T01:00:00.000000Z\n",
+                    """
+                            utc_time
+                            2021-03-28T01:00:00.000000Z
+                            """,
                     "select to_utc(dateadd('h', 2, '2021-03-28'), 'Europe/Berlin') as utc_time"
             );
 
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2021-10-31T00:00:00.000000Z\n",
+                    """
+                            utc_time
+                            2021-10-31T00:00:00.000000Z
+                            """,
                     "select to_utc(dateadd('h', 2, '2021-10-31'), 'Europe/Berlin') as utc_time"
             );
 
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2024-10-27T23:00:00.000000000Z\n",
+                    """
+                            utc_time
+                            2024-10-27T23:00:00.000000000Z
+                            """,
                     "select to_utc(dateadd('w', 1, '2024-10-21'::timestamp_ns), 'Europe/Bratislava') as utc_time"
             );
 
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2021-03-28T01:00:00.000000000Z\n",
+                    """
+                            utc_time
+                            2021-03-28T01:00:00.000000000Z
+                            """,
                     "select to_utc(dateadd('h', 2, '2021-03-28'::timestamp_ns), 'Europe/Berlin') as utc_time"
             );
 
             assertQueryNoLeakCheck(
-                    "utc_time\n" +
-                            "2021-10-31T00:00:00.000000000Z\n",
+                    """
+                            utc_time
+                            2021-10-31T00:00:00.000000000Z
+                            """,
                     "select to_utc(dateadd('h', 2, '2021-10-31'::timestamp_ns), 'Europe/Berlin') as utc_time"
             );
         });
@@ -230,15 +246,19 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                     // Input query testing DATEADD behavior
                     "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
                     // Updated expected plan
-                    "VirtualRecord\n" +
-                            "  functions: [2024-10-28T01:00:00.000000Z]\n" +
-                            "    long_sequence count: 1\n"
+                    """
+                            VirtualRecord
+                              functions: [2024-10-28T01:00:00.000000Z]
+                                long_sequence count: 1
+                            """
             );
             assertPlanNoLeakCheck(
                     "select dateadd('w', 1, '2024-10-21T00:00:11.123456789', 'Europe/Bratislava')",
-                    "VirtualRecord\n" +
-                            "  functions: [2024-10-28T01:00:11.123456789Z]\n" +
-                            "    long_sequence count: 1\n"
+                    """
+                            VirtualRecord
+                              functions: [2024-10-28T01:00:11.123456789Z]
+                                long_sequence count: 1
+                            """
             );
         });
     }
@@ -313,10 +333,12 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     @Test
     public void testSimplePlan() throws SqlException {
         assertSql(
-                "QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [dateadd('U',-5,now(),'Europe/Bratislava')]\n" +
-                        "    long_sequence count: 1\n",
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [dateadd('U',-5,now(),'Europe/Bratislava')]
+                            long_sequence count: 1
+                        """,
                 "explain select dateadd('U', -5, now, 'Europe/Bratislava') from long_sequence(1)"
         );
     }
@@ -342,18 +364,22 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         );
 
         assertSql(
-                "QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [dateadd('y',1587275359886758L,case([x::int,null,x]),'03:00')]\n" +
-                        "    long_sequence count: 2\n",
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [dateadd('y',1587275359886758L,case([x::int,null,x]),'03:00')]
+                            long_sequence count: 2
+                        """,
                 "explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758L, '03:00') from long_sequence(2)"
         );
 
         assertSql(
-                "QUERY PLAN\n" +
-                        "VirtualRecord\n" +
-                        "  functions: [dateadd('y',1587275359886758000L::timestamp_ns,case([x::int,null,x]),'03:00')]\n" +
-                        "    long_sequence count: 2\n",
+                """
+                        QUERY PLAN
+                        VirtualRecord
+                          functions: [dateadd('y',1587275359886758000L::timestamp_ns,case([x::int,null,x]),'03:00')]
+                            long_sequence count: 2
+                        """,
                 "explain select dateadd('y', case when x = 1 then cast(x as int) else null end, 1587275359886758000L::timestamp_ns, '03:00') from long_sequence(2)"
         );
 

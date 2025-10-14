@@ -80,32 +80,19 @@ public class MillsTimestampDriver implements TimestampDriver {
 
     @Override
     public long add(long timestamp, char type, int stride) {
-        switch (type) {
-            case 'n':
-                return Dates.addNanos(timestamp, stride);
-            case 'u':
-            case 'U':
-                return Dates.addMicros(timestamp, stride);
-            case 'T':
-                return Dates.addMillis(timestamp, stride);
-            case 's':
-                return Dates.addSeconds(timestamp, stride);
-            case 'm':
-                return Dates.addMinutes(timestamp, stride);
-            case 'H':
-            case 'h':
-                return Dates.addHours(timestamp, stride);
-            case 'd':
-                return Dates.addDays(timestamp, stride);
-            case 'w':
-                return Dates.addWeeks(timestamp, stride);
-            case 'M':
-                return Dates.addMonths(timestamp, stride);
-            case 'y':
-                return Dates.addYears(timestamp, stride);
-            default:
-                throw new UnsupportedOperationException("Unsupported time unit: " + type);
-        }
+        return switch (type) {
+            case 'n' -> Dates.addNanos(timestamp, stride);
+            case 'u', 'U' -> Dates.addMicros(timestamp, stride);
+            case 'T' -> Dates.addMillis(timestamp, stride);
+            case 's' -> Dates.addSeconds(timestamp, stride);
+            case 'm' -> Dates.addMinutes(timestamp, stride);
+            case 'H', 'h' -> Dates.addHours(timestamp, stride);
+            case 'd' -> Dates.addDays(timestamp, stride);
+            case 'w' -> Dates.addWeeks(timestamp, stride);
+            case 'M' -> Dates.addMonths(timestamp, stride);
+            case 'y' -> Dates.addYears(timestamp, stride);
+            default -> throw new UnsupportedOperationException("Unsupported time unit: " + type);
+        };
     }
 
     @Override
@@ -268,32 +255,19 @@ public class MillsTimestampDriver implements TimestampDriver {
 
     @Override
     public TimestampAddMethod getAddMethod(char c) {
-        switch (c) {
-            case 'n':
-                return Dates::addNanos;
-            case 'u':
-            case 'U':
-                return Dates::addMicros;
-            case 'T':
-                return Dates::addMillis;
-            case 's':
-                return Dates::addSeconds;
-            case 'm':
-                return Dates::addMinutes;
-            case 'H':
-            case 'h':
-                return Dates::addHours;
-            case 'd':
-                return Dates::addDays;
-            case 'w':
-                return Dates::addWeeks;
-            case 'M':
-                return Dates::addMonths;
-            case 'y':
-                return Dates::addYears;
-            default:
-                return null;
-        }
+        return switch (c) {
+            case 'n' -> Dates::addNanos;
+            case 'u', 'U' -> Dates::addMicros;
+            case 'T' -> Dates::addMillis;
+            case 's' -> Dates::addSeconds;
+            case 'm' -> Dates::addMinutes;
+            case 'H', 'h' -> Dates::addHours;
+            case 'd' -> Dates::addDays;
+            case 'w' -> Dates::addWeeks;
+            case 'M' -> Dates::addMonths;
+            case 'y' -> Dates::addYears;
+            default -> null;
+        };
     }
 
     @Override
@@ -470,38 +444,26 @@ public class MillsTimestampDriver implements TimestampDriver {
 
     @Override
     public PartitionAddMethod getPartitionAddMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return Dates::addDays;
-            case MONTH:
-                return Dates::addMonths;
-            case YEAR:
-                return Dates::addYears;
-            case HOUR:
-                return Dates::addHours;
-            case WEEK:
-                return Dates::addWeeks;
-            default:
-                return null;
-        }
+        return switch (partitionBy) {
+            case DAY -> Dates::addDays;
+            case MONTH -> Dates::addMonths;
+            case YEAR -> Dates::addYears;
+            case HOUR -> Dates::addHours;
+            case WEEK -> Dates::addWeeks;
+            default -> null;
+        };
     }
 
     @Override
     public TimestampCeilMethod getPartitionCeilMethod(int partitionBy) {
-        switch (partitionBy) {
-            case DAY:
-                return MillsTimestampDriver::partitionCeilDD;
-            case MONTH:
-                return MillsTimestampDriver::partitionCeilMM;
-            case YEAR:
-                return MillsTimestampDriver::partitionCeilYYYY;
-            case HOUR:
-                return MillsTimestampDriver::partitionCeilHH;
-            case WEEK:
-                return MillsTimestampDriver::partitionCeilWW;
-            default:
-                return null;
-        }
+        return switch (partitionBy) {
+            case DAY -> MillsTimestampDriver::partitionCeilDD;
+            case MONTH -> MillsTimestampDriver::partitionCeilMM;
+            case YEAR -> MillsTimestampDriver::partitionCeilYYYY;
+            case HOUR -> MillsTimestampDriver::partitionCeilHH;
+            case WEEK -> MillsTimestampDriver::partitionCeilWW;
+            default -> null;
+        };
     }
 
     @Override
@@ -1108,65 +1070,6 @@ public class MillsTimestampDriver implements TimestampDriver {
             }
         }
         throw NumericException.instance();
-    }
-
-    private static long parseDayTime(CharSequence seq, int lim, int pos, long ts, int dayRange, int dayDigits) throws NumericException {
-        CommonUtils.checkChar(seq, pos++, lim, '-');
-        int day = Numbers.parseInt(seq, pos, pos += dayDigits);
-        CommonUtils.checkRange(day, 1, dayRange);
-        if (CommonUtils.checkLen3(pos, lim)) {
-            CommonUtils.checkChar(seq, pos++, lim, 'T');
-            int hour = Numbers.parseInt(seq, pos, pos += 2);
-            CommonUtils.checkRange(hour, 0, 23);
-            if (CommonUtils.checkLen2(pos, lim)) {
-                int min = Numbers.parseInt(seq, pos, pos += 2);
-                CommonUtils.checkRange(min, 0, 59);
-                if (CommonUtils.checkLen2(pos, lim)) {
-                    int sec = Numbers.parseInt(seq, pos, pos += 2);
-                    CommonUtils.checkRange(sec, 0, 59);
-                    if (pos < lim && seq.charAt(pos) == '-') {
-                        pos++;
-                        int millis = 0;
-                        int milliLim = pos + 3;
-                        int mlim = Math.min(lim, milliLim);
-                        for (; pos < mlim; pos++) {
-                            char c = seq.charAt(pos);
-                            if (c < '0' || c > '9') {
-                                throw NumericException.instance();
-                            }
-                            millis *= 10;
-                            millis += c - '0';
-                        }
-                        millis *= CommonUtils.tenPow(milliLim - pos);
-
-                        ts += (day - 1) * Dates.DAY_MILLIS
-                                + hour * Dates.HOUR_MILLIS
-                                + min * Dates.MINUTE_MILLIS
-                                + sec * Dates.SECOND_MILLIS
-                                + millis;
-                    } else {
-                        if (pos == lim) {
-                            ts += (day - 1) * Dates.DAY_MILLIS
-                                    + hour * Dates.HOUR_MILLIS
-                                    + min * Dates.MINUTE_MILLIS
-                                    + sec * Dates.SECOND_MILLIS;
-                        } else {
-                            throw NumericException.instance();
-                        }
-                    }
-                } else {
-                    ts += (day - 1) * Dates.DAY_MILLIS
-                            + hour * Dates.HOUR_MILLIS
-                            + min * Dates.MINUTE_MILLIS;
-                }
-            } else {
-                ts += (day - 1) * Dates.DAY_MILLIS
-                        + hour * Dates.HOUR_MILLIS;
-            }
-        } else {
-            ts += (day - 1) * Dates.DAY_MILLIS;
-        }
-        return ts;
     }
 
     private static long partitionCeilDD(long millis) {
