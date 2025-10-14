@@ -1608,18 +1608,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * 1. A cross join between a table with a timestamp column and an arithmetic sequence
      * 2. An ORDER BY clause on the sum of the timestamp and the sequence offset
      *
-     * @param model          The query model containing ORDER BY information
-     * @param masterMetadata Metadata for the LHS of the join
-     * @param slaveMetadata  Metadata for the RHS of the join (should be an arithmetic sequence)
-     * @param slaveCursor    The RHS cursor factory (should produce an arithmetic sequence)
+     * @param model              The query model containing ORDER BY information
+     * @param masterMetadata     Metadata for the LHS of the join
+     * @param slaveMetadata      Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursorFactory The RHS cursor factory (should produce an arithmetic sequence)
      * @return TimestampLadderInfo if pattern is detected, null otherwise
      */
     private TimestampLadderInfo detectTimestampLadderPattern(
             QueryModel model,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata,
-            RecordCursorFactory slaveCursor
+            RecordCursorFactory slaveCursorFactory
     ) {
+        // Check if the RHS is `long_sequence()`, or based on it
+        RecordCursorFactory sourceFac = slaveCursorFactory;
+        while (!sourceFac.getClass().getSimpleName().contains("LongSequence")) {
+            sourceFac = sourceFac.getBaseFactory();
+            if (sourceFac == null) {
+                return null;
+            }
+        }
         // Check if we have an ORDER BY clause
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
         if (orderBy.size() != 1) {
@@ -1636,7 +1644,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The ORDER BY should be: timestamp_column + offset_column
         ExpressionNode lhs = orderByExpr.lhs;
         ExpressionNode rhs = orderByExpr.rhs;
-
         if (lhs == null || rhs == null) {
             return null;
         }
