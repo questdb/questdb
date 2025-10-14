@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.bind;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1304,7 +1305,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(type).implicitCast(value);
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastStrAsDate(value);
+                ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCast(value);
                 break;
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = SqlUtil.implicitCastStrAsFloat(value);
@@ -1435,7 +1436,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((TimestampBindVariable) function).value = ColumnType.getTimestampDriver(functionType).implicitCastVarchar(value);
                 break;
             case ColumnType.DATE:
-                ((DateBindVariable) function).value = SqlUtil.implicitCastVarcharAsDate(sinkVarchar(value));
+                ((DateBindVariable) function).value = MillsTimestampDriver.INSTANCE.implicitCastVarchar(value);
                 break;
             case ColumnType.LONG256:
                 SqlUtil.implicitCastStrAsLong256(sinkVarchar(value), ((Long256BindVariable) function).value);

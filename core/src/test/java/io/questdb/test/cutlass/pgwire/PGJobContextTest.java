@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.PartitionBy;
@@ -12256,7 +12257,7 @@ create table tab as (
                 DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(conf, engine.getConfiguration());
                 WorkerPool pool = new WorkerPool(conf)
         ) {
-            pool.assign(engine.getEngineMaintenanceJob());
+            pool.assign(new ServerMain.EngineMaintenanceJob(engine));
             try (
                     PGServer server = createPGWireServer(
                             conf,

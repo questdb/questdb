@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -55,6 +56,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -116,6 +118,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected TestTimestampType timestampType = TestTimestampType.MICRO;
     protected boolean useLegacyStringDefault = true;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration(configuration) {
+
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;
@@ -193,6 +196,12 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public int getRecvBufferSize() {
             return msgBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            // we don't want the connections to time out due to slow CI box
+            return 10 * Dates.MINUTE_MILLIS;
         }
 
         @Override
@@ -291,6 +300,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
         final long fd = Net.socketTcp(true);
+        Net.setTcpNoDelay(fd, true);
+        Net.configureKeepAlive(fd);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -309,7 +320,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 if (needMaintenanceJob) {
-                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                    sharedWorkerPool.assign(new ServerMain.EngineMaintenanceJob(engine));
                 }
                 sharedWorkerPool.start(LOG);
                 try {
