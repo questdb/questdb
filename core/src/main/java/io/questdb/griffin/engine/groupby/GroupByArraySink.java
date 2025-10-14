@@ -51,7 +51,6 @@ public class GroupByArraySink implements Mutable {
     private final int type;
     private final int dims;
     private final int elemSize;
-    private final long headerSize;
 
     private GroupByAllocator allocator;
     private long ptr;
@@ -60,7 +59,6 @@ public class GroupByArraySink implements Mutable {
     public GroupByArraySink(int type) {
         this.type = type;
         this.dims = ColumnType.decodeArrayDimensionality(type);
-        this.headerSize = INT_SIZE + (long) dims * INT_SIZE;
         this.elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
     }
 
@@ -107,7 +105,7 @@ public class GroupByArraySink implements Mutable {
         if (array == null || array.isNull()) {
             return INT_SIZE;
         }
-        return headerSize + (long) array.getFlatViewLength() * elemSize;
+        return ArrayTypeDriver.getCompactPlainValueSize(array);
     }
 
     private void ensureCapacity(long requiredSize) {

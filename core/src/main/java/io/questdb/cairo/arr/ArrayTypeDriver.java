@@ -369,6 +369,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return Long.BYTES + value.getVanillaMemoryLayoutSize();
     }
 
+    /**
+     * Calculates the size needed to store an array in compact format.
+     * This is used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * The size includes:
+     * <ul>
+     *     <li>4 bytes for dataSize field</li>
+     *     <li>N * 4 bytes for shape (dimension lengths)</li>
+     *     <li>cardinality * elemSize bytes for array data</li>
+     * </ul>
+     * <p>
+     * This method uses {@link ArrayView#getCardinality()} which works for all array types.
+     *
+     * @param value the array to calculate size for (must not be null)
+     * @return the total size in bytes needed to store the array in compact format
+     */
+    public static long getCompactPlainValueSize(@NotNull ArrayView value) {
+        long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(value.getType()));
+        long intBytes = Integer.BYTES;
+        return intBytes + value.getDimCount() * intBytes + value.getCardinality() * elemSize;
+    }
+
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         appendNullImpl(auxMem, dataMem);
