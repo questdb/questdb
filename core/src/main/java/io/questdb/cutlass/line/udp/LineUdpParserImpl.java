@@ -452,13 +452,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                     default:
                         valid = false;
                 }
-                if (!valid && ColumnType.isDecimalType(columnTypeTag)) {
-                    valid = valueTypeTag == ColumnType.DOUBLE || valueTypeTag == ColumnType.FLOAT ||
-                            valueTypeTag == ColumnType.LONG || valueTypeTag == ColumnType.INT ||
-                            valueTypeTag == ColumnType.SHORT || valueTypeTag == ColumnType.BYTE ||
-                            valueTypeTag == ColumnType.STRING || valueTypeTag == ColumnType.VARCHAR ||
-                            valueTypeTag == ColumnType.DECIMAL_DEFAULT_TYPE_TAG;
-                }
             } else {
                 valid = true; // null is valid, the storage value is assigned later
             }

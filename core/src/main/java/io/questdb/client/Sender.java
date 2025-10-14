@@ -34,6 +34,7 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV1;
 import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.cutlass.line.LineTcpSenderV3;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
@@ -103,6 +104,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
     int PROTOCOL_VERSION_NOT_SET_EXPLICIT = -1;
     int PROTOCOL_VERSION_V1 = 1;
     int PROTOCOL_VERSION_V2 = 2;
+    int PROTOCOL_VERSION_V3 = 3;
 
     /**
      * Create a Sender builder instance from a configuration string.
@@ -273,13 +275,22 @@ public interface Sender extends Closeable, ArraySender<Sender> {
     void close();
 
     /**
-     * Add a column with a Decimal value.
+     * Add a column with a Decimal value serialized using the binary format.
      *
      * @param name  name of the column
      * @param value value to add
      * @return this instance for method chaining
      */
     Sender decimalColumn(CharSequence name, Decimal256 value);
+
+    /**
+     * Add a column with a Decimal value serialized using the text format.
+     *
+     * @param name  name of the column
+     * @param value value to add
+     * @return this instance for method chaining
+     */
+    Sender decimalColumnText(CharSequence name, Decimal256 value);
 
     /**
      * Add a column with a floating point value.
@@ -774,11 +785,12 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 channel = tlsChannel;
             }
             try {
-                if (protocolVersion == PROTOCOL_VERSION_V1) {
-                    sender = new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
-                } else {
-                    sender = new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
-                }
+                sender = switch (protocolVersion) {
+                    case PROTOCOL_VERSION_V1 -> new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
+                    case PROTOCOL_VERSION_V2 -> new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
+                    case PROTOCOL_VERSION_V3 -> new LineTcpSenderV3(channel, bufferCapacity, maxNameLength);
+                    default -> throw new LineSenderException("unknown protocol version [version=").put(protocolVersion).put("]");
+                };
             } catch (Throwable t) {
                 channel.close();
                 throw rethrow(t);
@@ -1134,7 +1146,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         /**
          * Sets the protocol version used by the client to connect to the server.
          * <p>
-         * The client currently supports {@link #PROTOCOL_VERSION_V1} and {@link #PROTOCOL_VERSION_V2} (default).
+         * The client currently supports {@link #PROTOCOL_VERSION_V1}, {@link #PROTOCOL_VERSION_V2} and
+         * {@link #PROTOCOL_VERSION_V3} (default).
          * <p>
          * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
          * <p>
@@ -1147,9 +1160,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("protocol version was already configured ")
                         .put("[protocolVersion=").put(this.protocolVersion).put("]");
             }
-            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
+            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V3) {
                 throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes), " +
-                        "2(binary format for part datatypes) or explicitly unset");
+                        "2(binary format for part datatypes), 3(decimal datatype) or explicitly unset");
             }
             this.protocolVersion = protocolVersion;
             return this;

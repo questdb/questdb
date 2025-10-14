@@ -174,12 +174,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return this;
     }
 
-    public AbstractLineSender field(CharSequence name, Decimal256 value) {
-        writeFieldName(name).put(value);
-        putAsciiInternal('d');
-        return this;
-    }
-
     @Override
     public void flush() {
         validateNotClosed();
