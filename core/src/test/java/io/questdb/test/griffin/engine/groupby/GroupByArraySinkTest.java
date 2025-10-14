@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.groupby;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByArraySink;
@@ -179,11 +180,12 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     public void testPutMultidimensionalArray() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2, true);
+                int nDims = 2;
+                int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
                 GroupByArraySink sink = new GroupByArraySink(type);
                 sink.setAllocator(allocator);
 
-                ArrayView array = create2DArray(allocator, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+                ArrayView array = create2DArray(allocator, nDims, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
                 sink.put(array);
 
                 TestUtils.assertEquals(array, sink.getArray());
@@ -191,13 +193,39 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPutNonVanillaArray() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                int nDims = 2;
+                int type2D = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
+                GroupByArraySink sink = new GroupByArraySink(type2D);
+                sink.setAllocator(allocator);
+
+                ArrayView vanillaArray = create2DArray(allocator, nDims, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+                DerivedArrayView derivedArray = new DerivedArrayView();
+                derivedArray.of(vanillaArray);
+                derivedArray.transpose();
+
+                Assert.assertFalse(derivedArray.isVanilla());
+
+                sink.put(derivedArray);
+
+                ArrayView result = sink.getArray();
+                Assert.assertTrue(result.isVanilla());
+            }
+        });
+    }
+
     private ArrayView createArray(GroupByAllocator allocator, double... values) {
-        int nDims = ColumnType.decodeArrayDimensionality(TYPE);
-        long ptr = allocator.malloc((long) nDims * Integer.BYTES + (values.length * 8L));
+        long nDims = ColumnType.decodeArrayDimensionality(TYPE);
+        long shapeLen = nDims * Integer.BYTES;
+
+        long ptr = allocator.malloc(shapeLen + (values.length * 8L));
 
         Unsafe.getUnsafe().putInt(ptr, values.length);
 
-        long arrayPtr = ptr + (long) nDims * Integer.BYTES;
+        long arrayPtr = ptr + shapeLen;
         for (int i = 0; i < values.length; i++) {
             Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
         }
@@ -205,15 +233,15 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);
     }
 
-    private ArrayView create2DArray(GroupByAllocator allocator, double[] values) {
-        int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2, true);
-        int nDims = 2;
-        long ptr = allocator.malloc((long) nDims * Integer.BYTES + (values.length * 8L));
+    private ArrayView create2DArray(GroupByAllocator allocator, int nDims, double[] values) {
+        int shapeLen = nDims * Integer.BYTES;
+        int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
+        long ptr = allocator.malloc(shapeLen + (values.length * 8L));
 
         Unsafe.getUnsafe().putInt(ptr, 2);
         Unsafe.getUnsafe().putInt(ptr + 4, 3);
 
-        long arrayPtr = ptr + nDims * Integer.BYTES;
+        long arrayPtr = ptr + shapeLen;
         for (int i = 0; i < values.length; i++) {
             Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
         }
