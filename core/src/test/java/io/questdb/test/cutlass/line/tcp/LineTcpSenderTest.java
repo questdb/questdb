@@ -75,8 +75,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.*;
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -556,6 +555,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
                     .build()
             ) {
                 CountDownLatch released = createTableCommitNotifier("decimal_test");
@@ -594,78 +594,68 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
             AbstractCairoTest.create(model);
 
-            var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
-            for (int protocol : protocols) {
-                CountDownLatch released = createTableCommitNotifier(tableName);
-                try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                        .address("127.0.0.1")
-                        .port(bindPort)
-                        .protocolVersion(protocol)
-                        .build()
-                ) {
-                    sender.table(tableName)
-                            .decimalColumn("a", Decimal256.fromLong(12345, 0))
-                            .decimalColumn("b", Decimal256.fromLong(12345, 2))
-                            .at(100000000000L + protocol * 100, ChronoUnit.MICROS);
+            CountDownLatch released = createTableCommitNotifier(tableName);
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table(tableName)
+                        .decimalColumn("a", Decimal256.fromLong(12345, 0))
+                        .decimalColumn("b", Decimal256.fromLong(12345, 2))
+                        .at(100000000000L, ChronoUnit.MICROS);
 
-                    // Decimal without rescale
-                    sender.table(tableName)
-                            .decimalColumn("a", Decimal256.NULL_VALUE)
-                            .decimalColumn("b", Decimal256.fromLong(123456, 3))
-                            .at(100000000001L + protocol * 100, ChronoUnit.MICROS);
+                // Decimal without rescale
+                sender.table(tableName)
+                        .decimalColumn("a", Decimal256.NULL_VALUE)
+                        .decimalColumn("b", Decimal256.fromLong(123456, 3))
+                        .at(100000000001L, ChronoUnit.MICROS);
 
-                    // Integers -> Decimal
-                    sender.table(tableName)
-                            .longColumn("a", 42)
-                            .longColumn("b", 42)
-                            .at(100000000002L + protocol * 100, ChronoUnit.MICROS);
+                // Integers -> Decimal
+                sender.table(tableName)
+                        .longColumn("a", 42)
+                        .longColumn("b", 42)
+                        .at(100000000002L, ChronoUnit.MICROS);
 
-                    // Strings -> Decimal without rescale
-                    sender.table(tableName)
-                            .stringColumn("a", "42")
-                            .stringColumn("b", "42.123")
-                            .at(100000000003L + protocol * 100, ChronoUnit.MICROS);
+                // Strings -> Decimal without rescale
+                sender.table(tableName)
+                        .stringColumn("a", "42")
+                        .stringColumn("b", "42.123")
+                        .at(100000000003L, ChronoUnit.MICROS);
 
-                    // Strings -> Decimal with rescale
-                    sender.table(tableName)
-                            .stringColumn("a", "42.0")
-                            .stringColumn("b", "42.1")
-                            .at(100000000004L + protocol * 100, ChronoUnit.MICROS);
+                // Strings -> Decimal with rescale
+                sender.table(tableName)
+                        .stringColumn("a", "42.0")
+                        .stringColumn("b", "42.1")
+                        .at(100000000004L, ChronoUnit.MICROS);
 
-                    // Doubles -> Decimal
-                    sender.table(tableName)
-                            .doubleColumn("a", 42d)
-                            .doubleColumn("b", 42.1d)
-                            .at(100000000005L + protocol * 100, ChronoUnit.MICROS);
+                // Doubles -> Decimal
+                sender.table(tableName)
+                        .doubleColumn("a", 42d)
+                        .doubleColumn("b", 42.1d)
+                        .at(100000000005L, ChronoUnit.MICROS);
 
-                    // NaN/Inf Doubles -> Decimal
-                    sender.table(tableName)
-                            .doubleColumn("a", Double.NaN)
-                            .doubleColumn("b", Double.POSITIVE_INFINITY)
-                            .at(100000000006L + protocol * 100, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                waitTableWriterFinish(released);
+                // NaN/Inf Doubles -> Decimal
+                sender.table(tableName)
+                        .doubleColumn("a", Double.NaN)
+                        .doubleColumn("b", Double.POSITIVE_INFINITY)
+                        .at(100000000006L, ChronoUnit.MICROS);
+                sender.flush();
             }
+            waitTableWriterFinish(released);
 
-            assertTableSizeEventually(engine, "decimal_test", 14);
+            assertTableSizeEventually(engine, "decimal_test", 7);
             try (TableReader reader = getReader(tableName)) {
                 CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
                 TestUtils.assertReader("a\tb\ttimestamp\n" +
-                        "12345\t123.450\t1970-01-02T03:46:40.000100" + suffix +
-                        "\t123.456\t1970-01-02T03:46:40.000101" + suffix +
-                        "42\t42.000\t1970-01-02T03:46:40.000102" + suffix +
-                        "42\t42.123\t1970-01-02T03:46:40.000103" + suffix +
-                        "42\t42.100\t1970-01-02T03:46:40.000104" + suffix +
-                        "42\t42.100\t1970-01-02T03:46:40.000105" + suffix +
-                        "\t\t1970-01-02T03:46:40.000106" + suffix +
-                        "12345\t123.450\t1970-01-02T03:46:40.000200" + suffix +
-                        "\t123.456\t1970-01-02T03:46:40.000201" + suffix +
-                        "42\t42.000\t1970-01-02T03:46:40.000202" + suffix +
-                        "42\t42.123\t1970-01-02T03:46:40.000203" + suffix +
-                        "42\t42.100\t1970-01-02T03:46:40.000204" + suffix +
-                        "42\t42.100\t1970-01-02T03:46:40.000205" + suffix +
-                        "\t\t1970-01-02T03:46:40.000206" + suffix, reader, new StringSink());
+                        "12345\t123.450\t1970-01-02T03:46:40.000000" + suffix +
+                        "\t123.456\t1970-01-02T03:46:40.000001" + suffix +
+                        "42\t42.000\t1970-01-02T03:46:40.000002" + suffix +
+                        "42\t42.123\t1970-01-02T03:46:40.000003" + suffix +
+                        "42\t42.100\t1970-01-02T03:46:40.000004" + suffix +
+                        "42\t42.100\t1970-01-02T03:46:40.000005" + suffix +
+                        "\t\t1970-01-02T03:46:40.000006" + suffix, reader, new StringSink());
             }
         });
     }
@@ -684,58 +674,55 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
             AbstractCairoTest.create(model);
 
-            var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
-            for (int protocol : protocols) {
-                CountDownLatch released = createTableCommitNotifier(tableName);
-                try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                        .address("127.0.0.1")
-                        .port(bindPort)
-                        .protocolVersion(protocol)
-                        .build()
-                ) {
-                    // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
-                    sender.table(tableName)
-                            .longColumn("x", 1234)
-                            .at(100000000000L, ChronoUnit.MICROS);
+            CountDownLatch released = createTableCommitNotifier(tableName);
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
+                sender.table(tableName)
+                        .longColumn("x", 1234)
+                        .at(100000000000L, ChronoUnit.MICROS);
 
-                    // Integers overbound during the rescale process.
-                    sender.table(tableName)
-                            .longColumn("y", 12345)
-                            .at(100000000001L, ChronoUnit.MICROS);
+                // Integers overbound during the rescale process.
+                sender.table(tableName)
+                        .longColumn("y", 12345)
+                        .at(100000000001L, ChronoUnit.MICROS);
 
-                    // Floating points with a scale greater than expected.
-                    sender.table(tableName)
-                            .doubleColumn("x", 1.2345d)
-                            .at(100000000002L, ChronoUnit.MICROS);
+                // Floating points with a scale greater than expected.
+                sender.table(tableName)
+                        .doubleColumn("x", 1.2345d)
+                        .at(100000000002L, ChronoUnit.MICROS);
 
-                    // Floating points with a precision greater than expected.
-                    sender.table(tableName)
-                            .doubleColumn("x", 12345.678d)
-                            .at(100000000003L, ChronoUnit.MICROS);
+                // Floating points with a precision greater than expected.
+                sender.table(tableName)
+                        .doubleColumn("x", 12345.678d)
+                        .at(100000000003L, ChronoUnit.MICROS);
 
-                    // String that is not a valid decimal.
-                    sender.table(tableName)
-                            .stringColumn("x", "abc")
-                            .at(100000000004L, ChronoUnit.MICROS);
+                // String that is not a valid decimal.
+                sender.table(tableName)
+                        .stringColumn("x", "abc")
+                        .at(100000000004L, ChronoUnit.MICROS);
 
-                    // String that has a too big precision.
-                    sender.table(tableName)
-                            .stringColumn("x", "1E8")
-                            .at(100000000005L, ChronoUnit.MICROS);
+                // String that has a too big precision.
+                sender.table(tableName)
+                        .stringColumn("x", "1E8")
+                        .at(100000000005L, ChronoUnit.MICROS);
 
-                    // Decimal with a too big precision.
-                    sender.table(tableName)
-                            .decimalColumn("x", Decimal256.fromLong(12345678, 3))
-                            .at(100000000006L, ChronoUnit.MICROS);
+                // Decimal with a too big precision.
+                sender.table(tableName)
+                        .decimalColumn("x", Decimal256.fromLong(12345678, 3))
+                        .at(100000000006L, ChronoUnit.MICROS);
 
-                    // Decimal with a too big precision when scaled.
-                    sender.table(tableName)
-                            .decimalColumn("y", Decimal256.fromLong(12345, 0))
-                            .at(100000000007L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                waitTableWriterFinish(released);
+                // Decimal with a too big precision when scaled.
+                sender.table(tableName)
+                        .decimalColumn("y", Decimal256.fromLong(12345, 0))
+                        .at(100000000007L, ChronoUnit.MICROS);
+                sender.flush();
             }
+            waitTableWriterFinish(released);
 
             try (TableReader reader = getReader(tableName)) {
                 TestUtils.assertReader("x\ty\ttimestamp\n", reader, new StringSink());

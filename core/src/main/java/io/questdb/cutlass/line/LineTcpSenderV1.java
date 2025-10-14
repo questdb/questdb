@@ -36,6 +36,16 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
     }
 
     @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         throw new LineSenderException("current protocol version does not support double-array");
     }
@@ -58,18 +68,6 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
     @Override
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name).put(value);
-        return this;
-    }
-
-    @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        // Serializing the Decimal256 as text
-        writeFieldName(name);
-        if (value.isNull()) {
-            put("NaNd");
-        } else {
-            put(value).putAscii('d');
-        }
         return this;
     }
 

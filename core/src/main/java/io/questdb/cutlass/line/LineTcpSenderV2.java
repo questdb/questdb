@@ -69,22 +69,13 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     }
 
     @Override
-    public Sender decimalColumn(@NotNull CharSequence name, Decimal256 value) {
-        writeFieldName(name)
-                .putAsciiInternal('=')
-                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
-                .put((byte) value.getScale());
-        if (value.isNull()) {
-            put((byte) 0); // Length (0 -> null)
-            return this;
-        }
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
 
-        put((byte) 32); // Length
-        putLong(Long.reverseBytes(value.getHh()));
-        putLong(Long.reverseBytes(value.getHl()));
-        putLong(Long.reverseBytes(value.getLh()));
-        putLong(Long.reverseBytes(value.getLl()));
-        return this;
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

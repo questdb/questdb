@@ -94,8 +94,6 @@ public class LineUdpParserSupport {
                         return ColumnType.UNDEFINED;
                     }
                     return useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
-                case 'd':
-                    return ColumnType.DECIMAL_DEFAULT_TYPE;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
                         return defaultFloatColumnType;

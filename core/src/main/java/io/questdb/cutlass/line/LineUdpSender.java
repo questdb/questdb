@@ -67,6 +67,16 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         throw new LineSenderException("current protocol version does not support double-array");
     }
@@ -90,11 +100,6 @@ public class LineUdpSender extends AbstractLineSender {
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name).put(value);
         return this;
-    }
-
-    @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        return field(name, value);
     }
 
     @Override

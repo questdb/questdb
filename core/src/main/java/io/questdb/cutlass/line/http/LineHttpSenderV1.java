@@ -112,13 +112,12 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
     @Override
     public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        var request = writeFieldName(name);
-        if (value.isNull()) {
-            request.put("NaNd");
-        } else {
-            request.put(value).putAscii('d');
-        }
-        return this;
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

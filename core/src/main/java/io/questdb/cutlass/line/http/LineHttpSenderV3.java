@@ -29,7 +29,6 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.DoubleArray;
@@ -40,14 +39,12 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LineHttpSenderV2 extends AbstractLineHttpSender {
+public class LineHttpSenderV3 extends LineHttpSenderV2 {
 
-    public LineHttpSenderV2(String host,
+    public LineHttpSenderV3(String host,
                             int port,
                             HttpClientConfiguration clientConfiguration,
                             ClientTlsConfiguration tlsConfig,
@@ -72,11 +69,10 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
                 maxRetriesNanos,
                 maxBackoffMillis,
                 minRequestThroughput,
-                flushIntervalNanos,
-                new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks()));
+                flushIntervalNanos);
     }
 
-    public LineHttpSenderV2(ObjList<String> hosts,
+    public LineHttpSenderV3(ObjList<String> hosts,
                             IntList ports,
                             String path,
                             HttpClientConfiguration clientConfiguration,
@@ -113,7 +109,7 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
     }
 
     @SuppressWarnings("unused")
-    protected LineHttpSenderV2(String host,
+    protected LineHttpSenderV3(String host,
                                int port,
                                String path,
                                HttpClientConfiguration clientConfiguration,
@@ -148,121 +144,32 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
     }
 
     @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        throw new LineSenderException("current protocol version does not support decimal");
-    }
-
-    @Override
     public Sender decimalColumnText(CharSequence name, Decimal256 value) {
-        throw new LineSenderException("current protocol version does not support decimal");
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, DoubleArray array) {
-        if (processNullArray(name, array)) {
-            return this;
+        var request = writeFieldName(name);
+        if (value.isNull()) {
+            request.put("NaNd");
+        } else {
+            request.put(value).putAscii('d');
         }
-        writeFieldName(name)
-                .putAscii('=') // binary format flag
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE); // element type
-        array.appendToBufPtr(request);
         return this;
     }
 
     @Override
-    public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name)
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        var request = writeFieldName(name)
                 .putAscii('=')
-                .put(LineTcpParser.ENTITY_TYPE_DOUBLE)
-                .putDouble(value);
-        return this;
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, LongArray values) {
-        if (processNullArray(name, values)) {
+                .put(LineTcpParser.ENTITY_TYPE_DECIMAL)
+                .put((byte) value.getScale());
+        if (value.isNull()) {
+            request.put((byte) 0); // Length (0 -> null)
             return this;
         }
-        writeFieldName(name)
-                .putAscii('=') // binary format flag
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.LONG); // element type
-        values.appendToBufPtr(request);
-        return this;
-    }
 
-    private <T> Sender arrayColumn(
-            CharSequence name,
-            short columnType,
-            byte nDims,
-            T array,
-            ArrayShapeAppender<T> shapeAppender,
-            ArrayDataAppender<T> dataAppender
-    ) {
-        if (processNullArray(name, array)) {
-            return this;
-        }
-        writeFieldName(name)
-                .putAscii('=') // binary format flag
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) columnType) // element type
-                .put(nDims); // dims.
-        shapeAppender.append(request, array);
-        dataAppender.append(request, array);
+        request.put((byte) 32); // Length
+        request.putLong(Long.reverseBytes(value.getHh()));
+        request.putLong(Long.reverseBytes(value.getHl()));
+        request.putLong(Long.reverseBytes(value.getLh()));
+        request.putLong(Long.reverseBytes(value.getLl()));
         return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name)
-                    .putAscii('=') // binary format flag
-                    .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 }
