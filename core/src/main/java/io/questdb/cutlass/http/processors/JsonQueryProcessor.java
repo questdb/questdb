@@ -32,7 +32,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -311,11 +310,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
-    }
-
-    @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
-        return context.getCookieHandler().processCookies(context, securityContext);
     }
 
     @Override
@@ -877,7 +871,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setCookie(response.headers(), context.getSecurityContext());
+        context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
+        final String sessionId = context.getSessionId();
+        if (sessionId != null) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
+        }
         response.sendHeader();
     }
 

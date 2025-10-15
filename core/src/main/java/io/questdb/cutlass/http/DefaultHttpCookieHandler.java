@@ -33,11 +33,17 @@ public class DefaultHttpCookieHandler implements HttpCookieHandler {
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
+    public boolean parseCookies(HttpConnectionContext context) {
         return true;
     }
 
     @Override
-    public void setCookie(HttpResponseHeader header, SecurityContext securityContext) {
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return true;
+    }
+
+    @Override
+    public HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context, HttpSessionStore sessionStore) {
+        return null;
     }
 }

@@ -56,12 +56,12 @@ public interface HttpRequestProcessor {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    default boolean ignoreConnectionLimitCheck() {
-        return false;
-    }
-
     default short getSupportedRequestTypes() {
         return METHOD_GET;
+    }
+
+    default boolean ignoreConnectionLimitCheck() {
+        return false;
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {
@@ -81,10 +81,6 @@ public interface HttpRequestProcessor {
     }
 
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
-    }
-
-    default boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        return true;
     }
 
     default boolean requiresAuthentication() {

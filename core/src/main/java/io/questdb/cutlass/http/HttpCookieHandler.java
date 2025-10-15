@@ -27,7 +27,15 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.SecurityContext;
 
 public interface HttpCookieHandler {
-    boolean processCookies(HttpConnectionContext context, SecurityContext securityContext);
+    boolean parseCookies(HttpConnectionContext context);
 
-    void setCookie(HttpResponseHeader header, SecurityContext securityContext);
+    boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext);
+
+    HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context, HttpSessionStore sessionStore);
+
+    default void setServiceAccountCookie(HttpResponseHeader header, SecurityContext securityContext) {
+    }
+
+    default void setSessionCookie(HttpResponseHeader header, CharSequence sessionId) {
+    }
 }

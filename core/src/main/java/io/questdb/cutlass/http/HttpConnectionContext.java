@@ -54,6 +54,7 @@ import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
@@ -98,6 +99,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private final HttpSessionStore sessionStore;
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
@@ -110,6 +112,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
+    private String sessionId;
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
     private long totalReceived;
@@ -123,6 +126,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 configuration,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
+                DefaultHttpSessionStore.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
                 HttpServer.NO_OP_CACHE
         );
@@ -132,6 +136,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpServerConfiguration configuration,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
+            HttpSessionStore sessionStore,
             HttpHeaderParserFactory headerParserFactory,
             AssociativeCache<RecordCursorFactory> selectCache
     ) {
@@ -142,6 +147,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         this.configuration = configuration;
         this.cookieHandler = cookieHandler;
+        this.sessionStore = sessionStore;
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
@@ -216,6 +222,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.close();
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.sessionId = null;
         this.authenticator.close();
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
@@ -286,6 +293,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
+    public String getSessionId() {
+        return sessionId;
+    }
+
     @Override
     public SuspendEvent getSuspendEvent() {
         return suspendEvent;
@@ -351,6 +362,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.sessionId = null;
         this.authenticator.clear();
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
@@ -481,16 +493,36 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
+            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this, sessionStore);
             if (!authenticator.authenticate(headerParser)) {
+                // auth failed, fallback to session cookie if there is one
+                if (sessionInfo != null) {
+                    // create security context from session info
+                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                            sessionInfo.getPrincipal(),
+                            sessionInfo.getGroups(),
+                            sessionInfo.getAuthType(),
+                            SecurityContextFactory.HTTP
+                    );
+                    authenticationNanos = clock.getTicks() - authenticationStart;
+                    return true;
+                }
+
                 // authenticationNanos stays 0, when it fails this value is irrelevant
                 return false;
             }
+
+            // auth successful, create security context from auth info
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     authenticator.getPrincipal(),
                     authenticator.getGroups(),
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
+            // create session, if we do not have one yet
+            if (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal())) {
+                sessionId = sessionStore.createSession(authenticator);
+            }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }
         return true;
@@ -855,13 +887,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest) {
+                    final boolean cookiesEnabled = configuration.getHttpContextConfiguration().areCookiesEnabled();
+                    if (cookiesEnabled) {
+                        if (!cookieHandler.parseCookies(this)) {
+                            processor = rejectProcessor;
+                        }
+                    }
+
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
                         final byte requiredAuthType = processor.getRequiredAuthType();
                         processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                     }
 
-                    if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
-                        if (!processor.processCookies(this, securityContext)) {
+                    if (cookiesEnabled) {
+                        if (!cookieHandler.processServiceAccountCookie(this, securityContext)) {
                             processor = rejectProcessor;
                         }
                     }
