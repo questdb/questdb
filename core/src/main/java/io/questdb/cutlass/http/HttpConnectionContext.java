@@ -441,25 +441,30 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
         if (connectionLimit > -1) {
-            connectionCountGauge = processor.connectionCountGauge(metrics);
-            final long numOfConnections = connectionCountGauge.incrementAndGet();
+            AtomicLongGauge gauge = processor.connectionCountGauge(metrics);
+            final long numOfConnections = gauge.incrementAndGet();
             if (numOfConnections > connectionLimit) {
                 rejectProcessor.getMessageSink()
-                        .put("exceeded connection limit [name=").put(connectionCountGauge.getName())
+                        .put("exceeded connection limit [name=").put(gauge.getName())
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(']');
+                gauge.dec();
                 return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
             }
             if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
                 rejectProcessor.getMessageSink()
-                        .put("non-admin user reached connection limit [name=").put(connectionCountGauge.getName())
+                        .put("non-admin user reached connection limit [name=").put(gauge.getName())
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(']');
+                gauge.dec();
                 return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
             }
+            this.connectionCountGauge = gauge;
         }
+
+        connectionCounted = true;
         return processor;
     }
 
@@ -875,7 +880,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
                 if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
-                    connectionCounted = true;
                 }
 
                 final long contentLength = headerParser.getContentLength();
