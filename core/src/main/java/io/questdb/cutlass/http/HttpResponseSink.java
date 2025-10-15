@@ -60,6 +60,7 @@ import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
     public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    public static final int HTTP_MULTI_STATUS = 207;
     private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
@@ -840,6 +841,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
         httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
         httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
+        httpStatusMap.put(HTTP_MULTI_STATUS, new Utf8String("Multi status"));
         httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));
         httpStatusMap.put(HTTP_MOVED_TEMP, new Utf8String("Temporarily Moved"));
         httpStatusMap.put(HTTP_NOT_MODIFIED, new Utf8String("Not Modified"));

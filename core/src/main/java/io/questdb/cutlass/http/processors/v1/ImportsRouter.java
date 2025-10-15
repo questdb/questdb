@@ -58,6 +58,7 @@ import java.util.function.LongSupplier;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
+import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
 
 public class ImportsRouter implements HttpRequestHandler {
     private final HttpMultipartContentProcessor postProcessor;
@@ -93,7 +94,6 @@ public class ImportsRouter implements HttpRequestHandler {
         private static final Log LOG = LogFactory.getLog(ImportPostProcessor.class);
         private static final LocalValue<State> LV = new LocalValue<>();
 
-
         HttpConnectionContext context;
         CairoEngine engine;
         byte requiredAuthType;
@@ -126,12 +126,9 @@ public class ImportsRouter implements HttpRequestHandler {
                 // on first entry, open file for writing
                 if (state.fd == -1) {
                     TableUtils.createDirsOrFail(state.ff, state.tempPath, engine.getConfiguration().getMkDirMode());
-
                     state.fd = Files.openRW(state.tempPath.$());
                     if (state.fd == -1) {
-                        state.errorMsg.put("cannot open file for writing [path=").put(state.tempPath).put(']');
-                        state.errorCode = 500;
-                        sendError(context);
+                        sendErrorWithSuccessInfo(context, 500, "cannot open file for writing [path=" + state.tempPath + ']');
                         return;
                     }
                     state.written = 0;
@@ -140,9 +137,7 @@ public class ImportsRouter implements HttpRequestHandler {
                 final long chunkSize = hi - lo;
                 long bytesWritten = Files.write(state.fd, lo, chunkSize, state.written);
                 if (bytesWritten != chunkSize) {
-                    state.errorMsg.put("failed to write chunk [expected=").put(chunkSize).put(", actual=").put(bytesWritten).put(']');
-                    state.errorCode = 500;
-                    sendError(context);
+                    sendErrorWithSuccessInfo(context, 500, "failed to write chunk [expected=" + chunkSize + ", actual=" + bytesWritten + ']');
                     return;
                 }
                 state.written += chunkSize;
@@ -153,28 +148,22 @@ public class ImportsRouter implements HttpRequestHandler {
         public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
             if (Chars.isBlank(importRoot)) {
-                // throw error 400
-                state.errorMsg.put("invalid destination directory (sql.copy.input.root) [path=").put(importRoot).put(']');
-                state.errorCode = 400;
-                sendError(context);
+                sendErrorWithSuccessInfo(context, 400, "invalid destination directory (sql.copy.input.root) [path=" + importRoot + ']');
             }
 
-            final DirectUtf8Sequence filename = partHeader.getContentDispositionFilename();
+            final DirectUtf8Sequence filename = partHeader.getContentDispositionName();
             if (filename == null || filename.size() == 0) {
-                state.errorMsg.put("received Content-Disposition without a filename");
-                state.errorCode = 400;
-                sendError(context);
+                sendErrorWithSuccessInfo(context, 400, "received Content-Disposition without a filename");
+                return;
             }
 
-            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
-            state.of(name, importRoot);
+            state.currentFilename = filename.toString();
+            state.of(filename, importRoot);
             state.overwrite = HttpKeywords.isTrue(context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE));
             if (!state.overwrite && state.ff.exists(state.realPath.$())) {
                 // error 409 conflict
-                state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.realPath).put(", overwrite=").put(false).put(']');
-                state.errorCode = 409;
-                sendError(context);
-                assert false;
+                sendErrorWithSuccessInfo(context, 409, "file already exists and overwriting is disabled");
+                return;
             }
             LOG.info().$("starting import [src=").$(filename)
                     .$(", dest=").$(state.realPath).I$();
@@ -190,15 +179,14 @@ public class ImportsRouter implements HttpRequestHandler {
             if (state.ff.exists(state.realPath.$())) {
                 if (!state.overwrite) {
                     state.ff.removeQuiet(state.tempPath.$());
-                    state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.realPath).put(", overwrite=").put(false).put(']');
-                    state.errorCode = 409;
-                    sendError(context);
+                    sendErrorWithSuccessInfo(context, 409, "file already exists and overwriting is disabled [path=" + state.realPath + ", overwrite=false]");
                     return;
                 } else {
                     state.ff.removeQuiet(state.realPath.$());
                 }
             }
 
+            TableUtils.createDirsOrFail(state.ff, state.realPath, engine.getConfiguration().getMkDirMode());
             int renameResult = state.ff.rename(state.tempPath.$(), state.realPath.$());
             if (renameResult != Files.FILES_RENAME_OK) {
                 int errno = state.ff.errno();
@@ -207,16 +195,12 @@ public class ImportsRouter implements HttpRequestHandler {
                         .$(", errno=").$(errno)
                         .$(", renameResult=").$(renameResult).I$();
                 state.ff.remove(state.tempPath.$());
-                state.errorMsg.put("cannot rename temporary file [tempPath=").put(state.tempPath)
-                        .put(", realPath=").put(state.realPath)
-                        .put(", errno=").put(errno)
-                        .put(", renameResult=").put(renameResult).put(']');
-                state.errorCode = 500;
-                sendError(context);
+                sendErrorWithSuccessInfo(context, 500, "cannot rename temporary file [tempPath=" + state.tempPath +
+                        ", realPath=" + state.realPath + ", errno=" + errno + ", renameResult=" + renameResult + ']');
                 return;
             }
 
-            state.successfulFiles.add(state.realPath.toString());
+            state.successfulFiles.add(state.currentFilename);
             LOG.info().$("finished import [dest=").$(state.realPath).$(", size=").$(state.written).I$();
         }
 
@@ -234,6 +218,9 @@ public class ImportsRouter implements HttpRequestHandler {
         ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             this.context = context;
             this.state = LV.get(context);
+            if (state.fd != -1 && state.written != 0) {
+                state.ff.truncate(state.fd, state.written);
+            }
             onChunk(state.lo, state.hi);
         }
 
@@ -307,14 +294,56 @@ public class ImportsRouter implements HttpRequestHandler {
             }
         }
 
+        private void sendErrorWithSuccessInfo(HttpConnectionContext context, int errorCode, String errorMsg) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+            try {
+                final HttpChunkedResponse response = context.getChunkedResponse();
+                if (state.successfulFiles.size() > 0) {
+                    response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON_API);
+                    response.sendHeader();
+                    response.sendChunk(false);
+                    response.put("{\"successful\":[");
+                    for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
+                        response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
+                        if (i + 1 < n) response.put(",");
+                    }
+                    response.put("],\"failed\":[{\"path\":\"").put(state.currentFilename)
+                            .put("\",\"error\":\"").put(errorMsg)
+                            .put("\",\"code\":").put(errorCode)
+                            .put("}]}");
+                    response.sendChunk(true);
+                    response.done();
+                } else {
+                    LOG.error().$("POST /imports failed [status=").$(errorCode).$(", fd=").$(context.getFd()).$(", msg=").$(errorMsg).I$();
+                    response.status(errorCode, errorMsg);
+                    response.sendHeader();
+                    response.sendChunk(false);
+                    response.put("{\"errors\":[{\"status\":\"").put(errorCode)
+                            .put("\",\"detail\":\"").put(errorMsg)
+                            .put("\",\"name\":\"").put(state.currentFilename).put("\"}]}");
+                    response.sendChunk(true);
+                    response.shutdownWrite();
+                    throw ServerDisconnectException.INSTANCE;
+                }
+            } finally {
+                state.clear();
+            }
+        }
+
         private void sendSuccess(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
             try {
                 HttpChunkedResponse response = context.getChunkedResponse();
                 response.bookmark();
-                // We do not send a location header since there may be multiple locations.
-                response.status(201, CONTENT_TYPE_JSON_API);
+                response.status(200, CONTENT_TYPE_JSON_API);
                 response.sendHeader();
-                resumeSend(context);
+                response.sendChunk(false);
+                response.put("{\"successful\":[");
+                for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
+                    response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
+                    if (i + 1 < n) response.put(",");
+                }
+                response.put("]}");
+                response.sendChunk(true);
+                response.done();
             } finally {
                 state.clear();
             }
@@ -324,6 +353,7 @@ public class ImportsRouter implements HttpRequestHandler {
             final LongSupplier importIDSupplier;
             final Path realPath;
             final Path tempPath;
+            String currentFilename;
             int errorCode;
             Utf8StringSink errorMsg;
             long fd = -1;
@@ -332,7 +362,7 @@ public class ImportsRouter implements HttpRequestHandler {
             StringSink importId = new StringSink();
             long lo;
             boolean overwrite;
-            ObjList<String> successfulFiles;
+            ObjList<CharSequence> successfulFiles;
             int tempPathBaseLen;
             long written;
 
@@ -350,6 +380,7 @@ public class ImportsRouter implements HttpRequestHandler {
                 errorCode = -1;
                 errorMsg.clear();
                 successfulFiles.clear();
+                currentFilename = null;
                 if (fd != -1) {
                     Files.close(fd);
                     fd = -1;
@@ -360,8 +391,6 @@ public class ImportsRouter implements HttpRequestHandler {
                     ff.rmdir(tempPath, false);
                     tempPathBaseLen = 0;
                 }
-                realPath.trimTo(0);
-                tempPath.trimTo(0);
             }
 
             @Override
@@ -372,6 +401,7 @@ public class ImportsRouter implements HttpRequestHandler {
             }
 
             public void of(DirectUtf8Sequence filename, CharSequence importRoot) {
+                // clear prev
                 if (fd != -1) {
                     Files.close(fd);
                     fd = -1;
