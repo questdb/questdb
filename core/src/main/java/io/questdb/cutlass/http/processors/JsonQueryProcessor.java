@@ -263,6 +263,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
+    public String getName() {
+        return HttpLimits.PROCESSOR_JSON;
+    }
+
+    @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         return this;
     }

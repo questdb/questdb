@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.HttpLimits;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -37,6 +38,7 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -47,6 +49,7 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
@@ -849,6 +852,181 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportLimit() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 300 + rnd.nextInt(100);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            int requests = 30;
+            int requestExpLimit = 2;
+            int requestJsonLimit = 2;
+
+            params.clear();
+            params.put("query", "SELECT * FROM multiple_options_test");
+            params.put("fmt", "parquet");
+            params.put("compression_codec", "gzip");
+            params.put("compression_level", "6");
+            params.put("row_group_size", "2000");
+            params.put("data_page_size", "1024");
+            params.put("statistics_enabled", "true");
+            params.put("parquet_version", "2");
+            params.put("raw_array_encoding", "false");
+
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation),
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
+                    PropertyKey.LINE_TCP_ENABLED.toString(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
+                    PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
+            )) {
+                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                        "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
+                        "FROM long_sequence(5)" +
+                        ")");
+                serverMain.execute("CREATE TABLE multiple_options_test AS (SELECT x FROM long_sequence(5000))");
+
+                // Exceed the limit
+                ObjList<HttpClient.ResponseHeaders> respHeaders = new ObjList<>();
+                ObjList<HttpClient> clients = new ObjList<>();
+                int requestLimit = requestExpLimit + 4;
+
+                try {
+                    boolean limitExceeded = false;
+
+                    params.clear();
+                    params.put("query", "multiple_options_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("compression_level", "6");
+                    params.put("row_group_size", "2000");
+                    params.put("data_page_size", "1024");
+                    params.put("statistics_enabled", "true");
+                    params.put("parquet_version", "2");
+                    params.put("raw_array_encoding", "false");
+
+                    try {
+                        for (int i = 0; i < requestLimit; i++) {
+                            HttpClient client = HttpClientFactory.newPlainTextInstance();
+                            clients.add(client);
+//                        try {
+//                            client.assertGet("/exp", "PAR1\u0015\u0006\u0015", params, null, null);
+
+                            HttpClient.ResponseHeaders resp = startExport(client, serverMain, params, "multiple_options_test");
+                            respHeaders.add(resp);
+//                            reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
+//                            client.assertGetParquet("/exp", 1293, params, null);
+//                            client.assertGetParquet("/exp", 1293, params, null);
+//                        } catch (AssertionError ex) {
+//                            limitExceeded = true;
+//                            throw ex;
+//                        }
+                        }
+                    } finally {
+                        for (int i = 0; i < respHeaders.size(); i++) {
+                            respHeaders.get(i).await();
+                        }
+                        for (int i = 0; i < clients.size(); i++) {
+                            clients.get(i).close();
+                        }
+                        clients.clear();
+                    }
+
+                    assertEventually(() -> {
+                        Assert.assertEquals(0, serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_EXPORT));
+                    });
+
+                    LOG.info().$("=========== testing limit reached but not exceeded, limit: ").$(requestExpLimit).$();
+//                    Assert.assertTrue("Limit exceeded, should not succeed", limitExceeded);
+
+
+                    AtomicInteger errors = new AtomicInteger();
+
+                    AtomicInteger connectionExpCount = new AtomicInteger();
+                    ObjList<Thread> threads = new ObjList<>();
+                    for (int i = 0; i < requestExpLimit; i++) {
+                        Thread thread = new Thread(() -> {
+                            try {
+                                for (int n = 0; n < requests; n++) {
+                                    connectionExpCount.incrementAndGet();
+                                    try (TestHttpClient client = new TestHttpClient()) {
+                                        client.port = serverMain.getHttpServerPort();
+                                        CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                                        params.put("fmt", "parquet");
+                                        params.put("query", "basic_parquet_test");
+                                        client.assertGetParquet("/exp", 1293, params, null);
+                                    } catch (Throwable ex) {
+                                        LOG.error().$(ex.getMessage()).$();
+                                        errors.incrementAndGet();
+                                        throw ex;
+                                    }
+                                    int expectConnections = connectionExpCount.decrementAndGet();
+                                    assertEventually(() -> {
+                                        Assert.assertEquals(0,
+                                                serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_EXPORT));
+                                    });
+                                }
+                            } catch (Exception e) {
+                                LOG.error().$(e.getMessage()).$();
+                                errors.incrementAndGet();
+                                throw new RuntimeException(e);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads.add(thread);
+                    }
+
+                    AtomicInteger connectionJsonCount = new AtomicInteger();
+                    for (int i = 0; i < requestJsonLimit; i++) {
+                        Thread thread = new Thread(() -> {
+                            for (int n = 0; n < requests; n++) {
+                                connectionJsonCount.incrementAndGet();
+                                try (TestHttpClient client = new TestHttpClient()) {
+                                    client.port = serverMain.getHttpServerPort();
+                                    client.assertGet("/exec",
+                                            "{\"query\":\"basic_parquet_test\",\"columns\":[{\"name\":\"id\",\"type\":\"LONG\"},{\"name\":\"name\",\"type\":\"STRING\"},{\"name\":\"value\",\"type\":\"DOUBLE\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[1,\"test_1\",1.5,\"1970-01-01T00:00:00.000000Z\"],[2,\"test_2\",3.0,\"1970-01-01T00:00:01.000000Z\"],[3,\"test_3\",4.5,\"1970-01-01T00:00:02.000000Z\"],[4,\"test_4\",6.0,\"1970-01-01T00:00:03.000000Z\"],[5,\"test_5\",7.5,\"1970-01-01T00:00:04.000000Z\"]],\"count\":5}",
+                                            "basic_parquet_test",
+                                            "localhost",
+                                            serverMain.getHttpServerPort(),
+                                            null,
+                                            null,
+                                            null
+                                    );
+                                    int expectConnections = connectionJsonCount.decrementAndGet();
+                                    assertEventually(() -> {
+                                        Assert.assertEquals(0,
+                                                serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_JSON));
+                                    });
+                                } catch (Throwable ex) {
+                                    LOG.error().$(ex.getMessage()).$();
+                                    errors.incrementAndGet();
+                                    throw new RuntimeException(ex);
+                                }
+                                Os.pause();
+                            }
+                        });
+                        threads.add(thread);
+                    }
+
+                    for (int i = 0; i < threads.size(); i++) {
+                        threads.get(i).start();
+                    }
+                    for (int i = 0; i < threads.size(); i++) {
+                        threads.get(i).join();
+                    }
+                    Assert.assertEquals(0, errors.get());
+                } finally {
+                    for (int i = 0; i < clients.size(); i++) {
+                        clients.get(i).close();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetExportMultipleOptions() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -1116,5 +1294,24 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 Path.clearThreadLocals();
             }
         });
+    }
+
+    private static HttpClient.ResponseHeaders startExport(
+            HttpClient client,
+            TestServerMain serverMain,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            String sql
+    ) {
+
+        HttpClient.Request req = client.newRequest("localhost", serverMain.getHttpServerPort());
+        req.GET().url("/exp");
+        req.query("query", sql);
+        if (queryParams != null) {
+            for (int i = 0, n = queryParams.size(); i < n; i++) {
+                CharSequence name = queryParams.keys().getQuick(i);
+                req.query(name, queryParams.get(name));
+            }
+        }
+        return req.send();
     }
 }
