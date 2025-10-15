@@ -10649,10 +10649,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "order by ts, l1 " +
                         "limit 100 ) " +
                         "where i1*i2 != 0",
-                "Filter filter: i1*i2!=0\n" +
-                        "    SelectedRecord\n" +
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts, l1]\n" +
+                        "            SelectedRecord\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithReorder2d() throws Exception {
+        assertPlan(
+                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
+                "select i2, i1, ts, ts1 from " +
+                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
+                        "from a " +
+                        "order by 1, 3 " +
+                        "limit 100 ) " +
+                        "where i1*i2 != 0",
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
+                        "          keys: [ts, l1]\n" +
+                        "            SelectedRecord\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithReorder2e() throws Exception {
+        assertPlan(
+                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
+                "select i2, i1, ts, ts1 from " +
+                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
+                        "from a " +
+                        "order by 2, 3 " +
+                        "limit 100 ) " +
+                        "where i1*i2 != 0",
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
+                        "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +

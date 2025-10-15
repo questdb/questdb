@@ -4481,6 +4481,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final IntList columnCrossIndex = new IntList(selectColumnCount);
         final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
+        final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
+                ? model.getOrderBy().getQuick(0).token
+                : null;
         boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
@@ -4503,7 +4506,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            if (!timestampSet && index == timestampIndex) {
+            if (index == timestampIndex
+                    // always pick up the first ORDER BY column as the designated timestamp
+                    // in case of multiple aliases over the timestamp, e.g. `select ts, ts as ts1, ...`
+                    && (!timestampSet || Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn))) {
                 queryMetadata.setTimestampIndex(i);
                 timestampSet = true;
             }
