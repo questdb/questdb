@@ -5,8 +5,11 @@ steps:
     submodules: false
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
-    condition: eq(variables['os'], 'Linux')
-
+    condition: |
+      and(
+        eq(variables['os'], 'Linux'),
+        ne(variables['poolName'], 'hetzner-docker')
+      )
   - bash: |
       sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven build-essential zip
       JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
