@@ -515,7 +515,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         if (state.copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = null;
             try {
-                var sqlExecutionCircuitBreaker = sqlExecutionContext.getCircuitBreaker();
                 var copyExportContext = engine.getCopyExportContext();
                 CopyExportResult exportResult = state.getExportResult();
                 entry = copyExportContext.getEntry(state.copyID);
@@ -535,7 +534,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().isRawArrayEncoding()
                 );
 
-                serialParquetExporter.of(task, sqlExecutionCircuitBreaker);
+                serialParquetExporter.of(task);
                 serialParquetExporter.process();
             } finally {
                 if (entry != null) {
@@ -573,7 +572,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             sendException(response, 0, e.getMessage(), state);
                             break OUT;
                         }
-                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_FILE_SEND_INIT;
+                        state.queryState = JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER;
                         // fall through
 
                     case JsonQueryProcessorState.QUERY_PARQUET_SEND_HEADER:

@@ -93,10 +93,10 @@ public class SerialParquetExporter implements Closeable {
         Misc.free(tempPath);
     }
 
-    public void of(CopyExportRequestTask task, SqlExecutionCircuitBreaker circuitBreaker) {
+    public void of(CopyExportRequestTask task) {
         this.copyExportRoot = configuration.getSqlCopyExportRoot();
         this.task = task;
-        this.circuitBreaker = circuitBreaker;
+        this.circuitBreaker = task.getCircuitBreaker();
         this.exportPath.clear();
         numOfFiles = 0;
         sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);

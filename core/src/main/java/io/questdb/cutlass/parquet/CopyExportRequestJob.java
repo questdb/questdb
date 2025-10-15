@@ -109,10 +109,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         localTaskCopy.getTableName(),
                         localTaskCopy.getCopyID(),
                         localTaskCopy.getResult());
-                serialExporter.of(
-                        localTaskCopy,
-                        circuitBreaker
-                );
+                serialExporter.of(localTaskCopy);
                 phase = serialExporter.process(); // throws CopyExportException
 
                 entry.setPhase(CopyExportRequestTask.Phase.SUCCESS);
