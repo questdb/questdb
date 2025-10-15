@@ -73,7 +73,7 @@ jobs:
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "hetzner"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"
