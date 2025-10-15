@@ -17,7 +17,8 @@ steps:
     condition: |
       or(
         eq(variables['poolName'], 'vmss-uksouth-spot'),
-        eq(variables['poolName'], 'hetzner')
+        eq(variables['poolName'], 'hetzner'),
+        eq(variables['poolName'], 'hetzner-docker')
       )
   - task: Cache@2
     displayName: "Cache non-default Maven"
