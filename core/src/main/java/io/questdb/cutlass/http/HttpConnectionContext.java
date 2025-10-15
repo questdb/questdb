@@ -101,6 +101,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private final StringSink sessionID = new StringSink();
     private final HttpSessionStore sessionStore;
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
@@ -114,7 +115,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
-    private final StringSink sessionID = new StringSink();
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
     private long totalReceived;
@@ -494,10 +494,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (sessionInfo != null) {
                     // create security context from session info
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            sessionInfo.getPrincipal(),
-                            sessionInfo.getGroups(),
-                            sessionInfo.getAuthType(),
-                            SecurityContextFactory.HTTP
+                            sessionInfo, SecurityContextFactory.HTTP
                     );
                     authenticationNanos = clock.getTicks() - authenticationStart;
                     return true;
@@ -509,10 +506,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             // auth successful, create security context from auth info
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    authenticator.getPrincipal(),
-                    authenticator.getGroups(),
-                    authenticator.getAuthType(),
-                    SecurityContextFactory.HTTP
+                    authenticator, SecurityContextFactory.HTTP
             );
             // create session, if we do not have one yet
             if (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal())

@@ -32,6 +32,7 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -49,6 +50,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 
 public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext> {
+    private static final DummyPrincipalContext DUMMY_CONTEXT = new DummyPrincipalContext();
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
@@ -242,9 +244,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.ILP
+                            authenticator, SecurityContextFactory.ILP
                     );
                     try {
                         securityContext.checkEntityEnabled();
@@ -308,9 +308,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
+                    DUMMY_CONTEXT, SecurityContextFactory.ILP
             );
             securityContext.authorizeLineTcp();
         }
@@ -424,5 +422,22 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     public enum IOContextResult {
         NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
+    }
+
+    private static class DummyPrincipalContext implements PrincipalContext {
+        @Override
+        public byte getAuthType() {
+            return SecurityContext.AUTH_TYPE_NONE;
+        }
+
+        @Override
+        public ObjList<CharSequence> getGroups() {
+            return null;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            return null;
+        }
     }
 }

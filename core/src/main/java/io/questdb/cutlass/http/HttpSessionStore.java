@@ -26,7 +26,7 @@ public interface HttpSessionStore {
      */
     SessionInfo verifySession(@NotNull CharSequence sessionId);
 
-    class SessionInfo {
+    class SessionInfo implements PrincipalContext{
         private final byte authType;
         private final ObjList<CharSequence> groups = new ObjList<>();
         private final String principal;
@@ -44,6 +44,7 @@ public interface HttpSessionStore {
             }
         }
 
+        @Override
         public byte getAuthType() {
             return authType;
         }
@@ -52,10 +53,12 @@ public interface HttpSessionStore {
             return expiresAt;
         }
 
+        @Override
         public ObjList<CharSequence> getGroups() {
             return groups;
         }
 
+        @Override
         public String getPrincipal() {
             return principal;
         }
