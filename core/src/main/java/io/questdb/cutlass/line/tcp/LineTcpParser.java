@@ -880,7 +880,7 @@ public class LineTcpParser implements QuietCloseable {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
-                case ENTITY_TYPE_DECIMAL: {
+                case 'd': {
                     try {
                         CharSequence cs = value.asAsciiCharSequence();
                         // Users don't have another way to force strict mode, so we enable it manually
