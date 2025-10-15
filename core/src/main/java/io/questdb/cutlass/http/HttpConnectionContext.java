@@ -54,7 +54,6 @@ import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
-import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
@@ -69,8 +68,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
-import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
+import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
@@ -488,9 +486,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
-            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this, sessionStore);
             if (!authenticator.authenticate(headerParser)) {
                 // auth failed, fallback to session cookie if there is one
+                final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this, sessionStore);
                 if (sessionInfo != null) {
                     // create security context from session info
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -508,9 +506,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
                     authenticator, SecurityContextFactory.HTTP
             );
-            // create session, if we do not have one yet
-            if (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal())
-                    && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+            // create session if cookies are enabled, and the client requested it
+            final DirectUtf8Sequence createSession = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+            if (createSession != null && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
                 sessionStore.createSession(authenticator, sessionID);
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
