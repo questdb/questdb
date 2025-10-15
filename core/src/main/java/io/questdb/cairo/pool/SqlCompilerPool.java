@@ -41,6 +41,8 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
@@ -227,6 +229,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
             delegate.testParseExpression(expression, listener);
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.put("SqlCompilerPool.C{index=").put(index).put(", tableToken=").put(tableToken).put('}');
         }
 
         @Override

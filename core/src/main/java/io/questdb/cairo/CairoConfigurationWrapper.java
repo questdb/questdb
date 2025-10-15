@@ -77,6 +77,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return getDelegate().cairoResourcePoolTracingEnabled();
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
     }
@@ -474,6 +479,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMatViewMaxRefreshRetries() {
         return getDelegate().getMatViewMaxRefreshRetries();
+    }
+
+    @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return getDelegate().getMatViewMaxRefreshStepUs();
     }
 
     @Override

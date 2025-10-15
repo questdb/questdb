@@ -99,7 +99,7 @@ int64_t countDouble_Vanilla(double *d, int64_t count) {
     int64_t cnt = 0;
     for (; d < lim; d++) {
         const double v = *d;
-        if (v == v) {
+        if (!std::isnan(v)) {
             cnt += 1;
         }
     }
@@ -115,7 +115,7 @@ double sumDouble_Vanilla(double *d, int64_t count) {
     bool hasData = false;
     for (; d < lim; d++) {
         const double v = *d;
-        if (v == v) {
+        if (!std::isnan(v)) {
             sum += v;
             hasData = true;
         }
@@ -350,7 +350,7 @@ Java_io_questdb_std_Vect_avgDoubleAcc(JNIEnv *env, jclass cl, jlong pi, jlong co
     double_t c = 1;
     for (uint32_t i = 0; i < count; i++) {
         double_t v = ppi[i];
-        if (v == v) {
+        if (!std::isnan(v)) {
             avg += (v - avg) / c;
             ++c;
         }

@@ -32,6 +32,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWriterTenant> {
@@ -134,6 +136,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 close();
                 throw ex;
             }
+        }
+
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
+            sink.put("WalWriterTenant{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
         }
     }
 }

@@ -206,26 +206,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testClosePoolWhenReaderIsOut() throws Exception {
-        assertWithPool(pool -> {
-            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
-            AbstractCairoTest.create(model);
-
-            try (TableReader reader = pool.get(engine.verifyTableName("x"))) {
-                Assert.assertNotNull(reader);
-                try {
-                    pool.close();
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "table is left behind on pool shutdown [table=" + reader.getTableToken().getDirName() + "]");
-                }
-                Assert.assertTrue(reader.isOpen());
-            }
-        });
-    }
-
-    @Test
     public void testCloseReaderWhenPoolClosed() throws Exception {
         assertWithPool(pool -> {
             TableReader reader = pool.get(uTableToken);

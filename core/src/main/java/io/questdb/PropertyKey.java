@@ -183,6 +183,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
     CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS("cairo.mat.view.max.refresh.intervals"),
+    CAIRO_MAT_VIEW_MAX_REFRESH_STEP("cairo.mat.view.max.refresh.step"),
     CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD("cairo.mat.view.refresh.intervals.update.period"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
@@ -582,7 +583,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_DB_LOG_NAME("debug.db.log.name", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
-    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
+    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
