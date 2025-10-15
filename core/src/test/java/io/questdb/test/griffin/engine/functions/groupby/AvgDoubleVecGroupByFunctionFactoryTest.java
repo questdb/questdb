@@ -37,17 +37,17 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
         assertQuery(
                 """
-                avg
-                0.511848387
-                """,
+                        avg
+                        0.511848387
+                        """,
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,
                 "alter table tab add column b double",
                 """
-                avg
-                0.511848387
-                """,
+                        avg
+                        0.511848387
+                        """,
                 false,
                 true,
                 false
