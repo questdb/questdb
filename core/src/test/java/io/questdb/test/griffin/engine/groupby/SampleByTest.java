@@ -6285,7 +6285,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             ts\tdiff1\tdiff2
-                            2010-01-01T01:00:00.000000Z\t138396\t5766
+                            2010-01-01T01:00:00.000000Z\t138397\t5766
                             2020-01-01T01:00:00.000000Z\t25374\t1057
                             2030-01-01T01:00:00.000000Z\t12307\t512
                             """,
@@ -6319,7 +6319,7 @@ public class SampleByTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     """
                             ts\tmax\tdiff1\tdiff2
-                            2010-01-01T01:00:00.000000Z\t1\t138396\t5766
+                            2010-01-01T01:00:00.000000Z\t1\t138397\t5766
                             2020-01-01T01:00:00.000000Z\t2\t25374\t1057
                             2030-01-01T01:00:00.000000Z\t3\t12307\t512
                             """,
