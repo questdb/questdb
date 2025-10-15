@@ -31,10 +31,10 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class HttpLimits {
-    public static final HttpLimits NO_LIMITS = new HttpLimits() {
+public class ActiveConnectionTracker {
+    public static final ActiveConnectionTracker NO_TRACKING = new ActiveConnectionTracker() {
         @Override
-        public void decrementActiveConnection(String name) {
+        public void decrementActiveConnection(@NotNull String name) {
         }
 
         public int getActiveConnections(@NotNull String processorName) {
@@ -60,14 +60,13 @@ public class HttpLimits {
     private final AtomicInteger ilpActiveConnections = new AtomicInteger();
     private final AtomicInteger jsonActiveConnections = new AtomicInteger();
     private final Metrics metrics;
-    private final AtomicInteger otherActiveConnections = new AtomicInteger();
 
-    private HttpLimits() {
+    private ActiveConnectionTracker() {
         contextConfiguration = null;
         metrics = null;
     }
 
-    public HttpLimits(HttpContextConfiguration contextConfiguration) {
+    public ActiveConnectionTracker(HttpContextConfiguration contextConfiguration) {
         this.contextConfiguration = contextConfiguration;
         this.metrics = contextConfiguration.getMetrics();
     }
@@ -83,6 +82,7 @@ public class HttpLimits {
 
     public int getLimit(String processorName) {
         if (processorName == null) {
+            // No limit.
             return -1;
         }
         switch (processorName) {
@@ -93,7 +93,8 @@ public class HttpLimits {
             case PROCESSOR_EXPORT:
                 return contextConfiguration.getExportConnectionLimit();
             default:
-                return Integer.MAX_VALUE;
+                // No limit.
+                return -1;
         }
     }
 

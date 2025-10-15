@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.processors.HttpLimits;
+import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -44,7 +44,7 @@ public interface HttpRequestProcessor {
     }
 
     default String getName() {
-        return HttpLimits.PROCESSOR_OTHER;
+        return ActiveConnectionTracker.PROCESSOR_OTHER;
     }
 
     default byte getRequiredAuthType() {
@@ -53,10 +53,6 @@ public interface HttpRequestProcessor {
 
     default short getSupportedRequestTypes() {
         return METHOD_GET;
-    }
-
-    default boolean ignoreConnectionLimitCheck() {
-        return false;
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {

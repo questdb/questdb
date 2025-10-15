@@ -35,7 +35,7 @@ import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
-import io.questdb.cutlass.http.processors.HttpLimits;
+import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -92,7 +92,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final NetworkFacade nf;
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
-    private final HttpLimits requestLimits;
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
@@ -129,7 +129,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 DefaultHttpCookieHandler.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
                 HttpServer.NO_OP_CACHE,
-                HttpLimits.NO_LIMITS
+                ActiveConnectionTracker.NO_TRACKING
         );
     }
 
@@ -139,7 +139,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory,
             AssociativeCache<RecordCursorFactory> selectCache,
-            HttpLimits requestLimits
+            ActiveConnectionTracker activeConnectionTracker
     ) {
         super(
                 socketFactory,
@@ -148,7 +148,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         this.configuration = configuration;
         this.cookieHandler = cookieHandler;
-        this.requestLimits = requestLimits;
+        this.activeConnectionTracker = activeConnectionTracker;
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
@@ -445,17 +445,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         processorName = processor.getName();
-        final int connectionLimit = requestLimits.getLimit(processorName);
+        final int connectionLimit = activeConnectionTracker.getLimit(processorName);
         if (connectionLimit > -1) {
             assert processorName != null;
-            final long numOfConnections = requestLimits.incrementActiveConnection(processorName);
+            final long numOfConnections = activeConnectionTracker.incrementActiveConnection(processorName);
             if (numOfConnections > connectionLimit) {
                 rejectProcessor.getMessageSink()
                         .put("exceeded connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(']');
-                requestLimits.decrementActiveConnection(processorName);
+                activeConnectionTracker.decrementActiveConnection(processorName);
                 processorName = null;
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
@@ -466,7 +466,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
                         .put(']');
-                requestLimits.decrementActiveConnection(processorName);
+                activeConnectionTracker.decrementActiveConnection(processorName);
                 processorName = null;
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
@@ -780,7 +780,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private void decrementActiveConnections() {
         if (processorName != null) {
-            requestLimits.decrementActiveConnection(processorName);
+            activeConnectionTracker.decrementActiveConnection(processorName);
         }
         connectionCounted = false;
     }
@@ -892,7 +892,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
-                if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
+                if (!connectionCounted) {
                     processor = checkConnectionLimit(processor);
                 }
 

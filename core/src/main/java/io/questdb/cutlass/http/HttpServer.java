@@ -27,8 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
-import io.questdb.cutlass.http.processors.HttpLimits;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
@@ -71,7 +71,7 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final HttpLimits httpLimits;
+    private final ActiveConnectionTracker activeConnectionTracker;
 
     // used for min http server only
     public HttpServer(
@@ -114,8 +114,8 @@ public class HttpServer implements Closeable {
             this.selectCache = NO_OP_CACHE;
         }
 
-        this.httpLimits = new HttpLimits(configuration.getHttpContextConfiguration());
-        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, httpLimits);
+        this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
         networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
@@ -332,8 +332,8 @@ public class HttpServer implements Closeable {
         Misc.free(selectCache);
     }
 
-    public HttpLimits getHttpLimits() {
-        return httpLimits;
+    public ActiveConnectionTracker getActiveConnectionTracker() {
+        return activeConnectionTracker;
     }
 
     public int getPort() {
@@ -372,10 +372,10 @@ public class HttpServer implements Closeable {
                 HttpCookieHandler cookieHandler,
                 HttpHeaderParserFactory headerParserFactory,
                 AssociativeCache<RecordCursorFactory> selectCache,
-                HttpLimits httpLimits
+                ActiveConnectionTracker activeConnectionTracker
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, httpLimits),
+                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, headerParserFactory, selectCache, activeConnectionTracker),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

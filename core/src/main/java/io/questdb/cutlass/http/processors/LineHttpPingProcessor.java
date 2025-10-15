@@ -42,7 +42,7 @@ public class LineHttpPingProcessor implements HttpRequestProcessor, HttpRequestH
     }
 
     public String getName() {
-        return HttpLimits.PROCESSOR_ILP;
+        return ActiveConnectionTracker.PROCESSOR_ILP;
     }
 
     @Override

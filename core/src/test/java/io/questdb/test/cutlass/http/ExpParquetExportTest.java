@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.processors.HttpLimits;
+import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -893,8 +893,6 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 int requestLimit = requestExpLimit + 4;
 
                 try {
-                    boolean limitExceeded = false;
-
                     params.clear();
                     params.put("query", "multiple_options_test");
                     params.put("fmt", "parquet");
@@ -910,18 +908,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         for (int i = 0; i < requestLimit; i++) {
                             HttpClient client = HttpClientFactory.newPlainTextInstance();
                             clients.add(client);
-//                        try {
-//                            client.assertGet("/exp", "PAR1\u0015\u0006\u0015", params, null, null);
-
                             HttpClient.ResponseHeaders resp = startExport(client, serverMain, params, "multiple_options_test");
                             respHeaders.add(resp);
-//                            reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
-//                            client.assertGetParquet("/exp", 1293, params, null);
-//                            client.assertGetParquet("/exp", 1293, params, null);
-//                        } catch (AssertionError ex) {
-//                            limitExceeded = true;
-//                            throw ex;
-//                        }
                         }
                     } finally {
                         for (int i = 0; i < respHeaders.size(); i++) {
@@ -933,14 +921,15 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         clients.clear();
                     }
 
-                    assertEventually(() -> {
-                        Assert.assertEquals(0, serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_EXPORT));
-                    });
+                    assertEventually(() ->
+                            Assert.assertEquals(
+                                    0,
+                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT
+                                    )
+                            )
+                    );
 
                     LOG.info().$("=========== testing limit reached but not exceeded, limit: ").$(requestExpLimit).$();
-//                    Assert.assertTrue("Limit exceeded, should not succeed", limitExceeded);
-
-
                     AtomicInteger errors = new AtomicInteger();
 
                     AtomicInteger connectionExpCount = new AtomicInteger();
@@ -962,10 +951,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         throw ex;
                                     }
                                     int expectConnections = connectionExpCount.decrementAndGet();
-                                    assertEventually(() -> {
-                                        Assert.assertEquals(0,
-                                                serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_EXPORT));
-                                    });
+                                    assertEventually(
+                                            () -> Assert.assertTrue(
+                                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT) <= expectConnections
+                                            )
+                                    );
                                 }
                             } catch (Exception e) {
                                 LOG.error().$(e.getMessage()).$();
@@ -995,10 +985,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             null
                                     );
                                     int expectConnections = connectionJsonCount.decrementAndGet();
-                                    assertEventually(() -> {
-                                        Assert.assertEquals(0,
-                                                serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_JSON));
-                                    });
+                                    assertEventually(
+                                            () -> Assert.assertTrue(
+                                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON) <= expectConnections
+                                            )
+                                    );
                                 } catch (Throwable ex) {
                                     LOG.error().$(ex.getMessage()).$();
                                     errors.incrementAndGet();

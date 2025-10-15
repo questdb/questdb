@@ -217,7 +217,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
 
     @Override
     public String getName() {
-        return HttpLimits.PROCESSOR_EXPORT;
+        return ActiveConnectionTracker.PROCESSOR_EXPORT;
     }
 
     @Override

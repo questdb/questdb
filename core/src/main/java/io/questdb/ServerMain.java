@@ -265,7 +265,7 @@ public class ServerMain implements Closeable {
         if (httpServer == null) {
             return 0;
         }
-        return httpServer.getHttpLimits().getActiveConnections(processorName);
+        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
     }
 
     public int getPgWireServerPort() {

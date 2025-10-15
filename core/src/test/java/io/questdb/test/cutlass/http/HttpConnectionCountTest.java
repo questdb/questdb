@@ -38,7 +38,7 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.http.processors.HttpLimits;
+import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.mp.SOCountDownLatch;
@@ -256,7 +256,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 }
 
                 // wait for the rejected connection to be closed to avoid race in the next assert
-                while (serverMain.getActiveConnectionCount(HttpLimits.PROCESSOR_JSON) > numOfThreads) {
+                while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON) > numOfThreads) {
                     Os.sleep(50);
                 }
 
