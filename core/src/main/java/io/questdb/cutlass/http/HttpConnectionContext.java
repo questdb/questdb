@@ -54,6 +54,7 @@ import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,6 +91,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
+    private final CharSequenceObjHashMap<String> parsedCookies = new CharSequenceObjHashMap<>();
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
@@ -267,6 +269,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public int getNCompletedRequests() {
         return nCompletedRequests;
+    }
+
+    public CharSequenceObjHashMap<String> getParsedCookiesMap() {
+        return parsedCookies;
     }
 
     public HttpRawSocket getRawResponseSocket() {
