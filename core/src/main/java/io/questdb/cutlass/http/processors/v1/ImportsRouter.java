@@ -24,12 +24,8 @@
 
 package io.questdb.cutlass.http.processors.v1;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -39,26 +35,26 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.function.LongSupplier;
 
 import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
@@ -92,19 +88,16 @@ public class ImportsRouter implements HttpRequestHandler {
     /**
      * Expects requests of the form POST /api/v1/import
      * multiple form/data requests can come in to upload multiple files at once
-     * For now, locked to parquet files
-     *
      */
     public static class ImportPostProcessor implements HttpMultipartContentProcessor {
         private static final Log LOG = LogFactory.getLog(ImportPostProcessor.class);
         private static final LocalValue<State> LV = new LocalValue<>();
+
+
         HttpConnectionContext context;
-        PartitionDecoder decoder;
         CairoEngine engine;
-        @Nullable CharSequence importRoot;
         byte requiredAuthType;
         State state;
-
 
         /**
          * Handles basic file upload (mainly for parquet, csv imports).
@@ -118,8 +111,6 @@ public class ImportsRouter implements HttpRequestHandler {
         public ImportPostProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
             engine = cairoEngine;
             requiredAuthType = configuration.getRequiredAuthType();
-            importRoot = engine.getConfiguration().getSqlCopyInputRoot();
-            decoder = new PartitionDecoder();
         }
 
         @Override
@@ -132,38 +123,40 @@ public class ImportsRouter implements HttpRequestHandler {
             if (hi > lo) {
                 state.of(lo, hi);
 
-                // on first entry, initialise files
-                if (state.mem == null) {
-                    assert state.path.size() != 0;
-                    TableUtils.createDirsOrFail(state.ff, state.path, engine.getConfiguration().getMkDirMode());
+                // on first entry, open file for writing
+                if (state.fd == -1) {
+                    TableUtils.createDirsOrFail(state.ff, state.tempPath, engine.getConfiguration().getMkDirMode());
 
-                    state.mem = Vm.getCMARWInstance(
-                            state.ff,
-                            state.path.$(),
-                            engine.getConfiguration().getDataAppendPageSize(),
-                            state.size,
-                            MemoryTag.MMAP_IMPORT, CairoConfiguration.O_NONE
-                    );
+                    state.fd = Files.openRW(state.tempPath.$());
+                    if (state.fd == -1) {
+                        state.errorMsg.put("cannot open file for writing [path=").put(state.tempPath).put(']');
+                        state.errorCode = 500;
+                        sendError(context);
+                        return;
+                    }
                     state.written = 0;
                 }
 
                 final long chunkSize = hi - lo;
-                long addr = state.mem.appendAddressFor(state.written, chunkSize);
-                Vect.memcpy(addr, lo, chunkSize);
+                long bytesWritten = Files.write(state.fd, lo, chunkSize, state.written);
+                if (bytesWritten != chunkSize) {
+                    state.errorMsg.put("failed to write chunk [expected=").put(chunkSize).put(", actual=").put(bytesWritten).put(']');
+                    state.errorCode = 500;
+                    sendError(context);
+                    return;
+                }
                 state.written += chunkSize;
             }
         }
 
         @Override
         public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-
-            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
+            CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
             if (Chars.isBlank(importRoot)) {
                 // throw error 400
                 state.errorMsg.put("invalid destination directory (sql.copy.input.root) [path=").put(importRoot).put(']');
                 state.errorCode = 400;
                 sendError(context);
-                assert false; // exception should be thrown
             }
 
             final DirectUtf8Sequence filename = partHeader.getContentDispositionFilename();
@@ -171,56 +164,60 @@ public class ImportsRouter implements HttpRequestHandler {
                 state.errorMsg.put("received Content-Disposition without a filename");
                 state.errorCode = 400;
                 sendError(context);
-                assert false;
             }
 
-            state.clear();
+            final DirectUtf8Sequence name = partHeader.getContentDispositionName();
             state.of(name, importRoot);
-
-            // don't overwrite files by default
-            final DirectUtf8Sequence overwrite = context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE);
-            boolean _overwrite = HttpKeywords.isTrue(overwrite);
-
-            if (!_overwrite && state.ff.exists(state.path.$())) {
+            state.overwrite = HttpKeywords.isTrue(context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE));
+            if (!state.overwrite && state.ff.exists(state.realPath.$())) {
                 // error 409 conflict
-                state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.path).put(", overwrite=").put(false).put(']');
+                state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.realPath).put(", overwrite=").put(false).put(']');
                 state.errorCode = 409;
                 sendError(context);
                 assert false;
             }
-
             LOG.info().$("starting import [src=").$(filename)
-                    .$(", dest=").$(state.path).I$();
+                    .$(", dest=").$(state.realPath).I$();
         }
 
         @Override
         public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-            assert state.mem != null;
-            state.mem.setTruncateSize(state.written);
+            if (state.fd != -1) {
+                Files.close(state.fd);
+                state.fd = -1;
+            }
 
-            if (Utf8s.endsWithAscii(state.path, ".parquet")) {
-                try {
-                    decoder.of(state.mem.addressOf(0), state.written, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-
-                    if (decoder.metadata().columnCount() <= 0) {
-                        // throw error 422
-                        state.errorMsg.put("parquet file could not be decoded");
-                        state.errorCode = 422;
-                        sendError(context);
-                        assert false;
-                    }
-                } catch (CairoException ce) {
-                    LOG.error().$(ce.getMessage()).$();
-                    state.errorMsg.put("internal server error");
-                    state.errorCode = 500;
+            if (state.ff.exists(state.realPath.$())) {
+                if (!state.overwrite) {
+                    state.ff.removeQuiet(state.tempPath.$());
+                    state.errorMsg.put("file already exists and overwriting is disabled [path=").put(state.realPath).put(", overwrite=").put(false).put(']');
+                    state.errorCode = 409;
                     sendError(context);
-                    assert false;
+                    return;
+                } else {
+                    state.ff.removeQuiet(state.realPath.$());
                 }
             }
 
-            state.mem.close(true, Vm.TRUNCATE_TO_POINTER);
+            int renameResult = state.ff.rename(state.tempPath.$(), state.realPath.$());
+            if (renameResult != Files.FILES_RENAME_OK) {
+                int errno = state.ff.errno();
+                LOG.error().$("failed to rename temporary file [tempPath=").$(state.tempPath)
+                        .$(", realPath=").$(state.realPath)
+                        .$(", errno=").$(errno)
+                        .$(", renameResult=").$(renameResult).I$();
+                state.ff.remove(state.tempPath.$());
+                state.errorMsg.put("cannot rename temporary file [tempPath=").put(state.tempPath)
+                        .put(", realPath=").put(state.realPath)
+                        .put(", errno=").put(errno)
+                        .put(", renameResult=").put(renameResult).put(']');
+                state.errorCode = 500;
+                sendError(context);
+                return;
+            }
 
-            LOG.info().$("finished import [dest=").$(state.path).$(", size=").$(state.written).I$();
+            state.successfulFiles.add(state.realPath.toString());
+            LOG.info().$("finished import [dest=").$(state.realPath).$(", size=").$(state.written).I$();
         }
 
         @Override
@@ -228,7 +225,6 @@ public class ImportsRouter implements HttpRequestHandler {
             sendSuccess(context);
             if (state != null) {
                 state.clear();
-                state.filenames.clear();
             }
         }
 
@@ -246,7 +242,7 @@ public class ImportsRouter implements HttpRequestHandler {
             this.context = context;
             this.state = LV.get(context);
             if (state == null) {
-                state = new State(engine.getConfiguration().getFilesFacade());
+                state = new State(engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getCopyIDSupplier());
                 LV.set(context, state);
             }
         }
@@ -273,19 +269,17 @@ public class ImportsRouter implements HttpRequestHandler {
 
             if (state.errorCode == 409) {
                 response.put(",\"meta\":{\"name\":\"")
-                        .put(Utf8s.stringFromUtf8Bytes(state.path.lo() + importRoot.length() + 1, state.path.hi()))
+                        .put(Utf8s.stringFromUtf8Bytes(state.realPath.lo() + 1, state.realPath.hi()))
                         .put("\"}");
             }
-
             response.put("}]}");
-
         }
 
         private void encodeSuccessJson(HttpChunkedResponse response, State state) {
             response.put("{\"data\":[");
-            for (int i = 0, n = state.filenames.size(); i < n; i++) {
+            for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
                 response.put("{\"type\":\"imports\",\"id\":\"");
-                response.put(state.filenames.getQuick(i));
+                response.put(state.successfulFiles.getQuick(i));
                 response.put("\"}");
                 if (i + 1 < n) {
                     response.put(",");
@@ -327,45 +321,70 @@ public class ImportsRouter implements HttpRequestHandler {
         }
 
         public static class State implements Mutable, Closeable {
+            final LongSupplier importIDSupplier;
+            final Path realPath;
+            final Path tempPath;
             int errorCode;
             Utf8StringSink errorMsg;
+            long fd = -1;
             FilesFacade ff;
-            @Nullable DirectUtf8Sequence filename;
-            ObjList<String> filenames;
             long hi;
+            StringSink importId = new StringSink();
             long lo;
-            @Nullable MemoryCMARW mem;
-            Path path;
-            long size;
+            boolean overwrite;
+            ObjList<String> successfulFiles;
+            int tempPathBaseLen;
             long written;
 
-            public State(FilesFacade ff) {
+            public State(FilesFacade ff, LongSupplier importIDSupplier) {
                 this.ff = ff;
-                path = new Path();
-                filenames = new ObjList<>();
+                this.importIDSupplier = importIDSupplier;
+                tempPath = new Path();
+                realPath = new Path();
+                successfulFiles = new ObjList<>();
                 errorMsg = new Utf8StringSink();
             }
 
             public void clear() {
-                close();
+                written = 0;
+                errorCode = -1;
+                errorMsg.clear();
+                successfulFiles.clear();
+                if (fd != -1) {
+                    Files.close(fd);
+                    fd = -1;
+                }
+                importId.clear();
+                if (tempPathBaseLen > 0 && tempPath.size() > tempPathBaseLen) {
+                    tempPath.trimTo(tempPathBaseLen);
+                    ff.rmdir(tempPath, false);
+                    tempPathBaseLen = 0;
+                }
+                realPath.trimTo(0);
+                tempPath.trimTo(0);
             }
 
             @Override
             public void close() {
-                Misc.free(mem);
-                mem = null;
-                Misc.free(path);
-                filename = null;
-                size = -1;
-                written = -1;
-                errorMsg.clear();
-                errorCode = -1;
+                clear();
+                Misc.free(tempPath);
+                Misc.free(realPath);
             }
 
             public void of(DirectUtf8Sequence filename, CharSequence importRoot) {
-                this.filename = filename;
-                filenames.add(filename.toString());
-                path.of(importRoot).concat(filename);
+                if (fd != -1) {
+                    Files.close(fd);
+                    fd = -1;
+                }
+                if (importId.isEmpty()) {
+                    long id = importIDSupplier.getAsLong();
+                    Numbers.appendHex(importId, id, true);
+                }
+                written = 0;
+                tempPath.of(importRoot).concat(importId);
+                tempPathBaseLen = tempPath.size();
+                tempPath.concat(filename);
+                realPath.of(importRoot).concat(filename);
             }
 
             public void of(long lo, long hi) {
