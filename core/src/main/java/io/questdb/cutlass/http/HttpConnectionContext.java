@@ -176,7 +176,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @Override
     public void clear() {
-        LOG.info().$("clear [fd=").$(getFd()).I$();
+        LOG.debug().$("clear [fd=").$(getFd()).I$();
         super.clear();
         reset();
         if (this.pendingRetry) {
