@@ -1,6 +1,8 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -10,9 +12,8 @@ public interface HttpSessionStore {
      * Create a new session
      *
      * @param authenticator HTTP authenticator used to log the user in
-     * @return session id
      */
-    String createSession(@NotNull HttpAuthenticator authenticator);
+    void createSession(@NotNull HttpAuthenticator authenticator, StringSink sink);
 
     /**
      * Verify session id and return the associated session if the session is valid.
@@ -27,10 +28,8 @@ public interface HttpSessionStore {
         private final ObjList<CharSequence> groups = new ObjList<>();
         private final String principal;
         private volatile long expiresAt;
-        private volatile String sessionId;
 
-        public SessionInfo(String sessionId, CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
-            this.sessionId = sessionId;
+        public SessionInfo(CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
             this.principal = principal.toString();
             this.authType = authType;
             this.expiresAt = expiresAt;
