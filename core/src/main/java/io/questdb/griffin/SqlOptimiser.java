@@ -3015,6 +3015,10 @@ public class SqlOptimiser implements Mutable {
         return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
     }
 
+    private QueryColumn nextColumn(CharSequence alias, CharSequence column, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, position);
+    }
+
     private ExpressionNode nextLiteral(CharSequence token, int position) {
         return SqlUtil.nextLiteral(expressionNodePool, token, position);
     }
@@ -6238,7 +6242,7 @@ public class SqlOptimiser implements Mutable {
                                 if (existingAlias != null) {
                                     // the column is already present in group by as a key,
                                     // so the only thing we need to do is to expose it in the outer model
-                                    final QueryColumn translatedColumn = nextColumn(qc.getAlias(), existingAlias);
+                                    final QueryColumn translatedColumn = nextColumn(qc.getAlias(), existingAlias, qc.getAst().position);
                                     outerVirtualModel.addBottomUpColumn(translatedColumn);
                                     if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
                                         distinctModel.addBottomUpColumn(translatedColumn);
