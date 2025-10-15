@@ -39,12 +39,14 @@ public class ArithmeticSequenceMerger {
         int rhsCount = 1201;
         LongList initialValues = createInitialValues(lhsCount);
 
-        long start = System.nanoTime();
-        ArithmeticSequenceMerger merger = new ArithmeticSequenceMerger();
-        LongList list = merger.mergeSequences(initialValues, 10, rhsCount);
-        System.out.println("Time: " + (System.nanoTime() - start) / 1_000_000 + " ms");
+        for (int i = 0; i < 3; i++) {
+            long start = System.nanoTime();
+            ArithmeticSequenceMerger merger = new ArithmeticSequenceMerger();
+            LongList list = merger.mergeSequences(initialValues, 10, rhsCount);
+            System.out.println("Time: " + (System.nanoTime() - start) / 1_000_000 + " ms");
+            assertCorrectness(list, lhsCount, rhsCount);
+        }
 
-        assertCorrectness(list, lhsCount, rhsCount);
     }
 
     public LongList mergeSequences(LongList initialValues, long step, int elementCount) {
