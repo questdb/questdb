@@ -5268,6 +5268,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n",
                     "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
             );
+
+            assertSql(
+                    "TS\tts1\tx\tts11\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n",
+                    "select t2.ts as TS, t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
+            );
         });
     }
 

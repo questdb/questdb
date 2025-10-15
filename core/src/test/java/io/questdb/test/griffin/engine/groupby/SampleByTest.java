@@ -6278,16 +6278,16 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             query = """
-                    SELECT ts, datediff('h', ts, now()) / max(i) diff1, datediff('d', ts, now()) / MaX(i) diff2
+                    SELECT ts, datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
                     FROM 'x'
                     SAMPLE BY 1h;
                     """;
             assertQueryNoLeakCheck(
                     """
                             ts\tdiff1\tdiff2
-                            2010-01-01T01:00:00.000000Z\t138397\t5766
-                            2020-01-01T01:00:00.000000Z\t25374\t1057
-                            2030-01-01T01:00:00.000000Z\t12307\t512
+                            2010-01-01T01:00:00.000000Z\t1\t0
+                            2020-01-01T01:00:00.000000Z\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t58440\t2435
                             """,
                     query,
                     "ts",
@@ -6300,7 +6300,7 @@ public class SampleByTest extends AbstractCairoTest {
                             Radix sort light
                               keys: [ts]
                                 VirtualRecord
-                                  functions: [ts,datediff('h',ts,now())/max,datediff('d',ts,now())/max]
+                                  functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
                                     Async Group By workers: 1
                                       keys: [ts]
                                       values: [max(i)]
@@ -6312,16 +6312,16 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             query = """
-                    SELECT ts, max(i), datediff('h', ts, now()) / max(i) diff1, datediff('d', ts, now()) / MaX(i) diff2
+                    SELECT ts, max(i), datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
                     FROM 'x'
                     SAMPLE BY 1h;
                     """;
             assertQueryNoLeakCheck(
                     """
                             ts\tmax\tdiff1\tdiff2
-                            2010-01-01T01:00:00.000000Z\t1\t138397\t5766
-                            2020-01-01T01:00:00.000000Z\t2\t25374\t1057
-                            2030-01-01T01:00:00.000000Z\t3\t12307\t512
+                            2010-01-01T01:00:00.000000Z\t1\t1\t0
+                            2020-01-01T01:00:00.000000Z\t2\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t3\t58440\t2435
                             """,
                     query,
                     "ts",
@@ -6334,7 +6334,7 @@ public class SampleByTest extends AbstractCairoTest {
                             Radix sort light
                               keys: [ts]
                                 VirtualRecord
-                                  functions: [ts,max,datediff('h',ts,now())/max,datediff('d',ts,now())/max]
+                                  functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
                                     Async Group By workers: 1
                                       keys: [ts]
                                       values: [max(i)]

@@ -5279,10 +5279,8 @@ public class SqlOptimiser implements Mutable {
                         n--;
 
                         if (checkForChildAggregates(qc.getAst())) {
-                            // Ok, it's an expression with mixed timestamp references and aggregate functions.
                             // Replace aggregate functions with aliases and add the functions to the group by model.
-                            // This way an expression like `select timestamp, count() / timestamp::long`
-                            // Is turned into `select timestamp, count / timestamp::long from (select count(), ...`
+                            // E.g. `select ts, count() / ts::long` -> `select ts, count / ts::long from (select count(), ...`
                             needRemoveColumns += rewriteTimestampMixedWithAggregates(qc.getAst(), model);
                         }
 
@@ -6631,7 +6629,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private int rewriteTimestampMixedWithAggregates(@NotNull ExpressionNode node, @NotNull QueryModel sampleByModel) throws SqlException {
+    private int rewriteTimestampMixedWithAggregates(@NotNull ExpressionNode node, @NotNull QueryModel groupByModel) throws SqlException {
         int insertedAggregates = 0;
 
         sqlNodeStack.clear();
@@ -6639,13 +6637,13 @@ public class SqlOptimiser implements Mutable {
             if (node.rhs != null) {
                 if (node.rhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.rhs.token)) {
                     // replace the aggregate with an alias;
-                    final QueryColumn existingColumn = findQueryColumnByAst(sampleByModel.getBottomUpColumns(), node.rhs);
+                    final QueryColumn existingColumn = findQueryColumnByAst(groupByModel.getBottomUpColumns(), node.rhs);
                     final CharSequence aggregateAlias;
                     if (existingColumn == null) {
                         // the aggregate is not already present in group by model, so let's add a column for it
-                        aggregateAlias = createColumnAlias(node.rhs.token, sampleByModel);
+                        aggregateAlias = createColumnAlias(node.rhs, groupByModel);
                         final QueryColumn aggregateColumn = queryColumnPool.next().of(aggregateAlias, node.rhs);
-                        sampleByModel.addBottomUpColumn(aggregateColumn);
+                        groupByModel.addBottomUpColumn(aggregateColumn);
                         insertedAggregates++;
                     } else {
                         // yay! there is an existing column for the alias
@@ -6660,13 +6658,13 @@ public class SqlOptimiser implements Mutable {
             if (node.lhs != null) {
                 if (node.lhs.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(node.lhs.token)) {
                     // replace the aggregate with an alias;
-                    final QueryColumn existingColumn = findQueryColumnByAst(sampleByModel.getBottomUpColumns(), node.lhs);
+                    final QueryColumn existingColumn = findQueryColumnByAst(groupByModel.getBottomUpColumns(), node.lhs);
                     final CharSequence aggregateAlias;
                     if (existingColumn == null) {
                         // the aggregate is not already present in group by model, so let's add a column for it
-                        aggregateAlias = createColumnAlias(node.lhs.token, sampleByModel);
+                        aggregateAlias = createColumnAlias(node.lhs, groupByModel);
                         final QueryColumn aggregateColumn = queryColumnPool.next().of(aggregateAlias, node.lhs);
-                        sampleByModel.addBottomUpColumn(aggregateColumn);
+                        groupByModel.addBottomUpColumn(aggregateColumn);
                         insertedAggregates++;
                     } else {
                         // yay! there is an existing column for the alias
