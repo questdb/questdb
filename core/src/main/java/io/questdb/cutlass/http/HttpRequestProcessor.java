@@ -83,6 +83,10 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
+    default boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        return true;
+    }
+
     default boolean requiresAuthentication() {
         return getRequiredAuthType() != SecurityContext.AUTH_TYPE_NONE;
     }

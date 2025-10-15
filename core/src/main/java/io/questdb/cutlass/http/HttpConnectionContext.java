@@ -890,7 +890,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
 
                     if (cookiesEnabled) {
-                        if (!cookieHandler.processServiceAccountCookie(this, securityContext)) {
+                        if (!processor.processServiceAccountCookie(this, securityContext)) {
                             processor = rejectProcessor;
                         }
                     }

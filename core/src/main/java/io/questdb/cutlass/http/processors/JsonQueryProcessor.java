@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
@@ -310,6 +311,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             state.setRnd(sqlExecutionContext.getRandom());
         }
+    }
+
+    @Override
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
     }
 
     @Override
