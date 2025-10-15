@@ -466,10 +466,7 @@ public abstract class HttpClient implements QuietCloseable {
             state = STATE_QUERY;
             urlEncode = true;
             try {
-                put(name);
-                if (value != null) {
-                    putAsciiInternal('=').put(value);
-                }
+                put(name).putAsciiInternal('=').put(value);
             } finally {
                 urlEncode = false;
             }
