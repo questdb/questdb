@@ -789,7 +789,8 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     case PROTOCOL_VERSION_V1 -> new LineTcpSenderV1(channel, bufferCapacity, maxNameLength);
                     case PROTOCOL_VERSION_V2 -> new LineTcpSenderV2(channel, bufferCapacity, maxNameLength);
                     case PROTOCOL_VERSION_V3 -> new LineTcpSenderV3(channel, bufferCapacity, maxNameLength);
-                    default -> throw new LineSenderException("unknown protocol version [version=").put(protocolVersion).put("]");
+                    default ->
+                            throw new LineSenderException("unknown protocol version [version=").put(protocolVersion).put("]");
                 };
             } catch (Throwable t) {
                 channel.close();
