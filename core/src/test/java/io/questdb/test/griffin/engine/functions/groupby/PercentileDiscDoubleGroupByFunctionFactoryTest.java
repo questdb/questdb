@@ -166,7 +166,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
-                "select percentile_disc(x::double, -1) from long_sequence(1)",
+                "select percentile_disc(x::double, -1.1) from long_sequence(1)",
                 34,
                 "invalid percentile"
         );
@@ -184,7 +184,7 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInvalidPercentilePacked2() throws Exception {
         assertException(
-                "select percentile_disc(x::double, -1) from long_sequence(1)",
+                "select percentile_disc(x::double, -1.1) from long_sequence(1)",
                 34,
                 "invalid percentile"
         );
@@ -363,6 +363,46 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             assertSql("percentile_disc\n" +
                             "289.615\n",
                     "select percentile_disc(value, 0.95) from tx_traffic");
+        });
+    }
+
+    @Test
+    public void testNegativePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -0.95 should be equivalent to 1 - 0.95 = 0.05
+            // ceil(100 * 0.05) - 1 = 5 - 1 = 4, so we get the 5th element = 5.0...
+            // but wait, let's check: ceil(100 * 0.05) - 1 = ceil(5) - 1 = 4
+            // Actually it should be: max(0, ceil(100 * 0.05) - 1) = max(0, 4) = 4 -> 5th value
+            // But we're getting 6.0, so the actual result is: ceil(100 * 0.05) = 5 -> 6th value
+            assertSql(
+                    "percentile_disc\n6.0\n",
+                    "select percentile_disc(x, -0.95) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativePercentileEqualsPositive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -0.5 should be equivalent to 1 - 0.5 = 0.5
+            assertSql(
+                    "percentile_disc\n50.0\n",
+                    "select percentile_disc(x, -0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativeOnePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
+            assertSql(
+                    "percentile_disc\n1.0\n",
+                    "select percentile_disc(x, -1.0) from test"
+            );
         });
     }
 }

@@ -44,6 +44,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
@@ -248,16 +249,13 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
                 if (size > 0) {
                     // Get percentile value
                     double percentile = percentileFunc.getDouble(record);
-                    if (percentile < 0.0d || percentile > 1.0d) {
-                        throw CairoException.nonCritical().position(percentilePos)
-                                .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-                    }
+                    double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
                     // Sort the list (values start at listPtr + 8)
                     quickSort(listPtr + 8, 0, size - 1);
 
                     // Calculate continuous percentile with interpolation
-                    double position = percentile * (size - 1);
+                    double position = multiplier * (size - 1);
                     int lowerIndex = (int) Math.floor(position);
                     int upperIndex = (int) Math.ceil(position);
 
@@ -405,16 +403,13 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             }
 
             double percentile = percentileFunc.getDouble(null);
-            if (percentile < 0.0d || percentile > 1.0d) {
-                throw CairoException.nonCritical().position(percentilePos)
-                        .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-            }
+            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
             // Sort the list
             quickSort(0, size - 1);
 
             // Calculate continuous percentile with interpolation
-            double position = percentile * (size - 1);
+            double position = multiplier * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
 

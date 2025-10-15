@@ -47,6 +47,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
@@ -296,12 +297,9 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                     // Calculate each percentile
                     for (int i = 0; i < percentileCount; i++) {
                         double percentile = view.getDoubleAtAbsIndex(i);
-                        if (percentile < 0.0d || percentile > 1.0d) {
-                            throw CairoException.nonCritical().position(percentilesPos)
-                                    .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-                        }
+                        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
-                        int N = (int) Math.max(0, Math.ceil(size * percentile) - 1);
+                        int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
                         double resultValue = listMemory.getDouble(listPtr + 8 + N * 8);
                         resultMemory.putDouble(resultPtr + 8 + i * 8, resultValue);
                     }
@@ -478,12 +476,9 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             results = new double[percentileCount];
             for (int i = 0; i < percentileCount; i++) {
                 double percentile = view.getDoubleAtAbsIndex(i);
-                if (percentile < 0.0d || percentile > 1.0d) {
-                    throw CairoException.nonCritical().position(percentilesPos)
-                            .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-                }
+                double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
-                int N = (int) Math.max(0, Math.ceil(size * percentile) - 1);
+                int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
                 results[i] = listMemory.getDouble(N * 8);
             }
         }

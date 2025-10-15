@@ -220,7 +220,7 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
-                "select percentile_cont(x::double, -1) from long_sequence(1)",
+                "select percentile_cont(x::double, -1.1) from long_sequence(1)",
                 34,
                 "invalid percentile"
         );
@@ -354,6 +354,43 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             assertSql("percentile_cont\n" +
                             "268.20624999999984\n",
                     "select percentile_cont(value, 0.95) from tx_traffic");
+        });
+    }
+
+    @Test
+    public void testNegativePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -0.95 should be equivalent to 1 - 0.95 = 0.05 (5th percentile)
+            // position = 0.05 * (100 - 1) = 4.95, interpolating between indices 4 and 5 (values 5 and 6)
+            assertSql(
+                    "percentile_cont\n5.950000000000005\n",
+                    "select percentile_cont(x, -0.95) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativePercentileEqualsPositive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -0.5 should be equivalent to 1 - 0.5 = 0.5
+            assertSql(
+                    "percentile_cont\n50.5\n",
+                    "select percentile_cont(x, -0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativeOnePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select cast(x as double) x from long_sequence(100))");
+            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile = minimum)
+            assertSql(
+                    "percentile_cont\n1.0\n",
+                    "select percentile_cont(x, -1.0) from test"
+            );
         });
     }
 

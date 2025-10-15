@@ -166,7 +166,7 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testInvalidPercentile2() throws Exception {
         assertException(
-                "select percentile_disc(x, -1) from long_sequence(1)",
+                "select percentile_disc(x, -1.1) from long_sequence(1)",
                 26,
                 "invalid percentile"
         );
@@ -184,7 +184,7 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     @Test
     public void testInvalidPercentilePacked2() throws Exception {
         assertException(
-                "select percentile_disc(x, -1) from long_sequence(1)",
+                "select percentile_disc(x, -1.1) from long_sequence(1)",
                 26,
                 "invalid percentile"
         );
@@ -322,6 +322,42 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             assertSql("percentile_disc\n" +
                             "289\n",
                     "select percentile_disc(value, 0.95) from tx_traffic");
+        });
+    }
+
+    @Test
+    public void testNegativePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select x from long_sequence(100))");
+            // -0.95 should be equivalent to 1 - 0.95 = 0.05
+            assertSql(
+                    "percentile_disc\n6\n",
+                    "select percentile_disc(x, -0.95) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativePercentileEqualsPositive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select x from long_sequence(100))");
+            // -0.5 should be equivalent to 1 - 0.5 = 0.5
+            assertSql(
+                    "percentile_disc\n50\n",
+                    "select percentile_disc(x, -0.5) from test"
+            );
+        });
+    }
+
+    @Test
+    public void testNegativeOnePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test as (select x from long_sequence(100))");
+            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
+            assertSql(
+                    "percentile_disc\n1\n",
+                    "select percentile_disc(x, -1.0) from test"
+            );
         });
     }
 }

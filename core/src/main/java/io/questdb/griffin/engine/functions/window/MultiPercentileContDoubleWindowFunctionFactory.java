@@ -47,6 +47,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
@@ -296,13 +297,10 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     // Calculate each percentile with interpolation
                     for (int i = 0; i < percentileCount; i++) {
                         double percentile = view.getDoubleAtAbsIndex(i);
-                        if (percentile < 0.0d || percentile > 1.0d) {
-                            throw CairoException.nonCritical().position(percentilesPos)
-                                    .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-                        }
+                        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
                         // Calculate continuous percentile with interpolation
-                        double position = percentile * (size - 1);
+                        double position = multiplier * (size - 1);
                         int lowerIndex = (int) Math.floor(position);
                         int upperIndex = (int) Math.ceil(position);
 
@@ -490,13 +488,10 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             results = new double[percentileCount];
             for (int i = 0; i < percentileCount; i++) {
                 double percentile = view.getDoubleAtAbsIndex(i);
-                if (percentile < 0.0d || percentile > 1.0d) {
-                    throw CairoException.nonCritical().position(percentilesPos)
-                            .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-                }
+                double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
                 // Calculate continuous percentile with interpolation
-                double position = percentile * (size - 1);
+                double position = multiplier * (size - 1);
                 int lowerIndex = (int) Math.floor(position);
                 int upperIndex = (int) Math.ceil(position);
 

@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
@@ -78,12 +79,10 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         java.util.Set<Integer> indexSet = new java.util.HashSet<>();
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            if (percentile < 0.0d || percentile > 1.0d) {
-                throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-            }
+            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
             // Calculate the continuous percentile position
-            double position = percentile * (size - 1);
+            double position = multiplier * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
 
@@ -107,7 +106,8 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         // Now compute interpolated values
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            double position = percentile * (size - 1);
+            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            double position = multiplier * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
 

@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
@@ -146,10 +147,8 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         int[] indices = new int[view_length];
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            if (percentile < 0.0d || percentile > 1.0d) {
-                throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-            }
-            int N = (int) Math.ceil(size * percentile) - 1;
+            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            int N = (int) Math.ceil(size * multiplier) - 1;
             if (N < 0) {
                 N = 0;
             }
@@ -165,7 +164,8 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         // Now retrieve the values (they're already in the correct positions)
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            int N = (int) Math.ceil(size * percentile) - 1;
+            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            int N = (int) Math.ceil(size * multiplier) - 1;
             if (N < 0) {
                 N = 0;
             }
