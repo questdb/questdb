@@ -250,7 +250,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         public boolean hasNext() {
             if (currentIter == null) {
                 advanceMasterIfPending();
-                if (!masterHasNext) {
+                if (!masterHasNext || slaveRecordArray.size() == 0) {
                     return false;
                 }
                 isMasterHasNextPending = true;
