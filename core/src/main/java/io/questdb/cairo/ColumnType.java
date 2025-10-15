@@ -113,7 +113,7 @@ public final class ColumnType {
     //
     // Stored decimal uses the Extra type information to store the precision
     // and scale, giving this layout:
-    //       31         30~24    23~16      15~8              7~0
+    //        31        30~24     23~16       15~8                7~0
     // +--------------+--------+----------+-----------+-------------------------+
     // | Handling bit | Scale  | Reserved | Precision | Type discriminant (tag) |
     // +--------------+--------+----------+-----------+-------------------------+
