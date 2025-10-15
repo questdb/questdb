@@ -7235,6 +7235,42 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDuplicateKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(
+                    "create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);",
+                    "select b, sum(a), k k1, k from x sample by 3h",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [b,k1,ts]\n" +
+                            "              values: [sum(a)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select b, sum(a), k, k k1 from x sample by 3h",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [b,k,ts]\n" +
+                            "              values: [sum(a)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(

@@ -4507,8 +4507,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (index == timestampIndex
-                    // always pick up the first ORDER BY column as the designated timestamp
-                    // in case of multiple aliases over the timestamp, e.g. `select ts, ts as ts1, ...`
+                    // Always pick up the first ORDER BY column as the designated timestamp
+                    // in case of multiple aliases over the timestamp, e.g. `select ts, ts as ts1, ...`.
+                    // Otherwise, generateOrderBy() would be broken.
                     && (!timestampSet || Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn))) {
                 queryMetadata.setTimestampIndex(i);
                 timestampSet = true;

@@ -6240,9 +6240,16 @@ public class SqlOptimiser implements Mutable {
                                         innerVirtualModel
                                 );
                                 if (existingAlias != null) {
-                                    // the column is already present in group by as a key,
-                                    // so the only thing we need to do is to expose it in the outer model
-                                    final QueryColumn translatedColumn = nextColumn(qc.getAlias(), existingAlias, qc.getAst().position);
+                                    // the column is already present in the group by model as a key,
+                                    // so the only thing we need to do is to expose it in the outer models;
+                                    // by doing this, we keep the number of keys in group by minimal
+                                    final QueryColumn translatedColumn;
+                                    if (outerVirtualModel.getColumnNameToAliasMap().contains(qc.getAlias())) {
+                                        final CharSequence alias = createColumnAlias(qc.getAlias(), groupByModel);
+                                        translatedColumn = nextColumn(alias, existingAlias, qc.getAst().position);
+                                    } else {
+                                        translatedColumn = nextColumn(qc.getAlias(), existingAlias, qc.getAst().position);
+                                    }
                                     outerVirtualModel.addBottomUpColumn(translatedColumn);
                                     if ((rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0) {
                                         distinctModel.addBottomUpColumn(translatedColumn);
