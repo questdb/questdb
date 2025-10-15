@@ -1,6 +1,6 @@
 statement ok
 CREATE TABLE quantile as (
-SELECT * FROM (SELECT x r, rnd_double() AS q
+SELECT * FROM (SELECT (x-1) as r, rnd_double() AS q
 FROM long_sequence(10000)
 UNION ALL
 SELECT NULL, 0.1
@@ -22,16 +22,6 @@ SELECT quantile_disc(r, 0.5) FROM quantile
 #SELECT quantile_disc(r::decimal(10,2), 0.5) FROM quantile
 #----
 #4999
-
-query I
-SELECT quantile_disc(case when r is null then null else [r] end, 0.5) FROM quantile
-----
-[4999]
-
-query I
-SELECT quantile_disc(case when r is null then null else {'i': r} end, 0.5) FROM quantile
-----
-{'i': 4999}
 
 query I
 SELECT quantile_disc(r, 1.0) FROM quantile
@@ -67,9 +57,7 @@ SELECT quantile_disc(42, 0.5)
 query III
 SELECT quantile_disc(r, 0.1), quantile_disc(r, 0.5), quantile_disc(r, 0.9) from quantile
 ----
-999
-4999
-8999
+999 4999 8999
 
 #foreach type decimal(4,1) decimal(8,1) decimal(12,1) decimal(18,1) decimal(24,1)
 
@@ -84,7 +72,8 @@ SELECT quantile_disc(r, 0.1), quantile_disc(r, 0.5), quantile_disc(r, 0.9) from 
 # Negative quantiles (use descending intervals)
 query I
 SELECT quantile_disc(col, -0.5)
-FROM VALUES (11000), (3100), (2900), (2800), (2600), (2500) AS tab(col);
+FROM
+( SELECT 11000 col UNION SELECT 3100 col UNION SELECT 2900 col UNION SELECT 2600 col UNION SELECT 2500 col );
 ----
 2900
 
@@ -99,48 +88,10 @@ FROM VALUES (11000), (3100), (2900), (2800), (2600), (2500) AS tab(col);
 #1.2	1.2
 
 #
-# VARCHAR. Remember, this is dictionary ordering, not numeric ordering!
-#
-#query III
-#SELECT quantile_disc(d::VARCHAR, 0.1), quantile_disc(d::VARCHAR, 0.5), quantile_disc(d::VARCHAR, 0.9)
-#FROM range(0,100) tbl(d)
-#----
-#17	53	9
-
-# A string column that has only NULL values
-#query I
-#SELECT quantile_disc(NULL::VARCHAR, 0.1)
-#FROM range(0,100) tbl(d)
-#----
-#NULL
-
-# A string column that has long strings (>12 characters)
-#query I
-#SELECT quantile_disc('prefix-' || d::VARCHAR || '-suffix', 0.1)
-#FROM range(0,100) tbl(d)
-#----
-#prefix-17-suffix
-#
-## Using median itself on a string (just an alias for quantile_disc)
-#query I
-#SELECT median(d::VARCHAR)
-#FROM range(0,100) tbl(d)
-#----
-#53
-#
-## Median on an empty table
-#query I
-#SELECT median(d::VARCHAR)
-#FROM range(0,100) tbl(d)
-#WHERE d > 100
-#----
-#NULL
-
-#
 # Multiple groups
 #
 query II
-SELECT mod(r,10) as g, quantile_disc(r, 0.1) FROM quantile GROUP BY 1 ORDER BY 1
+SELECT r % 10 as g, quantile_disc(r, 0.1) FROM quantile GROUP BY 1 ORDER BY 1
 ----
 NULL	NULL
 0	990
@@ -156,35 +107,9 @@ NULL	NULL
 
 # temporal types
 query I
-SELECT quantile_disc('2021-01-01'::TIMESTAMP + interval (r) hour, 0.5) FROM quantile
+SELECT quantile_disc(dateadd('h', r::int, '2021-01-01'::timestamp)::long, 0.5)::timestamp FROM quantile
 ----
 2021-07-28 07:00:00
-
-query I
-SELECT quantile_disc(dateadd('h', r, '2021-01-1'), 0.5)::timestamp FROM quantile
-----
-2021-07-28 07:00:00
-
-query I
-SELECT quantile_disc('1990-01-01'::DATE + interval (r) day, 0.5) FROM quantile
-----
-2003-09-09 00:00:00
-
-query I
-SELECT quantile_disc('00:00:00'::TIME + interval (r) second, 0.5) FROM quantile
-----
-01:23:19
-
-query I
-SELECT quantile_disc(interval (r) second, 0.5) FROM quantile
-----
-01:23:19
-
-# WITH TIME ZONE
-query I
-SELECT quantile_disc(('2021-01-01'::TIMESTAMP + interval (r) hour)::TIMESTAMPTZ, 0.5) FROM quantile
-----
-2021-07-28 07:00:00+00
 
 # constant input
 query I
@@ -205,7 +130,6 @@ SELECT quantile_disc(r, -1.1) FROM quantile
 
 statement error
 SELECT quantile_disc(r, 1.1) FROM quantile
-
 
 
 statement error

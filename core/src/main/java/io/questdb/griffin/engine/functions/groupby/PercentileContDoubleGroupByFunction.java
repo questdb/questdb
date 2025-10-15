@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
@@ -52,12 +53,10 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
             return Double.NaN;
         }
         double percentile = percentileFunc.getDouble(record);
-        if (percentile < 0.0d || percentile > 1.0d) {
-            throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-        }
+        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
         // Calculate the continuous percentile position
-        double position = percentile * (size - 1);
+        double position = multiplier * (size - 1);
         int lowerIndex = (int) Math.floor(position);
         int upperIndex = (int) Math.ceil(position);
 

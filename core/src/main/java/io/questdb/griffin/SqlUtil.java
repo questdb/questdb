@@ -24,11 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.*;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.sql.Function;
@@ -80,6 +76,14 @@ public class SqlUtil {
     ) throws SqlException {
         model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", 0));
         model.setArtificialStar(true);
+    }
+
+    public static double getPercentileMultiplier(double percentile, int percentilePos) {
+        double absPercentile = Math.abs(percentile);
+        if (Numbers.isNull(percentile) || absPercentile < 0.0d || absPercentile > 1.0d) {
+            throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+        }
+        return percentile >= 0 ? percentile : 1 - absPercentile;
     }
 
     public static long castPGDates(CharSequence value, int fromColumnType, TimestampDriver driver) {

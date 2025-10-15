@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -116,10 +117,8 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
         listA.sortAsUnsigned();
 
         double percentile = percentileFunc.getDouble(record);
-        if (percentile < 0.0d || percentile > 1.0d) {
-            throw CairoException.nonCritical().position(percentilePos).put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
-        }
-        int N = (int) Math.max(0, Math.ceil(size * percentile) - 1);
+        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+        int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
         return listA.getQuick(N);
     }
 
