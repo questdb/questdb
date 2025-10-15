@@ -4516,7 +4516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (index == timestampIndex) {
                 // Always prefer the column matching the first ORDER BY column as the designated
                 // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
-                // This invariant is important for generateOrderBy().
+                // This is important for choosing the optimal plan in generateOrderBy().
                 // Otherwise, prefer columns with aliases matching the base column name, e.g.
                 // prefer `t1.ts as ts` over `t1.ts as ts2`.
                 if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)

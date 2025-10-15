@@ -6201,17 +6201,13 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
-    // TODO(puzpuzpuz): test the following cases
-    //  count(), count() / max(ts)::long
-    //  count() / datediff('h', ts, now()) c1, count() / datediff('d', ts, now()) c2
-    //  count(), count() / datediff('h', ts, now()) c1, count() / datediff('d', ts, now()) c2
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("INSERT INTO x VALUES (1, '2010-01-01T01'),(2, '2020-01-01T01'),(3, '2030-01-01T01');");
 
-            final String query = """
+            String query = """
                     SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
                     FROM 'x'
                     SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
@@ -6228,7 +6224,6 @@ public class SampleByTest extends AbstractCairoTest {
                     true,
                     true
             );
-
             assertPlanNoLeakCheck(
                     query,
                     """
@@ -6245,6 +6240,108 @@ public class SampleByTest extends AbstractCairoTest {
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, count(), max(ts)::long / count() AS ts_divided
+                    FROM 'x'
+                    SAMPLE BY 1d;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcount\tts_divided
+                            2010-01-01T00:00:00.000000Z\t1\t1262307600000000
+                            2020-01-01T00:00:00.000000Z\t1\t1577840400000000
+                            2030-01-01T00:00:00.000000Z\t1\t1893459600000000
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,count,max::long/count]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [count(*),max(ts)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts, now()) / max(i) diff1, datediff('d', ts, now()) / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t138396\t5766
+                            2020-01-01T01:00:00.000000Z\t25374\t1057
+                            2030-01-01T01:00:00.000000Z\t12307\t512
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts,now())/max,datediff('d',ts,now())/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, max(i), datediff('h', ts, now()) / max(i) diff1, datediff('d', ts, now()) / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tmax\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t1\t138396\t5766
+                            2020-01-01T01:00:00.000000Z\t2\t25374\t1057
+                            2030-01-01T01:00:00.000000Z\t3\t12307\t512
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max,datediff('h',ts,now())/max,datediff('d',ts,now())/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
                             """
             );
         });
