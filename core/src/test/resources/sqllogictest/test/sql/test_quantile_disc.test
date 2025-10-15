@@ -1,9 +1,17 @@
 statement ok
-CREATE TABLE quantile as
-SELECT x r, rnd_double() AS q
+CREATE TABLE quantile as (
+SELECT * FROM (SELECT x r, rnd_double() AS q
 FROM long_sequence(10000)
-UNION ALL VALUES (NULL, 0.1), (NULL, 0.5), (NULL, 0.9)
-ORDER BY 2;
+UNION ALL
+SELECT NULL, 0.1
+UNION ALL
+SELECT NULL, 0.5
+UNION ALL
+SELECT NULL, 0.9
+)
+ORDER BY 2
+);
+
 
 query I
 SELECT quantile_disc(r, 0.5) FROM quantile
@@ -193,31 +201,32 @@ NULL
 # Invalid usage
 statement error
 SELECT quantile_disc(r, -1.1) FROM quantile
-----
 
-#statement error
+
+statement error
 SELECT quantile_disc(r, 1.1) FROM quantile
 
 
-# statement error
+
+statement error
 SELECT quantile_disc(r, "string") FROM quantile
-----
+
 
 statement error
 SELECT quantile_disc(r, NULL) FROM quantile
-----
+
 
 statement error
 SELECT quantile_disc(r) FROM quantile
-----
+
 
 statement error
 SELECT quantile_disc(r, 0.1, 50) FROM quantile
-----
+
 
 statement error
 SELECT quantile_cont(r, q) FROM quantile
-----
+
 
 statement ok
 pragma threads=4
@@ -262,23 +271,28 @@ SELECT quantile_disc(r, 0.1) FROM quantile WHERE 1=0
 NULL
 
 # NaNs
-foreach fp float double
-
-loop i 0 10
-
 query I
 with a as (
-	select 'NaN'::${fp} as num
+	select 'NaN'::double as num
 	union all
-	select num::${fp} as num from generate_series(1,99) as tbl(num)
+	select num::double as num from generate_series(1,99) as tbl(num)
 	union all
-	select 'NaN'::${fp} as num
+	select 'NaN'::double as num
 )
 select quantile_disc(num, 0.9) c1
 from a;
 ----
 91.0
 
-endloop
-
-endloop
+query I
+with a as (
+	select 'NaN'::float as num
+	union all
+	select num::float as num from generate_series(1,99) as tbl(num)
+	union all
+	select 'NaN'::float as num
+)
+select quantile_disc(num, 0.9) c1
+from a;
+----
+91.0
