@@ -64,7 +64,9 @@ import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
@@ -112,7 +114,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long recvPos;
     private HttpRequestProcessor resumeProcessor = null;
     private SecurityContext securityContext;
-    private String sessionId;
+    private final StringSink sessionID = new StringSink();
     private SuspendEvent suspendEvent;
     private long totalBytesSent;
     private long totalReceived;
@@ -222,7 +224,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.close();
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.sessionId = null;
+        this.sessionID.clear();
         this.authenticator.close();
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
@@ -293,8 +295,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
-    public String getSessionId() {
-        return sessionId;
+    public @NotNull CharSequence getSessionID() {
+        return sessionID;
     }
 
     @Override
@@ -312,19 +314,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
-        boolean keepGoing;
-        switch (operation) {
-            case IOOperation.READ:
-                keepGoing = handleClientRecv(selector, rescheduleContext);
-                break;
-            case IOOperation.WRITE:
-                keepGoing = handleClientSend();
-                break;
-            case IOOperation.HEARTBEAT:
-                throw registerDispatcherHeartBeat();
-            default:
-                throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
-        }
+        boolean keepGoing = switch (operation) {
+            case IOOperation.READ -> handleClientRecv(selector, rescheduleContext);
+            case IOOperation.WRITE -> handleClientSend();
+            case IOOperation.HEARTBEAT -> throw registerDispatcherHeartBeat();
+            default -> throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
+        };
 
         boolean useful = keepGoing;
         if (keepGoing) {
@@ -362,7 +357,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.sessionId = null;
+        this.sessionID.clear();
         this.authenticator.clear();
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
@@ -520,9 +515,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     SecurityContextFactory.HTTP
             );
             // create session, if we do not have one yet
-            if ((sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
+            if (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal())
                     && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
-                sessionId = sessionStore.createSession(authenticator);
+                sessionStore.createSession(authenticator, sessionID);
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }

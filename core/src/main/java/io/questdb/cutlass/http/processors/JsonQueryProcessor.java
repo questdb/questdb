@@ -371,10 +371,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             JsonQueryProcessorState state,
             Metrics metrics
     ) {
-        if (e instanceof CairoException) {
-            CairoException ce = (CairoException) e;
+        if (e instanceof CairoException ce) {
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                state.info().$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
                         .$("`, q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
@@ -872,9 +871,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
         context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
-        final String sessionId = context.getSessionId();
-        if (sessionId != null) {
-            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
+        final CharSequence sessionID = context.getSessionID();
+        if (!sessionID.isEmpty()) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionID);
         }
         response.sendHeader();
     }

@@ -1,5 +1,6 @@
 package io.questdb.cutlass.http;
 
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class DefaultHttpSessionStore implements HttpSessionStore {
@@ -9,8 +10,8 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public String createSession(@NotNull HttpAuthenticator authenticator) {
-        return null;
+    public void createSession(@NotNull HttpAuthenticator authenticator, StringSink sessionID) {
+        sessionID.clear();
     }
 
     @Override

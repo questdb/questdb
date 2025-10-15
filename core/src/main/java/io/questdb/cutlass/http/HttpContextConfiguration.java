@@ -27,8 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.Clock;
 
 public interface HttpContextConfiguration {
 
@@ -62,7 +62,7 @@ public interface HttpContextConfiguration {
 
     long getMultipartIdleSpinCount();
 
-    Clock getNanosecondClock();
+    NanosecondClock getNanosecondClock();
 
     NetworkFacade getNetworkFacade();
 

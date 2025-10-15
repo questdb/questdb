@@ -39,7 +39,6 @@ import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -56,8 +55,8 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -79,7 +78,7 @@ public class HttpQueryTestBuilder {
     private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private long maxWriterWaitTimeout = 30_000L;
     private MicrosecondClock microsecondClock;
-    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
@@ -87,7 +86,6 @@ public class HttpQueryTestBuilder {
     private long startWriterWaitTimeout = 500;
     private boolean telemetry;
     private String temp;
-    private HttpRequestProcessorBuilder textImportProcessor;
     private int workerCount = 1;
 
     public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
@@ -195,11 +193,7 @@ public class HttpQueryTestBuilder {
 
                     @Override
                     public HttpRequestHandler newInstance() {
-                        return textImportProcessor != null ? textImportProcessor.create(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 
@@ -312,11 +306,6 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withCustomTextImportProcessor(HttpRequestProcessorBuilder textQueryProcessor) {
-        this.textImportProcessor = textQueryProcessor;
-        return this;
-    }
-
     public HttpQueryTestBuilder withFactoryProvider(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
         return this;
@@ -347,7 +336,7 @@ public class HttpQueryTestBuilder {
         return this;
     }
 
-    public HttpQueryTestBuilder withNanosClock(Clock nanosecondClock) {
+    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }
@@ -385,14 +374,5 @@ public class HttpQueryTestBuilder {
     @FunctionalInterface
     public interface HttpClientCode {
         void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws Exception;
-    }
-
-    @FunctionalInterface
-    public interface HttpRequestProcessorBuilder {
-        HttpRequestHandler create(
-                JsonQueryProcessorConfiguration configuration,
-                CairoEngine engine,
-                int workerCount
-        );
     }
 }

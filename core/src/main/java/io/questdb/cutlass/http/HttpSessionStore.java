@@ -1,6 +1,8 @@
 package io.questdb.cutlass.http;
 
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -10,9 +12,8 @@ public interface HttpSessionStore {
      * Create a new session
      *
      * @param authenticator HTTP authenticator used to log the user in
-     * @return session id
      */
-    String createSession(@NotNull HttpAuthenticator authenticator);
+    void createSession(@NotNull HttpAuthenticator authenticator, StringSink sink);
 
     default void setTokenGenerator(TokenGenerator tokenGenerator) {
     }
@@ -30,17 +31,15 @@ public interface HttpSessionStore {
         private final ObjList<CharSequence> groups = new ObjList<>();
         private final String principal;
         private volatile long expiresAt;
-        private volatile String sessionId;
 
-        public SessionInfo(String sessionId, CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
-            this.sessionId = sessionId;
-            this.principal = principal.toString();
+        public SessionInfo(CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
+            this.principal = Chars.toString(principal);
             this.authType = authType;
             this.expiresAt = expiresAt;
 
             if (groups != null) {
                 for (int i = 0, n = groups.size(); i < n; i++) {
-                    this.groups.add(groups.getQuick(i).toString());
+                    this.groups.add(Chars.toString(groups.getQuick(i)));
                 }
             }
         }
