@@ -57,7 +57,7 @@ import java.util.HashMap;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V3;
 import static io.questdb.preferences.SettingsStore.Mode.MERGE;
 import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
@@ -256,7 +256,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         responseHeaders.await();
                         assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
                         parser.parse(responseHeaders.getResponse());
-                        Assert.assertEquals(PROTOCOL_VERSION_V2, parser.getDefaultProtocolVersion());
+                        Assert.assertEquals(PROTOCOL_VERSION_V3, parser.getDefaultProtocolVersion());
                     }
                 }
             }
