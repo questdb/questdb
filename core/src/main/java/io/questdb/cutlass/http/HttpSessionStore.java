@@ -26,7 +26,7 @@ public interface HttpSessionStore {
      */
     SessionInfo verifySession(@NotNull CharSequence sessionId);
 
-    class SessionInfo implements PrincipalContext{
+    class SessionInfo implements PrincipalContext {
         private final byte authType;
         private final ObjList<CharSequence> groups = new ObjList<>();
         private final String principal;
