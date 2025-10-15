@@ -41,18 +41,12 @@ public class RecordArray extends RecordChain {
 
     // auxMem is used to store records startOffset in dataMem
     private final MemoryARW auxMem;
-    private long size = 0L;
     private long nextRecordIndex = 0L;
+    private long size = 0L;
 
     public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
         this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
-    }
-
-    public long put(Record record) {
-        long offset = beginRecord();
-        recordSink.copy(record, this);
-        return offset;
     }
 
     public long beginRecord() {
@@ -62,36 +56,6 @@ public class RecordArray extends RecordChain {
         mem.jumpTo(recordOffset + varOffset);
         varAppendOffset = recordOffset + varOffset + fixOffset;
         return recordOffset;
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (nextRecordIndex < size) {
-            final long offset = auxMem.getLong(nextRecordIndex * 8);
-            recordA.of(offset);
-            nextRecordIndex++;
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public void toTop() {
-        nextRecordIndex = 0;
-    }
-
-    public void toBottom() {
-        nextRecordIndex = size - 1;
-    }
-
-    public boolean hasPrev() {
-        if (nextRecordIndex >= 0) {
-            final long offset = auxMem.getLong(nextRecordIndex * 8);
-            recordA.of(offset);
-            nextRecordIndex--;
-            return true;
-        }
-        return false;
     }
 
     @Override
@@ -107,13 +71,54 @@ public class RecordArray extends RecordChain {
     }
 
     @Override
-    protected long rowToDataOffset(long row) {
-        return row;
+    public boolean hasNext() {
+        if (nextRecordIndex < size) {
+            final long offset = auxMem.getLong(nextRecordIndex * 8);
+            recordA.of(offset);
+            nextRecordIndex++;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean hasPrev() {
+        if (nextRecordIndex >= 0) {
+            final long offset = auxMem.getLong(nextRecordIndex * 8);
+            recordA.of(offset);
+            nextRecordIndex--;
+            return true;
+        }
+        return false;
+    }
+
+    public long put(Record record) {
+        long offset = beginRecord();
+        recordSink.copy(record, this);
+        return offset;
+    }
+
+    @Override
+    public long size() {
+        return size;
+    }
+
+    public void toBottom() {
+        nextRecordIndex = size - 1;
+    }
+
+    @Override
+    public void toTop() {
+        nextRecordIndex = 0;
     }
 
     @Override
     protected RecordChainRecord newChainRecord() {
         return new RecordArrayRecord(columnCount);
+    }
+
+    @Override
+    protected long rowToDataOffset(long row) {
+        return row;
     }
 
     class RecordArrayRecord extends RecordChainRecord {
