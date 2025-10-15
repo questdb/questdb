@@ -264,14 +264,10 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             advanceMasterIfPending();
             SlaveRowIterator nextIter = currentIter.nextIterator();
             if (currentIter.isEmpty()) {
-                nextIter = prevIter.removeNextIterator();
-                if (nextIter == null) {
-                    // we just removed the only remaining iterator
+                if (prevIter.removeNextIterator() == null) {
                     if (masterHasNext) {
-                        // there's a master row waiting, unconditionally activate it
                         nextIter = activateMasterRow();
                     } else {
-                        // no active iterators, no more master rows, we're all done
                         prevIter = currentIter = null;
                         return false;
                     }
@@ -290,7 +286,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         @Override
         public long preComputedStateSize() {
-            return 0;
+            return slaveRecordArray.size() + slaveRecordOffsets.size();
         }
 
         @Override
