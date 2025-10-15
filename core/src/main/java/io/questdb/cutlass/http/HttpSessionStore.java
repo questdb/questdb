@@ -1,8 +1,8 @@
 package io.questdb.cutlass.http;
 
+import io.questdb.std.Chars;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -30,13 +30,13 @@ public interface HttpSessionStore {
         private volatile long expiresAt;
 
         public SessionInfo(CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
-            this.principal = principal.toString();
+            this.principal = Chars.toString(principal);
             this.authType = authType;
             this.expiresAt = expiresAt;
 
             if (groups != null) {
                 for (int i = 0, n = groups.size(); i < n; i++) {
-                    this.groups.add(groups.getQuick(i).toString());
+                    this.groups.add(Chars.toString(groups.getQuick(i)));
                 }
             }
         }
