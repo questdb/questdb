@@ -79,6 +79,8 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
+import static io.questdb.griffin.engine.table.parquet.ParquetCompression.packCompressionCodecLevel;
+
 public class ParquetTest extends AbstractTest {
     private final static long DATA_PAGE_SIZE = 128; // bytes
     private final static Log LOG = LogFactory.getLog(ParquetTest.class);
@@ -627,7 +629,7 @@ public class ParquetTest extends AbstractTest {
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
                         path,
-                        (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
+                        packCompressionCodecLevel(5, ParquetCompression.COMPRESSION_ZSTD),
                         true,
                         rawArrayEncoding,
                         ROW_GROUP_SIZE,
