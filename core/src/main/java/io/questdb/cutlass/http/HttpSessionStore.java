@@ -14,6 +14,9 @@ public interface HttpSessionStore {
      */
     String createSession(@NotNull HttpAuthenticator authenticator);
 
+    default void setTokenGenerator(TokenGenerator tokenGenerator) {
+    }
+
     /**
      * Verify session id and return the associated session if the session is valid.
      *

@@ -1077,7 +1077,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             long multipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MULTIPART_IDLE_SPIN_COUNT, 10_000);
             boolean httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
-            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
+            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_COOKIES_ENABLED, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
 
             this.httpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_ACCEPT_LOOP_TIMEOUT, 500);

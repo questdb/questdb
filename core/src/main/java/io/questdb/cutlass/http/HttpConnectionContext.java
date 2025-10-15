@@ -520,7 +520,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     SecurityContextFactory.HTTP
             );
             // create session, if we do not have one yet
-            if (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal())) {
+            if ((sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
+                    && configuration.getHttpContextConfiguration().areCookiesEnabled()) {
                 sessionId = sessionStore.createSession(authenticator);
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
