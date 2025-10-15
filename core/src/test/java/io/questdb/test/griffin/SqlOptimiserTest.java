@@ -326,18 +326,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q1,
-                "SelectedRecord\n" +
-                        "    Window\n" +
-                        "      functions: [rank() over ()]\n" +
-                        "        SelectedRecord\n" +
-                        "            Filter filter: t2.ts<t1.ts\n" +
-                        "                Cross Join\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n"
+                "Window\n" +
+                        "  functions: [rank() over ()]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
         );
         assertSql("rank\tusage_system\tusage_system1\n" +
                 "1\t2.0\t2.0\n" +
@@ -348,18 +347,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q2,
-                "SelectedRecord\n" +
-                        "    Window\n" +
-                        "      functions: [rank() over (partition by [hostname])]\n" +
-                        "        SelectedRecord\n" +
-                        "            Filter filter: t2.ts<t1.ts\n" +
-                        "                Cross Join\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n"
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
         );
         assertSql("rank\tusage_system\tusage_system1\n" +
                 "1\t1.0\t1.0\n" +
@@ -371,20 +369,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q3,
-                "SelectedRecord\n" +
-                        "    Window\n" +
-                        "      functions: [rank() over (partition by [hostname])]\n" +
-                        "        VirtualRecord\n" +
-                        "          functions: [hostname,ts,usage_system,usage_system1+10]\n" +
-                        "            SelectedRecord\n" +
-                        "                Filter filter: t2.ts<t1.ts\n" +
-                        "                    Cross Join\n" +
-                        "                        PageFrame\n" +
-                        "                            Row forward scan\n" +
-                        "                            Frame forward scan on: cpu_ts\n" +
-                        "                        PageFrame\n" +
-                        "                            Row forward scan\n" +
-                        "                            Frame forward scan on: cpu_ts\n"
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "        SelectedRecord\n" +
+                        "            Filter filter: t2.ts<t1.ts\n" +
+                        "                Cross Join\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
         );
         assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
                 "1\t1.0\t1.0\t12.0\n" +

@@ -4479,11 +4479,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw e;
         }
 
-        final IntList columnCrossIndex = new IntList(selectColumnCount);
-        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
+        CharSequence timestampName = null;
+        int timestampNameDot = -1;
+        if (timestampIndex != -1) {
+            timestampName = factory.getMetadata().getColumnName(timestampIndex);
+            timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
+        }
         final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
                 ? model.getOrderBy().getQuick(0).token
                 : null;
+
+        final IntList columnCrossIndex = new IntList(selectColumnCount);
+        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
         boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
@@ -4506,13 +4513,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            if (index == timestampIndex
-                    // Always pick up the first ORDER BY column as the designated timestamp
-                    // in case of multiple aliases over the timestamp, e.g. `select ts, ts as ts1, ...`.
-                    // Otherwise, generateOrderBy() would be broken.
-                    && (!timestampSet || Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn))) {
-                queryMetadata.setTimestampIndex(i);
-                timestampSet = true;
+            if (index == timestampIndex) {
+                // Always prefer the column matching the first ORDER BY column as the designated
+                // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
+                // This invariant is important for generateOrderBy().
+                // Otherwise, prefer columns with aliases matching the base column name, e.g.
+                // prefer `t1.ts as ts` over `t1.ts as ts2`.
+                if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
+                        || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
+                        || !timestampSet) {
+                    queryMetadata.setTimestampIndex(i);
+                    timestampSet = true;
+                }
             }
         }
 

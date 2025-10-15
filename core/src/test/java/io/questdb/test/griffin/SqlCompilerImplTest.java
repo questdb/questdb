@@ -5247,22 +5247,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertSql(
                     "TS\tts2\tts1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n",
+                    "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
             );
 
             assertSql(
                     "TS\tts1\tts2\tx\tts3\tx1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;"
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n",
+                    "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;"
             );
 
             assertSql(
-                    "TS\tts1\tx\tts2\n" +
-                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+                    "TS\tts1\tx\tts11\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n",
+                    "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
             );
 
             assertSql(
-                    "TS\tts1\tx\tts2\n" +
-                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
+                    "TS\tts1\tx\tts11\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n",
+                    "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
             );
         });
     }
