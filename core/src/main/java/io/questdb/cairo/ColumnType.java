@@ -839,18 +839,18 @@ public final class ColumnType {
                 /* 25 IPv4       */, {IPv4, STRING, VARCHAR}
                 /* 26 VARCHAR    */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
                 /* 27 ARRAY      */, {ARRAY}
-                /* 28 unused     */, {}
-                /* 29 unused     */, {}
-                /* 30 unused     */, {}
-                /* 31 unused     */, {}
-                /* 32 INTERVAL   */, {INTERVAL, STRING}
-                /* 33 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 34 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 35 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 36 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
-                /* 37 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
-                /* 38 DECIMAL256 */, {DECIMAL256, DECIMAL}
-                /* 39 DECIMAL    */, {}
+                /* 28 DECIMAL8   */, {DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 29 DECIMAL16  */, {DECIMAL16, DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 30 DECIMAL32  */, {DECIMAL32, DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 31 DECIMAL64  */, {DECIMAL64, DECIMAL128, DECIMAL256, DECIMAL}
+                /* 32 DECIMAL128 */, {DECIMAL128, DECIMAL256, DECIMAL}
+                /* 33 DECIMAL256 */, {DECIMAL256, DECIMAL}
+                /* 34 DECIMAL    */, {}
+                /* 35 unused     */, {}
+                /* 36 unused     */, {}
+                /* 37 unused     */, {}
+                /* 38 unused     */, {}
+                /* 39 INTERVAL   */, {INTERVAL, STRING}
                 /* 40 NULL       */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
@@ -1003,13 +1003,13 @@ public final class ColumnType {
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
         TYPE_SIZE_POW2[UUID] = 4;
-        TYPE_SIZE_POW2[INTERVAL] = 4;
         TYPE_SIZE_POW2[DECIMAL8] = 0;
         TYPE_SIZE_POW2[DECIMAL16] = 1;
         TYPE_SIZE_POW2[DECIMAL32] = 2;
         TYPE_SIZE_POW2[DECIMAL64] = 3;
         TYPE_SIZE_POW2[DECIMAL128] = 4;
         TYPE_SIZE_POW2[DECIMAL256] = 5;
+        TYPE_SIZE_POW2[INTERVAL] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -1040,13 +1040,13 @@ public final class ColumnType {
         TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
-        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
         TYPE_SIZE[DECIMAL8] = Byte.BYTES;
         TYPE_SIZE[DECIMAL16] = Short.BYTES;
         TYPE_SIZE[DECIMAL32] = Integer.BYTES;
         TYPE_SIZE[DECIMAL64] = Long.BYTES;
         TYPE_SIZE[DECIMAL128] = 2 * Long.BYTES;
         TYPE_SIZE[DECIMAL256] = 4 * Long.BYTES;
+        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
 
         nonPersistedTypes.add(UNDEFINED);
         nonPersistedTypes.add(INTERVAL);
