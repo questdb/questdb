@@ -65,8 +65,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V1;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.test.AbstractCairoTest.parseFloorPartialTimestamp;
 
@@ -1222,74 +1221,65 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = serverMain.getHttpServerPort();
 
-                var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
-                for (int protocol : protocols) {
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                            .retryTimeoutMillis(0)
-                            .protocolVersion(protocol)
-                            .build()
-                    ) {
-                        sender.table(tableName)
-                                .decimalColumn("a", Decimal256.fromLong(12345, 0))
-                                .decimalColumn("b", Decimal256.fromLong(12345, 2))
-                                .at(100000000000L + protocol * 100, ChronoUnit.MICROS);
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .protocolVersion(PROTOCOL_VERSION_V3)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .decimalColumn("a", Decimal256.fromLong(12345, 0))
+                            .decimalColumn("b", Decimal256.fromLong(12345, 2))
+                            .at(100000000000L, ChronoUnit.MICROS);
 
-                        // Decimal without rescale
-                        sender.table(tableName)
-                                .decimalColumn("a", Decimal256.NULL_VALUE)
-                                .decimalColumn("b", Decimal256.fromLong(123456, 3))
-                                .at(100000000001L + protocol * 100, ChronoUnit.MICROS);
+                    // Decimal without rescale
+                    sender.table(tableName)
+                            .decimalColumn("a", Decimal256.NULL_VALUE)
+                            .decimalColumn("b", Decimal256.fromLong(123456, 3))
+                            .at(100000000001L, ChronoUnit.MICROS);
 
-                        // Integers -> Decimal
-                        sender.table(tableName)
-                                .longColumn("a", 42)
-                                .longColumn("b", 42)
-                                .at(100000000002L + protocol * 100, ChronoUnit.MICROS);
+                    // Integers -> Decimal
+                    sender.table(tableName)
+                            .longColumn("a", 42)
+                            .longColumn("b", 42)
+                            .at(100000000002L, ChronoUnit.MICROS);
 
-                        // Strings -> Decimal without rescale
-                        sender.table(tableName)
-                                .stringColumn("a", "42")
-                                .stringColumn("b", "42.123")
-                                .at(100000000003L + protocol * 100, ChronoUnit.MICROS);
+                    // Strings -> Decimal without rescale
+                    sender.table(tableName)
+                            .stringColumn("a", "42")
+                            .stringColumn("b", "42.123")
+                            .at(100000000003L, ChronoUnit.MICROS);
 
-                        // Strings -> Decimal with rescale
-                        sender.table(tableName)
-                                .stringColumn("a", "42.0")
-                                .stringColumn("b", "42.1")
-                                .at(100000000004L + protocol * 100, ChronoUnit.MICROS);
+                    // Strings -> Decimal with rescale
+                    sender.table(tableName)
+                            .stringColumn("a", "42.0")
+                            .stringColumn("b", "42.1")
+                            .at(100000000004L, ChronoUnit.MICROS);
 
-                        // Doubles -> Decimal
-                        sender.table(tableName)
-                                .doubleColumn("a", 42d)
-                                .doubleColumn("b", 42.1d)
-                                .at(100000000005L + protocol * 100, ChronoUnit.MICROS);
+                    // Doubles -> Decimal
+                    sender.table(tableName)
+                            .doubleColumn("a", 42d)
+                            .doubleColumn("b", 42.1d)
+                            .at(100000000005L, ChronoUnit.MICROS);
 
-                        // NaN/Inf Doubles -> Decimal
-                        sender.table(tableName)
-                                .doubleColumn("a", Double.NaN)
-                                .doubleColumn("b", Double.POSITIVE_INFINITY)
-                                .at(100000000006L + protocol * 100, ChronoUnit.MICROS);
-                        sender.flush();
-                    }
+                    // NaN/Inf Doubles -> Decimal
+                    sender.table(tableName)
+                            .doubleColumn("a", Double.NaN)
+                            .doubleColumn("b", Double.POSITIVE_INFINITY)
+                            .at(100000000006L, ChronoUnit.MICROS);
+                    sender.flush();
                 }
-                serverMain.awaitTxn(tableName, 2);
+
+                serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("select * from " + tableName, "a\tb\tts\n" +
-                        "12345\t123.450\t1970-01-02T03:46:40.000100Z\n" +
-                        "\t123.456\t1970-01-02T03:46:40.000101Z\n" +
-                        "42\t42.000\t1970-01-02T03:46:40.000102Z\n" +
-                        "42\t42.123\t1970-01-02T03:46:40.000103Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000104Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000105Z\n" +
-                        "\t\t1970-01-02T03:46:40.000106Z\n" +
-                        "12345\t123.450\t1970-01-02T03:46:40.000200Z\n" +
-                        "\t123.456\t1970-01-02T03:46:40.000201Z\n" +
-                        "42\t42.000\t1970-01-02T03:46:40.000202Z\n" +
-                        "42\t42.123\t1970-01-02T03:46:40.000203Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000204Z\n" +
-                        "42\t42.100\t1970-01-02T03:46:40.000205Z\n" +
-                        "\t\t1970-01-02T03:46:40.000206Z\n");
+                        "12345\t123.450\t1970-01-02T03:46:40.000000Z\n" +
+                        "\t123.456\t1970-01-02T03:46:40.000001Z\n" +
+                        "42\t42.000\t1970-01-02T03:46:40.000002Z\n" +
+                        "42\t42.123\t1970-01-02T03:46:40.000003Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000004Z\n" +
+                        "42\t42.100\t1970-01-02T03:46:40.000005Z\n" +
+                        "\t\t1970-01-02T03:46:40.000006Z\n");
             }
         });
     }
@@ -1401,84 +1391,81 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int port = serverMain.getHttpServerPort();
 
-                var protocols = new int[]{PROTOCOL_VERSION_V1, PROTOCOL_VERSION_V2};
-                for (int protocol : protocols) {
-                    try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                            .address("localhost:" + port)
-                            .autoFlushRows(Integer.MAX_VALUE)
-                            .retryTimeoutMillis(0)
-                            .protocolVersion(protocol)
-                            .build()) {
-                        // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
-                        sender.table(tableName)
-                                .longColumn("x", 1234)
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "line protocol value: 1234 is out bounds of column type: DECIMAL(6,3)");
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE)
+                        .retryTimeoutMillis(0)
+                        .protocolVersion(PROTOCOL_VERSION_V3)
+                        .build()) {
+                    // Integers out of bound (with scaling, 1234 becomes 1234.000 which have a precision of 7).
+                    sender.table(tableName)
+                            .longColumn("x", 1234)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "line protocol value: 1234 is out bounds of column type: DECIMAL(6,3)");
 
-                        sender.reset();
-                        // Integers overbound during the rescale process.
-                        sender.table(tableName)
-                                .longColumn("y", 12345)
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "line protocol value: 12345 is out bounds of column type: DECIMAL(76,73)");
+                    sender.reset();
+                    // Integers overbound during the rescale process.
+                    sender.table(tableName)
+                            .longColumn("y", 12345)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "line protocol value: 12345 is out bounds of column type: DECIMAL(76,73)");
 
-                        sender.reset();
-                        // Floating points with a scale greater than expected.
-                        sender.table(tableName)
-                                .doubleColumn("x", 1.2345d)
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+                    sender.reset();
+                    // Floating points with a scale greater than expected.
+                    sender.table(tableName)
+                            .doubleColumn("x", 1.2345d)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
 
-                        sender.reset();
-                        // Floating points with a precision greater than expected.
-                        sender.table(tableName)
-                                .doubleColumn("x", 12345.678d)
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
+                    sender.reset();
+                    // Floating points with a precision greater than expected.
+                    sender.table(tableName)
+                            .doubleColumn("x", 12345.678d)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "cast error from protocol type: FLOAT to column type: DECIMAL(6,3)");
 
-                        sender.reset();
-                        // String that is not a valid decimal.
-                        sender.table(tableName)
-                                .stringColumn("x", "abc")
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+                    sender.reset();
+                    // String that is not a valid decimal.
+                    sender.table(tableName)
+                            .stringColumn("x", "abc")
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
 
-                        // String that has a too big precision.
-                        sender.table(tableName)
-                                .stringColumn("x", "1E8")
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
+                    // String that has a too big precision.
+                    sender.table(tableName)
+                            .stringColumn("x", "1E8")
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "cast error from protocol type: STRING to column type: DECIMAL(6,3)");
 
-                        sender.reset();
-                        // Decimal with a too big precision.
-                        sender.table(tableName)
-                                .decimalColumn("x", Decimal256.fromLong(12345678, 3))
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "12345.678 is out bounds of column type: DECIMAL(6,3)");
+                    sender.reset();
+                    // Decimal with a too big precision.
+                    sender.table(tableName)
+                            .decimalColumn("x", Decimal256.fromLong(12345678, 3))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "12345.678 is out bounds of column type: DECIMAL(6,3)");
 
-                        sender.reset();
-                        // Decimal with a too big precision when scaled.
-                        sender.table(tableName)
-                                .decimalColumn("y", Decimal256.fromLong(12345, 0))
-                                .at(100000000000L, ChronoUnit.MICROS);
-                        flushAndAssertError(
-                                sender,
-                                "cast error from protocol type: DECIMAL to column type: DECIMAL(76,73)");
-                    }
+                    sender.reset();
+                    // Decimal with a too big precision when scaled.
+                    sender.table(tableName)
+                            .decimalColumn("y", Decimal256.fromLong(12345, 0))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "cast error from protocol type: DECIMAL to column type: DECIMAL(76,73)");
                 }
             }
         });
