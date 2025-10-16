@@ -25,6 +25,8 @@
 package io.questdb.cutlass.http.processors.v1;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -37,16 +39,19 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -54,17 +59,19 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.util.function.LongSupplier;
 
-import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
-import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
+import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
 
 public class ImportsRouter implements HttpRequestHandler {
+    private final HttpRequestProcessor getProcessor;
     private final HttpMultipartContentProcessor postProcessor;
 
     public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         postProcessor = new ImportPostProcessor(cairoEngine, configuration);
+        getProcessor = new ImportGetProcessor(cairoEngine, configuration);
     }
 
     public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
@@ -81,9 +88,364 @@ public class ImportsRouter implements HttpRequestHandler {
         if (HttpKeywords.isPOST(method)) {
             return postProcessor;
         } else if (HttpKeywords.isGET(method)) {
-            return null;
+            return getProcessor;
         }
         return null;
+    }
+
+    public static class ImportGetProcessor implements HttpRequestProcessor {
+        static final int FILE_SEND_INIT = 0;
+        static final int FILE_SEND_CHUNK = FILE_SEND_INIT + 1;
+        static final int FILE_SEND_COMPLETED = FILE_SEND_CHUNK + 1;
+        private static final Log LOG = LogFactory.getLog(ImportGetProcessor.class);
+        private static final LocalValue<State> LV = new LocalValue<>();
+        CairoEngine engine;
+        FilesFacade ff;
+        byte requiredAuthType;
+
+        public ImportGetProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+            engine = cairoEngine;
+            requiredAuthType = configuration.getRequiredAuthType();
+            ff = cairoEngine.getConfiguration().getFilesFacade();
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return requiredAuthType;
+        }
+
+        @Override
+        public void onRequestComplete(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            State state = LV.get(context);
+            if (state == null) {
+                LV.set(context, state = new State(engine.getConfiguration().getFilesFacade()));
+            }
+
+            HttpChunkedResponse response = context.getChunkedResponse();
+            CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
+            if (Chars.isBlank(importRoot)) {
+                sendException(503, response, "service unavailable: sql.copy.input.root is not configured", state);
+                return;
+            }
+
+            HttpRequestHeader request = context.getRequestHeader();
+            final DirectUtf8Sequence file = request.getUrlParam(URL_PARAM_FILENAME);
+
+            if (file == null || file.size() == 0) {
+                // No filename parameter - list all files in import directory
+                sendFileList(response, importRoot, state);
+                return;
+            }
+
+            // Filename provided - download specific file
+            if (containsAbsOrRelativePath(file)) {
+                sendException(403, response, "forbidden: path traversal not allowed in filename", state);
+                return;
+            }
+            state.file = file;
+            state.contentType = getContentType(file);
+            doResumeSend(context);
+        }
+
+        @Override
+        public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
+            State state = LV.get(context);
+            if (state != null) {
+                state.pausedQuery = pausedQuery;
+            }
+        }
+
+        @Override
+        public void resumeSend(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            try {
+                doResumeSend(context);
+            } catch (CairoError | CairoException e) {
+                throw ServerDisconnectException.INSTANCE;
+            }
+        }
+
+        private boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {
+            if (Utf8s.startsWithAscii(filename, "/") || Utf8s.startsWithAscii(filename, "\\")) {
+                return true;
+            }
+            return Utf8s.containsAscii(filename, "../") || Utf8s.containsAscii(filename, "..\\");
+        }
+
+        private void doResumeSend(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            State state = LV.get(context);
+            if (state == null) {
+                return;
+            }
+
+            if (!state.pausedQuery) {
+                context.resumeResponseSend();
+            } else {
+                state.pausedQuery = false;
+            }
+
+            final HttpChunkedResponse response = context.getChunkedResponse();
+            OUT:
+            while (true) {
+                try {
+                    switch (state.state) {
+                        case FILE_SEND_INIT:
+                            initFileSending(response, state);
+                            state.state = FILE_SEND_CHUNK;
+                            // fall through
+                        case FILE_SEND_CHUNK:
+                            sendFileChunk(response, state);
+                            if (state.fileOffset >= state.fileSize) {
+                                state.state = FILE_SEND_COMPLETED;
+                            }
+                            break;
+                        case FILE_SEND_COMPLETED:
+                            response.done();
+                            break OUT;
+                        default:
+                            break OUT;
+                    }
+                } catch (NoSpaceLeftInResponseBufferException ignored) {
+                    if (response.resetToBookmark()) {
+                        response.sendChunk(false);
+                    } else {
+                        LOG.info().$("Response buffer is too small").$();
+                        throw PeerDisconnectedException.INSTANCE;
+                    }
+                }
+            }
+            response.done();
+        }
+
+        private String getContentType(DirectUtf8Sequence filename) {
+            if (Utf8s.endsWithAscii(filename, ".parquet")) {
+                return CONTENT_TYPE_PARQUET;
+            } else if (Utf8s.endsWithAscii(filename, ".csv")) {
+                return CONTENT_TYPE_CSV;
+            } else if (Utf8s.endsWithAscii(filename, ".json")) {
+                return CONTENT_TYPE_JSON;
+            } else if (Utf8s.endsWithAscii(filename, ".txt")) {
+                return CONTENT_TYPE_TEXT;
+            }
+            return CONTENT_TYPE_OCTET_STREAM;
+        }
+
+        private void header(
+                HttpChunkedResponse response,
+                State state
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            response.status(200, state.contentType);
+            response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.file).putAscii("\"").putEOL();
+            response.sendHeader();
+        }
+
+        private void headerJsonError(int errorCode, HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            response.status(errorCode, CONTENT_TYPE_JSON);
+            response.sendHeader();
+        }
+
+        private void initFileSending(HttpChunkedResponse response, State state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            Path path = Path.getThreadLocal(engine.getConfiguration().getSqlCopyInputRoot());
+            path.concat(state.file);
+            state.fd = state.ff.openRO(path.$());
+            if (state.fd < 0) {
+                sendException(404, response, "file not found in import directory", state);
+                return;
+            }
+
+            state.fileSize = state.ff.length(state.fd);
+            if (state.fileSize > 0) {
+                state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_IMPORT);
+                if (state.fileAddress == 0) {
+                    sendException(500, response, "failed to memory-map file", state);
+                }
+            } else {
+                sendException(400, response, "unprocessable entity: file is empty", state);
+                return;
+            }
+
+            header(response, state);
+        }
+
+        private void scanDirectory(
+                CharSequence rootPath,
+                String relativePath,
+                HttpChunkedResponse response,
+                State state,
+                boolean[] first,
+                int rootLen
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            Path path = Path.getThreadLocal(rootPath);
+            if (!relativePath.isEmpty()) {
+                path.concat(relativePath);
+            }
+
+            long pFind = state.ff.findFirst(path.$());
+            if (pFind == -1) {
+                return;
+            }
+
+            try {
+                Utf8StringSink fileNameSink = Misc.getThreadLocalUtf8Sink();
+                do {
+                    long pUtf8NameZ = state.ff.findName(pFind);
+                    int type = state.ff.findType(pFind);
+
+                    if (pUtf8NameZ != 0) {
+                        fileNameSink.clear();
+                        if (state.ff.isDirOrSoftLinkDirNoDots(path, path.size(), pUtf8NameZ, type, fileNameSink)) {
+                            String dirName = Utf8s.toString(fileNameSink);
+                            String newRelativePath = relativePath.isEmpty() ? dirName : relativePath + "/" + dirName;
+                            scanDirectory(rootPath, newRelativePath, response, state, first, rootLen);
+                        } else if (type == Files.DT_FILE) {
+                            fileNameSink.clear();
+                            for (long i = pUtf8NameZ; ; i++) {
+                                byte b = Unsafe.getUnsafe().getByte(i);
+                                if (b == 0) break;
+                                fileNameSink.putAny(b);
+                            }
+
+                            String fileName = Utf8s.toString(fileNameSink);
+                            String fullRelativePath = relativePath.isEmpty() ? fileName : relativePath + "/" + fileName;
+
+                            path.trimTo(rootLen).concat(fullRelativePath);
+                            long fileSize = state.ff.length(path.$());
+                            long lastModified = state.ff.getLastModified(path.$());
+                            if (!first[0]) {
+                                response.put(',');
+                            }
+                            first[0] = false;
+                            response.put('{');
+                            response.putAsciiQuoted("path").put(':').putQuote().escapeJsonStr(fullRelativePath).putQuote().put(',');
+                            response.putAsciiQuoted("name").put(':').putQuote().escapeJsonStr(fileName).putQuote().put(',');
+                            response.putAsciiQuoted("size").put(':').put(fileSize).put(',');
+                            response.putAsciiQuoted("lastModified").put(':').put(lastModified);
+                            response.put('}');
+                        }
+                    }
+                } while (state.ff.findNext(pFind) > 0);
+            } finally {
+                state.ff.findClose(pFind);
+            }
+        }
+
+        private void sendException(
+                int errorCode,
+                HttpChunkedResponse response,
+                CharSequence message,
+                State state
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            if (state.fileOffset > 0) {
+                LOG.error().$("partial file response sent, closing connection on error [fd=").$(state.getFd())
+                        .$(", fileOffset=").$(state.fileOffset)
+                        .$(", errorMessage=").$safe(message)
+                        .I$();
+                throw PeerDisconnectedException.INSTANCE;
+            }
+            headerJsonError(errorCode, response);
+            response.putAscii('{')
+                    .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message).putQuote()
+                    .putAscii('}');
+            response.sendChunk(true);
+        }
+
+        private void sendFileChunk(HttpChunkedResponse response, State state) throws PeerIsSlowToReadException, PeerDisconnectedException {
+            if (state.fileOffset >= state.fileSize) {
+                return;
+            }
+
+            long remainingSize = state.fileSize - state.fileOffset;
+            int sendLSize = (int) Math.min(Integer.MAX_VALUE, remainingSize);
+            long bytesWritten = response.writeBytes(state.fileAddress + state.fileOffset, sendLSize);
+            state.fileOffset += bytesWritten;
+            response.bookmark();
+            if (state.fileOffset < state.fileSize) {
+                response.sendChunk(false);
+            }
+        }
+
+        private void sendFileList(
+                HttpChunkedResponse response,
+                CharSequence importRoot,
+                State state
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            try {
+                response.status(200, CONTENT_TYPE_JSON);
+                response.sendHeader();
+                response.put('{').putAsciiQuoted("files").put(':').put('[');
+
+                boolean[] first = {true}; // Use array to allow modification in lambda
+                int rootLen = importRoot.length();
+
+                // Recursively scan import directory and subdirectories
+                scanDirectory(importRoot, "", response, state, first, rootLen);
+
+                response.put(']').put('}');
+                response.sendChunk(true);
+            } catch (Exception e) {
+                LOG.error().$("failed to list files in import directory: ").$(e).I$();
+                sendException(500, response, "failed to list directory contents", state);
+            }
+        }
+
+        public static class State implements Mutable, Closeable {
+            CharSequence contentType;
+            HttpConnectionContext context;
+            long fd = -1;
+            FilesFacade ff;
+            DirectUtf8Sequence file;
+            long fileAddress = 0;
+            long fileOffset;
+            long fileSize;
+            boolean pausedQuery;
+            int state;
+
+            State(FilesFacade ff) {
+                this.ff = ff;
+            }
+
+            @Override
+            public void clear() {
+                try {
+                    if (fileAddress != 0) {
+                        ff.munmap(fileAddress, fileSize, MemoryTag.MMAP_IMPORT);
+                    }
+                } catch (Exception e) {
+                    LOG.error().$("failed to unmap memory [fileAddress=").$(fileAddress).$("]").$();
+                } finally {
+                    fileAddress = 0;
+                }
+
+                try {
+                    if (fd != -1) {
+                        ff.close(fd);
+                    }
+                } catch (Exception e) {
+                    LOG.error().$("failed to close file descriptor [fd=").$(fd).$("]").$();
+                } finally {
+                    fd = -1;
+                }
+
+                fileSize = 0;
+                fileOffset = 0;
+                state = FILE_SEND_INIT;
+                file = null;
+                contentType = null;
+            }
+
+            @Override
+            public void close() throws IOException {
+            }
+
+            public long getFd() {
+                return context.getFd();
+            }
+        }
     }
 
     /**
@@ -247,21 +609,6 @@ public class ImportsRouter implements HttpRequestHandler {
             response.done();
         }
 
-        private void encodeErrorJson(HttpChunkedResponse response, State state) {
-            response.bookmark();
-            response.put("{\"errors\":[{")
-                    .put("\"status\":\"").put(state.errorCode)
-                    .put("\",\"detail\":\"").put(state.errorMsg)
-                    .put("\"");
-
-            if (state.errorCode == 409) {
-                response.put(",\"meta\":{\"name\":\"")
-                        .put(Utf8s.stringFromUtf8Bytes(state.realPath.lo() + 1, state.realPath.hi()))
-                        .put("\"}");
-            }
-            response.put("}]}");
-        }
-
         private void encodeSuccessJson(HttpChunkedResponse response, State state) {
             response.put("{\"data\":[");
             for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
@@ -273,25 +620,6 @@ public class ImportsRouter implements HttpRequestHandler {
                 }
             }
             response.put("]}");
-        }
-
-        private void sendError(HttpConnectionContext context) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
-            try {
-                final State state = LV.get(context);
-                final HttpChunkedResponse response = context.getChunkedResponse();
-                if (state.errorCode < 500) {
-                    LOG.error().$("POST /imports failed [status=").$(state.errorCode).$(", fd=").$(context.getFd()).$(", msg=").$safe(state.errorMsg).I$();
-                }
-                response.status(state.errorCode, state.errorMsg.asAsciiCharSequence());
-                response.sendHeader();
-                response.sendChunk(false);
-                encodeErrorJson(response, state);
-                response.sendChunk(true);
-                response.shutdownWrite();
-                throw ServerDisconnectException.INSTANCE;
-            } finally {
-                state.clear();
-            }
         }
 
         private void sendErrorWithSuccessInfo(HttpConnectionContext context, int errorCode, String errorMsg) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {

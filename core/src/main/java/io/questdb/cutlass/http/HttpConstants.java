@@ -34,6 +34,8 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
+    public static final String CONTENT_TYPE_OCTET_STREAM = "application/octet-stream";
+    public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_VALUE_SEPARATOR = '=';
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
