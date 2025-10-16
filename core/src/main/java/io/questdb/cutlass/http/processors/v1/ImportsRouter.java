@@ -46,6 +46,8 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntStack;
+import io.questdb.std.LongStack;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -55,6 +57,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
@@ -64,6 +67,7 @@ import java.util.function.LongSupplier;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
+import static java.net.HttpURLConnection.HTTP_OK;
 
 public class ImportsRouter implements HttpRequestHandler {
     private final HttpRequestProcessor getProcessor;
@@ -122,7 +126,6 @@ public class ImportsRouter implements HttpRequestHandler {
             if (state == null) {
                 LV.set(context, state = new State(engine.getConfiguration().getFilesFacade()));
             }
-
             HttpChunkedResponse response = context.getChunkedResponse();
             CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
             if (Chars.isBlank(importRoot)) {
@@ -135,7 +138,7 @@ public class ImportsRouter implements HttpRequestHandler {
 
             if (file == null || file.size() == 0) {
                 // No filename parameter - list all files in import directory
-                sendFileList(response, importRoot, state);
+                sendFileList(context, importRoot, state);
                 return;
             }
 
@@ -146,15 +149,7 @@ public class ImportsRouter implements HttpRequestHandler {
             }
             state.file = file;
             state.contentType = getContentType(file);
-            doResumeSend(context);
-        }
-
-        @Override
-        public void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
-            State state = LV.get(context);
-            if (state != null) {
-                state.pausedQuery = pausedQuery;
-            }
+            doResumeSend(context, state);
         }
 
         @Override
@@ -162,9 +157,51 @@ public class ImportsRouter implements HttpRequestHandler {
                 HttpConnectionContext context
         ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
             try {
-                doResumeSend(context);
+                State state = LV.get(context);
+                if (state != null) {
+                    if (state.file == null || state.file.size() == 0) {
+                        context.simpleResponse().sendStatusJsonContent(HTTP_OK, state.sink, false);
+                    } else {
+                        doResumeSend(context, state);
+                    }
+                }
             } catch (CairoError | CairoException e) {
                 throw ServerDisconnectException.INSTANCE;
+            }
+        }
+
+        private static void copyUtf8ZString(long pUtf8NameZ, Path path) {
+            for (long i = pUtf8NameZ; ; i++) {
+                byte b = Unsafe.getUnsafe().getByte(i);
+                if (b == 0) break;
+                path.put(b);
+            }
+            path.put((byte) 0);
+        }
+
+        private static void writeRelativePathEscaped(Utf8Sink sink, Path path, int rootLen, int currentPathLen) {
+            if (currentPathLen > rootLen) {
+                int relativeStart = rootLen + 1; // Skip root path and separator
+                for (int i = relativeStart; i < currentPathLen; i++) {
+                    char c = (char) path.byteAt(i);
+                    if (c == '\"' || c == '\\') {
+                        sink.putAscii('\\');
+                    }
+                    sink.putAscii(c);
+                }
+                sink.putAscii('/');
+            }
+        }
+
+        private static void writeUtf8StringEscaped(Utf8Sink sink, long pUtf8NameZ) {
+            for (long i = pUtf8NameZ; ; i++) {
+                byte b = Unsafe.getUnsafe().getByte(i);
+                if (b == 0) break;
+                char c = (char) b;
+                if (c == '\"' || c == '\\') {
+                    sink.putAscii('\\');
+                }
+                sink.putAscii(c);
             }
         }
 
@@ -176,19 +213,9 @@ public class ImportsRouter implements HttpRequestHandler {
         }
 
         private void doResumeSend(
-                HttpConnectionContext context
+                HttpConnectionContext context,
+                State state
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            State state = LV.get(context);
-            if (state == null) {
-                return;
-            }
-
-            if (!state.pausedQuery) {
-                context.resumeResponseSend();
-            } else {
-                state.pausedQuery = false;
-            }
-
             final HttpChunkedResponse response = context.getChunkedResponse();
             OUT:
             while (true) {
@@ -254,7 +281,7 @@ public class ImportsRouter implements HttpRequestHandler {
             path.concat(state.file);
             state.fd = state.ff.openRO(path.$());
             if (state.fd < 0) {
-                sendException(404, response, "file not found in import directory", state);
+                sendException(404, response, "file not found in import files", state);
                 return;
             }
 
@@ -274,63 +301,76 @@ public class ImportsRouter implements HttpRequestHandler {
 
         private void scanDirectory(
                 CharSequence rootPath,
-                String relativePath,
-                HttpChunkedResponse response,
-                State state,
-                boolean[] first,
-                int rootLen
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+                Utf8Sink sink,
+                State state
+        ) {
+            int rootLen = rootPath.length();
             Path path = Path.getThreadLocal(rootPath);
-            if (!relativePath.isEmpty()) {
-                path.concat(relativePath);
-            }
-
+            Utf8StringSink tempSink = Misc.getThreadLocalUtf8Sink();
+            state.findStack.clear();
+            state.pathLenStack.clear();
             long pFind = state.ff.findFirst(path.$());
             if (pFind == -1) {
                 return;
             }
+            state.findStack.push(pFind);
+            state.pathLenStack.push(path.size());
 
             try {
-                Utf8StringSink fileNameSink = Misc.getThreadLocalUtf8Sink();
-                do {
+                while (state.findStack.notEmpty()) {
+                    pFind = state.findStack.peek();
+                    int currentPathLen = state.pathLenStack.peek();
                     long pUtf8NameZ = state.ff.findName(pFind);
                     int type = state.ff.findType(pFind);
-
                     if (pUtf8NameZ != 0) {
-                        fileNameSink.clear();
-                        if (state.ff.isDirOrSoftLinkDirNoDots(path, path.size(), pUtf8NameZ, type, fileNameSink)) {
-                            String dirName = Utf8s.toString(fileNameSink);
-                            String newRelativePath = relativePath.isEmpty() ? dirName : relativePath + "/" + dirName;
-                            scanDirectory(rootPath, newRelativePath, response, state, first, rootLen);
-                        } else if (type == Files.DT_FILE) {
-                            fileNameSink.clear();
-                            for (long i = pUtf8NameZ; ; i++) {
-                                byte b = Unsafe.getUnsafe().getByte(i);
-                                if (b == 0) break;
-                                fileNameSink.putAny(b);
+                        tempSink.clear();
+                        if (state.ff.isDirOrSoftLinkDirNoDots(path, currentPathLen, pUtf8NameZ, type, tempSink)) {
+                            path.trimTo(currentPathLen);
+                            path.concat(pUtf8NameZ).slash();
+                            long childFind = state.ff.findFirst(path.$());
+                            if (childFind != -1) {
+                                state.findStack.push(childFind);
+                                state.pathLenStack.push(path.size());
+                                continue;
                             }
-
-                            String fileName = Utf8s.toString(fileNameSink);
-                            String fullRelativePath = relativePath.isEmpty() ? fileName : relativePath + "/" + fileName;
-
-                            path.trimTo(rootLen).concat(fullRelativePath);
+                        } else if (type == Files.DT_FILE) {
+                            if (!state.firstFile) {
+                                sink.put(',');
+                            }
+                            state.firstFile = false;
+                            sink.put('{');
+                            sink.putAsciiQuoted("path").put(':').putQuote();
+                            writeRelativePathEscaped(sink, path, rootLen, currentPathLen);
+                            writeUtf8StringEscaped(sink, pUtf8NameZ);
+                            sink.putQuote().put(',');
+                            sink.putAsciiQuoted("name").put(':').putQuote();
+                            writeUtf8StringEscaped(sink, pUtf8NameZ);
+                            sink.putQuote().put(',');
+                            path.trimTo(currentPathLen);
+                            copyUtf8ZString(pUtf8NameZ, path);
                             long fileSize = state.ff.length(path.$());
                             long lastModified = state.ff.getLastModified(path.$());
-                            if (!first[0]) {
-                                response.put(',');
-                            }
-                            first[0] = false;
-                            response.put('{');
-                            response.putAsciiQuoted("path").put(':').putQuote().escapeJsonStr(fullRelativePath).putQuote().put(',');
-                            response.putAsciiQuoted("name").put(':').putQuote().escapeJsonStr(fileName).putQuote().put(',');
-                            response.putAsciiQuoted("size").put(':').put(fileSize).put(',');
-                            response.putAsciiQuoted("lastModified").put(':').put(lastModified);
-                            response.put('}');
+                            sink.putAsciiQuoted("size").put(':').put(fileSize).put(',');
+                            sink.putAsciiQuoted("lastModified").put(':').put(lastModified);
+                            sink.put('}');
                         }
                     }
-                } while (state.ff.findNext(pFind) > 0);
+
+                    if (state.ff.findNext(pFind) <= 0) {
+                        state.ff.findClose(pFind);
+                        state.findStack.pop();
+                        state.pathLenStack.pop();
+
+                        if (state.pathLenStack.notEmpty()) {
+                            path.trimTo(state.pathLenStack.peek());
+                        }
+                    }
+                }
             } finally {
-                state.ff.findClose(pFind);
+                while (state.findStack.notEmpty()) {
+                    state.ff.findClose(state.findStack.pop());
+                    state.pathLenStack.pop();
+                }
             }
         }
 
@@ -370,30 +410,34 @@ public class ImportsRouter implements HttpRequestHandler {
         }
 
         private void sendFileList(
-                HttpChunkedResponse response,
+                HttpConnectionContext context,
                 CharSequence importRoot,
                 State state
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            Utf8StringSink listSink = state.sink;
+            listSink.put('[');
             try {
-                response.status(200, CONTENT_TYPE_JSON);
-                response.sendHeader();
-                response.put('{').putAsciiQuoted("files").put(':').put('[');
-
-                boolean[] first = {true}; // Use array to allow modification in lambda
-                int rootLen = importRoot.length();
-
-                // Recursively scan import directory and subdirectories
-                scanDirectory(importRoot, "", response, state, first, rootLen);
-
-                response.put(']').put('}');
-                response.sendChunk(true);
-            } catch (Exception e) {
-                LOG.error().$("failed to list files in import directory: ").$(e).I$();
-                sendException(500, response, "failed to list directory contents", state);
+                scanDirectory(importRoot, listSink, state);
+                listSink.put(']');
+                context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
+            } catch (CairoException e) {
+                LOG.error().$("failed to list import files: ").$(e.getFlyweightMessage()).I$();
+                HttpChunkedResponse response = context.getChunkedResponse();
+                StringSink sink = Misc.getThreadLocalSink();
+                sink.put("failed to list import contents, error: ").put(e.getFlyweightMessage());
+                sendException(500, response, sink, state);
+            } catch (Throwable e) {
+                LOG.error().$("failed to list import files: ").$(e).I$();
+                HttpChunkedResponse response = context.getChunkedResponse();
+                StringSink sink = Misc.getThreadLocalSink();
+                sink.put("failed to list import contents, error: ").put(e.getMessage());
+                sendException(500, response, sink, state);
             }
         }
 
         public static class State implements Mutable, Closeable {
+            final LongStack findStack = new LongStack();
+            final IntStack pathLenStack = new IntStack();
             CharSequence contentType;
             HttpConnectionContext context;
             long fd = -1;
@@ -402,7 +446,8 @@ public class ImportsRouter implements HttpRequestHandler {
             long fileAddress = 0;
             long fileOffset;
             long fileSize;
-            boolean pausedQuery;
+            boolean firstFile = true;
+            Utf8StringSink sink = new Utf8StringSink();
             int state;
 
             State(FilesFacade ff) {
@@ -436,6 +481,10 @@ public class ImportsRouter implements HttpRequestHandler {
                 state = FILE_SEND_INIT;
                 file = null;
                 contentType = null;
+                findStack.clear();
+                pathLenStack.clear();
+                firstFile = true;
+                sink.clear();
             }
 
             @Override
