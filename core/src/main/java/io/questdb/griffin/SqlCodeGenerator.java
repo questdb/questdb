@@ -1631,17 +1631,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         // Check if we have an ORDER BY clause
         // Use lastSeenOrderByModel which is captured as we descend through nested models
-        if (lastSeenOrderByModel == null) {
+        QueryModel orderByModel = lastSeenOrderByModel;
+        if (orderByModel == null) {
             return null;
         }
 
-        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
+        ExpressionNode orderByNode = orderByModel.getOrderBy().getQuick(0);
 
         // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
         ExpressionNode orderByExpr = orderByNode;
         if (orderByNode.type == ExpressionNode.LITERAL) {
             // Look up the column in the model's alias map to get the actual expression
-            QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
+            QueryColumn queryColumn = orderByModel.getAliasToColumnMap().get(orderByNode.token);
             if (queryColumn != null) {
                 orderByExpr = queryColumn.getAst();
             }
@@ -1688,8 +1689,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null; // Slave column not found
         }
 
-        // Pattern detected! Return the info needed to create the optimized factory.
-        return new TimestampLadderInfo(timestampColumnIndex, slaveColumnIndex);
+        // Pattern detected! Now find which SELECT column (if any) matches the ORDER BY expression.
+        // This will become the designated timestamp in the result metadata.
+        int resultTimestampColumnIndex = -1;
+        final ObjList<QueryColumn> selectColumns = orderByModel.getColumns();
+        for (int i = 0, n = selectColumns.size(); i < n; i++) {
+            final QueryColumn column = selectColumns.getQuick(i);
+            if (column != null && column.getAst() != null) {
+                // Compare the SELECT column's expression with the ORDER BY expression
+                if (ExpressionNode.compareNodesExact(column.getAst(), orderByExpr)) {
+                    resultTimestampColumnIndex = i;
+                    break;
+                }
+            }
+        }
+        assert resultTimestampColumnIndex != -1 : "resultTimestampColumnIndex is -1";
+
+        // Return the info needed to create the optimized factory.
+        // resultTimestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
+        return new TimestampLadderInfo(timestampColumnIndex, slaveColumnIndex, resultTimestampColumnIndex);
     }
 
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
@@ -2841,7 +2859,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     // Use the optimized TimestampLadderRecordCursorFactory
                                     master = new TimestampLadderRecordCursorFactory(
                                             configuration,
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, ladderInfo.designatedTimestampColumnIndex),
                                             master,
                                             slave,
                                             masterMetadata.getColumnCount(),
@@ -7181,12 +7199,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Container class to hold the detected parameters of a timestamp ladder pattern.
      */
     private static class TimestampLadderInfo {
+        int designatedTimestampColumnIndex;
         int masterTimestampColumnIndex;
         int slaveSequenceColumnIndex;
 
-        TimestampLadderInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex) {
+        TimestampLadderInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex, int designatedTimestampColumnIndex) {
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
+            this.designatedTimestampColumnIndex = designatedTimestampColumnIndex;
         }
     }
 
