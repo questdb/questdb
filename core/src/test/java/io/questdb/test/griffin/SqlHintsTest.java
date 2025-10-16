@@ -114,6 +114,10 @@ public class SqlHintsTest extends AbstractTest {
 
             model.clear();
             Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
+
+            // parameter-less hint is ignored
+            model.addHint(SqlHints.ENABLE_PRE_TOUCH_HINT, null);
+            Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
         });
     }
 }
