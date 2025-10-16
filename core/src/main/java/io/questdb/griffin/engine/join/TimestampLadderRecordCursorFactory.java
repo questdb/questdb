@@ -175,9 +175,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * The slave cursor (arithmetic sequence) is fully materialized into a RecordArray
      * for efficient random access during the optimized iteration.
      * <p>
-     * Uses a merge algorithm similar to ArithmeticSequenceMerger, maintaining a circular
-     * linked list of SlaveRowIterator objects (one per master row) that emit rows in
-     * sorted timestamp order.
+     * Uses a merge algorithm that maintains a circular linked list of SlaveRowIterator
+     * objects (one per master row) that emit rows in sorted timestamp order.
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
         private final CairoConfiguration configuration;
@@ -188,7 +187,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private final RecordArray slaveRecordArray;
         private final LongList slaveRecordOffsets;
         private final int slaveSequenceColumnIndex;
-        private final RecordCursor.Counter tmpCounter;
         private SqlExecutionCircuitBreaker circuitBreaker;
         // Merge algorithm state
         private SlaveRowIterator currentIter;
@@ -211,16 +209,11 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             this.configuration = configuration;
             this.masterMetadata = masterMetadata;
             this.record = new JoinRecord(columnSplit);
-            this.tmpCounter = new Counter();
             this.masterTimestampColumnIndex = masterTimestampColumnIndex;
             this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
             this.slaveRecordArray = slaveRecordArray;
             this.slaveRecordOffsets = new LongList();
             this.masterRecordSink = masterRecordSink;
-        }
-
-        @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         }
 
         @Override
@@ -338,7 +331,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             masterHasNext = false;
             masterCursor.toTop();
             slaveRecordArray.toTop();
-            tmpCounter.clear();
         }
 
         private @NotNull SlaveRowIterator activateMasterRow() {
@@ -402,7 +394,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             prevIter = null;
             isMasterHasNextPending = true;
             masterHasNext = false;
-            tmpCounter.clear();
         }
 
         // Specifically designed for this algorithm:
