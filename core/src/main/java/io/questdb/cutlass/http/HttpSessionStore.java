@@ -47,10 +47,12 @@ public interface HttpSessionStore {
         private final ObjList<CharSequence> groupsA = new ObjList<>();
         private final ObjList<CharSequence> groupsB = new ObjList<>();
         private final String principal;
+        private final String sessionId;
         private volatile long expiresAt;
         private volatile ObjList<CharSequence> groups = groupsB;
 
-        public SessionInfo(CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
+        public SessionInfo(@NotNull CharSequence sessionId, CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
+            this.sessionId = Chars.toString(sessionId);
             this.principal = Chars.toString(principal);
             this.authType = authType;
             this.expiresAt = expiresAt;
@@ -75,6 +77,10 @@ public interface HttpSessionStore {
         @Override
         public String getPrincipal() {
             return principal;
+        }
+
+        public String getSessionId() {
+            return sessionId;
         }
 
         public synchronized void setGroups(@Nullable ObjList<CharSequence> source) {

@@ -31,7 +31,7 @@ public interface HttpCookieHandler {
 
     boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext);
 
-    HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context, HttpSessionStore sessionStore);
+    HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context);
 
     default void setServiceAccountCookie(HttpResponseHeader header, SecurityContext securityContext) {
     }

@@ -75,7 +75,9 @@ import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
+    private static final String FALSE = "false";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
+    private static final String TRUE = "true";
     private final HttpAuthenticator authenticator;
     private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
     private final HttpServerConfiguration configuration;
@@ -493,34 +495,36 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
-            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this, sessionStore);
-            if (!authenticator.authenticate(headerParser)) {
-                // auth failed, fallback to session cookie if there is one
-                if (sessionInfo != null) {
-                    // create security context from session info
-                    securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                            sessionInfo, SecurityContextFactory.HTTP
-                    );
-                    authenticationNanos = clock.getTicks() - authenticationStart;
-                    return true;
-                }
 
+            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this);
+
+            final PrincipalContext principalContext;
+            if (authenticator.authenticate(headerParser)) {
+                principalContext = authenticator;
+            } else if (sessionInfo != null) {
+                principalContext = sessionInfo;
+            } else {
                 // authenticationNanos stays 0, when it fails this value is irrelevant
                 return false;
             }
 
             // auth successful, create security context from auth info
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    authenticator, SecurityContextFactory.HTTP
-            );
-            // create session, if we do not have one yet, cookies are enabled, and the client requested it
-            final DirectUtf8Sequence createSession = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+            final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
+            securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
+
+            final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+
+            // create session if we do not have one yet, and cookies are enabled, and the client requested it
             if (
-                    createSession != null
+                    Utf8s.equalsNcAscii(TRUE, sessionParam)
                             && (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
                             && configuration.getHttpContextConfiguration().areCookiesEnabled()
             ) {
                 sessionStore.createSession(authenticator, sessionID);
+            } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
+                // close session if client requested it
+                // note that this request is still going to be processed
+                sessionStore.destroySession(sessionInfo.getSessionId());
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }
