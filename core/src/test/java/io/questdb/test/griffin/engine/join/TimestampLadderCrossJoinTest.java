@@ -53,7 +53,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(2)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -76,8 +76,6 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
-
-            // Verify that Timestamp Ladder Join optimization is being used
         });
     }
 
@@ -89,7 +87,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
                     SELECT id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
@@ -114,7 +112,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(0)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -144,7 +142,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // 100-row sequence creates 1000 total rows
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(100)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -174,7 +172,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(2)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -211,7 +209,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // Large sequence (1-second offsets) creates heavy interleaving
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -251,7 +249,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // With 5-second offsets (0, 1, 2, 3, 4), the sequences interleave
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(5)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -297,7 +295,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // With 3-second offsets (0, 1, 2), the sequences don't overlap
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -343,12 +341,13 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             """,
                     """
                             WITH offsets AS (
-                                SELECT x-3 AS sec_offs, 1_000_000 * (x-3) usec_offs
+                                SELECT 1_000_000 * (x-3) usec_offs
                                 FROM long_sequence(5)
                             )
                             SELECT id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                            ORDER BY order_ts + usec_offs
+                            """,
                     null,
                     false,
                     true
@@ -374,7 +373,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // Simulate generating interpolated timestamps every 10 seconds for each reading
             String sql = """
                     WITH time_offsets AS (
-                        SELECT (x-1) * 10 AS sec_offs, (x-1) * 10_000_000 AS usec_offs
+                        SELECT (x-1) * 10_000_000 AS usec_offs
                         FROM long_sequence(6)
                     )
                     SELECT sensor_id, temperature, reading_ts + usec_offs AS ts
@@ -422,7 +421,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             // Test with 1201 rows to verify performance and correctness with larger sequences
             String sql = """
                     WITH offsets AS (
-                        SELECT x-601 AS sec_offs, 1_000_000 * (x-601) AS usec_offs
+                        SELECT 1_000_000 * (x-601) AS usec_offs
                         FROM long_sequence(1201)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -474,7 +473,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String query = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(3)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -516,7 +515,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             """,
                     """
                             WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                                SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(1)
                             )
                             SELECT id, order_ts + usec_offs AS ts
@@ -538,7 +537,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
             String sql = """
                     WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
                     SELECT id, order_ts + usec_offs AS ts
@@ -583,7 +582,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             """,
                     """
                             WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                                SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(2)
                             )
                             SELECT id, order_ts + usec_offs AS ts
@@ -615,7 +614,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             """,
                     """
                             WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                                SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(3)
                             )
                             SELECT id, customer, amount, order_ts + usec_offs AS ts
