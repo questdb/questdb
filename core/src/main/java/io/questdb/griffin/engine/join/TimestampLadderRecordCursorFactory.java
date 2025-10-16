@@ -263,27 +263,35 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             advanceMasterIfPending();
             SlaveRowIterator nextIter = currentIter.nextIterator();
+            final boolean nextIterNeedsSetup;
             if (currentIter.isEmpty()) {
                 if (prevIter.removeNextIterator() == null) {
+                    currentIter = null;
                     // prevIter.removeNextIterator() removed currentIter from the circular list.
                     // If it returned null, it implies that nextIter == currentIter (we got it from
                     // the circular list of size one). So, there's no actual next iterator.
-                    if (masterHasNext) {
-                        // Activate the next master row, and use this iterator as the beginning of a new circular list.
-                        nextIter = activateMasterRow();
-                    } else {
+                    if (!masterHasNext) {
                         // No more iterators, no more master rows, we're all done.
-                        prevIter = currentIter = null;
+                        prevIter = null;
                         return false;
                     }
+                    // Activate the next master row, and use this iterator as the beginning of a new circular list.
+                    nextIter = activateMasterRow();
+                    prevIter = nextIter;
+                    nextIterNeedsSetup = false;
+                } else {
+                    nextIterNeedsSetup = true;
                 }
             } else {
                 prevIter = currentIter;
+                nextIterNeedsSetup = true;
             }
-            if (masterHasNext && initialTimestampOfMasterRow() < nextIter.peekNextTimestamp()) {
-                nextIter = activateMasterRow();
-            } else {
-                nextIter.gotoNextRow();
+            if (nextIterNeedsSetup) {
+                if (masterHasNext && initialTimestampOfMasterRow() < nextIter.peekNextTimestamp()) {
+                    nextIter = activateMasterRow();
+                } else {
+                    nextIter.gotoNextRow();
+                }
             }
             currentIter = nextIter;
             setupJoinRecord(currentIter.getMasterRecord(), currentIter.currentRowNum());
@@ -335,7 +343,10 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         private @NotNull SlaveRowIterator activateMasterRow() {
             isMasterHasNextPending = true;
-            return currentIter.postInsertNewIterator(masterCursor.getRecord());
+            if (currentIter != null) {
+                return currentIter.postInsertNewIterator(masterCursor.getRecord());
+            }
+            return new SlaveRowIterator(masterCursor.getRecord());
         }
 
         private void advanceMasterIfPending() {
@@ -354,6 +365,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private void setupJoinRecord(Record masterRecord, int slaveRowNum) {
             long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
             Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
+            long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
+            long slaveTimeOffset = slaveRecord.getLong(slaveSequenceColumnIndex);
+            System.out.printf("[%d,%d]\n", masterTimestamp / 1_000_000, slaveTimeOffset / 1_000_000);
             record.of(masterRecord, slaveRecord);
         }
 
