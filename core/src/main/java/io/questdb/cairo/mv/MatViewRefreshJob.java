@@ -813,9 +813,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             Misc.free(factory);
             int errno = Integer.MIN_VALUE;
             if (th instanceof CairoException e) {
-                if (e.isInterruption()) {
-                    // The query was cancelled, most likely by a questdb shutdown.
-                    LOG.info().$("materialized view refresh cancelled [view=").$(viewTableToken)
+                if (e.isInterruption() && engine.isClosing()) {
+                    // The query was cancelled, because a questdb shutdown.
+                    LOG.info().$("materialized view refresh cancelled on shutdown [view=").$(viewTableToken)
                             .$(", msg=").$safe(e.getFlyweightMessage())
                             .I$();
                     return false;
