@@ -386,7 +386,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
             LOG.info().$("removing ").$(path).$();
-            Assert.assertTrue(Files.remove(path.$()));
+            Assert.assertTrue(TestUtils.remove(path.$()));
         }
     }
 

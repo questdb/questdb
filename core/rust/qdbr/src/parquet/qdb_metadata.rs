@@ -109,6 +109,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
 pub struct QdbMetaCol {
+    // designated timestamp has TYPE_FLAG_DESIGNATED_TIMESTAMP bit set
     pub column_type: ColumnType,
     pub column_top: usize,
 
@@ -130,8 +131,11 @@ pub struct QdbMetaV1 {
 }
 
 impl QdbMetaV1 {
-    pub fn new() -> Self {
-        Self { version: U32Const, schema: QdbMetaSchema::new() }
+    pub fn new(column_count: usize) -> Self {
+        Self {
+            version: U32Const,
+            schema: QdbMetaSchema::with_capacity(column_count),
+        }
     }
 }
 
