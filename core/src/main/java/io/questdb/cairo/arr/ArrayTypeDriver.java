@@ -179,9 +179,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * and a 4-byte type field. This compact format omits the type (known from context) and
      * uses a 4-byte dataSize instead of 8-byte totalSize.
      *
-     * @param addr the memory address to write to
-     * @param value the array to append
-     * @param nDims the number of dimensions
+     * @param addr     the memory address to write to
+     * @param value    the array to append
+     * @param nDims    the number of dimensions
      * @param elemSize the size of each element in bytes
      */
     public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
@@ -342,8 +342,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * This is the counterpart to {@link #appendCompactPlainValue} and differs from {@link #getPlainValue}
      * which expects an 8-byte size field and a type field in the layout.
      *
-     * @param addr the memory address to read from
-     * @param type the encoded array type (provided from context)
+     * @param addr  the memory address to read from
+     * @param type  the encoded array type (provided from context)
      * @param nDims the number of dimensions
      * @param value the borrowed array to populate
      * @return the populated array
