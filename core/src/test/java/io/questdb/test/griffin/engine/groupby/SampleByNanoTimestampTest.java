@@ -6391,7 +6391,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                               keys: [ts,s]
                               values: [first(v)]
                                 Async Filter workers: 1
-                                  filter: s='B' [pre-touch]
+                                  filter: s='B'
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: tab

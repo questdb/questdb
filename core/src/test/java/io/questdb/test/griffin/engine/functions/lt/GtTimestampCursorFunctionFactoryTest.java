@@ -454,7 +454,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] > cursor\s
                                 VirtualRecord
                                   functions: [null]
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -469,7 +469,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] <= cursor\s
                                 VirtualRecord
                                   functions: [null]
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -484,7 +484,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] > cursor\s
                                 VirtualRecord
                                   functions: [2026-03-10T00:00:00.000000Z]
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -499,7 +499,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] <= cursor\s
                                 VirtualRecord
                                   functions: ['2014-09-03']
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -514,7 +514,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] > cursor\s
                                 VirtualRecord
                                   functions: ['2020-02-21']
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -529,7 +529,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts [thread-safe] <= cursor\s
                                 VirtualRecord
                                   functions: ['2020-02-21']
-                                    long_sequence count: 1 [pre-touch]
+                                    long_sequence count: 1
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -545,7 +545,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts::varchar::timestamp > cursor\s
                                 VirtualRecord
                                   functions: [null]
-                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                    long_sequence count: 1 [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -560,7 +560,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts::varchar::timestamp > cursor\s
                                 VirtualRecord
                                   functions: [2026-03-10T00:00:00.000000Z]
-                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                    long_sequence count: 1 [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -575,7 +575,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts::varchar::timestamp > cursor\s
                                 VirtualRecord
                                   functions: ['2014-09-03']
-                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                    long_sequence count: 1 [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -590,7 +590,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                               filter: ts::varchar::timestamp > cursor\s
                                 VirtualRecord
                                   functions: ['2020-02-21']
-                                    long_sequence count: 1 [state-shared] [pre-touch]
+                                    long_sequence count: 1 [state-shared]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x

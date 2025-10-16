@@ -177,16 +177,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isColumnPreTouchEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabledOverride() {
-        return false;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -242,14 +232,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
-    }
-
-    @Override
-    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-    }
-
-    @Override
-    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
     }
 
     @Override
