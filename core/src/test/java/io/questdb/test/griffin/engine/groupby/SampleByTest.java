@@ -65,7 +65,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -7004,11 +7003,7 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
-    // TODO: fix it, it's a bug
     @Test
-    @Ignore
-    // the sample-by to group-by rewrite does not extract aggregate expressions from timestamp
-    // arithmetic
     public void testSampleByWithProjection2() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' (\n" +
@@ -7025,16 +7020,22 @@ public class SampleByTest extends AbstractCairoTest {
                     "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
                     "from long_sequence(10)\n");
 
-            assertSql(
-                    "",
-                    "select " +
-                            "symbol || 'abcd' as symbol" +
-                            ", sum(amount)" +
-                            ", vwap(price, amount)" +
-                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
-                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
-                            "from trades\n" +
-                            "sample by 5m"
+            final String query = "select " +
+                    "symbol || 'abcd' as symbol" +
+                    ", sum(amount)" +
+                    ", vwap(price, amount)" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime " +
+                    "from trades\n" +
+                    "sample by 5m";
+            assertQueryNoLeakCheck(
+                    "symbol\tsum\tvwap\tts\tNYTime\n" +
+                            "aabcd\t0.6390492980774742\t0.3421677972133922\t1.64565E15\t1.6456500000000008E15\n" +
+                            "cabcd\t0.20447441837877756\t0.299199045961845\t1.64565E15\t1.6456500000000002E15\n" +
+                            "babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15\n" +
+                            "babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15\n" +
+                            "cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15\n",
+                    query
             );
 
             assertSampleByFlavours(
@@ -7044,11 +7045,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15\n" +
                             "babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15\n" +
                             "cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15\n",
-                    "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), " +
-                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts, " +
-                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
-                            "from trades\n" +
-                            "sample by 5m"
+                    query
             );
         });
     }
