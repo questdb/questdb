@@ -6204,8 +6204,12 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("INSERT INTO x VALUES (1, '2010-01-01T01'),(2, '2020-01-01T01'),(3, '2030-01-01T01');");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x VALUES (1, '2010-01-01T01', '2010-01-01T01')," +
+                            "(2, '2020-01-01T01', '2020-01-01T02')," +
+                            "(3, '2030-01-01T01', '2030-01-01T03');"
+            );
 
             String query = """
                     SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
@@ -6342,6 +6346,76 @@ public class SampleByTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff
+                            2010-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:00.000000Z\t2
+                            2030-01-01T00:00:00.000000Z\t3
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count]
+                                    Async Group By workers: 1
+                                      keys: [ts,ts2]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff1, datediff('M', ts2, '2010-01-01T01') / count() diff2
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T00:00:00.000000Z\t1\t0
+                            2020-01-01T00:00:00.000000Z\t2\t120
+                            2030-01-01T00:00:00.000000Z\t3\t240
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count,diff2]
+                                    VirtualRecord
+                                      functions: [ts,count,ts2,datediff('M',ts2,1262307600000000)/count]
+                                        Async Group By workers: 1
+                                          keys: [ts,ts2]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
         });
