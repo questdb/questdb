@@ -55,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -241,11 +242,11 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                     }
                 })) {
                     final HttpClient.ResponseHeaders responseHeaders = sendIlpRequest(httpClient, "tab col=1i 1000000");
-                    assertResponse(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4]\r\n");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertIlpRequest(httpClient, "tab col=3i 2000000", HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4]\r\n");
+                        assertIlpRequest(httpClient, "tab col=3i 2000000", HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -268,11 +269,12 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                     }
                 })) {
                     final HttpClient.ResponseHeaders responseHeaders = sendPingRequest(httpClient);
-                    assertResponse(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4]\r\n");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertPingRequest(httpClient, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4]\r\n");
+                        final HttpClient.ResponseHeaders responseHeaders2 = sendPingRequest(httpClient);
+                        assertResponseContains(responseHeaders2, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=ilp-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -381,12 +383,13 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                         return false;
                     }
                 })) {
-                    final HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 2");
-                    assertResponse(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4]\r\n");
+                    HttpClient.ResponseHeaders responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 2");
+                    assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4,");
 
                     // test that the connection cannot be used anymore
                     try {
-                        assertExecRequest(httpClient, EXEC_URI, "select 3", HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4]\r\n");
+                        responseHeaders = sendExecRequest(httpClient, EXEC_URI, "select 3");
+                        assertResponseContains(responseHeaders, HTTP_TOO_MANY_REQUESTS, "exceeded connection limit [name=json-http, numOfConnections=5, connectionLimit=4,");
                         fail("Exception expected");
                     } catch (Exception e) {
                         TestUtils.assertContains(e.getMessage(), "peer disconnect");
@@ -486,6 +489,31 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
 
         TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
     }
+
+    private void assertResponseContains(
+            HttpClient.ResponseHeaders responseHeaders,
+            int expectedHttpStatusCode,
+            String expectedHttpResponse
+    ) {
+        responseHeaders.clear();
+        responseHeaders.await();
+
+        final Utf8StringSink sink = new Utf8StringSink();
+
+        Fragment fragment;
+        final Response response = responseHeaders.getResponse();
+        while ((fragment = response.recv()) != null) {
+            Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
+        }
+
+        if (!Utf8s.containsAscii(sink, expectedHttpResponse)) {
+            Assert.fail("Expected response to contain: " + expectedHttpResponse + ", actual: " + sink);
+        }
+        sink.clear();
+
+        TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+    }
+
 
     private HttpClient.ResponseHeaders sendExecRequest(
             HttpClient httpClient,
