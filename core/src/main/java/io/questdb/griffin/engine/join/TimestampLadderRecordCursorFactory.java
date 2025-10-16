@@ -357,9 +357,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         private void setupJoinRecord(Record masterRecord, int slaveRowNum) {
             long slaveOffset = slaveRecordOffsets.getQuick(slaveRowNum);
             Record slaveRecord = slaveRecordArray.getRecordAt(slaveOffset);
-            long masterTimestamp = masterRecord.getTimestamp(masterTimestampColumnIndex);
-            long slaveTimeOffset = slaveRecord.getLong(slaveSequenceColumnIndex);
-            System.out.printf("[%d,%d]\n", masterTimestamp / 1_000_000, slaveTimeOffset / 1_000_000);
             record.of(masterRecord, slaveRecord);
         }
 
