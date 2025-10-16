@@ -68,7 +68,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared] [pre-touch]\n" +
+                            "  filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -485,7 +485,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s ilike v% [state-shared] [pre-touch]\n" +
+                            "  filter: s ilike v% [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -495,7 +495,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s like v% [state-shared] [pre-touch]\n" +
+                            "  filter: s like v% [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -507,7 +507,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s like %v [state-shared] [pre-touch]\n" +
+                            "  filter: s like %v [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -517,7 +517,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s ilike %v [state-shared] [pre-touch]\n" +
+                            "  filter: s ilike %v [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -528,7 +528,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s like %v% [state-shared] [pre-touch]\n" +
+                            "  filter: s like %v% [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -538,7 +538,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: s ilike %v% [state-shared] [pre-touch]\n" +
+                            "  filter: s ilike %v% [state-shared]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",

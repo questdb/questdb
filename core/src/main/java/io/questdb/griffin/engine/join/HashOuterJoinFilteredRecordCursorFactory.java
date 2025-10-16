@@ -146,8 +146,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             this.matchIdsMap = null;
         }
 
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         RecordCursor masterCursor = null;
         try {

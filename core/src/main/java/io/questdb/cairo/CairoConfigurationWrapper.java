@@ -1347,11 +1347,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
-        return getDelegate().isSqlParallelFilterPreTouchEnabled();
-    }
-
-    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
     }
