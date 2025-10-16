@@ -29,21 +29,27 @@ import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.metrics.AtomicLongGauge;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class ActiveConnectionTracker {
+    public static final String PROCESSOR_EXPORT = "export-http";
+    public static final String PROCESSOR_ILP = "ilp-http";
+    public static final String PROCESSOR_JSON = "json-http";
+    public static final String PROCESSOR_OTHER = "other-http";
+    public static final int UNLIMITED = -1;
     public static final ActiveConnectionTracker NO_TRACKING = new ActiveConnectionTracker() {
         @Override
-        public void decrementActiveConnection(@NotNull String name) {
+        public long decrementActiveConnection(@NotNull String name) {
+            return 0;
         }
 
-        public int getActiveConnections(@NotNull String processorName) {
+        public long getActiveConnections(@NotNull String processorName) {
             return 0;
         }
 
         @Override
         public int getLimit(@NotNull String processorName) {
-            return Integer.MAX_VALUE;
+            return UNLIMITED;
         }
 
         @Override
@@ -51,14 +57,10 @@ public class ActiveConnectionTracker {
             return 0;
         }
     };
-    public static final String PROCESSOR_EXPORT = "export-http";
-    public static final String PROCESSOR_ILP = "ilp-http";
-    public static final String PROCESSOR_JSON = "json-http";
-    public static final String PROCESSOR_OTHER = "other-http";
     private final HttpContextConfiguration contextConfiguration;
-    private final AtomicInteger exportActiveConnections = new AtomicInteger();
-    private final AtomicInteger ilpActiveConnections = new AtomicInteger();
-    private final AtomicInteger jsonActiveConnections = new AtomicInteger();
+    private final AtomicLong exportActiveConnections = new AtomicLong();
+    private final AtomicLong ilpActiveConnections = new AtomicLong();
+    private final AtomicLong jsonActiveConnections = new AtomicLong();
     private final Metrics metrics;
 
     private ActiveConnectionTracker() {
@@ -71,19 +73,19 @@ public class ActiveConnectionTracker {
         this.metrics = contextConfiguration.getMetrics();
     }
 
-    public void decrementActiveConnection(@NotNull String processorName) {
-        getCounter(processorName).decrementAndGet();
+    public long decrementActiveConnection(@NotNull String processorName) {
         getGauge(processorName).dec();
+        return getCounter(processorName).decrementAndGet();
     }
 
-    public int getActiveConnections(@NotNull String processorName) {
+    public long getActiveConnections(@NotNull String processorName) {
         return getCounter(processorName).get();
     }
 
     public int getLimit(String processorName) {
         if (processorName == null) {
             // No limit.
-            return -1;
+            return UNLIMITED;
         }
         switch (processorName) {
             case PROCESSOR_JSON:
@@ -94,7 +96,7 @@ public class ActiveConnectionTracker {
                 return contextConfiguration.getExportConnectionLimit();
             default:
                 // No limit.
-                return -1;
+                return UNLIMITED;
         }
     }
 
@@ -103,7 +105,7 @@ public class ActiveConnectionTracker {
         return getCounter(processorName).incrementAndGet();
     }
 
-    private AtomicInteger getCounter(@NotNull String processorName) {
+    private AtomicLong getCounter(@NotNull String processorName) {
         switch (processorName) {
             case PROCESSOR_ILP:
                 return ilpActiveConnections;

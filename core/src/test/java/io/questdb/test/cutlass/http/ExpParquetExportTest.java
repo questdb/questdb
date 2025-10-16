@@ -878,6 +878,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "0.0.0.0:0",
                     PropertyKey.LINE_TCP_ENABLED.toString(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.HTTP_MIN_ENABLED.getPropertyPath(), "false",
                     PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
                     PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
             )) {
@@ -938,7 +939,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         Thread thread = new Thread(() -> {
                             try {
                                 for (int n = 0; n < requests; n++) {
+                                    // Http server may take time to close the connection, so we need to wait
+                                    // until the active connection count is less than the limit
                                     connectionExpCount.incrementAndGet();
+                                    while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT) + connectionExpCount.get() > requestExpLimit) {
+                                        Os.pause();
+                                    }
+
                                     try (TestHttpClient client = new TestHttpClient()) {
                                         client.port = serverMain.getHttpServerPort();
                                         CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
@@ -950,12 +957,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                         errors.incrementAndGet();
                                         throw ex;
                                     }
-                                    int expectConnections = connectionExpCount.decrementAndGet();
-                                    assertEventually(
-                                            () -> Assert.assertTrue(
-                                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_EXPORT) <= expectConnections
-                                            )
-                                    );
+
+                                    connectionExpCount.decrementAndGet();
                                 }
                             } catch (Exception e) {
                                 LOG.error().$(e.getMessage()).$();
@@ -972,7 +975,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     for (int i = 0; i < requestJsonLimit; i++) {
                         Thread thread = new Thread(() -> {
                             for (int n = 0; n < requests; n++) {
+                                // Http server may take time to close the connection, so we need to wait
+                                // until the active connection count is less than the limit
                                 connectionJsonCount.incrementAndGet();
+                                while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON) + connectionJsonCount.get() > requestJsonLimit) {
+                                    Os.pause();
+                                }
+
                                 try (TestHttpClient client = new TestHttpClient()) {
                                     client.port = serverMain.getHttpServerPort();
                                     client.assertGet("/exec",
@@ -984,18 +993,12 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                             null,
                                             null
                                     );
-                                    int expectConnections = connectionJsonCount.decrementAndGet();
-                                    assertEventually(
-                                            () -> Assert.assertTrue(
-                                                    serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON) <= expectConnections
-                                            )
-                                    );
                                 } catch (Throwable ex) {
                                     LOG.error().$(ex.getMessage()).$();
                                     errors.incrementAndGet();
                                     throw new RuntimeException(ex);
                                 }
-                                Os.pause();
+                                connectionJsonCount.decrementAndGet();
                             }
                         });
                         threads.add(thread);

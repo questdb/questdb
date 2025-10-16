@@ -261,7 +261,7 @@ public class ServerMain implements Closeable {
         throw CairoException.nonCritical().put("http server is not running");
     }
 
-    public int getActiveConnectionCount(String processorName) {
+    public long getActiveConnectionCount(String processorName) {
         if (httpServer == null) {
             return 0;
         }

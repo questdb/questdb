@@ -177,6 +177,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
+        decrementActiveConnections(getFd());
         super.clear();
         reset();
         if (this.pendingRetry) {
@@ -191,8 +192,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
-
-        decrementActiveConnections();
     }
 
     @Override
@@ -204,7 +203,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void close() {
         final long fd = getFd();
         LOG.debug().$("close [fd=").$(fd).I$();
-        decrementActiveConnections();
+        decrementActiveConnections(fd);
         super.close();
         if (this.pendingRetry) {
             this.pendingRetry = false;
@@ -446,7 +445,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
         processorName = processor.getName();
         final int connectionLimit = activeConnectionTracker.getLimit(processorName);
-        if (connectionLimit > -1) {
+        if (connectionLimit != ActiveConnectionTracker.UNLIMITED) {
             assert processorName != null;
             final long numOfConnections = activeConnectionTracker.incrementActiveConnection(processorName);
             if (numOfConnections > connectionLimit) {
@@ -454,6 +453,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put("exceeded connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
+                        .put(", fd=").put(getFd())
                         .put(']');
                 activeConnectionTracker.decrementActiveConnection(processorName);
                 processorName = null;
@@ -465,12 +465,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         .put("non-admin user reached connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
+                        .put(", fd=").put(getFd())
                         .put(']');
                 activeConnectionTracker.decrementActiveConnection(processorName);
                 processorName = null;
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
+            LOG.debug().$("counted connection [name=").$(processorName)
+                    .$(", numOfConnections=").$(numOfConnections)
+                    .$(", connectionLimit=").$(connectionLimit)
+                    .$(", fd=").$(getFd())
+                    .I$();
         }
         return processor;
     }
@@ -778,9 +784,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return keepGoing;
     }
 
-    private void decrementActiveConnections() {
+    private void decrementActiveConnections(long fd) {
         if (processorName != null) {
-            activeConnectionTracker.decrementActiveConnection(processorName);
+            long activeConnections = activeConnectionTracker.decrementActiveConnection(processorName);
+            LOG.debug().$("decrementing active connections [name=").$(processorName)
+                    .$(", activeConnections=").$(activeConnections)
+                    .$(", fd=").$(fd)
+                    .I$();
+            processorName = null;
         }
         connectionCounted = false;
     }
