@@ -11,9 +11,25 @@ public interface HttpSessionStore {
     /**
      * Create a new session
      *
-     * @param authenticator HTTP authenticator used to log the user in
+     * @param context Principal context, such as an HTTP authenticator used to log the user in
      */
-    void createSession(@NotNull HttpAuthenticator authenticator, StringSink sink);
+    void createSession(@NotNull PrincipalContext context, StringSink sink);
+
+    /**
+     * Closes a session
+     *
+     * @param sessionId id of the session to be closed
+     */
+    void destroySession(@NotNull CharSequence sessionId);
+
+    /**
+     * Session lookup by principal
+     *
+     * @param principal Entity name
+     * @return List of sessions associated with the principal, or null if no active sessions exist
+     */
+    @Nullable
+    ObjList<SessionInfo> getSessions(@NotNull CharSequence principal);
 
     default void setTokenGenerator(TokenGenerator tokenGenerator) {
     }
@@ -28,20 +44,18 @@ public interface HttpSessionStore {
 
     class SessionInfo implements PrincipalContext {
         private final byte authType;
-        private final ObjList<CharSequence> groups = new ObjList<>();
+        private final ObjList<CharSequence> groupsA = new ObjList<>();
+        private final ObjList<CharSequence> groupsB = new ObjList<>();
         private final String principal;
         private volatile long expiresAt;
+        private volatile ObjList<CharSequence> groups = groupsB;
 
         public SessionInfo(CharSequence principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt) {
             this.principal = Chars.toString(principal);
             this.authType = authType;
             this.expiresAt = expiresAt;
 
-            if (groups != null) {
-                for (int i = 0, n = groups.size(); i < n; i++) {
-                    this.groups.add(Chars.toString(groups.getQuick(i)));
-                }
-            }
+            setGroups(groups);
         }
 
         @Override
@@ -61,6 +75,28 @@ public interface HttpSessionStore {
         @Override
         public String getPrincipal() {
             return principal;
+        }
+
+        public synchronized void setGroups(@Nullable ObjList<CharSequence> source) {
+            // ideally these would be compared as sets, but it is ok
+            // unlikely that the order of groups changing constantly
+            if (groups.equals(source)) {
+                return;
+            }
+
+            // select non-active list as target
+            final ObjList<CharSequence> target = groups == groupsA ? groupsB : groupsA;
+
+            // populate target
+            target.clear();
+            if (source != null) {
+                for (int i = 0, n = source.size(); i < n; i++) {
+                    target.add(Chars.toString(source.getQuick(i)));
+                }
+            }
+
+            // publish new groups
+            groups = target;
         }
     }
 }
