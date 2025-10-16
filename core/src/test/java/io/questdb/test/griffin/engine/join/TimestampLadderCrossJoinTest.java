@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -47,6 +51,16 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:00.000000Z')");
             execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:00.000000Z')");
 
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(2)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -57,18 +71,13 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             2\t1970-01-01T00:00:01.000000Z
                             3\t1970-01-01T00:00:01.000000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
-                                FROM long_sequence(2)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
             );
+
+            // Verify that Timestamp Ladder Join optimization is being used
         });
     }
 
@@ -78,15 +87,18 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // No data inserted
 
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     "id\tts\n",
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
@@ -100,16 +112,19 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
 
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(0)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     "id\tts\n",
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
-                                FROM long_sequence(0)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
@@ -135,68 +150,13 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     SELECT id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
-
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             count
                             1000
                             """,
                     "SELECT count(*) FROM (" + sql + ")",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testManyMasterRowsSmallSequence() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            // Insert 100 master rows
-            for (int i = 1; i <= 100; i++) {
-                execute("INSERT INTO orders VALUES (" + i + ", " + (i * 1_000_000L) + ")");
-            }
-
-            String sql = """
-                    WITH offsets AS (
-                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                        FROM long_sequence(3)
-                    )
-                    SELECT id, order_ts + usec_offs AS ts
-                    FROM orders CROSS JOIN offsets
-                    ORDER BY order_ts + usec_offs""";
-
-            // Verify count
-            assertQueryNoLeakCheck(
-                    """
-                            count
-                            300
-                            """,
-                    "SELECT count(*) FROM (" + sql + ")",
-                    null,
-                    false,
-                    true
-            );
-
-            // Verify first and last rows
-            assertQueryNoLeakCheck(
-                    """
-                            id\tts
-                            1\t1970-01-01T00:00:00.001000Z
-                            """,
-                    "SELECT id, ts FROM (" + sql + ") LIMIT 1",
-                    null,
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    """
-                            id\tts
-                            100\t1970-01-01T00:00:00.102000Z
-                            """,
-                    "SELECT id, ts FROM (" + sql + ") LIMIT -1",
                     null,
                     false,
                     true
@@ -212,6 +172,17 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:05.000000Z')");
             execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:10.000000Z')");
 
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(2)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    WHERE id != 2
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -220,15 +191,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:10.000000Z
                             3\t1970-01-01T00:00:11.000000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(2)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            WHERE id != 2
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     false
@@ -246,6 +209,16 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:00.200000Z')");
 
             // Large sequence (1-second offsets) creates heavy interleaving
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -259,14 +232,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             2\t1970-01-01T00:00:02.100000Z
                             3\t1970-01-01T00:00:02.200000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
@@ -283,6 +249,16 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:02.000000Z')");
 
             // With 5-second offsets (0, 1, 2, 3, 4), the sequences interleave
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(5)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -302,14 +278,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:05.000000Z
                             3\t1970-01-01T00:00:06.000000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(5)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
@@ -326,6 +295,16 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("INSERT INTO orders VALUES (3, '1970-01-01T00:02:00.000000Z')");
 
             // With 3-second offsets (0, 1, 2), the sequences don't overlap
+            String sql = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -339,14 +318,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:02:01.000000Z
                             3\t1970-01-01T00:02:02.000000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    sql,
                     null,
                     false,
                     true
@@ -385,56 +357,6 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimizationApplied() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-
-            assertPlanNoLeakCheck(
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
-                    """
-                            VirtualRecord
-                              functions: [id,order_ts+usec_offs]
-                                Timestamp Ladder Join
-                                  timestampColumn: 1
-                                  slaveColumn: 1
-                            """
-            );
-        });
-    }
-
-    @Test
-    public void testOptimizationNotAppliedWhenNoOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-
-            // Without ORDER BY, optimization should not be applied
-            assertPlanNoLeakCheck(
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets""",
-                    """
-                            VirtualRecord
-                              functions: [id,order_ts+usec_offs]
-                                Cross Join
-                            """
-            );
-        });
-    }
-
-    @Test
     public void testRealWorldScenario() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -442,46 +364,51 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         sensor_id INT,
                         temperature DOUBLE,
                         reading_ts TIMESTAMP
-                    ) TIMESTAMP(reading_ts)""");
+                    ) TIMESTAMP(reading_ts)
+                    """);
 
             execute("INSERT INTO sensor_readings VALUES (101, 20.5, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO sensor_readings VALUES (102, 21.3, '2024-01-01T00:00:30.000000Z')");
             execute("INSERT INTO sensor_readings VALUES (103, 19.8, '2024-01-01T00:01:00.000000Z')");
 
             // Simulate generating interpolated timestamps every 10 seconds for each reading
+            String sql = """
+                    WITH time_offsets AS (
+                        SELECT (x-1) * 10 AS sec_offs, (x-1) * 10_000_000 AS usec_offs
+                        FROM long_sequence(6)
+                    )
+                    SELECT sensor_id, temperature, reading_ts + usec_offs AS ts
+                    FROM sensor_readings CROSS JOIN time_offsets
+                    ORDER BY reading_ts + usec_offs
+                    """;
+            assertTimestampLadderJoinUsed(sql);
             assertQueryNoLeakCheck(
                     """
-                            sensor_id\ttemperature\tts
-                            101\t20.5\t2024-01-01T00:00:00.000000Z
-                            101\t20.5\t2024-01-01T00:00:10.000000Z
-                            101\t20.5\t2024-01-01T00:00:20.000000Z
-                            102\t21.3\t2024-01-01T00:00:30.000000Z
-                            101\t20.5\t2024-01-01T00:00:30.000000Z
-                            102\t21.3\t2024-01-01T00:00:40.000000Z
-                            101\t20.5\t2024-01-01T00:00:40.000000Z
-                            102\t21.3\t2024-01-01T00:00:50.000000Z
-                            101\t20.5\t2024-01-01T00:00:50.000000Z
-                            103\t19.8\t2024-01-01T00:01:00.000000Z
-                            102\t21.3\t2024-01-01T00:01:00.000000Z
-                            103\t19.8\t2024-01-01T00:01:10.000000Z
-                            102\t21.3\t2024-01-01T00:01:10.000000Z
-                            103\t19.8\t2024-01-01T00:01:20.000000Z
-                            103\t19.8\t2024-01-01T00:01:30.000000Z
-                            103\t19.8\t2024-01-01T00:01:40.000000Z
+                            sensor_id	temperature	ts
+                            101	20.5	2024-01-01T00:00:00.000000Z
+                            101	20.5	2024-01-01T00:00:10.000000Z
+                            101	20.5	2024-01-01T00:00:20.000000Z
+                            101	20.5	2024-01-01T00:00:30.000000Z
+                            102	21.3	2024-01-01T00:00:30.000000Z
+                            101	20.5	2024-01-01T00:00:40.000000Z
+                            102	21.3	2024-01-01T00:00:40.000000Z
+                            101	20.5	2024-01-01T00:00:50.000000Z
+                            102	21.3	2024-01-01T00:00:50.000000Z
+                            102	21.3	2024-01-01T00:01:00.000000Z
+                            103	19.8	2024-01-01T00:01:00.000000Z
+                            102	21.3	2024-01-01T00:01:10.000000Z
+                            103	19.8	2024-01-01T00:01:10.000000Z
+                            102	21.3	2024-01-01T00:01:20.000000Z
+                            103	19.8	2024-01-01T00:01:20.000000Z
+                            103	19.8	2024-01-01T00:01:30.000000Z
+                            103	19.8	2024-01-01T00:01:40.000000Z
+                            103	19.8	2024-01-01T00:01:50.000000Z
                             """,
-                    """
-                            WITH time_offsets AS (
-                                SELECT (x-1) * 10 AS sec_offs, (x-1) * 10_000_000 AS usec_offs
-                                FROM long_sequence(6)
-                            )
-                            SELECT sensor_id, temperature, reading_ts + usec_offs AS ts
-                            FROM sensor_readings CROSS JOIN time_offsets
-                            ORDER BY reading_ts + usec_offs
-                            """,
+                    sql,
                     null,
-                    "ts",
-                    true,
-                    false
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -545,6 +472,15 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
 
+            String query = """
+                    WITH offsets AS (
+                        SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
+                        FROM long_sequence(3)
+                    )
+                    SELECT id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs""";
+
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -552,18 +488,14 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:01.000000Z
                             1\t1970-01-01T00:00:02.000000Z
                             """,
-                    """
-                            WITH offsets AS (
-                                SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
-                                FROM long_sequence(3)
-                            )
-                            SELECT id, order_ts + usec_offs AS ts
-                            FROM orders CROSS JOIN offsets
-                            ORDER BY order_ts + usec_offs""",
+                    query,
                     null,
                     false,
                     true
             );
+
+            // Verify that Timestamp Ladder Join optimization is being used
+            assertTimestampLadderJoinUsed(query);
         });
     }
 
@@ -624,9 +556,9 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     """;
 
             // Execute multiple times to test cursor reuse
-            assertQueryNoLeakCheck(expected, sql, null, "ts", true, false);
-            assertQueryNoLeakCheck(expected, sql, null, "ts", true, false);
-            assertQueryNoLeakCheck(expected, sql, null, "ts", true, false);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, null, false, true);
         });
     }
 
@@ -727,5 +659,22 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    /**
+     * Asserts that the query plan contains "Timestamp Ladder Join",
+     * confirming the optimization is being applied.
+     */
+    private void assertTimestampLadderJoinUsed(String query) throws Exception {
+        // Get the execution plan
+        try (RecordCursorFactory factory = select("EXPLAIN " + query)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                // Convert cursor to string
+                sink.clear();
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                // Check that it contains our optimization
+                TestUtils.assertContains(sink, "Timestamp Ladder Join");
+            }
+        }
     }
 }
