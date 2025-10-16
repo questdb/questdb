@@ -185,7 +185,7 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
                 GroupByArraySink sink = new GroupByArraySink(type);
                 sink.setAllocator(allocator);
 
-                ArrayView array = create2DArray(allocator, nDims, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+                ArrayView array = create2DArray(allocator, nDims, 2, 3, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
                 sink.put(array);
 
                 TestUtils.assertEquals(array, sink.getArray());
@@ -199,20 +199,25 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 int nDims = 2;
                 int type2D = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
+
                 GroupByArraySink sink = new GroupByArraySink(type2D);
                 sink.setAllocator(allocator);
 
-                ArrayView vanillaArray = create2DArray(allocator, nDims, new double[]{1.0, 2.0, 3.0, 4.0, 5.0, 6.0});
+                double[] values = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+                ArrayView vanillaArray = create2DArray(allocator, nDims, 2, 3, values);
                 DerivedArrayView derivedArray = new DerivedArrayView();
                 derivedArray.of(vanillaArray);
                 derivedArray.transpose();
-
                 Assert.assertFalse(derivedArray.isVanilla());
 
                 sink.put(derivedArray);
 
+                double[] transposedValues = {1.0, 4.0, 2.0, 5.0, 3.0, 6.0};
+                ArrayView expected = create2DArray(allocator, nDims, 3, 2, transposedValues);
+
                 ArrayView result = sink.getArray();
                 Assert.assertTrue(result.isVanilla());
+                TestUtils.assertEquals(expected, result);
             }
         });
     }
@@ -233,13 +238,13 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);
     }
 
-    private ArrayView create2DArray(GroupByAllocator allocator, int nDims, double[] values) {
+    private ArrayView create2DArray(GroupByAllocator allocator, int nDims, int rows, int cols, double[] values) {
         int shapeLen = nDims * Integer.BYTES;
         int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims, true);
         long ptr = allocator.malloc(shapeLen + (values.length * 8L));
 
-        Unsafe.getUnsafe().putInt(ptr, 2);
-        Unsafe.getUnsafe().putInt(ptr + 4, 3);
+        Unsafe.getUnsafe().putInt(ptr, rows);
+        Unsafe.getUnsafe().putInt(ptr + 4, cols);
 
         long arrayPtr = ptr + shapeLen;
         for (int i = 0; i < values.length; i++) {
