@@ -263,25 +263,28 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             advanceMasterIfPending();
             SlaveRowIterator nextIter = currentIter.nextIterator();
-            if (currentIter.isEmpty() && prevIter.removeNextIterator() == null) {
-                // prevIter.removeNextIterator() removed currentIter from the circular list.
-                // If it returned null, it implies that nextIter == currentIter (we got it from
-                // the circular list of size one). So, there's no actual next iterator.
-                if (masterHasNext) {
-                    // Activate the next master row, and use this iterator as the beginning of a new circular list.
-                    nextIter = activateMasterRow();
-                } else {
-                    // No more iterators, no more master rows, we're all done.
-                    prevIter = currentIter = null;
-                    return false;
+            if (currentIter.isEmpty()) {
+                if (prevIter.removeNextIterator() == null) {
+                    // prevIter.removeNextIterator() removed currentIter from the circular list.
+                    // If it returned null, it implies that nextIter == currentIter (we got it from
+                    // the circular list of size one). So, there's no actual next iterator.
+                    if (masterHasNext) {
+                        // Activate the next master row, and use this iterator as the beginning of a new circular list.
+                        nextIter = activateMasterRow();
+                    } else {
+                        // No more iterators, no more master rows, we're all done.
+                        prevIter = currentIter = null;
+                        return false;
+                    }
                 }
+            } else {
+                prevIter = currentIter;
             }
-            if (masterHasNext && initialTimestampOfNextMaster() < nextIter.peekNextTimestamp()) {
+            if (masterHasNext && initialTimestampOfMasterRow() < nextIter.peekNextTimestamp()) {
                 nextIter = activateMasterRow();
             } else {
                 nextIter.gotoNextRow();
             }
-            prevIter = currentIter;
             currentIter = nextIter;
             setupJoinRecord(currentIter.getMasterRecord(), currentIter.currentRowNum());
             return true;
@@ -332,7 +335,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
         private @NotNull SlaveRowIterator activateMasterRow() {
             isMasterHasNextPending = true;
-            return currentIter.postInsert(masterCursor.getRecord());
+            return currentIter.postInsertNewIterator(masterCursor.getRecord());
         }
 
         private void advanceMasterIfPending() {
@@ -342,7 +345,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             }
         }
 
-        private long initialTimestampOfNextMaster() {
+        private long initialTimestampOfMasterRow() {
             Record nextMasterRecord = masterCursor.getRecord();
             long nextMasterTimestamp = nextMasterRecord.getTimestamp(masterTimestampColumnIndex);
             return nextMasterTimestamp + firstSlaveTimeOffset;
@@ -385,15 +388,14 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             prevIter = null;
             isMasterHasNextPending = true;
             masterHasNext = false;
-
-            record.of(masterCursor.getRecord(), slaveRecordArray.getRecord());
             tmpCounter.clear();
         }
 
-        /**
-         * Iterator for a single master row, iterating through all slave records.
-         * Forms a circular linked list with other iterators for the merge algorithm.
-         */
+        // Specifically designed for this algorithm:
+        // - initially positioned at the first slave row
+        // - you can get the current slave row number, but can't access that row at all
+        // - you can peek the timestamp of the next slave row
+        // - also works as a node in a circular list of iterators
         private class SlaveRowIterator {
             private final RecordChain masterRecordChain;
             private SlaveRowIterator nextIter;
@@ -408,7 +410,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                         configuration.getSqlHashJoinValuePageSize(),
                         configuration.getSqlHashJoinValueMaxPages()
                 );
-                // Store the master record
+                // Put the master record in the record chain
                 this.masterRecordChain.put(masterRecord, -1);
                 this.masterRecordChain.toTop();
                 this.masterRecordChain.hasNext(); // Position at the record
@@ -451,12 +453,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 return nextIter;
             }
 
-            /**
-             * Returns the timestamp of the current row.
-             * If the row has not been consumed, the
-             * timestamp is returned immediately. If the row has been consumed, the iterator
-             * advances to the next row and returns the timestamp of that row.
-             */
             long peekNextTimestamp() {
                 if (nextSlaveRowNum == slaveRowCount) {
                     return Long.MIN_VALUE;
@@ -464,7 +460,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 return nextTimestamp;
             }
 
-            SlaveRowIterator postInsert(Record masterRecord) {
+            SlaveRowIterator postInsertNewIterator(Record masterRecord) {
                 SlaveRowIterator iter = new SlaveRowIterator(masterRecord);
                 iter.nextIter = this.nextIter;
                 this.nextIter = iter;
