@@ -23,6 +23,7 @@ public class HttpRequestValidator {
     public static final short METHOD_GET = 0x0001;
     public static final short METHOD_POST = METHOD_GET << 1;
     public static final short METHOD_PUT = METHOD_POST << 1;
+    public static final short METHOD_DELETE = METHOD_PUT << 1;
     public static final short NON_MULTIPART_REQUEST = 0x0100;
     public static final short MULTIPART_REQUEST = NON_MULTIPART_REQUEST << 1;
 
@@ -74,6 +75,12 @@ public class HttpRequestValidator {
             }
             requestType = multipart ? MULTIPART_REQUEST : NON_MULTIPART_REQUEST;
             requestType |= requestHeader.isPostRequest() ? METHOD_POST : METHOD_PUT;
+        } else if (requestHeader.isDeleteRequest()) {
+            if (chunked || multipart || contentLength > 0) {
+                rejectProcessor.reject(HTTP_BAD_REQUEST, "GET request method cannot have content");
+                return;
+            }
+            requestType = METHOD_DELETE;
         }
     }
 

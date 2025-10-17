@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestValidator;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
@@ -71,12 +72,14 @@ import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class ImportsRouter implements HttpRequestHandler {
+    private final HttpRequestProcessor deleteProcessor;
     private final HttpRequestProcessor getProcessor;
     private final HttpMultipartContentProcessor postProcessor;
 
     public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
         postProcessor = new ImportPostProcessor(cairoEngine, configuration);
         getProcessor = new ImportGetProcessor(cairoEngine, configuration);
+        deleteProcessor = new ImportDeleteProcessor(cairoEngine, configuration);
     }
 
     public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
@@ -94,8 +97,105 @@ public class ImportsRouter implements HttpRequestHandler {
             return postProcessor;
         } else if (HttpKeywords.isGET(method)) {
             return getProcessor;
+        } else if (HttpKeywords.isDELETE(method)) {
+            return deleteProcessor;
         }
         return null;
+    }
+
+    static boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {
+        if (filename.byteAt(0) == Files.SEPARATOR) {
+            return true;
+        }
+        return Utf8s.containsAscii(filename, "../") || Utf8s.containsAscii(filename, "..\\");
+    }
+
+    public static class ImportDeleteProcessor implements HttpRequestProcessor {
+        private static final Log LOG = LogFactory.getLog(ImportDeleteProcessor.class);
+        private final CairoEngine engine;
+        private final FilesFacade ff;
+        private final byte requiredAuthType;
+
+        public ImportDeleteProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+            engine = cairoEngine;
+            ff = cairoEngine.getConfiguration().getFilesFacade();
+            requiredAuthType = configuration.getRequiredAuthType();
+        }
+
+        @Override
+        public byte getRequiredAuthType() {
+            return requiredAuthType;
+        }
+
+        @Override
+        public short getSupportedRequestTypes() {
+            return HttpRequestValidator.METHOD_DELETE;
+        }
+
+        @Override
+        public void onRequestComplete(
+                HttpConnectionContext context
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+            HttpRequestHeader request = context.getRequestHeader();
+            CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
+            if (Chars.isBlank(importRoot)) {
+                sendError(context, 400, "sql.copy.input.root is not configured");
+                return;
+            }
+
+            final DirectUtf8Sequence path = request.getUrlParam(URL_PARAM_PATH);
+            if (path == null || path.size() == 0) {
+                sendError(context, 400, "missing required parameter: path");
+                return;
+            }
+
+            if (containsAbsOrRelativePath(path)) {
+                sendError(context, 403, "traversal not allowed in path");
+                return;
+            }
+            Path filePath = Path.getThreadLocal(importRoot);
+            filePath.concat(path);
+            if (!ff.exists(filePath.$())) {
+                sendError(context, 404, "path not found");
+                return;
+            }
+            boolean isDirectory = Files.isDirOrSoftLinkDir(filePath.$());
+            if (isDirectory) {
+                if (!Files.rmdir(filePath, false)) {
+                    LOG.error().$("failed to delete import directory [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
+                    sendError(context, 500, "failed to delete directory - may not be empty or have permission issues");
+                    return;
+                }
+                LOG.info().$("deleted import directory [path=").$(filePath).I$();
+            } else {
+                if (!ff.removeQuiet(filePath.$())) {
+                    LOG.error().$("failed to delete import file [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
+                    sendError(context, 500, "failed to delete file");
+                    return;
+                }
+                LOG.info().$("deleted import file [path=").$(filePath).I$();
+            }
+            sendSuccess(context, path);
+        }
+
+        private void sendError(
+                HttpConnectionContext context,
+                int errorCode,
+                String message
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+            sink.putAscii("{\"error\":\"").putAscii(message).putAscii("\"}");
+            context.simpleResponse().sendStatusJsonContent(errorCode, sink, false);
+        }
+
+        private void sendSuccess(
+                HttpConnectionContext context,
+                DirectUtf8Sequence path
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
+            sink.putAscii("{\"message\":\"path deleted successfully\",\"path\":\"").put(path).put("\"}");
+            context.simpleResponse().sendStatusJsonContent(HTTP_OK, sink, false);
+        }
     }
 
     public static class ImportGetProcessor implements HttpRequestProcessor {
@@ -130,7 +230,7 @@ public class ImportsRouter implements HttpRequestHandler {
             HttpChunkedResponse response = context.getChunkedResponse();
             CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
             if (Chars.isBlank(importRoot)) {
-                sendException(503, response, "service unavailable: sql.copy.input.root is not configured", state);
+                sendException(400, response, "sql.copy.input.root is not configured", state);
                 return;
             }
 
@@ -145,7 +245,7 @@ public class ImportsRouter implements HttpRequestHandler {
 
             // Filename provided - download specific file
             if (containsAbsOrRelativePath(file)) {
-                sendException(403, response, "forbidden: path traversal not allowed in filename", state);
+                sendException(403, response, "path traversal not allowed in filename", state);
                 return;
             }
             state.file = file;
@@ -169,13 +269,6 @@ public class ImportsRouter implements HttpRequestHandler {
             } catch (CairoError | CairoException e) {
                 throw ServerDisconnectException.INSTANCE;
             }
-        }
-
-        private boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {
-            if (Utf8s.startsWithAscii(filename, "/") || Utf8s.startsWithAscii(filename, "\\")) {
-                return true;
-            }
-            return Utf8s.containsAscii(filename, "../") || Utf8s.containsAscii(filename, "..\\");
         }
 
         private void doResumeSend(
@@ -282,7 +375,6 @@ public class ImportsRouter implements HttpRequestHandler {
 
             try {
                 while (true) {
-                    // Handle empty find pointer - pop from stack
                     while (pFind <= 0 && state.findStack.notEmpty()) {
                         pFind = state.findStack.pop();
                         int pathLen = state.pathLenStack.pop();
@@ -305,7 +397,6 @@ public class ImportsRouter implements HttpRequestHandler {
                     tempSink.clear();
                     Utf8s.utf8ZCopy(pUtf8NameZ, tempSink);
 
-                    // Skip "." and ".." directories
                     if (!Files.notDots(tempSink)) {
                         if (state.ff.findNext(pFind) <= 0) {
                             state.ff.findClose(pFind);
@@ -315,19 +406,16 @@ public class ImportsRouter implements HttpRequestHandler {
                     }
 
                     if (type == Files.DT_DIR) {
-                        // Save current findPtr to stack if there are more entries
                         if (state.ff.findNext(pFind) > 0) {
                             state.findStack.push(pFind);
                             state.pathLenStack.push(path.size());
                         } else {
                             state.ff.findClose(pFind);
                         }
-                        // Enter subdirectory
                         path.concat(tempSink).slash();
                         pFind = state.ff.findFirst(path.$());
                         continue;
                     } else if (type == Files.DT_FILE) {
-                        // Output file information
                         if (!state.firstFile) {
                             sink.put(',');
                         }
@@ -335,7 +423,6 @@ public class ImportsRouter implements HttpRequestHandler {
                         sink.put('{');
                         sink.putAsciiQuoted("path").put(':').putQuote();
 
-                        // Build relative path
                         if (path.size() > rootLen) {
                             Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), sink);
                         }
@@ -344,7 +431,6 @@ public class ImportsRouter implements HttpRequestHandler {
                         sink.putAsciiQuoted("name").put(':').putQuote();
                         Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
                         sink.putQuote().put(',');
-                        // Get file information
                         int oldLen = path.size();
                         path.concat(tempSink);
                         long fileSize = state.ff.length(path.$());
@@ -359,14 +445,12 @@ public class ImportsRouter implements HttpRequestHandler {
                         sink.put('}');
                     }
 
-                    // Move to next entry
                     if (state.ff.findNext(pFind) <= 0) {
                         state.ff.findClose(pFind);
                         pFind = 0;
                     }
                 }
             } finally {
-                // Clean up any remaining find handles
                 if (pFind > 0) {
                     state.ff.findClose(pFind);
                 }
