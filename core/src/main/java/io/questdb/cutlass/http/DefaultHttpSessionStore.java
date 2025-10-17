@@ -11,12 +11,12 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public void createSession(@NotNull PrincipalContext context, StringSink sessionID) {
-        sessionID.clear();
+    public void createSession(@NotNull PrincipalContext context, StringSink sessionIdSink, long fd) {
+        sessionIdSink.clear();
     }
 
     @Override
-    public void destroySession(@NotNull CharSequence sessionId) {
+    public void destroySession(@NotNull CharSequence sessionId, long fd) {
     }
 
     @Override
@@ -25,7 +25,7 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public SessionInfo verifySession(@NotNull CharSequence sessionId) {
+    public SessionInfo verifySession(@NotNull CharSequence sessionId, StringSink sessionIdSink, long fd) {
         return null;
     }
 }

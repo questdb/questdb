@@ -877,9 +877,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
         context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
-        final CharSequence sessionID = context.getSessionID();
-        if (!sessionID.isEmpty()) {
-            context.getCookieHandler().setSessionCookie(response.headers(), sessionID);
+        final CharSequence sessionId = context.getSessionIdSink();
+        if (!sessionId.isEmpty()) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
         }
         response.sendHeader();
     }

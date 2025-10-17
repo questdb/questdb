@@ -93,7 +93,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
-    private final CharSequenceObjHashMap<String> parsedCookies = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> parsedCookies = new CharSequenceObjHashMap<>();
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
@@ -104,7 +104,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
-    private final StringSink sessionID = new StringSink();
+    private final StringSink sessionIdSink = new StringSink();
     private final HttpSessionStore sessionStore;
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
@@ -227,7 +227,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.close();
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.sessionID.clear();
+        this.sessionIdSink.clear();
         this.authenticator.close();
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
@@ -273,7 +273,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return nCompletedRequests;
     }
 
-    public CharSequenceObjHashMap<String> getParsedCookiesMap() {
+    public CharSequenceObjHashMap<CharSequence> getParsedCookiesMap() {
         return parsedCookies;
     }
 
@@ -302,8 +302,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
-    public @NotNull CharSequence getSessionID() {
-        return sessionID;
+    public @NotNull StringSink getSessionIdSink() {
+        return sessionIdSink;
     }
 
     @Override
@@ -364,7 +364,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
-        this.sessionID.clear();
+        this.sessionIdSink.clear();
         this.authenticator.clear();
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
@@ -520,11 +520,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                             && (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
                             && configuration.getHttpContextConfiguration().areCookiesEnabled()
             ) {
-                sessionStore.createSession(authenticator, sessionID);
+                sessionStore.createSession(authenticator, sessionIdSink, getFd());
             } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
                 // close session if client requested it
                 // note that this request is still going to be processed
-                sessionStore.destroySession(sessionInfo.getSessionId());
+                sessionStore.destroySession(sessionInfo.getSessionId(), getFd());
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }
