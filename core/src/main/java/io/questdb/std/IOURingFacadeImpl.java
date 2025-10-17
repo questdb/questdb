@@ -102,7 +102,22 @@ public class IOURingFacadeImpl implements IOURingFacade {
             available = false;
         } else {
             String kernelVersion = IOUringAccessor.kernelVersion();
-            available = isAvailableOn(kernelVersion);
+            boolean usable = isAvailableOn(kernelVersion);
+
+            // a recent kernel is required, but not sufficient, for io_uring
+            // e.g. kernel can be compiled wihout io_uring support or
+            // the current user might not have permissions to use io_uring
+            // the only reliable way to check is to try to create an io_uring
+            if (usable) {
+                long ioUring = IOUringAccessor.create(8);
+                if (ioUring < 0) {
+                    usable = false;
+                } else {
+                    assert ioUring > 0;
+                    IOUringAccessor.close(ioUring);
+                }
+            }
+            available = usable;
         }
     }
 }
