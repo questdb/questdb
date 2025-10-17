@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-public class Int3Sort {
+public final class Int3Sort {
 
     private static final int N = 3;
 
