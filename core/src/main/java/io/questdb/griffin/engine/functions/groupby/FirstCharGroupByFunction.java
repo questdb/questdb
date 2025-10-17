@@ -92,6 +92,11 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

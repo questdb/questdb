@@ -93,6 +93,11 @@ class FirstGeoHashGroupByFunctionInt extends GeoIntFunction implements GroupByFu
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 /**
- * Handles ORDER BY + LIMIT N on a single long column.
+ * Handles ORDER BY + LIMIT N on a single LONG or TIMESTAMP column.
  */
 public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean ascending;
@@ -52,7 +52,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     ) {
         super(metadata);
         assert lo > 0;
-        assert base.recordCursorSupportsLongTopK();
+        assert base.recordCursorSupportsLongTopK(columnIndex);
         this.base = base;
         this.columnIndex = columnIndex;
         this.lo = lo;

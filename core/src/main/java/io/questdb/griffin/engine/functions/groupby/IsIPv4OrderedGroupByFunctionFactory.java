@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class IsIPv4OrderedGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "isOrdered(X)";
@@ -43,7 +44,13 @@ public class IsIPv4OrderedGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new IsIPv4OrderedGroupByFunction(args.getQuick(0));
     }
 }

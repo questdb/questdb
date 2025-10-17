@@ -93,6 +93,11 @@ class FirstGeoHashGroupByFunctionLong extends GeoLongFunction implements GroupBy
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

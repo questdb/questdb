@@ -2449,6 +2449,24 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitedOrderByLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
+            assertQueryNoLeakCheck(
+                    "sym\tlatest\n" +
+                            "1\t0\n" +
+                            "2\t0\n",
+                    "SELECT sym, first((0::timestamp)::long) latest " +
+                            "FROM x " +
+                            "WHERE ts IN '2023-01-01' " +
+                            "ORDER BY latest DESC " +
+                            "LIMIT 10;"
+            );
+        });
+    }
+
+    @Test
     public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
         String expected = "url\tu_count\tcnt\tavg_m_sum\n" +
                 "RXPEHNRXGZ\t4\t4\t414.25\n" +

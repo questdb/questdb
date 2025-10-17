@@ -58,6 +58,13 @@ public class PriorityMetadata extends AbstractRecordMetadata {
         columnNameIndexMap.putAt(keyIndex, m.getColumnName(), pos);
     }
 
+    public int getBaseColumnIndex(int index) {
+        if (index < virtualColumnReservedSlots) {
+            return -1;
+        }
+        return index - virtualColumnReservedSlots;
+    }
+
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         int index = baseMetadata.getColumnIndexQuiet(columnName, lo, hi);

@@ -37,7 +37,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactory {
-
     public static final String NAME = "first_not_null";
 
     @Override
@@ -51,7 +50,13 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function function = args.getQuick(0);
         int type = function.getType();
 
@@ -68,6 +73,7 @@ public class FirstNotNullGeoHashGroupByFunctionFactory implements FunctionFactor
     }
 
     private static class FirstNotNullGeoHashGroupByFunctionByte extends FirstGeoHashGroupByFunctionByte {
+
         public FirstNotNullGeoHashGroupByFunctionByte(int type, Function function) {
             super(type, function);
         }

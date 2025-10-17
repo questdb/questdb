@@ -92,6 +92,11 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

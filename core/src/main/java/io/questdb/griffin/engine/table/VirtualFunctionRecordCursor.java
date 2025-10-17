@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -31,26 +32,33 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualFunctionRecord;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
     private final ObjList<Function> functions;
     private final int memoizerCount;
     private final ObjList<Function> memoizers;
+    private final PriorityMetadata priorityMetadata;
     private final VirtualFunctionRecord recordB;
     private final boolean supportsRandomAccess;
     protected RecordCursor baseCursor;
 
     public VirtualFunctionRecordCursor(
-            ObjList<Function> functions,
-            ObjList<Function> memoizers,
+            @NotNull PriorityMetadata priorityMetadata,
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<Function> memoizers,
             boolean supportsRandomAccess,
             int virtualColumnReservedSlots
     ) {
+        this.priorityMetadata = priorityMetadata;
         this.functions = functions;
         this.memoizers = memoizers;
         this.memoizerCount = memoizers.size();
@@ -78,6 +86,17 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         }
     }
 
+    public int getLongTopKColumnIndex(int columnIndex) {
+        if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof ColumnFunction columnFunction) {
+            final int virtualColumnIndex = columnFunction.getColumnIndex();
+            final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
+            if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
+                return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
+            }
+        }
+        return -1;
+    }
+
     @Override
     public Record getRecord() {
         return recordA;
@@ -103,6 +122,13 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
             memoizeFunctions(recordA);
         }
         return result;
+    }
+
+    @Override
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+        final int baseColumnIndex = getLongTopKColumnIndex(columnIndex);
+        assert baseColumnIndex != -1;
+        baseCursor.longTopK(list, baseColumnIndex);
     }
 
     @Override

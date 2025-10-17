@@ -291,9 +291,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             String expectedSql = "1\tURL\tc\n" +
                     "1\tabc\t2\n" +
-                    "1\tghi\t1\n" +
-                    "1\tdef\t1\n";
-            String expectedPlan = "Sort light lo: 10\n" +
+                    "1\tdef\t1\n" +
+                    "1\tghi\t1\n";
+            String expectedPlan = "Long Top K lo: 10\n" +
                     "  keys: [c desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [1,URL,c]\n" +

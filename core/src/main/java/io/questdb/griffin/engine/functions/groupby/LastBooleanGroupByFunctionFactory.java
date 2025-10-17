@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LastBooleanGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "last(T)";
@@ -43,7 +44,13 @@ public class LastBooleanGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new LastBooleanGroupByFunction(args.getQuick(0));
     }
 }

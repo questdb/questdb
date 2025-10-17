@@ -178,6 +178,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        return base.recordCursorSupportsLongTopK(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }
