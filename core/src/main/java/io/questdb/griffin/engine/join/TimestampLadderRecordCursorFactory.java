@@ -400,26 +400,28 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
         // - also works as a node in a circular list of iterators
         private class SlaveRowIterator {
             private final RecordChain masterRecordChain;
+            private final long masterTimestamp;
             private SlaveRowIterator nextIter;
             private int nextSlaveRowNum;
             private long nextTimestamp = Long.MIN_VALUE;
 
             SlaveRowIterator(Record masterRecord) {
                 // Create a RecordChain to hold a single master record
-                this.masterRecordChain = new RecordChain(
+                masterRecordChain = new RecordChain(
                         masterMetadata,
                         masterRecordSink,
                         configuration.getSqlHashJoinValuePageSize(),
                         configuration.getSqlHashJoinValueMaxPages()
                 );
                 // Put the master record in the record chain
-                this.masterRecordChain.put(masterRecord, -1);
-                this.masterRecordChain.toTop();
-                this.masterRecordChain.hasNext(); // Position at the record
+                masterRecordChain.put(masterRecord, -1);
+                masterRecordChain.toTop();
+                masterRecordChain.hasNext(); // Position at the record
+                masterTimestamp = getMasterRecord().getTimestamp(masterTimestampColumnIndex);
 
                 // Initialize iteration state
-                this.nextSlaveRowNum = 0;
-                this.nextIter = this;  // Initially points to itself (circular list of one)
+                nextSlaveRowNum = 0;
+                nextIter = this;  // Initially points to itself (circular list of one)
                 gotoNextRow();
             }
 
@@ -440,7 +442,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     return;
                 }
                 nextSlaveRowNum++;
-                long masterTimestamp = getMasterRecord().getTimestamp(masterTimestampColumnIndex);
                 long slaveRecordOffset = slaveRecordOffsets.getQuick(nextSlaveRowNum);
                 Record slaveRec = slaveRecordArray.getRecordAt(slaveRecordOffset);
                 long slaveOffset = slaveRec.getLong(slaveSequenceColumnIndex);
