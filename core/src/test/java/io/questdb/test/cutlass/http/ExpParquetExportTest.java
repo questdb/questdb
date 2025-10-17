@@ -160,7 +160,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
                                 errorCount.incrementAndGet();
-                                e.printStackTrace();
+                                LOG.error().$(e).$();
                             } finally {
                                 Misc.free(client);
                                 Path.clearThreadLocals();
@@ -214,7 +214,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
-                                e.printStackTrace();
+                                LOG.error().$(e).$();
                             } finally {
                                 Misc.free(client);
                                 Path.clearThreadLocals();
@@ -262,7 +262,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 }
                                 completedCount.incrementAndGet();
                             } catch (Exception e) {
-                                e.printStackTrace();
+                                LOG.error().$(e).$();
                             } finally {
                                 Misc.free(client);
                                 Path.clearThreadLocals();
@@ -326,7 +326,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 }
                                 successCount.incrementAndGet();
                             } catch (Exception e) {
-                                e.printStackTrace();
+                                LOG.error().$(e).$();
                             } finally {
                                 Misc.free(client);
                                 Path.clearThreadLocals();
@@ -341,6 +341,25 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     Assert.assertEquals("Expected all concurrent exports with different codecs to succeed",
                             threadCount, successCount.get());
+                });
+    }
+
+    @Test
+    public void testEmptyTable() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE codec_zstd_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+                    params.clear();
+                    params.put("fmt", "parquet");
+                    params.put("query", "SELECT * FROM codec_zstd_test where 1 = 2");
+
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "{\"query\":\"SELECT * FROM codec_zstd_test where 1 = 2\",\"error\":\"empty table\",\"position\":0}",
+                            params,
+                            null,
+                            null
+                    );
                 });
     }
 
