@@ -38,7 +38,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.FileInputStream;
 
-public class ImportParquetTest extends AbstractCairoTest {
+public class FileImportTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
@@ -161,7 +161,7 @@ public class ImportParquetTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "2e\r\n" +
-                                                "{\"successful\":[\"dir/dir1/large_test.parquet\"]}\r\n" +
+                                                (Os.isWindows() ? "{\"successful\":[\"dir\\dir1\\large_test.parquet\"]}\r\n" : "{\"successful\":[\"dir/dir1/large_test.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -185,77 +185,6 @@ public class ImportParquetTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetImportLargeTotalSize() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(100))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "6a\r\n" +
-                                                "{\"status\":\"parquet file transfer incomplete [expected=1000 bytes, received=732 bytes, file=test.parquet]\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportRejectsInvalidParquet() throws Exception {
-        assertMemoryLeak(() -> {
-            String invalidRequest = "POST /upload?total_size=" + 20 + " HTTP/1.1\r\n" +
-                    "Host: localhost:9001\r\n" +
-                    "User-Agent: curl/7.64.0\r\n" +
-                    "Content-Type: multipart/form-data; boundary=boundary123\r\n" +
-                    "Content-Length: 100\r\n" +
-                    "\r\n" +
-                    "--boundary123\r\n" +
-                    "Content-Disposition: form-data; name=\"parquet\"; filename=\"test.parquet\"\r\n" +
-                    "\r\n" +
-                    "invalid parquet data\r\n" +
-                    "--boundary123--";
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        invalidRequest.getBytes(),
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/plain; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "87\r\n" +
-                                                "error in PartitionDecoder.create: could not read parquet file with read size 20: File out of specification: The file must end with PAR1\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
     public void testParquetImportRelativePath() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
@@ -273,77 +202,14 @@ public class ImportParquetTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 403 Forbidden\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "3d\r\n" +
-                                                "{\"status\":\"relative path is not allowed in parquet filename\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportSmallTotalSize() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(100))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "65\r\n" +
-                                                "{\"status\":\"parquet chunk exceeds expected file size [written=0, chunk=732, total=732, expected=100]\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportWithNegativeSize() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "4e\r\n" +
-                                                "{\"status\":\"parquet import requires positive 'total_size' URL parameter value\"}\r\n" +
+                                                "4f\r\n" +
+                                                "{\"errors\":[{\"status\":\"403\",\"detail\":\"path traversal not allowed in filename\"}]}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -368,78 +234,14 @@ public class ImportParquetTest extends AbstractCairoTest {
                         new SendAndReceiveRequestBuilder()
                                 .execute(
                                         parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/plain; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "49\r\n" +
-                                                "parquet files can only be imported when sql.copy.input.root is configured\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportWithoutTotalSize() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
+                                        "HTTP/1.1 400 Bad request\r\n" +
                                                 "Server: questDB/1.0\r\n" +
                                                 "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "59\r\n" +
-                                                "{\"status\":\"parquet import requires 'total_size' URL parameter to pre-allocate file size\"}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportWithoutTotalSizeNotNumber() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withCopyInputRoot(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "4d\r\n" +
-                                                "{\"status\":\"parquet import requires valid numeric 'total_size' URL parameter\"}\r\n" +
+                                                "4f\r\n" +
+                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.export.root is not configured\"}]}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
