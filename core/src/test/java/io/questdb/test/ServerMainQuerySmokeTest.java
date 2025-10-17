@@ -248,7 +248,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
                         ") timestamp (ts) PARTITION BY DAY",
                 convertToParquet ? "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0" : null,
-                "SELECT * FROM tab WHERE key = 'k3' LIMIT 10",
+                "SELECT /*+ ENABLE_PRE_TOUCH(tab) */ * FROM tab WHERE key = 'k3' LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
