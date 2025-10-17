@@ -1,0 +1,378 @@
+# name: test/sql/test_percentile_disc.test
+# description: Test PERCENTILE_DISC (window function with whole partition frames)
+# group: [window]
+# Note: QuestDB's percentile_disc window function only supports whole partition frames
+# Valid: OVER () or OVER (PARTITION BY col)
+# Invalid: OVER (ORDER BY col)
+# For ORDER BY behavior, use quantile_disc aggregate function instead
+
+#statement ok
+#PRAGMA enable_verification
+
+# Create test table
+statement ok
+CREATE TABLE flights(
+	year INT,
+	month INT,
+	day INT,
+	dep_time INT,
+	sched_dep_time INT,
+	dep_delay DOUBLE,
+	arr_time INT,
+	sched_arr_time INT,
+	arr_delay DOUBLE,
+	carrier STRING,
+	flight INT,
+	tailnum STRING,
+	origin STRING,
+	dest STRING,
+	air_time DOUBLE,
+	distance DOUBLE,
+	hour DOUBLE,
+	minute DOUBLE,
+	time_hour TIMESTAMP
+) timestamp(time_hour) PARTITION BY DAY;
+
+# Test with OVER () - whole dataset percentile
+query R
+select percentile_disc(x, 0.5) over ()
+from (select x from long_sequence(101) order by x) where x = 51
+----
+51.000000
+
+# Test with OVER () - single value result for all rows
+query I
+SELECT percentile_disc(x, 0.25) over ()
+FROM (select x from long_sequence(100))
+WHERE x = 100
+----
+100.000000
+
+# Test with simple values using aggregate quantile_disc instead
+# This is equivalent to DuckDB's percentile_disc(0.5) within group(order by col desc)
+query I
+SELECT quantile_disc(col, 0.5)
+FROM (
+    SELECT 11000 as col UNION ALL
+    SELECT 3100 as col UNION ALL
+    SELECT 2900 as col UNION ALL
+    SELECT 2800 as col UNION ALL
+    SELECT 2600 as col UNION ALL
+    SELECT 2500 as col
+)
+----
+2800
+
+# Multiple percentiles using aggregate quantile_disc
+query III
+SELECT
+    quantile_disc(col, 0.25),
+    quantile_disc(col, 0.5),
+    quantile_disc(col, 0.75)
+FROM (
+    SELECT 11000 as col UNION ALL
+    SELECT 3100 as col UNION ALL
+    SELECT 2900 as col UNION ALL
+    SELECT 2800 as col UNION ALL
+    SELECT 2600 as col UNION ALL
+    SELECT 2500 as col
+)
+----
+2600 2800 2900
+
+# Test percentile_disc with PARTITION BY
+query II
+with data as (
+    SELECT 'A' as grp, 10 as val UNION ALL
+    SELECT 'A' as grp, 20 as val UNION ALL
+    SELECT 'A' as grp, 30 as val UNION ALL
+    SELECT 'B' as grp, 40 as val UNION ALL
+    SELECT 'B' as grp, 50 as val UNION ALL
+    SELECT 'B' as grp, 60 as val
+)
+SELECT
+    grp,
+    percentile_disc(val, 0.5) over (partition by grp)
+FROM data
+WHERE val in (30, 60)
+ORDER BY grp
+----
+A 20
+B 50
+
+# Error checking - percentile_disc with ORDER BY should fail
+statement error
+SELECT percentile_disc(x, 0.25) over (order by x) from long_sequence(10)
+
+
+# Error checking - wrong number of arguments
+statement error
+SELECT percentile_disc(x) over () from long_sequence(10)
+
+
+statement error
+SELECT percentile_disc(x, 0.25, 0.5) over () from long_sequence(10)
+
+
+# Test with NULL values using aggregate
+query I
+SELECT quantile_disc(val, 0.5)
+FROM (
+    SELECT NULL as val UNION ALL
+    SELECT 1 as val UNION ALL
+    SELECT 2 as val UNION ALL
+    SELECT 3 as val UNION ALL
+    SELECT 4 as val UNION ALL
+    SELECT 5 as val
+)
+----
+3
+
+# Test with all NULL values
+query I
+SELECT percentile_disc(val, 0.5) over ()
+FROM (SELECT NULL::int as val UNION ALL SELECT NULL::int as val)
+WHERE val IS NULL
+----
+NULL
+
+# Test with single value
+query I
+SELECT percentile_disc(x, 0.5) over ()
+FROM (SELECT 42 as x)
+----
+42
+
+# Test with two values using aggregate
+query I
+SELECT quantile_disc(x, 0.5)
+FROM (SELECT 10 as x UNION ALL SELECT 20 as x)
+----
+10
+
+# Test edge percentiles (0.0 and 1.0) using aggregate
+query II
+SELECT
+    quantile_disc(x, 0.0),
+    quantile_disc(x, 1.0)
+FROM (select x from long_sequence(100))
+----
+1 100
+
+# Test with constant values
+query I
+SELECT percentile_disc(x, 0.5) over ()
+FROM (SELECT 42 as x UNION ALL SELECT 42 as x UNION ALL SELECT 42 as x)
+LIMIT 1
+----
+42
+
+# Test with negative values using aggregate
+query I
+SELECT quantile_disc(x, 0.5)
+FROM (SELECT -10 as x UNION ALL SELECT -5 as x UNION ALL SELECT 0 as x UNION ALL SELECT 5 as x UNION ALL SELECT 10 as x)
+----
+0
+
+# Test with very large values
+query I
+SELECT percentile_disc(x, 0.5) over ()
+FROM (SELECT 9223372036854775800::long as x UNION ALL SELECT 9223372036854775801::long as x UNION ALL SELECT 9223372036854775802::long as x)
+LIMIT 1
+----
+9223372036854775801
+
+# Test with very small percentiles using aggregate
+query I
+SELECT quantile_disc(x, 0.01)
+FROM (select x from long_sequence(100))
+----
+1
+
+# Test with very large percentiles using aggregate
+query I
+SELECT quantile_disc(x, 0.99)
+FROM (select x from long_sequence(100))
+----
+99
+
+# Test different integer types with window function
+query I
+SELECT percentile_disc(x::int, 0.5) over ()
+FROM (select x::int from long_sequence(10))
+LIMIT 1
+----
+5
+
+query I
+SELECT percentile_disc(x::long, 0.5) over ()
+FROM (select x from long_sequence(10))
+LIMIT 1
+----
+5
+
+# Test with byte type
+query I
+SELECT percentile_disc(x::byte, 0.5) over ()
+FROM (select x::byte from long_sequence(10))
+LIMIT 1
+----
+5
+
+# Test with short type
+query I
+SELECT percentile_disc(x::short, 0.5) over ()
+FROM (select x::short from long_sequence(10))
+LIMIT 1
+----
+5
+
+# Test with floating point values (percentile_disc should work with doubles too)
+query R
+SELECT percentile_disc(x::double, 0.5) over ()
+FROM (select x::double from long_sequence(10))
+LIMIT 1
+----
+5.000000
+
+# Test with quarter percentiles using aggregate
+query IIII
+SELECT
+    quantile_disc(x, 0.25),
+    quantile_disc(x, 0.50),
+    quantile_disc(x, 0.75),
+    quantile_disc(x, 1.00)
+FROM (select x from long_sequence(100))
+----
+25 50 75 100
+
+# Test timestamp/date values using aggregate
+query I
+SELECT quantile_disc(dateadd('d', x::int, '2020-01-01'::timestamp)::long, 0.5)::timestamp
+FROM (select x from long_sequence(10))
+----
+2020-01-06 00:00:00
+
+# Test with NaN values using aggregate
+query R
+with data as (
+	select 'NaN'::double as num
+	union all
+	select x::double as num from long_sequence(99)
+	union all
+	select 'NaN'::double as num
+)
+select quantile_disc(num, 0.9)
+from data;
+----
+90.000000
+
+# Test median behavior
+query I
+with items as (
+	SELECT 500 as val UNION ALL
+	SELECT 1000 as val UNION ALL
+	SELECT 800 as val UNION ALL
+	SELECT 1000 as val UNION ALL
+	SELECT 500 as val UNION ALL
+	SELECT 550 as val UNION ALL
+	SELECT 400 as val UNION ALL
+	SELECT 200 as val UNION ALL
+	SELECT 10 as val
+)
+SELECT quantile_disc(val, 0.5)
+FROM items
+----
+500
+
+# Test quartiles with specific dataset using aggregate
+query III
+SELECT
+    quantile_disc(value, 0.25),
+    quantile_disc(value, 0.50),
+    quantile_disc(value, 0.75)
+FROM (
+    SELECT x as value
+    FROM long_sequence(1000)
+)
+----
+250 500 750
+
+# Test empty result set behavior
+query I
+SELECT percentile_disc(x, 0.5) over ()
+FROM long_sequence(10)
+WHERE 1 = 0
+----
+
+# Test window function with whole partition on large dataset
+query I
+SELECT percentile_disc(x, 0.99) over ()
+FROM (select x from long_sequence(1000))
+WHERE x = 1000
+----
+990
+
+# Test multiple partitions with percentile_disc
+query III
+with data as (
+    SELECT 'X' as grp, x as val FROM long_sequence(10)
+    UNION ALL
+    SELECT 'Y' as grp, x + 100 as val FROM long_sequence(10)
+    UNION ALL
+    SELECT 'Z' as grp, x + 200 as val FROM long_sequence(10)
+)
+SELECT
+    grp,
+    percentile_disc(val, 0.25) over (partition by grp),
+    percentile_disc(val, 0.75) over (partition by grp)
+FROM data
+WHERE val in (10, 110, 210)
+ORDER BY grp
+----
+X 3 8
+Y 103 108
+Z 203 208
+
+# Test using quantile_disc with GROUP BY for partitioned behavior
+query II
+SELECT
+    grp,
+    quantile_disc(val, 0.5) as median
+FROM (
+    SELECT 'A' as grp, 10 as val UNION ALL
+    SELECT 'A' as grp, 20 as val UNION ALL
+    SELECT 'A' as grp, 30 as val UNION ALL
+    SELECT 'B' as grp, 40 as val UNION ALL
+    SELECT 'B' as grp, 50 as val UNION ALL
+    SELECT 'B' as grp, 60 as val
+)
+GROUP BY grp
+ORDER BY grp
+----
+A 20
+B 50
+
+# Test with mixed positive and negative values
+query I
+SELECT percentile_disc(x, 0.5) over ()
+FROM (
+    SELECT -100 as x UNION ALL
+    SELECT -50 as x UNION ALL
+    SELECT 0 as x UNION ALL
+    SELECT 50 as x UNION ALL
+    SELECT 100 as x
+)
+LIMIT 1
+----
+0
+
+# Test 0th and 100th percentiles with window function
+query II
+SELECT
+    percentile_disc(x, 0.0) over (),
+    percentile_disc(x, 1.0) over ()
+FROM (select x from long_sequence(50))
+WHERE x = 50
+----
+1 50

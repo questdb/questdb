@@ -1,0 +1,381 @@
+# name: test/sql/test_quantile_cont.test
+# description: Test QUANTILE_CONT aggregate
+# group: [aggregates]
+
+#statement ok
+#SET default_null_order='nulls_first';
+
+#statement ok
+#PRAGMA enable_verification
+
+#statement ok
+#PRAGMA verify_external
+
+# Create test table with sample data
+statement ok
+CREATE TABLE quantile AS (
+SELECT * FROM (
+    SELECT (x-1)*100 as r, rnd_double() AS q
+    FROM long_sequence(10000)
+    UNION ALL
+    SELECT NULL, 0.1
+    UNION ALL
+    SELECT NULL, 0.5
+    UNION ALL
+    SELECT NULL, 0.9
+)
+ORDER BY 2
+);
+
+# Test NULL quantile parameter - QuestDB may handle this differently
+#statement error
+#SELECT quantile_cont(r, NULL) FROM quantile
+
+query R
+SELECT quantile_cont(r, 0.5) FROM quantile
+----
+4.9995e+5
+
+#query R
+#SELECT quantile_cont(r::decimal(10,2), 0.5) FROM quantile
+#----
+#499950
+
+query R
+SELECT quantile_cont(r, 1.0) FROM quantile
+----
+9.999e+5
+
+query R
+SELECT quantile_cont(r, 0.0) FROM quantile
+----
+0.000000
+
+query R
+SELECT quantile_cont(NULL, 0.5) FROM quantile
+----
+NULL
+
+query R
+SELECT quantile_cont(42, 0.5) FROM quantile
+----
+42.000000
+
+query R
+SELECT quantile_cont(NULL, 0.5)
+----
+NULL
+
+query R
+SELECT quantile_cont(42, 0.5)
+----
+42.000000
+
+# single GROUP - multiple quantiles
+query RRR
+SELECT quantile_cont(r, 0.25), quantile_cont(r, 0.5), quantile_cont(r, 0.75) from quantile
+----
+2.49975e+5 4.9995e+5 7.49925e+5
+
+# DuckDB foreach loop for decimal types - QuestDB may not support all decimal types
+#foreach type decimal(4,1) decimal(8,1) decimal(12,1) decimal(18,1) decimal(24,1)
+#
+#query III
+#SELECT quantile_cont(d::${type}, 0.25), quantile_cont(d::${type}, 0.5), quantile_cont(d::${type}, 0.75)
+#FROM range(0,100) tbl(d)
+#----
+#24.7	49.5	74.2
+#
+#endloop
+
+# multiple groups
+query II
+SELECT r % 1000 as g, quantile_cont(r, 0.25) FROM quantile GROUP BY 1 ORDER BY 1
+----
+NULL NULL
+0 2.4975e+5
+100 2.4985e+5
+200 2.4995e+5
+300 2.5005e+5
+400 2.5015e+5
+500 2.5025e+5
+600 2.5035e+5
+700 2.5045e+5
+800 2.5055e+5
+900 2.5065e+5
+
+# temporal types - QuestDB uses different timestamp syntax
+query I
+SELECT quantile_cont(dateadd('s', r::int, '2021-01-01T00:00:00.000000Z'::timestamp)::long, 0.5)::timestamp FROM quantile
+----
+2021-01-06 18:52:30
+
+# date type interpolation
+#query I
+#SELECT quantile_cont(dateadd('d', r/100, '1990-01-01'::date)::date, 0.5) FROM quantile
+#----
+#2003-09-09 12:00:00
+
+# time type interpolation - QuestDB may not support TIME type
+#query I
+#SELECT quantile_cont('00:00:00'::TIME + interval (r/100) second, 0.5) FROM quantile
+#----
+#01:23:19.5
+
+# interval type - not supported
+#statement error
+#SELECT quantile_cont(interval (r/100) second, 0.5) FROM quantile
+
+# WITH TIME ZONE - QuestDB may handle timezone differently
+#query I
+#SELECT quantile_cont(('2021-01-01'::TIMESTAMP + interval (r) second)::TIMESTAMPTZ, 0.5) FROM quantile
+#----
+#2021-01-06 18:52:30+00
+
+# constant input
+query R
+SELECT quantile_cont(1, 0.1) FROM quantile
+----
+1.000000
+
+# Negative/Descending fractions
+query R
+SELECT quantile_cont(r, -0.1) FROM quantile
+----
+8.9991e+5
+
+# ORDER BY ... DESC - This is the ordered set aggregate syntax with WITHIN GROUP
+# QuestDB may not support PERCENTILE_CONT with WITHIN GROUP yet, so converting to window function
+#query II
+#SELECT
+#    percentile_cont(0.8) WITHIN GROUP (ORDER BY x DESC),
+#    quantile_cont(x, 0.8 ORDER BY x DESC),
+#FROM
+#    (VALUES (2), (1)) _(x);
+#----
+#1.2	1.2
+
+# Convert to window function test - using OVER () for whole partition
+query R
+SELECT percentile_cont(x, 0.8) over ()
+FROM (SELECT 2::double as x UNION ALL SELECT 1::double as x)
+----
+1.800000
+1.800000
+
+# empty input
+query R
+SELECT quantile_cont(r, 0.1) FROM quantile WHERE 1=0
+----
+NULL
+
+# Error cases - QuestDB error messages may differ
+statement error
+SELECT quantile_cont(r, -1.1) FROM quantile
+
+
+statement error
+SELECT quantile_cont(r, 1.1) FROM quantile
+
+
+statement error
+SELECT quantile_cont(r, "string") FROM quantile
+
+
+#statement error
+#SELECT quantile_cont(r, NULL) FROM quantile
+
+
+#statement error
+#SELECT quantile_cont(r::string, 0.5) FROM quantile
+
+
+statement error
+SELECT quantile_cont(r) FROM quantile
+
+
+statement error
+SELECT quantile_cont(r, 0.1, 50) FROM quantile
+
+
+# Parallel execution tests
+statement ok
+pragma threads=4
+
+#statement ok
+#PRAGMA verify_parallelism
+
+# single GROUP
+query RRR
+SELECT quantile_cont(r, 0.25), quantile_cont(r, 0.5), quantile_cont(r, 0.75) from quantile
+----
+2.49975e+5 4.9995e+5 7.49925e+5
+
+# multiple groups
+query II
+SELECT r % 1000 as g, quantile_cont(r, 0.25) FROM quantile GROUP BY 1 ORDER BY 1
+----
+NULL NULL
+0 2.4975e+5
+100 2.4985e+5
+200 2.4995e+5
+300 2.5005e+5
+400 2.5015e+5
+500 2.5025e+5
+600 2.5035e+5
+700 2.5045e+5
+800 2.5055e+5
+900 2.5065e+5
+
+# constant input
+query R
+SELECT quantile_cont(1, 0.1) FROM quantile
+----
+1.000000
+
+# empty input
+query R
+SELECT quantile_cont(r, 0.1) FROM quantile WHERE 1=0
+----
+NULL
+
+# TINYINT extremes - QuestDB uses BYTE
+#query I
+#SELECT quantile_cont(t, 0.5) FROM (VALUES (120::TINYINT), (122::TINYINT)) tbl(t)
+#----
+#121
+
+query I
+SELECT quantile_cont(t, 0.5) FROM (SELECT 120::byte as t UNION ALL SELECT 122::byte as t)
+----
+121.000000
+
+#statement ok
+#CREATE TABLE tinyints(t TINYINT);
+#
+#statement ok
+#INSERT INTO tinyints VALUES (-127), (-127);
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM tinyints;
+#----
+#-127
+#
+#statement ok
+#UPDATE tinyints SET t=-t;
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM tinyints;
+#----
+#127
+
+# SMALLINT extremes - QuestDB uses SHORT
+#query I
+#SELECT quantile_cont(t, 0.5) FROM (VALUES (32764::SMALLINT), (32766::SMALLINT)) tbl(t)
+#----
+#32765
+
+query I
+SELECT quantile_cont(t, 0.5) FROM (SELECT 32764::short as t UNION ALL SELECT 32766::short as t)
+----
+32765.000000
+
+#statement ok
+#CREATE TABLE smallints(t SMALLINT);
+#
+#statement ok
+#INSERT INTO smallints VALUES (-32767), (-32767);
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM smallints;
+#----
+#-32767
+#
+#statement ok
+#UPDATE smallints SET t=-t;
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM smallints;
+#----
+#32767
+
+# INTEGER extremes - QuestDB uses INT
+query I
+SELECT quantile_cont(t, 0.5) FROM (SELECT 2147483642::int as t UNION ALL SELECT 2147483644::int as t)
+----
+2.147483643e+9
+
+#statement ok
+#CREATE TABLE integers(t INTEGER);
+#
+#statement ok
+#INSERT INTO integers VALUES (-2147483647), (-2147483647);
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM integers;
+#----
+#-2147483647
+#
+#statement ok
+#UPDATE integers SET t=-t;
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM integers;
+#----
+#2147483647
+
+# BIGINT extremes - same name in QuestDB
+query I
+SELECT quantile_cont(t, 0.5) FROM (SELECT 9223372036854775794::long as t UNION ALL SELECT 9223372036854775796::long as t)
+----
+9.223372036854776e+18
+
+#statement ok
+#CREATE TABLE bigints(t BIGINT);
+#
+#statement ok
+#INSERT INTO bigints VALUES (-9223372036854775800), (-9223372036854775800);
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM bigints;
+#----
+#-9223372036854775800
+#
+#statement ok
+#UPDATE bigints SET t=-t;
+#
+#query I
+#SELECT quantile_cont(t, 0.5) FROM bigints;
+#----
+#9223372036854775800
+
+# Non-constant quantile parameter
+#statement error
+#SELECT quantile_cont(r, random()) FROM quantile
+
+# NaNs
+query R
+with a as (
+	select 'NaN'::double as num
+	union all
+	select x::double as num from long_sequence(99)
+	union all
+	select 'NaN'::double as num
+)
+select quantile_cont(num, 0.9)
+from a;
+----
+89.200000
+
+query R
+with a as (
+	select cast('NaN' as float) as num
+	union all
+	select x::float as num from long_sequence(99)
+	union all
+	select cast('NaN' as float) as num
+)
+select quantile_cont(num, 0.9)
+from a;
+----
+89.099998

@@ -1,0 +1,316 @@
+# name: test/sql/test_percentile_cont.test
+# description: Test PERCENTILE_CONT (window function with whole partition frames)
+# group: [window]
+# Note: QuestDB's percentile_cont window function only supports whole partition frames
+# Valid: OVER () or OVER (PARTITION BY col)
+# Invalid: OVER (ORDER BY col)
+# For ORDER BY behavior, use quantile_cont aggregate function instead
+
+#statement ok
+#PRAGMA enable_verification
+
+# Create test table
+statement ok
+CREATE TABLE flights(
+	year INT,
+	month INT,
+	day INT,
+	dep_time INT,
+	sched_dep_time INT,
+	dep_delay DOUBLE,
+	arr_time INT,
+	sched_arr_time INT,
+	arr_delay DOUBLE,
+	carrier STRING,
+	flight INT,
+	tailnum STRING,
+	origin STRING,
+	dest STRING,
+	air_time DOUBLE,
+	distance DOUBLE,
+	hour DOUBLE,
+	minute DOUBLE,
+	time_hour TIMESTAMP
+) timestamp(time_hour) PARTITION BY DAY;
+
+# Test with OVER () - whole dataset percentile
+query R
+select percentile_cont(x, 0.5) over ()
+from (select x from long_sequence(101) order by x) where x = 51
+----
+51.000000
+
+# Test with OVER () - returns same value for all rows, filter to one row
+query R
+SELECT percentile_cont(x, 0.25) over ()
+FROM (select x from long_sequence(100))
+LIMIT 1
+----
+25.750000
+
+# Test with simple values using aggregate quantile_cont instead
+# This is equivalent to DuckDB's percentile_cont(0.5) within group(order by col desc)
+query R
+SELECT quantile_cont(col, 0.5)
+FROM (
+    SELECT 11000.0 as col UNION ALL
+    SELECT 3100.0 as col UNION ALL
+    SELECT 2900.0 as col UNION ALL
+    SELECT 2800.0 as col UNION ALL
+    SELECT 2600.0 as col UNION ALL
+    SELECT 2500.0 as col
+)
+----
+2850.000000
+
+# Multiple percentiles using aggregate quantile_cont
+query RRR
+SELECT
+    quantile_cont(col, 0.25),
+    quantile_cont(col, 0.5),
+    quantile_cont(col, 0.75)
+FROM (
+    SELECT 11000.0 as col UNION ALL
+    SELECT 3100.0 as col UNION ALL
+    SELECT 2900.0 as col UNION ALL
+    SELECT 2800.0 as col UNION ALL
+    SELECT 2600.0 as col UNION ALL
+    SELECT 2500.0 as col
+)
+----
+2650.000000 2850.000000 3050.000000
+
+# Test percentile_cont with PARTITION BY
+#query RR
+#with data as (
+#    SELECT 'A' as grp, 10.0 as val UNION ALL
+#    SELECT 'A' as grp, 20.0 as val UNION ALL
+#    SELECT 'A' as grp, 30.0 as val UNION ALL
+#    SELECT 'B' as grp, 40.0 as val UNION ALL
+#    SELECT 'B' as grp, 50.0 as val UNION ALL
+#    SELECT 'B' as grp, 60.0 as val
+#)
+#SELECT
+#    grp,
+#    percentile_cont(val, 0.5) over (partition by grp)
+#FROM data
+#WHERE val in (30.0, 60.0)
+#ORDER BY grp
+#----
+#A 20.000000
+#B 50.000000
+
+# Error checking - percentile_cont with ORDER BY should fail
+statement error
+SELECT percentile_cont(x, 0.25) over (order by x) from long_sequence(10)
+
+
+# Error checking - wrong number of arguments
+statement error
+SELECT percentile_cont(x) over () from long_sequence(10)
+
+
+statement error
+SELECT percentile_cont(x, 0.25, 0.5) over () from long_sequence(10)
+
+
+# Test with NULL values using aggregate
+query R
+SELECT quantile_cont(val, 0.5)
+FROM (
+    SELECT NULL as val UNION ALL
+    SELECT 1.0 as val UNION ALL
+    SELECT 2.0 as val UNION ALL
+    SELECT 3.0 as val UNION ALL
+    SELECT 4.0 as val UNION ALL
+    SELECT 5.0 as val
+)
+----
+3.000000
+
+# Test with all NULL values
+query R
+SELECT percentile_cont(val, 0.5) over ()
+FROM (SELECT NULL::double as val UNION ALL SELECT NULL::double as val)
+WHERE val IS NULL
+----
+NULL
+NULL
+
+# Test with single value
+query R
+SELECT percentile_cont(x, 0.5) over ()
+FROM (SELECT 42.0 as x)
+----
+42.000000
+
+# Test with two values (interpolation) using aggregate
+query R
+SELECT quantile_cont(x, 0.5)
+FROM (SELECT 10.0 as x UNION ALL SELECT 20.0 as x)
+----
+15.000000
+
+# Test edge percentiles (0.0 and 1.0) using aggregate
+query RR
+SELECT
+    quantile_cont(x, 0.0),
+    quantile_cont(x, 1.0)
+FROM (select x from long_sequence(100))
+----
+1.000000 100.000000
+
+# Test with constant values
+query R
+SELECT percentile_cont(x, 0.5) over ()
+FROM (SELECT 42.0 as x UNION ALL SELECT 42.0 as x UNION ALL SELECT 42.0 as x)
+LIMIT 1
+----
+42.000000
+
+# Test with negative values using aggregate
+query R
+SELECT quantile_cont(x, 0.5)
+FROM (SELECT -10.0 as x UNION ALL SELECT -5.0 as x UNION ALL SELECT 0.0 as x UNION ALL SELECT 5.0 as x UNION ALL SELECT 10.0 as x)
+----
+0.000000
+
+# Test with very large values
+query R
+SELECT percentile_cont(x, 0.5) over ()
+FROM (SELECT 1e15::double as x UNION ALL SELECT 2e15::double as x UNION ALL SELECT 3e15::double as x)
+LIMIT 1
+----
+2.000000e+15
+
+# Test with very small percentiles using aggregate
+query R
+SELECT quantile_cont(x, 0.01)
+FROM (select x from long_sequence(100))
+----
+1.990000
+
+# Test with very large percentiles using aggregate
+query R
+SELECT quantile_cont(x, 0.99)
+FROM (select x from long_sequence(100))
+----
+99.010000
+
+# Test different data types with window function
+query R
+SELECT percentile_cont(x::int, 0.5) over ()
+FROM (select x::int from long_sequence(10))
+LIMIT 1
+----
+5.500000
+
+query R
+SELECT percentile_cont(x::long, 0.5) over ()
+FROM (select x from long_sequence(10))
+LIMIT 1
+----
+5.500000
+
+query R
+SELECT percentile_cont(x::float, 0.5) over ()
+FROM (select x::float from long_sequence(10))
+LIMIT 1
+----
+5.500000
+
+query R
+SELECT percentile_cont(x::double, 0.5) over ()
+FROM (select x::double from long_sequence(10))
+LIMIT 1
+----
+5.500000
+
+# Test with NaN values using aggregate
+query R
+with data as (
+	select 'NaN'::double as num
+	union all
+	select x::double as num from long_sequence(99)
+	union all
+	select 'NaN'::double as num
+)
+select quantile_cont(num, 0.9)
+from data;
+----
+89.100000
+
+# Test window function with whole partition on large dataset
+query R
+SELECT percentile_cont(x, 0.99) over ()
+FROM (select x from long_sequence(1000))
+WHERE x = 1000
+----
+990.010000
+
+# Test multiple partitions with percentile_cont
+query RRR
+with data as (
+    SELECT 'X' as grp, x::double as val FROM long_sequence(10)
+    UNION ALL
+    SELECT 'Y' as grp, (x + 100)::double as val FROM long_sequence(10)
+    UNION ALL
+    SELECT 'Z' as grp, (x + 200)::double as val FROM long_sequence(10)
+)
+SELECT
+    grp,
+    percentile_cont(val, 0.25) over (partition by grp),
+    percentile_cont(val, 0.75) over (partition by grp)
+FROM data
+WHERE val in (10.0, 110.0, 210.0)
+ORDER BY grp
+----
+X 3.250000 7.750000
+Y 103.250000 107.750000
+Z 203.250000 207.750000
+
+# Test empty result set behavior
+query R
+SELECT percentile_cont(x, 0.5) over ()
+FROM long_sequence(10)
+WHERE 1 = 0
+----
+
+# Test with array percentiles using window function (if supported)
+# QuestDB may support array syntax for multiple percentiles
+#query R
+#SELECT percentile_cont(x, ARRAY[0.25, 0.5, 0.75]) over ()
+#FROM (select x from long_sequence(100))
+#WHERE x = 100
+
+# Test using quantile_cont with GROUP BY for partitioned behavior
+query RR
+SELECT
+    grp,
+    quantile_cont(val, 0.5) as median
+FROM (
+    SELECT 'A' as grp, 10.0 as val UNION ALL
+    SELECT 'A' as grp, 20.0 as val UNION ALL
+    SELECT 'A' as grp, 30.0 as val UNION ALL
+    SELECT 'B' as grp, 40.0 as val UNION ALL
+    SELECT 'B' as grp, 50.0 as val UNION ALL
+    SELECT 'B' as grp, 60.0 as val
+)
+GROUP BY grp
+ORDER BY grp
+----
+A 20.000000
+B 50.000000
+
+# Test quartiles using quantile_cont aggregate
+query RRR
+SELECT
+    quantile_cont(val, 0.25),
+    quantile_cont(val, 0.50),
+    quantile_cont(val, 0.75)
+FROM (
+    SELECT x::double as val
+    FROM long_sequence(1000)
+)
+----
+250.750000 500.500000 750.250000
