@@ -45,6 +45,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
@@ -2832,6 +2833,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     assertFalse(
                                             "function " + factory.getSignature() + " should serialize to text properly",
                                             Chars.contains(tmpPlanSink.getSink(), "io.questdb")
+                                    );
+                                }
+
+                                if (function instanceof GroupByFunction) {
+                                    assertFalse(
+                                            "group by function " + factory.getSignature() + " should not be marked as constant",
+                                            function.isConstant()
                                     );
                                 }
                             } finally {
