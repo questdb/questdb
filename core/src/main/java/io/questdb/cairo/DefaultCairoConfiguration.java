@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
@@ -93,6 +94,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean attachPartitionCopy() {
+        return false;
+    }
+
+    @Override
+    public boolean autoScaleSymbolCapacity() {
+        return true;
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityThreshold() {
+        return 0.8;
+    }
+
+    @Override
+    public boolean cairoResourcePoolTracingEnabled() {
         return false;
     }
 
@@ -496,6 +512,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
+    }
+
+    @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return Micros.YEAR_MICROS_NONLEAP;
     }
 
     @Override
@@ -1057,8 +1078,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return 256 * 1024;
+    public long getSymbolTableMaxAllocationPageSize() {
+        return 8 * 1024 * 1024;
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return Files.PAGE_SIZE;
     }
 
     @Override
@@ -1342,11 +1368,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
     }
 

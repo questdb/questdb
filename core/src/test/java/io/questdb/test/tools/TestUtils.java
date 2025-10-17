@@ -66,6 +66,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -76,6 +77,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
@@ -94,6 +96,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -139,6 +142,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
+    private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -190,7 +194,7 @@ public final class TestUtils {
 
     public static void assertContains(String message, CharSequence sequence, CharSequence term) {
         // Assume that "" is contained in any string.
-        if (term.length() == 0) {
+        if (term.isEmpty()) {
             return;
         }
         if (Chars.contains(sequence, term)) {
@@ -205,7 +209,7 @@ public final class TestUtils {
 
     public static void assertContainsEither(CharSequence sequence, CharSequence term1, CharSequence term2) {
         // Assume that "" is contained in any string.
-        if (term1.length() == 0 || term2.length() == 0) {
+        if (term1.isEmpty() || term2.isEmpty()) {
             return;
         }
 
@@ -675,7 +679,7 @@ public final class TestUtils {
     }
 
     public static void assertEventually(EventualCode assertion) throws Exception {
-        assertEventually(assertion, 30);
+        assertEventually(assertion, 60);
     }
 
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
@@ -770,7 +774,7 @@ public final class TestUtils {
      * @param term     the {@code CharSequence} to search for (and assert its absence).
      */
     public static void assertNotContains(String message, CharSequence sequence, CharSequence term) {
-        if (term.length() == 0) {
+        if (term.isEmpty()) {
             String formatted = "";
             if (message != null) {
                 formatted = message + " ";
@@ -837,7 +841,7 @@ public final class TestUtils {
             Assert.fail(cleanMessage + "expected:<" + reverseLines(expected) + "> but was:<" + actual + ">");
         }
 
-        if (expected.length() == 0) {
+        if (expected.isEmpty()) {
             // If expected is empty, so is actual here (otherwise it would have failed the last condition).
             return;
         }
@@ -1703,25 +1707,12 @@ public final class TestUtils {
     }
 
     public static int maxDayOfMonth(int month) {
-        switch (month) {
-            case 1:
-            case 3:
-            case 5:
-            case 7:
-            case 8:
-            case 10:
-            case 12:
-                return 31;
-            case 2:
-                return 28;
-            case 4:
-            case 6:
-            case 9:
-            case 11:
-                return 30;
-            default:
-                throw new IllegalArgumentException("[1..12]");
-        }
+        return switch (month) {
+            case 1, 3, 5, 7, 8, 10, 12 -> 31;
+            case 2 -> 28;
+            case 4, 6, 9, 11 -> 30;
+            default -> throw new IllegalArgumentException("[1..12]");
+        };
     }
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
@@ -1890,6 +1881,17 @@ public final class TestUtils {
         } catch (IOException e) {
             throw new RuntimeException("Cannot read from " + file.getAbsolutePath(), e);
         }
+    }
+
+    public static boolean remove(LPSZ lpsz) {
+        if (Files.remove(lpsz)) {
+            return true;
+        }
+
+        // could not remove file, logging error
+        final FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        LOG.error().$("Could not remove file [path=").$safe(lpsz).$(", errno=").$(ff.errno()).I$();
+        return false;
     }
 
     public static void removeTestPath(CharSequence root) {
@@ -2337,17 +2339,16 @@ public final class TestUtils {
 
     @Nullable
     private static CharSequence readAsCharSequence(int columnType, Record rr, int col) {
-        switch (columnType) {
-            case ColumnType.SYMBOL:
-                return rr.getSymA(col);
-            case ColumnType.STRING:
-                return rr.getStrA(col);
-            case ColumnType.VARCHAR:
+        return switch (columnType) {
+            case ColumnType.SYMBOL -> rr.getSymA(col);
+            case ColumnType.STRING -> rr.getStrA(col);
+            case ColumnType.VARCHAR -> {
                 Utf8Sequence vc = rr.getVarcharA(col);
-                return vc == null ? null : vc.toString();
-            default:
-                throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
-        }
+                yield vc == null ? null : vc.toString();
+            }
+            default ->
+                    throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(columnType));
+        };
     }
 
     private static String recordToString(Record record, RecordMetadata metadata, boolean genericStringMatch) {

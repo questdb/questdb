@@ -131,6 +131,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.writer.data.append.page.size"),
     CAIRO_WRITER_MISC_APPEND_PAGE_SIZE("cairo.writer.misc.append.page.size"),
     CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE("cairo.symbol.table.append.page.size"),
+    CAIRO_SYMBOL_TABLE_MIN_ALLOCATION_PAGE_SIZE("cairo.symbol.table.min.allocation.page.size"),
+    CAIRO_SYMBOL_TABLE_MAX_ALLOCATION_PAGE_SIZE("cairo.symbol.table.max.allocation.page.size"),
     CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE("cairo.writer.command.queue.slot.size"),
     CAIRO_SQL_SAMPLEBY_PAGE_SIZE("cairo.sql.sampleby.page.size"),
     CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR("cairo.sql.sampleby.default.alignment.calendar"),
@@ -181,10 +183,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
     CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS("cairo.mat.view.max.refresh.intervals"),
+    CAIRO_MAT_VIEW_MAX_REFRESH_STEP("cairo.mat.view.max.refresh.step"),
     CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD("cairo.mat.view.refresh.intervals.update.period"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
+    CAIRO_AUTO_SCALE_SYMBOL_CAPACITY("cairo.auto.scale.symbol.capacity"),
+    CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD("cairo.auto.scale.symbol.capacity.threshold"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
@@ -578,7 +583,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_DB_LOG_NAME("debug.db.log.name", false, true),
     CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED("cairo.sql.column.alias.expression.enabled"),
     CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE("cairo.sql.column.alias.generated.max.size"),
-    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled");
+    CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED("cairo.file.descriptor.cache.enabled"),
+    CAIRO_RESOURCE_POOL_TRACING_ENABLED("cairo.resource.pool.tracing.enabled");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

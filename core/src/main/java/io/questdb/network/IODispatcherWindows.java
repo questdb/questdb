@@ -32,8 +32,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     private final FDSet readFdSet;
     private final SelectFacade sf;
     private final FDSet writeFdSet;
-    // used for heartbeats
-    private long idSeq = 1;
     private boolean listenerRegistered;
 
     public IODispatcherWindows(
@@ -58,10 +56,6 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
         LOG.info().$("closed").$();
     }
 
-    private long nextOpId() {
-        return idSeq++;
-    }
-
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
@@ -80,14 +74,18 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 int heartbeatRow = pendingHeartbeats.binarySearch(srcOpId, OPM_ID);
                 if (heartbeatRow < 0) {
-                    continue; // The connection is already closed.
+                    LOG.info().$("could not find heartbeat, connection must be already closed [fd=").$(fd)
+                            .$(", srcId=").$(srcOpId)
+                            .I$();
+                    continue;
                 } else {
                     operation = (int) pendingHeartbeats.get(heartbeatRow, OPM_OPERATION);
 
                     LOG.debug().$("processing heartbeat registration [fd=").$(fd)
                             .$(", op=").$(operation)
                             .$(", srcId=").$(srcOpId)
-                            .$(", id=").$(opId).I$();
+                            .$(", id=").$(opId)
+                            .I$();
 
                     int r = pending.addRow();
                     pending.set(r, OPM_CREATE_TIMESTAMP, pendingHeartbeats.get(heartbeatRow, OPM_CREATE_TIMESTAMP));
@@ -107,7 +105,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
 
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
-                        .$(", id=").$(opId).I$();
+                        .$(", id=").$(opId)
+                        .I$();
 
                 int r = pending.addRow();
                 pending.set(r, OPM_CREATE_TIMESTAMP, timestamp);
@@ -337,6 +336,4 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     protected void unregisterListenerFd() {
         listenerRegistered = false;
     }
-
 }
-

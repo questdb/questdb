@@ -60,6 +60,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -210,6 +211,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+        Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -297,7 +299,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
@@ -424,7 +425,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
-        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSymbolTableAppendPageSize());
+        Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getSymbolTableMinAllocationPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
@@ -1388,6 +1389,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
+            Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -1869,7 +1871,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.4, configuration.getSqlDistinctTimestampLoadFactor(), 0.001);
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
-        Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
@@ -1913,7 +1914,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getDataIndexKeyAppendPageSize());
         Assert.assertEquals(262144, configuration.getDataIndexValueAppendPageSize());
         Assert.assertEquals(131072, configuration.getMiscAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(512, configuration.getColumnPurgeQueueCapacity());
         Assert.assertEquals(5.0, configuration.getColumnPurgeRetryDelayMultiplier(), 0.00001);
@@ -1940,7 +1941,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4242, configuration.getWalMaxLagTxnCount());
         Assert.assertEquals(262144, configuration.getWalDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getSystemWalDataAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(1, configuration.getO3LastPartitionMaxSplits());
         final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
