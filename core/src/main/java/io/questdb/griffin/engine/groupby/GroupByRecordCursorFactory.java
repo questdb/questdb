@@ -130,7 +130,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
-        return getMetadata().getColumnType(columnIndex) == ColumnType.LONG;
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
     }
 
     @Override

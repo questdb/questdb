@@ -255,14 +255,14 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
      * Executes an optimized top-K operation for ORDER BY + LIMIT queries.
      * <p>
      * This method provides an efficient implementation for queries that need to find
-     * the top K records based on a specific column's values. It uses a heap-based
+     * the top K records based on a specific column's values. It uses a sorted list-based
      * approach to avoid sorting the entire result set when only the top K records
      * are needed.
      * <p>
      * The method is only supported by certain cursor implementations. Check
      * {@link RecordCursorFactory#recordCursorSupportsLongTopK(int)} before calling.
      *
-     * @param list        a min or max heap (DirectLongLongSortedList) to store the top K records
+     * @param list        a min or max sorted list (DirectLongLongSortedList) to store the top K records
      * @param columnIndex the zero-based index of the column to order by
      * @throws UnsupportedOperationException if the cursor does not support top-K optimization
      * @see RecordCursorFactory#recordCursorSupportsLongTopK(int)

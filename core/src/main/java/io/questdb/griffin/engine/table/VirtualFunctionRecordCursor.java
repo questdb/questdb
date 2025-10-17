@@ -34,7 +34,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualFunctionRecord;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
@@ -87,9 +87,10 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     public int getLongTopKColumnIndex(int columnIndex) {
-        if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof LongColumn longColumn) {
-            final int virtualColumnIndex = longColumn.getColumnIndex();
-            if (priorityMetadata.getColumnType(virtualColumnIndex) == ColumnType.LONG) {
+        if (supportsRandomAccess && functions.getQuick(columnIndex) instanceof ColumnFunction columnFunction) {
+            final int virtualColumnIndex = columnFunction.getColumnIndex();
+            final int columnType = priorityMetadata.getColumnType(virtualColumnIndex);
+            if (columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType)) {
                 return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
             }
         }

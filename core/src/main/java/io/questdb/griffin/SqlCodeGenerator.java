@@ -3746,7 +3746,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final long lo = loFunc.getLong(null);
                             if (lo > 0 && lo <= Integer.MAX_VALUE) {
                                 // Long top K has decent performance even though being single-threaded,
-                                // so we try to go with it before the parallel top K factory.
+                                // so we prefer it over the parallel top K factory.
                                 if (listColumnFilterA.size() == 1) {
                                     final int index = listColumnFilterA.getQuick(0);
                                     final int columnIndex = (index > 0 ? index : -index) - 1;

@@ -1151,7 +1151,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelLongKeyGroupByWithLimit() throws Exception {
+    public void testParallelKeyedGroupByWithLongTopK() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT quantity, max(price) FROM tab ORDER BY quantity ASC LIMIT 10",
                 "quantity\tmax\n" +
@@ -1170,27 +1170,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelLongKeyGroupByWithLimit2() throws Exception {
-        // Verifies outer virtual factory scenario.
-        testParallelSymbolKeyGroupBy(
-                "SELECT quantity, 'foobar' k, max(price) FROM tab ORDER BY quantity ASC LIMIT 10",
-                "quantity\tk\tmax\n" +
-                        "1\tfoobar\t1.0\n" +
-                        "2\tfoobar\t2.0\n" +
-                        "3\tfoobar\t3.0\n" +
-                        "4\tfoobar\t4.0\n" +
-                        "5\tfoobar\t5.0\n" +
-                        "6\tfoobar\t6.0\n" +
-                        "7\tfoobar\t7.0\n" +
-                        "8\tfoobar\t8.0\n" +
-                        "9\tfoobar\t9.0\n" +
-                        "10\tfoobar\t10.0\n",
-                "Long Top K lo: 10"
-        );
-    }
-
-    @Test
-    public void testParallelLongKeyGroupByWithLimit3() throws Exception {
+    public void testParallelKeyedGroupByWithLongTopK2() throws Exception {
         // Verifies outer selected factory scenario.
         testParallelSymbolKeyGroupBy(
                 "SELECT max_p, sum_q FROM (SELECT concat(key,'_42'), max(price) max_p, sum(quantity) sum_q FROM tab) ORDER BY sum_q DESC LIMIT 10",
@@ -1200,6 +1180,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "4048.0\t3240800\n" +
                         "4047.0\t3239200\n" +
                         "4046.0\t3237600\n",
+                "Long Top K lo: 10"
+        );
+    }
+
+    @Test
+    public void testParallelKeyedGroupByWithLongTopK3() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, last(ts) last_ts FROM tab ORDER BY last_ts DESC LIMIT 10",
+                "key\tlast_ts\n" +
+                        "k0\t1970-02-10T12:00:00.000000Z\n" +
+                        "k4\t1970-02-10T11:45:36.000000Z\n" +
+                        "k3\t1970-02-10T11:31:12.000000Z\n" +
+                        "k2\t1970-02-10T11:16:48.000000Z\n" +
+                        "k1\t1970-02-10T11:02:24.000000Z\n",
+                "Long Top K lo: 10"
+        );
+    }
+
+    @Test
+    public void testParallelKeyedGroupByWithLongTopK4() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, 'foobar' key2, last(ts) last_ts FROM tab ORDER BY last_ts DESC LIMIT 10",
+                "key\tkey2\tlast_ts\n" +
+                        "k0\tfoobar\t1970-02-10T12:00:00.000000Z\n" +
+                        "k4\tfoobar\t1970-02-10T11:45:36.000000Z\n" +
+                        "k3\tfoobar\t1970-02-10T11:31:12.000000Z\n" +
+                        "k2\tfoobar\t1970-02-10T11:16:48.000000Z\n" +
+                        "k1\tfoobar\t1970-02-10T11:02:24.000000Z\n",
                 "Long Top K lo: 10"
         );
     }
