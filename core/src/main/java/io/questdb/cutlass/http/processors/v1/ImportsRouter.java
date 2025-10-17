@@ -27,7 +27,7 @@ package io.questdb.cutlass.http.processors.v1;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -354,7 +354,7 @@ public class ImportsRouter implements HttpRequestHandler {
                         SizePrettyFunctionFactory.toSizePretty(sink, fileSize);
                         sink.putQuote().put(',');
                         sink.putAsciiQuoted("lastModified").put(':').putQuote();
-                        MicrosTimestampDriver.INSTANCE.append(sink, lastModified);
+                        MillsTimestampDriver.INSTANCE.append(sink, lastModified);
                         sink.putQuote();
                         sink.put('}');
                     }
