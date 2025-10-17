@@ -753,8 +753,6 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterEnabled();
 
-    boolean isSqlParallelFilterPreTouchEnabled();
-
     boolean isSqlParallelGroupByEnabled();
 
     boolean isSqlParallelReadParquetEnabled();

@@ -90,8 +90,6 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         cursor.of(baseCursor, circuitBreaker);
