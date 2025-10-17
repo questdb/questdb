@@ -903,8 +903,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
-                if (!connectionCounted) {
+                if (!connectionCounted && !processor.ignoreConnectionLimitCheck()) {
                     processor = checkConnectionLimit(processor);
+                    connectionCounted = true;
                 }
 
                 final long contentLength = headerParser.getContentLength();

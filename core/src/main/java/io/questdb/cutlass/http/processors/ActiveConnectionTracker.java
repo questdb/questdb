@@ -101,7 +101,7 @@ public class ActiveConnectionTracker {
     }
 
     public long incrementActiveConnection(@NotNull String processorName) {
-        getGauge(processorName).incrementAndGet();
+        getGauge(processorName).inc();
         return getCounter(processorName).incrementAndGet();
     }
 
@@ -118,8 +118,6 @@ public class ActiveConnectionTracker {
 
     private AtomicLongGauge getGauge(@NotNull String processorName) {
         switch (processorName) {
-            case PROCESSOR_JSON:
-                return metrics.jsonQueryMetrics().connectionCountGauge();
             case PROCESSOR_ILP:
                 return metrics.lineMetrics().httpConnectionCountGauge();
             default:

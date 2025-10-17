@@ -92,7 +92,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
         final long ilpConnLimit = numOfThreads - jsonQueryConnLimit;
 
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=" + numOfThreads,
                 HTTP_NET_CONNECTION_LIMIT + "=" + (int) (numOfThreads * 1.5),
                 HTTP_JSON_QUERY_CONNECTION_LIMIT + "=" + jsonQueryConnLimit,
@@ -162,7 +161,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     @Test
     public void testIlpConnectionLimit() throws Exception {
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=6",
                 HTTP_ILP_CONNECTION_LIMIT + "=4"
         ));
@@ -257,7 +255,7 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
                 }
 
                 // wait for the rejected connection to be closed to avoid race in the next assert
-                while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_JSON) > numOfThreads) {
+                while (serverMain.getActiveConnectionCount(ActiveConnectionTracker.PROCESSOR_ILP) > numOfThreads) {
                     Os.sleep(50);
                 }
 
@@ -305,7 +303,6 @@ public class HttpConnectionCountTest extends AbstractBootstrapTest {
     @Test
     public void testQueryConnectionLimit() throws Exception {
         unchecked(() -> createDummyConfiguration(
-                METRICS_ENABLED + "=true",
                 HTTP_WORKER_COUNT + "=6",
                 HTTP_JSON_QUERY_CONNECTION_LIMIT + "=4"
         ));

@@ -51,6 +51,10 @@ public interface HttpRequestProcessor {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
+    default boolean ignoreConnectionLimitCheck() {
+        return false;
+    }
+
     default short getSupportedRequestTypes() {
         return METHOD_GET;
     }
