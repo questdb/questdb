@@ -34,7 +34,6 @@ import io.questdb.std.IntStack;
 import io.questdb.std.LongStack;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -46,7 +45,7 @@ import io.questdb.std.str.Utf8s;
  * Used by both ImportFilesFunctionFactory and ExportFilesFunctionFactory.
  */
 public class FilesRecordCursor implements NoRandomAccessRecordCursor {
-    private static final int MODIFIED_TIME_COLUMN = 2;
+    private static final int MODIFIED_TIME_COLUMN = 3;
     private static final int PATH_COLUMN = 0;
     private static final int SIZE_COLUMN = 1;
     private static final int SIZE_HUMAN_COLUMN = 2;
@@ -148,7 +147,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
                 int oldLen = workingPath.size();
                 workingPath.concat(fileNameSink);
                 long size = ff.length(workingPath.$());
-                long modifiedTime = ff.getLastModified(workingPath.$()) * Micros.MILLI_MICROS;
+                long modifiedTime = ff.getLastModified(workingPath.$());
                 workingPath.trimTo(oldLen);
                 record.of(relativePathSink, size, modifiedTime);
                 if (Files.findNext(findPtr) <= 0) {
@@ -226,12 +225,19 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
         protected long size;
 
         @Override
+        public long getDate(int col) {
+            if (col == MODIFIED_TIME_COLUMN) {
+                return modifiedTime;
+            }
+            return 0;
+        }
+
+        @Override
         public long getLong(int col) {
-            return switch (col) {
-                case SIZE_COLUMN -> size;
-                case MODIFIED_TIME_COLUMN -> modifiedTime;
-                default -> 0;
-            };
+            if (col == SIZE_COLUMN) {
+                return size;
+            }
+            return 0;
         }
 
         @Override

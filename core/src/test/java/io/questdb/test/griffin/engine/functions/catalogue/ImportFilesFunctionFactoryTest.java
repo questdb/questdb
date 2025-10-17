@@ -57,21 +57,21 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
     public void testImportFilesBasic() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
-                    "path\tdiskSize\tdiskSizeHuman\n" +
-                            "analytics" + File.separator + "metrics.parquet\t256\t256.0 B\n" +
-                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t256\t256.0 B\n" +
-                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t256\t256.0 B\n" +
-                            "data" + File.separator + "file1.csv\t15076\t14.7 KiB\n" +
-                            "data" + File.separator + "file2.parquet\t256\t256.0 B\n" +
-                            "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\n" +
-                            "nested" + File.separator + "deep" + File.separator + "file3.json\t1234890\t1.2 MiB\n" +
-                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t256\t256.0 B\n" +
-                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t256\t256.0 B\n" +
-                            "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\n" +
-                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t256\t256.0 B\n" +
-                            "temp" + File.separator + "backup.sql\t45\t45.0 B\n" +
-                            "test.txt\t1289\t1.3 KiB\n",
-                    "select path, diskSize, diskSizeHuman from import_files() order by path"
+                    "path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
+                            "analytics" + File.separator + "metrics.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "analytics" + File.separator + "models" + File.separator + "prediction_model.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "analytics" + File.separator + "results" + File.separator + "output.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "data" + File.separator + "file1.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                            "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "data" + File.separator + "nested" + File.separator + "deep_file.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "nested" + File.separator + "deep" + File.separator + "file3.json\t1234890\t1.2 MiB\t1970-04-26T18:07:14.890Z\n" +
+                            "reports" + File.separator + "2023" + File.separator + "q1_report.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "reports" + File.separator + "2024" + File.separator + "q2_summary.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
+                            "temp" + File.separator + "archived" + File.separator + "old_backup.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
+                            "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
+                            "test.txt\t1289\t1.3 KiB\t1970-04-26T17:46:41.289Z\n",
+                    "select path, diskSize, diskSizeHuman, modifiedTime from import_files() order by path"
             );
         });
     }
@@ -136,6 +136,7 @@ public class ImportFilesFunctionFactoryTest extends AbstractCairoTest {
                     Files.close(fd);
                 }
             }
+            Files.setLastModified(path.$(), 10000000000L + size);
         }
     }
 
