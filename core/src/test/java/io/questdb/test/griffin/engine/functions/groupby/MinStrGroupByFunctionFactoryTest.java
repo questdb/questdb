@@ -37,10 +37,12 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testConstant() throws Exception {
         assertQuery(
-                "a\tmin\n" +
-                        "a\t42\n" +
-                        "b\t42\n" +
-                        "c\t42\n",
+                """
+                        a\tmin
+                        a\t42
+                        b\t42
+                        c\t42
+                        """,
                 "select a, min('42') from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -52,10 +54,12 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpression() throws Exception {
         assertQuery(
-                "a\tmin\n" +
-                        "a\taaaaaa\n" +
-                        "b\taaaaaa\n" +
-                        "c\taaaaaa\n",
+                """
+                        a\tmin
+                        a\taaaaaa
+                        b\taaaaaa
+                        c\taaaaaa
+                        """,
                 "select a, min(concat(s, s)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
                 null,
@@ -67,10 +71,12 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tmin\n" +
-                        "a\t111\n" +
-                        "b\t111\n" +
-                        "c\t111\n",
+                """
+                        a\tmin
+                        a\t111
+                        b\t111
+                        c\t111
+                        """,
                 "select a, min(s) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('111','222','333') s, timestamp_sequence(0, 100000) ts from long_sequence(20)) timestamp(ts))",
                 null,
@@ -82,8 +88,10 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "min\n" +
-                        "a\n",
+                """
+                        min
+                        a
+                        """,
                 "select min(s) from x",
                 "create table x as (select * from (select rnd_str('a','a1','a2') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
@@ -95,8 +103,10 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "min\n" +
-                    "a\n";
+            String expected = """
+                    min
+                    a
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select min(s) from x",
@@ -115,10 +125,12 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullConstant() throws Exception {
         assertQuery(
-                "a\tmin\n" +
-                        "a\t\n" +
-                        "b\t\n" +
-                        "c\t\n",
+                """
+                        a\tmin
+                        a\t
+                        b\t
+                        c\t
+                        """,
                 "select a, min(cast(null as STRING)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -146,19 +158,21 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleKeyed() throws Exception {
         assertQuery(
-                "a\tmin\tts\n" +
-                        "a\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "f\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\tдве\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\tдве\t1970-01-01T00:00:05.000000Z\n" +
-                        "b\tдве\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\tедно\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\tдве\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\tдве\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\tдве\t1970-01-01T00:00:05.000000Z\n",
+                """
+                        a\tmin\tts
+                        a\tдве\t1970-01-01T00:00:00.000000Z
+                        b\tдве\t1970-01-01T00:00:00.000000Z
+                        f\tдве\t1970-01-01T00:00:00.000000Z
+                        c\tдве\t1970-01-01T00:00:00.000000Z
+                        e\tдве\t1970-01-01T00:00:00.000000Z
+                        d\tдве\t1970-01-01T00:00:00.000000Z
+                        d\tдве\t1970-01-01T00:00:05.000000Z
+                        b\tдве\t1970-01-01T00:00:05.000000Z
+                        a\tедно\t1970-01-01T00:00:05.000000Z
+                        c\tдве\t1970-01-01T00:00:05.000000Z
+                        f\tдве\t1970-01-01T00:00:05.000000Z
+                        e\tдве\t1970-01-01T00:00:05.000000Z
+                        """,
                 "select a, min(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",

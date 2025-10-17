@@ -53,7 +53,8 @@ public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactor
         return new CountDistinctSymbolGroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor()
+                configuration.getCountDistinctLoadFactor(),
+                sqlExecutionContext.getSharedQueryWorkerCount()
         );
     }
 }

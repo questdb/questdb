@@ -53,7 +53,8 @@ public class CountDistinctIPv4GroupByFunctionFactory implements FunctionFactory 
         return new CountDistinctIPv4GroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor()
+                configuration.getCountDistinctLoadFactor(),
+                sqlExecutionContext.getSharedQueryWorkerCount()
         );
     }
 }

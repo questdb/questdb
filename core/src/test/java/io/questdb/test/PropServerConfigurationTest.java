@@ -227,7 +227,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
         Assert.assertEquals(3, configuration.getCairoConfiguration().getCountDistinctCapacity());
-        Assert.assertEquals(0.75, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
+        Assert.assertEquals(0.5, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());

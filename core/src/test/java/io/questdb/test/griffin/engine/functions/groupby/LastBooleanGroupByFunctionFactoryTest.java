@@ -60,8 +60,10 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastBoolean() throws Exception {
         assertQuery(
-                "a\n" +
-                        "false\n",
+                """
+                        a
+                        false
+                        """,
                 "select last(a)a from tab",
                 "create table tab as (select true a union select true a union select false a)",
                 null,
@@ -73,8 +75,10 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastBoolean2() throws Exception {
         assertQuery(
-                "a\n" +
-                        "true\n",
+                """
+                        a
+                        true
+                        """,
                 "select last(a)a from tab",
                 "create table tab as (select false a union select false a union select true a)",
                 null,

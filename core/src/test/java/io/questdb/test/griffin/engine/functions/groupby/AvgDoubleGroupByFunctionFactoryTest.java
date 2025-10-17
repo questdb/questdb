@@ -32,8 +32,10 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "max\tavg\tsum\tstddev_samp\n" +
-                        "10\t5.5\t55\t3.0276503540974917\n", "select max(x), avg(x), sum(x), stddev_samp(x) from long_sequence(10)"
+                """
+                        max\tavg\tsum\tstddev_samp
+                        10\t5.5\t55\t3.0276503540974917
+                        """, "select max(x), avg(x), sum(x), stddev_samp(x) from long_sequence(10)"
         ));
     }
 
@@ -42,8 +44,10 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test2 as(select case  when rnd_double() > 0.6 then 1.0   else 0.0  end val from long_sequence(100));");
             assertSql(
-                    "sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp\n" +
-                            "44.0\t1.0\t1.0\t1.0\t44.0\t44.0\t0.0\n",
+                    """
+                            sum\tavg\tmax\tmin\tksum\tnsum\tstddev_samp
+                            44.0\t1.0\t1.0\t1.0\t44.0\t44.0\t0.0
+                            """,
                     "select sum(1/val) , avg(1/val), max(1/val), min(1/val), ksum(1/val), nsum(1/val), stddev_samp(1/val) from test2"
             );
         });
@@ -68,16 +72,19 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");
             execute("insert into fill_options values(to_timestamp('2020-01-01:14:00:00', 'yyyy-MM-dd:HH:mm:ss'), 5);");
 
-            assertQuery("ts\tmin\tmax\tavg\tstddev_samp\n" +
-                            "2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tnull\n" +
-                            "2020-01-01T11:00:00.000000Z\t2\t2\t2.0\tnull\n" +
-                            "2020-01-01T12:00:00.000000Z\t3\t3\t3.0\tnull\n" +
-                            "2020-01-01T13:00:00.000000Z\t4\t4\t4.0\tnull\n" +
-                            "2020-01-01T14:00:00.000000Z\t5\t5\t5.0\tnull\n",
-                    "select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp\n" +
-                            "from fill_options\n" +
-                            "sample by 1h\n" +
-                            "fill(linear);",
+            assertQuery("""
+                            ts\tmin\tmax\tavg\tstddev_samp
+                            2020-01-01T10:00:00.000000Z\t1\t1\t1.0\tnull
+                            2020-01-01T11:00:00.000000Z\t2\t2\t2.0\tnull
+                            2020-01-01T12:00:00.000000Z\t3\t3\t3.0\tnull
+                            2020-01-01T13:00:00.000000Z\t4\t4\t4.0\tnull
+                            2020-01-01T14:00:00.000000Z\t5\t5\t5.0\tnull
+                            """,
+                    """
+                            select ts, min(price) min, max(price) max, avg(price) avg, stddev_samp(price) stddev_samp
+                            from fill_options
+                            sample by 1h
+                            fill(linear);""",
                     "ts",
                     true,
                     true

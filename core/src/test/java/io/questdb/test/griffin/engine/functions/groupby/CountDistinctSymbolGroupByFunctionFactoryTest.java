@@ -31,10 +31,12 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testConstant() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t1\n" +
-                "b\t1\n" +
-                "c\t1\n";
+        String expected = """
+                a\tcount_distinct
+                a\t1
+                b\t1
+                c\t1
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct('a'::symbol) from x order by a",
@@ -49,14 +51,16 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testExpression() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "a\tcount_distinct\n" +
-                    "1\t1\n" +
-                    "3\t1\n" +
-                    "4\t2\n" +
-                    "5\t2\n" +
-                    "6\t2\n" +
-                    "7\t3\n" +
-                    "8\t2\n";
+            final String expected = """
+                    a\tcount_distinct
+                    1\t1
+                    3\t1
+                    4\t2
+                    5\t2
+                    6\t2
+                    7\t3
+                    8\t2
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a",
@@ -75,14 +79,16 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testGroupKeyed() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "0\t3\n" +
-                "1\t3\n" +
-                "3\t3\n" +
-                "4\t3\n" +
-                "5\t1\n" +
-                "6\t2\n" +
-                "8\t3\n";
+        String expected = """
+                a\tcount_distinct
+                0\t3
+                1\t3
+                3\t3
+                4\t3
+                5\t1
+                6\t2
+                8\t3
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(s) from x order by a",
@@ -96,8 +102,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        String expected = "count_distinct\n" +
-                "922\n";
+        String expected = """
+                count_distinct
+                922
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
@@ -111,8 +119,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testGroupNotKeyedMultipleFunctions() throws Exception {
-        String expected = "count_distinct\tcount_distinct1\n" +
-                "96\t921\n";
+        String expected = """
+                count_distinct\tcount_distinct1
+                96\t921
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(s1), count_distinct(s2) from x",
@@ -127,8 +137,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "count_distinct\n" +
-                    "62\n";
+            String expected = """
+                    count_distinct
+                    62
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select count_distinct(s) from x",
@@ -148,10 +160,12 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testNullConstant() throws Exception {
-        String expected = "s\tcount_distinct\n" +
-                "a\t0\n" +
-                "b\t0\n" +
-                "c\t0\n";
+        String expected = """
+                s\tcount_distinct
+                a\t0
+                b\t0
+                c\t0
+                """;
         assertQuery(
                 expected,
                 "select s, count_distinct(cast(null as SYMBOL)) from x order by s",
@@ -165,9 +179,11 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testSampleKeyed() throws Exception {
-        final String expected = "count_distinct\tts\n" +
-                "6\t1970-01-01T00:00:00.000000Z\n" +
-                "6\t1970-01-01T00:00:05.000000Z\n";
+        final String expected = """
+                count_distinct\tts
+                6\t1970-01-01T00:00:00.000000Z
+                6\t1970-01-01T00:00:05.000000Z
+                """;
         final String queryA = "select count_distinct(s), ts from x sample by 5s";
         final String queryB = "select count(distinct s), ts from x sample by 5s";
         final String ddl = "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))";

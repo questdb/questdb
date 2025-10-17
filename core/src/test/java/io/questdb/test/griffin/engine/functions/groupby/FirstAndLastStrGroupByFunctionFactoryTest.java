@@ -40,8 +40,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testAllNull() throws Exception {
         assertQuery(
-                "r1\tr2\n" +
-                        "\t\n",
+                """
+                        r1\tr2
+                        \t
+                        """,
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list(null,null,null) as string) a1 from long_sequence(3))",
                 null,
@@ -53,8 +55,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testFirstNullLastSomething() throws Exception {
         assertQuery(
-                "r1\tr2\n" +
-                        "\tsomething\n",
+                """
+                        r1\tr2
+                        \tsomething
+                        """,
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))",
                 null,
@@ -66,8 +70,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testFirstSomethingLastNull() throws Exception {
         assertQuery(
-                "r1\tr2\n" +
-                        "something\t\n",
+                """
+                        r1\tr2
+                        something\t
+                        """,
                 "select first(a1) r1, last(a1) r2 from tab",
                 "create table tab as (select cast(list('something','else',null) as string) a1 from long_sequence(3))",
                 null,
@@ -79,8 +85,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testFunctionArgument() throws Exception {
         assertQuery(
-                "r1\tr2\tr3\tr4\n" +
-                        "foobar\tbarbar\tfoobar\tbarbar\n",
+                """
+                        r1\tr2\tr3\tr4
+                        foobar\tbarbar\tfoobar\tbarbar
+                        """,
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
                 "create table tab as (select rnd_str('foo','bar') a1, rnd_str('bar','baz') a2 from long_sequence(10))",
                 null,
@@ -92,8 +100,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testFunctionArgumentAllNulls() throws Exception {
         assertQuery(
-                "r1\tr2\tr3\tr4\n" +
-                        "\t\t\t\n",
+                """
+                        r1\tr2\tr3\tr4
+                        \t\t\t
+                        """,
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
                 "create table tab as (select rnd_str(null) a1, rnd_str(null) a2 from long_sequence(10))",
                 null,
@@ -105,8 +115,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testFunctionArgumentSomeNulls() throws Exception {
         assertQuery(
-                "r1\tr2\tr3\tr4\n" +
-                        "foobar\tfoobaz\tfoobar\tfoobaz\n",
+                """
+                        r1\tr2\tr3\tr4
+                        foobar\tfoobaz\tfoobar\tfoobaz
+                        """,
                 "select first(concat(a1,a2)) r1, last(concat(a1,a2)) r2, first_not_null(concat(a1,a2)) r3, last_not_null(concat(a1,a2)) r4 from tab",
                 "create table tab as (select rnd_str('foo','bar',null) a1, rnd_str('bar','baz',null) a2 from long_sequence(10))",
                 null,
@@ -118,8 +130,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testGroupByOverUnion() throws Exception {
         assertQuery(
-                "first\tlast\tfirst_nn\tlast_nn\n" +
-                        "TJWCPSWHYR\t10\tTJWCPSWHYR\t10\n",
+                """
+                        first\tlast\tfirst_nn\tlast_nn
+                        TJWCPSWHYR\t10\tTJWCPSWHYR\t10
+                        """,
                 "select first(s) first, last(s) last, first_not_null(s) first_nn, last_not_null(s) last_nn " +
                         "from (x union select x::string s, x::timestamp ts from long_sequence(10))",
                 "create table x as (" +
@@ -138,10 +152,12 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testGroupKeyedFirstLastAllNulls() throws Exception {
         assertQuery(
-                "a\tfirst\tlast\tfirst_not_null\tlast_not_null\n" +
-                        "a\t\t\t\t\n" +
-                        "b\t\t\t\t\n" +
-                        "c\t\t\t\t\n",
+                """
+                        a\tfirst\tlast\tfirst_not_null\tlast_not_null
+                        a\t\t\t\t
+                        b\t\t\t\t
+                        c\t\t\t\t
+                        """,
                 "select a, first(s), last(s), first_not_null(s), last_not_null(s) from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -160,8 +176,10 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testGroupKeyedManyRows() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "9877\n",
+                """
+                        sum
+                        9877
+                        """,
                 "select sum(length(first) + length(last) + length(first_nn) + length(last_nn)) " +
                         "from " +
                         "( " +
@@ -209,9 +227,11 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "last_not_null(valueDb) last_nn_value " +
                     "from test";
 
-            String expected = "ts\tdevice\tfirst_str\tfirst_value\tfirst_nn_str\tfirst_nn_value\tlast_str\tlast_value\tlast_nn_str\tlast_nn_value\n" +
-                    "2023-12-18T18:00:00.000000Z\tA\t\tnull\thot_1\t150.0\t\tnull\thot_2\t151.0\n" +
-                    "2023-12-18T18:00:00.000000Z\tB\t\tnull\tcold_1\t3.0\t\tnull\tcold_2\t4.0\n";
+            String expected = """
+                    ts\tdevice\tfirst_str\tfirst_value\tfirst_nn_str\tfirst_nn_value\tlast_str\tlast_value\tlast_nn_str\tlast_nn_value
+                    2023-12-18T18:00:00.000000Z\tA\t\tnull\thot_1\t150.0\t\tnull\thot_2\t151.0
+                    2023-12-18T18:00:00.000000Z\tB\t\tnull\tcold_1\t3.0\t\tnull\tcold_2\t4.0
+                    """;
 
             assertSql(expected, query + " order by ts, device");
             assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
@@ -245,9 +265,11 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                     "last_not_null(valueDb) last_nn_value " +
                     "from test";
 
-            String expected = "ts\tdevice\tfirst_str\tfirst_value\tfirst_nn_str\tfirst_nn_value\tlast_str\tlast_value\tlast_nn_str\tlast_nn_value\n" +
-                    "2023-12-18T18:00:00.000000Z\tA\thot_1\t150.0\thot_1\t150.0\thot_3\t152.0\thot_3\t152.0\n" +
-                    "2023-12-18T18:00:00.000000Z\tB\tcold_1\t3.0\tcold_1\t3.0\tcold_3\t5.0\tcold_3\t5.0\n";
+            String expected = """
+                    ts\tdevice\tfirst_str\tfirst_value\tfirst_nn_str\tfirst_nn_value\tlast_str\tlast_value\tlast_nn_str\tlast_nn_value
+                    2023-12-18T18:00:00.000000Z\tA\thot_1\t150.0\thot_1\t150.0\thot_3\t152.0\thot_3\t152.0
+                    2023-12-18T18:00:00.000000Z\tB\tcold_1\t3.0\tcold_1\t3.0\tcold_3\t5.0\tcold_3\t5.0
+                    """;
 
             assertSql(expected, query + " order by ts, device");
             assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");

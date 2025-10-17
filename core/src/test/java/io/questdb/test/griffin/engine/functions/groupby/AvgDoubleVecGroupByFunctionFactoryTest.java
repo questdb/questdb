@@ -35,13 +35,29 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
-        assertQuery("avg\n" +
-                "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
-                "0.511848387\n", false, true, false);
+        assertQuery(
+                """
+                        avg
+                        0.511848387
+                        """,
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_double(2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b double",
+                """
+                        avg
+                        0.511848387
+                        """,
+                false,
+                true,
+                false
+        );
 
         assertQuery(
-                "avg\tavg2\n" +
-                        "0.5008779999999999\t0.487931\n",
+                """
+                        avg\tavg2
+                        0.5008779999999999\t0.487931
+                        """,
                 "select round(avg(f),6) avg, round(avg(b),6) avg2 from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
@@ -52,9 +68,13 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("avg\n" +
-                "null\n", "select avg(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 123 from long_sequence(1)", "avg\n" +
-                "123.0\n", false, true, false);
+        assertQuery("""
+                avg
+                null
+                """, "select avg(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 123 from long_sequence(1)", """
+                avg
+                123.0
+                """, false, true, false);
     }
 
     @Test
@@ -63,8 +83,10 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         assertQuery(
-                "avg\n" +
-                        "0.511848387\n",
+                """
+                        avg
+                        0.511848387
+                        """,
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_double(2) f from long_sequence(131))",
                 null,

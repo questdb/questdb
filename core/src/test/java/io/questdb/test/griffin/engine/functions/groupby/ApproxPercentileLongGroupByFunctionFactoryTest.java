@@ -148,8 +148,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
             assertSql(
-                    "approx_percentile\n" +
-                            "null\n",
+                    """
+                            approx_percentile
+                            null
+                            """,
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -171,8 +173,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             assertSql(
-                    "approx_percentile\n" +
-                            "null\n",
+                    """
+                            approx_percentile
+                            null
+                            """,
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -184,8 +188,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("create table test (x long)");
             execute("insert into test values (null), (null), (null)");
             assertSql(
-                    "approx_percentile\n" +
-                            "null\n",
+                    """
+                            approx_percentile
+                            null
+                            """,
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });
@@ -196,8 +202,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         assertMemoryLeak(() -> {
             execute("create table test (x long)");
             assertSql(
-                    "approx_percentile\n" +
-                            "null\n",
+                    """
+                            approx_percentile
+                            null
+                            """,
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });
@@ -221,8 +229,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("create table test (x long)");
             execute("insert into test values (1), (null), (null), (null)");
             assertSql(
-                    "approx_percentile\n" +
-                            "1.0\n",
+                    """
+                            approx_percentile
+                            1.0
+                            """,
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -319,8 +329,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("insert into test values (1), (-1)");
             try {
                 assertSql(
-                        "approx_percentile\n" +
-                                "1.0\n",
+                        """
+                                approx_percentile
+                                1.0
+                                """,
                         "select approx_percentile(x, 0.5) from test"
                 );
                 Assert.fail();
@@ -336,8 +348,10 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             execute("insert into test values (1), (-1)");
             try {
                 assertSql(
-                        "approx_percentile\n" +
-                                "1.0\n",
+                        """
+                                approx_percentile
+                                1.0
+                                """,
                         "select approx_percentile(x, 0.5, 5) from test"
                 );
                 Assert.fail();

@@ -34,13 +34,28 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery("avg\n" +
-                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
-                "5261.376146789\n", false, true, false);
+        assertQuery("""
+                        avg
+                        5261.376146789
+                        """,
+                "select round(avg(f),9) avg from tab",
+                "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
+                null,
+                "alter table tab add column b long",
+                """
+                        avg
+                        5261.376146789
+                        """,
+                false,
+                true,
+                false
+        );
 
         assertQuery(
-                "avg\tmax\n" +
-                        "14.792007\t88964\n",
+                """
+                        avg\tmax
+                        14.792007\t88964
+                        """,
                 "select round(avg(f),6) avg, max(b) max from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
@@ -51,16 +66,31 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("max\n" +
-                "null\n", "select max(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
-                "99999999999995\n", false, true, false);
+        assertQuery("""
+                        max
+                        null
+                        """,
+                "select max(f) from tab",
+                "create table tab as (select cast(null as long) f from long_sequence(33))",
+                null,
+                "insert into tab select 99999999999995L from long_sequence(1)",
+                """
+                        max
+                        99999999999995
+                        """,
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testSimple() throws Exception {
         assertQuery(
-                "max\n" +
-                        "8826\n",
+                """
+                        max
+                        8826
+                        """,
                 "select max(f) from tab",
                 "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
                 null,

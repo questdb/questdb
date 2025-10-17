@@ -61,8 +61,10 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testConstantNull() throws Exception {
         assertQuery(
-                "string_agg\n" +
-                        "\n",
+                """
+                        string_agg
+                        
+                        """,
                 "select string_agg(null, ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -74,8 +76,10 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testConstantString() throws Exception {
         assertQuery(
-                "string_agg\n" +
-                        "aaa,aaa,aaa,aaa,aaa\n",
+                """
+                        string_agg
+                        aaa,aaa,aaa,aaa,aaa
+                        """,
                 "select string_agg('aaa', ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -98,11 +102,15 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctColumnNameQuoted() throws Exception {
-        String expected = "string_agg\n" +
-                "abc,bbb,aaa,ccc,aaa\n";
+        String expected = """
+                string_agg
+                abc,bbb,aaa,ccc,aaa
+                """;
         assertQuery(
-                "string_agg\n" +
-                        "abc,bbb,aaa,ccc,aaa\n",
+                """
+                        string_agg
+                        abc,bbb,aaa,ccc,aaa
+                        """,
                 "select string_agg(\"distinct\", ',') from x",
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') \"distinct\", timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -117,13 +125,15 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyed() throws Exception {
         assertQuery(
-                "a\tstring_agg\n" +
-                        "a\tbbb,abc,aaa\n" +
-                        "b\tccc,abc\n" +
-                        "c\tccc\n" +
-                        "d\tbbb\n" +
-                        "e\tabc,ccc\n" +
-                        "f\tccc\n",
+                """
+                        a\tstring_agg
+                        a\tbbb,abc,aaa
+                        b\tccc,abc
+                        c\tccc
+                        d\tbbb
+                        e\tabc,ccc
+                        f\tccc
+                        """,
                 "select a, string_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -142,10 +152,12 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyedAllNulls() throws Exception {
         assertQuery(
-                "a\tstring_agg\n" +
-                        "a\t\n" +
-                        "b\t\n" +
-                        "c\t\n",
+                """
+                        a\tstring_agg
+                        a\t
+                        b\t
+                        c\t
+                        """,
                 "select a, string_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -164,8 +176,10 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyedManyRows() throws Exception {
         assertQuery(
-                "max\n" +
-                        "47\n",
+                """
+                        max
+                        47
+                        """,
                 "select max(length(agg)) from (select a, string_agg(s, ',') agg from x)",
                 "create table x as (" +
                         "select * from (" +
@@ -184,9 +198,11 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupKeyedSomeNulls() throws Exception {
         assertQuery(
-                "a\tstring_agg\n" +
-                        "\taaa,aaa,aaa,aaa,aaa,aaa\n" +
-                        "a\taaa,aaa,aaa,aaa\n",
+                """
+                        a\tstring_agg
+                        \taaa,aaa,aaa,aaa,aaa,aaa
+                        a\taaa,aaa,aaa,aaa
+                        """,
                 "select a, string_agg(s, ',') from x",
                 "create table x as (" +
                         "select * from (" +
@@ -205,8 +221,10 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGroupNotKeyed() throws Exception {
         assertQuery(
-                "string_agg\n" +
-                        "abc,bbb,aaa,ccc,aaa\n",
+                """
+                        string_agg
+                        abc,bbb,aaa,ccc,aaa
+                        """,
                 "select string_agg(s, ',') from x",
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
@@ -218,14 +236,18 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSkipNull() throws Exception {
         assertQuery(
-                "string_agg\n" +
-                        "\n",
+                """
+                        string_agg
+                        
+                        """,
                 "select string_agg(s, ',') from x",
                 "create table x as (select * from (select cast(null as string) s from long_sequence(5)))",
                 null,
                 "insert into x select 'abc' from long_sequence(1)",
-                "string_agg\n" +
-                        "abc\n",
+                """
+                        string_agg
+                        abc
+                        """,
                 false,
                 true,
                 false
@@ -247,8 +269,10 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     private static void testBufferLimitCompliance1(RecordCursorFactory fact) throws SqlException {
         try (RecordCursor cursor = fact.getCursor(sqlExecutionContext)) {
             TestUtils.assertCursor(
-                    "string_agg\n" +
-                            "FGSLQDYOCTKSCTOHWMRHGLXBI,HWIIOHDDLYDZEUTOQEZOODZRO,NSTFHKVDEKTQJGFGVRMVZVRCO,HRFVCWZYHGIEIEJEIDVRHYFXF,LEZBTJQRMHTRYZEUDDOTUHDOC,IMSSDLJUVTBCCPKOOEYICCHMH,NSBDCJLEPQPOVFLEJCELDSOWJ,TIMPLKXPJEVHPWLCKDUTWKOSZ,HBJLFGZSKNBUVJNXJUUKCSJHM,GDKSKLTEBHKVQXNELZCHSPSYD\n",
+                    """
+                            string_agg
+                            FGSLQDYOCTKSCTOHWMRHGLXBI,HWIIOHDDLYDZEUTOQEZOODZRO,NSTFHKVDEKTQJGFGVRMVZVRCO,HRFVCWZYHGIEIEJEIDVRHYFXF,LEZBTJQRMHTRYZEUDDOTUHDOC,IMSSDLJUVTBCCPKOOEYICCHMH,NSBDCJLEPQPOVFLEJCELDSOWJ,TIMPLKXPJEVHPWLCKDUTWKOSZ,HBJLFGZSKNBUVJNXJUUKCSJHM,GDKSKLTEBHKVQXNELZCHSPSYD
+                            """,
                     cursor,
                     fact.getMetadata(),
                     true,

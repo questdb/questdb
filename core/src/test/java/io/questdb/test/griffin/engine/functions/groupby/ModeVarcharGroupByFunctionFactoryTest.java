@@ -37,8 +37,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select null::varchar as f from long_sequence(5))",
                 null,
@@ -50,8 +52,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeBasic() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "varchar_hello\n",
+                """
+                        mode
+                        varchar_hello
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('varchar_' || x as varchar) as f from long_sequence(5) " +
@@ -67,8 +71,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab (f varchar)",
                 null,
@@ -80,8 +86,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSingleValue() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "single_varchar\n",
+                """
+                        mode
+                        single_varchar
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select cast('single_varchar' as varchar) as f from long_sequence(1))",
                 null,
@@ -93,8 +101,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSomeNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "common_varchar\n",
+                """
+                        mode
+                        common_varchar
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::varchar as f from long_sequence(2) " +
@@ -112,8 +122,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithEmptyVarchar() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('' as varchar) as f from long_sequence(3) " +
@@ -143,9 +155,11 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "A\talpha_varchar\n" +
-                        "B\tbeta_varchar\n",
+                """
+                        g\tmode
+                        A\talpha_varchar
+                        B\tbeta_varchar
+                        """,
                 "select g, mode(f) from tab order by g",
                 "create table tab as (" +
                         "select 'A' as g, cast('alpha_varchar' as varchar) as f from long_sequence(3) " +
@@ -165,8 +179,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithLongVarchar() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "very_long_varchar_value_that_exceeds_typical_string_length_limits_and_tests_memory_handling\n",
+                """
+                        mode
+                        very_long_varchar_value_that_exceeds_typical_string_length_limits_and_tests_memory_handling
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('very_long_varchar_value_that_exceeds_typical_string_length_limits_and_tests_memory_handling' as varchar) as f from long_sequence(3) " +
@@ -182,12 +198,14 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithManyGroups() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "0\tvarchar_group_0\n" +
-                        "1\tvarchar_group_1\n" +
-                        "2\tvarchar_group_2\n" +
-                        "3\tvarchar_group_3\n" +
-                        "4\tvarchar_group_4\n",
+                """
+                        g\tmode
+                        0\tvarchar_group_0
+                        1\tvarchar_group_1
+                        2\tvarchar_group_2
+                        3\tvarchar_group_3
+                        4\tvarchar_group_4
+                        """,
                 "select g, mode(f) from tab order by g limit 5",
                 "create table tab as (" +
                         "select " +
@@ -204,8 +222,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithNumericVarchar() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "12345.6789\n",
+                """
+                        mode
+                        12345.6789
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('12345.6789' as varchar) as f from long_sequence(3) " +
@@ -223,10 +243,12 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithOrderByAndLimit() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "E\techo_varchar\n" +
-                        "D\tdelta_varchar\n" +
-                        "C\tcharlie_varchar\n",
+                """
+                        g\tmode
+                        E\techo_varchar
+                        D\tdelta_varchar
+                        C\tcharlie_varchar
+                        """,
                 "select g, mode(f) from tab order by g desc limit 3",
                 "create table tab as (" +
                         "select " +
@@ -251,8 +273,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithRandomData() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "constant_varchar\n",
+                """
+                        mode
+                        constant_varchar
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('constant_varchar' as varchar) as f from long_sequence(10) " +
@@ -268,10 +292,12 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSampleBy() throws Exception {
         assertQuery(
-                "k\tmode\n" +
-                        "1970-01-01T00:00:00.000000Z\tone_varchar\n" +
-                        "1970-01-01T01:00:00.000000Z\ttwo_varchar\n" +
-                        "1970-01-01T02:00:00.000000Z\tthree_varchar\n",
+                """
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\tone_varchar
+                        1970-01-01T01:00:00.000000Z\ttwo_varchar
+                        1970-01-01T02:00:00.000000Z\tthree_varchar
+                        """,
                 "select k, mode(f) from tab sample by 1h",
                 "create table tab as (" +
                         "select " +
@@ -290,8 +316,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSpecialCharacters() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "special_chars_!@#$%^&*()\n",
+                """
+                        mode
+                        special_chars_!@#$%^&*()
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('special_chars_!@#$%^&*()' as varchar) as f from long_sequence(3) " +
@@ -309,8 +337,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithUnicodeVarchar() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "unicode_varchar_αβγ_中文\n",
+                """
+                        mode
+                        unicode_varchar_αβγ_中文
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast('unicode_varchar_αβγ_中文' as varchar) as f from long_sequence(3) " +
@@ -328,8 +358,10 @@ public class ModeVarcharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithWhereClause() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "filtered_varchar\n",
+                """
+                        mode
+                        filtered_varchar
+                        """,
                 "select mode(f) from tab where filter < 5",
                 "create table tab as (" +
                         "select " +

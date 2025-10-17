@@ -36,8 +36,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllFalse() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "false\n",
+                """
+                        mode
+                        false
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select false as f from long_sequence(5))",
                 null,
@@ -49,8 +51,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "false\n",
+                """
+                        mode
+                        false
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select null::boolean as f from long_sequence(5))",
                 null,
@@ -62,8 +66,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllTrue() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "true\n",
+                """
+                        mode
+                        true
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select true as f from long_sequence(5))",
                 null,
@@ -75,8 +81,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeBasic() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "true\n",
+                """
+                        mode
+                        true
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select true as f from long_sequence(3) " +
@@ -92,8 +100,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "false\n",
+                """
+                        mode
+                        false
+                        """,
                 "select mode(f) from tab",
                 "create table tab (f boolean)",
                 null,
@@ -105,8 +115,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSingleValue() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "true\n",
+                """
+                        mode
+                        true
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select true as f from long_sequence(1))",
                 null,
@@ -119,8 +131,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSomeNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "true\n",
+                """
+                        mode
+                        true
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::boolean as f from long_sequence(2) " +
@@ -156,10 +170,12 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "A\ttrue\n" +
-                        "B\tfalse\n" +
-                        "C\ttrue\n",
+                """
+                        g\tmode
+                        A\ttrue
+                        B\tfalse
+                        C\ttrue
+                        """,
                 "select g, mode(f) from tab order by g",
                 "create table tab as (" +
                         "select 'A' as g, true as f from long_sequence(2) " +
@@ -183,8 +199,10 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithRandomData() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "true\n",
+                """
+                        mode
+                        true
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select true as f from long_sequence(60) " +
@@ -200,10 +218,12 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSampleBy() throws Exception {
         assertQuery(
-                "k\tmode\n" +
-                        "1970-01-01T00:00:00.000000Z\ttrue\n" +
-                        "1970-01-01T01:00:00.000000Z\ttrue\n" +
-                        "1970-01-01T02:00:00.000000Z\ttrue\n",
+                """
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\ttrue
+                        1970-01-01T01:00:00.000000Z\ttrue
+                        1970-01-01T02:00:00.000000Z\ttrue
+                        """,
                 "select k, mode(f) from tab sample by 1h",
                 "create table tab as (" +
                         "select " +

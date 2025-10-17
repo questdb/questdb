@@ -253,7 +253,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.75;
+        return 0.5;
     }
 
     @Override

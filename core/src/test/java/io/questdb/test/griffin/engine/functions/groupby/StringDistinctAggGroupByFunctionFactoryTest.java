@@ -31,8 +31,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testConstantNull() throws Exception {
-        String expected = "string_distinct_agg\n" +
-                "\n";
+        String expected = """
+                string_distinct_agg
+                
+                """;
         assertQuery(
                 expected,
                 "select string_distinct_agg(null, ',') from x",
@@ -46,8 +48,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testConstantString() throws Exception {
-        String expected = "string_distinct_agg\n" +
-                "aaa\n";
+        String expected = """
+                string_distinct_agg
+                aaa
+                """;
         assertQuery(
                 expected,
                 "select string_distinct_agg('aaa', ',') from x",
@@ -61,13 +65,15 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupKeyed() throws Exception {
-        String expected = "a\tstring_distinct_agg\n" +
-                "a\tbbb,abc,aaa\n" +
-                "b\tccc,abc,bbb\n" +
-                "c\tccc,abc,aaa\n" +
-                "d\tbbb,abc\n" +
-                "e\tabc,ccc\n" +
-                "f\tccc,abc,bbb\n";
+        String expected = """
+                a\tstring_distinct_agg
+                a\tbbb,abc,aaa
+                b\tccc,abc,bbb
+                c\tccc,abc,aaa
+                d\tbbb,abc
+                e\tabc,ccc
+                f\tccc,abc,bbb
+                """;
         assertQuery(
                 expected,
                 "select a, string_distinct_agg(s, ',') from x order by a",
@@ -88,10 +94,12 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupKeyedAllNulls() throws Exception {
-        String expected = "a\tstring_distinct_agg\n" +
-                "a\t\n" +
-                "b\t\n" +
-                "c\t\n";
+        String expected = """
+                a\tstring_distinct_agg
+                a\t
+                b\t
+                c\t
+                """;
         assertQuery(
                 expected,
                 "select a, string_distinct_agg(s, ',') from x order by a",
@@ -112,8 +120,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupKeyedManyRows() throws Exception {
-        String expected = "max\n" +
-                "15\n";
+        String expected = """
+                max
+                15
+                """;
         assertQuery(
                 expected,
                 "select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)",
@@ -134,9 +144,11 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupKeyedSomeNulls() throws Exception {
-        String expected = "a\tstring_distinct_agg\n" +
-                "\taaa\n" +
-                "a\taaa\n";
+        String expected = """
+                a\tstring_distinct_agg
+                \taaa
+                a\taaa
+                """;
         assertQuery(
                 expected,
                 "select a, string_distinct_agg(s, ',') from x",
@@ -157,8 +169,10 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        String expected = "string_distinct_agg\n" +
-                "abc,bbb,aaa,ccc\n";
+        String expected = """
+                string_distinct_agg
+                abc,bbb,aaa,ccc
+                """;
         assertQuery(
                 expected,
                 "select string_distinct_agg(s, ',') from x",
@@ -173,11 +187,15 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testSkipNull() throws Exception {
         String ddl = "create table x as (select * from (select cast(null as string) s from long_sequence(5)))";
-        String expected = "string_distinct_agg\n" +
-                "\n";
+        String expected = """
+                string_distinct_agg
+                
+                """;
         String ddl2 = "insert into x select 'abc' from long_sequence(1)";
-        String expected2 = "string_distinct_agg\n" +
-                "abc\n";
+        String expected2 = """
+                string_distinct_agg
+                abc
+                """;
         assertQuery(
                 expected,
                 "select string_distinct_agg(s, ',') from x",

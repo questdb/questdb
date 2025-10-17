@@ -31,10 +31,12 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testConstant() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t1\n" +
-                "b\t1\n" +
-                "c\t1\n";
+        String expected = """
+                a\tcount_distinct
+                a\t1
+                b\t1
+                c\t1
+                """;
 
         assertQuery(
                 expected,
@@ -50,8 +52,10 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testConstantDefaultHashSetNoEntryValue() throws Exception {
-        String expected = "count_distinct\n" +
-                "1\n";
+        String expected = """
+                count_distinct
+                1
+                """;
 
         assertQuery(
                 expected,
@@ -67,10 +71,12 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testExpression() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "a\tcount_distinct\n" +
-                    "a\t4\n" +
-                    "b\t4\n" +
-                    "c\t4\n";
+            final String expected = """
+                    a\tcount_distinct
+                    a\t4
+                    b\t4
+                    c\t4
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select a, count_distinct(to_long256(s*42, s*42, s*42, s*42)) from x order by a",
@@ -90,13 +96,15 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testGroupKeyed() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t2\n" +
-                "b\t1\n" +
-                "c\t1\n" +
-                "d\t4\n" +
-                "e\t4\n" +
-                "f\t3\n";
+        String expected = """
+                a\tcount_distinct
+                a\t2
+                b\t1
+                c\t1
+                d\t4
+                e\t4
+                f\t3
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(s) from x order by a",
@@ -110,8 +118,10 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        String expected = "count_distinct\n" +
-                "6\n";
+        String expected = """
+                count_distinct
+                6
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
@@ -126,8 +136,10 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "count_distinct\n" +
-                    "6\n";
+            String expected = """
+                    count_distinct
+                    6
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select count_distinct(s) from x",
@@ -160,8 +172,10 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
             execute("insert into x values ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, null, 5, 5), '2021-05-21'), ('a', to_long256(0, 5, 5, 5), '2021-05-21'), ('a', to_long256(null, 5, 5, 5), '2021-05-21')"
                     + ", ('a', to_long256(5, 5, 0, 5), '2021-05-21'), ('a', to_long256(5, 5, null, 5), '2021-05-21'), ('a', to_long256(5, 5, 5, 0), '2021-05-21'), ('a', to_long256(5, 5, 5, null), '2021-05-21')" +
                     ", ('a', to_long256(0, 0, 0, 0), '2021-05-21'), ('a', to_long256(null, null, null, null), '2021-05-21')");
-            String expected = "a\ts\n" +
-                    "a\t9\n";
+            String expected = """
+                    a\ts
+                    a\t9
+                    """;
             assertSql(expected, "select a, count_distinct(s) as s from x order by a");
             assertSql(expected, "select a, count(distinct s) as s from x order by a");
         });
@@ -169,10 +183,12 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testNullConstant() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t0\n" +
-                "b\t0\n" +
-                "c\t0\n";
+        String expected = """
+                a\tcount_distinct
+                a\t0
+                b\t0
+                c\t0
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(to_long256(null, null, null, null)) from x order by a",
@@ -186,17 +202,19 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        String expected = "ts\tcount_distinct\n" +
-                "1970-01-01T00:00:00.000000Z\t9\n" +
-                "1970-01-01T00:00:01.000000Z\t7\n" +
-                "1970-01-01T00:00:02.000000Z\t7\n" +
-                "1970-01-01T00:00:03.000000Z\t8\n" +
-                "1970-01-01T00:00:04.000000Z\t8\n" +
-                "1970-01-01T00:00:05.000000Z\t8\n" +
-                "1970-01-01T00:00:06.000000Z\t7\n" +
-                "1970-01-01T00:00:07.000000Z\t8\n" +
-                "1970-01-01T00:00:08.000000Z\t7\n" +
-                "1970-01-01T00:00:09.000000Z\t9\n";
+        String expected = """
+                ts\tcount_distinct
+                1970-01-01T00:00:00.000000Z\t9
+                1970-01-01T00:00:01.000000Z\t7
+                1970-01-01T00:00:02.000000Z\t7
+                1970-01-01T00:00:03.000000Z\t8
+                1970-01-01T00:00:04.000000Z\t8
+                1970-01-01T00:00:05.000000Z\t8
+                1970-01-01T00:00:06.000000Z\t7
+                1970-01-01T00:00:07.000000Z\t8
+                1970-01-01T00:00:08.000000Z\t7
+                1970-01-01T00:00:09.000000Z\t9
+                """;
         assertQuery(
                 expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
@@ -211,9 +229,11 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "ts\tcount_distinct\n" +
-                    "1970-01-01T00:00:00.050000Z\t8\n" +
-                    "1970-01-01T00:00:02.050000Z\t8\n";
+            String expected = """
+                    ts\tcount_distinct
+                    1970-01-01T00:00:00.050000Z\t8
+                    1970-01-01T00:00:02.050000Z\t8
+                    """;
 
             assertSql(expected, "with x as (select * from (select to_long256(rnd_long(1, 8, 0), 0, 0, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 2s align to first observation"
@@ -225,17 +245,19 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testSampleFillValue() throws Exception {
-        String expected = "ts\tcount_distinct\n" +
-                "1970-01-01T00:00:00.000000Z\t5\n" +
-                "1970-01-01T00:00:01.000000Z\t8\n" +
-                "1970-01-01T00:00:02.000000Z\t6\n" +
-                "1970-01-01T00:00:03.000000Z\t7\n" +
-                "1970-01-01T00:00:04.000000Z\t6\n" +
-                "1970-01-01T00:00:05.000000Z\t5\n" +
-                "1970-01-01T00:00:06.000000Z\t6\n" +
-                "1970-01-01T00:00:07.000000Z\t6\n" +
-                "1970-01-01T00:00:08.000000Z\t6\n" +
-                "1970-01-01T00:00:09.000000Z\t7\n";
+        String expected = """
+                ts\tcount_distinct
+                1970-01-01T00:00:00.000000Z\t5
+                1970-01-01T00:00:01.000000Z\t8
+                1970-01-01T00:00:02.000000Z\t6
+                1970-01-01T00:00:03.000000Z\t7
+                1970-01-01T00:00:04.000000Z\t6
+                1970-01-01T00:00:05.000000Z\t5
+                1970-01-01T00:00:06.000000Z\t6
+                1970-01-01T00:00:07.000000Z\t6
+                1970-01-01T00:00:08.000000Z\t6
+                1970-01-01T00:00:09.000000Z\t7
+                """;
         assertQuery(
                 expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
@@ -248,19 +270,21 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testSampleKeyed() throws Exception {
-        String expected = "a\tcount_distinct\tts\n" +
-                "a\t4\t1970-01-01T00:00:00.000000Z\n" +
-                "f\t9\t1970-01-01T00:00:00.000000Z\n" +
-                "c\t8\t1970-01-01T00:00:00.000000Z\n" +
-                "e\t4\t1970-01-01T00:00:00.000000Z\n" +
-                "d\t6\t1970-01-01T00:00:00.000000Z\n" +
-                "b\t6\t1970-01-01T00:00:00.000000Z\n" +
-                "b\t5\t1970-01-01T00:00:05.000000Z\n" +
-                "c\t4\t1970-01-01T00:00:05.000000Z\n" +
-                "f\t7\t1970-01-01T00:00:05.000000Z\n" +
-                "e\t6\t1970-01-01T00:00:05.000000Z\n" +
-                "d\t8\t1970-01-01T00:00:05.000000Z\n" +
-                "a\t5\t1970-01-01T00:00:05.000000Z\n";
+        String expected = """
+                a\tcount_distinct\tts
+                a\t4\t1970-01-01T00:00:00.000000Z
+                f\t9\t1970-01-01T00:00:00.000000Z
+                c\t8\t1970-01-01T00:00:00.000000Z
+                e\t4\t1970-01-01T00:00:00.000000Z
+                d\t6\t1970-01-01T00:00:00.000000Z
+                b\t6\t1970-01-01T00:00:00.000000Z
+                b\t5\t1970-01-01T00:00:05.000000Z
+                c\t4\t1970-01-01T00:00:05.000000Z
+                f\t7\t1970-01-01T00:00:05.000000Z
+                e\t6\t1970-01-01T00:00:05.000000Z
+                d\t8\t1970-01-01T00:00:05.000000Z
+                a\t5\t1970-01-01T00:00:05.000000Z
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(s), ts from x sample by 5s align to first observation",

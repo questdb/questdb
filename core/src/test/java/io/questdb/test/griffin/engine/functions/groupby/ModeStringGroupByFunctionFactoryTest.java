@@ -36,8 +36,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select null::string as f from long_sequence(5))",
                 null,
@@ -49,8 +51,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeBasic() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "hello\n",
+                """
+                        mode
+                        hello
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select cast(x as string) as f from long_sequence(5) " +
@@ -66,8 +70,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab (f string)",
                 null,
@@ -79,8 +85,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSingleValue() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "world\n",
+                """
+                        mode
+                        world
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select 'world' as f from long_sequence(1))",
                 null,
@@ -92,8 +100,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSomeNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "test\n",
+                """
+                        mode
+                        test
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::string as f from long_sequence(2) " +
@@ -111,8 +121,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithEmptyStrings() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "\n",
+                """
+                        mode
+                        
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select '' as f from long_sequence(3) " +
@@ -143,9 +155,11 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "A\talphabetic\n" +
-                        "B\tbeta\n",
+                """
+                        g\tmode
+                        A\talphabetic
+                        B\tbeta
+                        """,
                 "select g, mode(f) from tab order by g",
                 "create table tab as (" +
                         "select 'A' as g, 'alphabetic' as f from long_sequence(3) " +
@@ -165,8 +179,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithLongStrings() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "this_is_a_very_long_string_that_should_be_handled_correctly_by_the_mode_function\n",
+                """
+                        mode
+                        this_is_a_very_long_string_that_should_be_handled_correctly_by_the_mode_function
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'this_is_a_very_long_string_that_should_be_handled_correctly_by_the_mode_function' as f from long_sequence(3) " +
@@ -182,12 +198,14 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithManyGroups() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "0\tgroup0\n" +
-                        "1\tgroup1\n" +
-                        "2\tgroup2\n" +
-                        "3\tgroup3\n" +
-                        "4\tgroup4\n",
+                """
+                        g\tmode
+                        0\tgroup0
+                        1\tgroup1
+                        2\tgroup2
+                        3\tgroup3
+                        4\tgroup4
+                        """,
                 "select g, mode(f) from tab order by g limit 5",
                 "create table tab as (" +
                         "select " +
@@ -204,10 +222,12 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithOrderByAndLimit() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "E\techo\n" +
-                        "D\tdelta\n" +
-                        "C\tcharlie\n",
+                """
+                        g\tmode
+                        E\techo
+                        D\tdelta
+                        C\tcharlie
+                        """,
                 "select g, mode(f) from tab order by g desc limit 3",
                 "create table tab as (" +
                         "select " +
@@ -232,8 +252,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithRandomData() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "constant_value\n",
+                """
+                        mode
+                        constant_value
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'constant_value' as f from long_sequence(10) " +
@@ -249,10 +271,12 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSampleBy() throws Exception {
         assertQuery(
-                "k\tmode\n" +
-                        "1970-01-01T00:00:00.000000Z\tone\n" +
-                        "1970-01-01T01:00:00.000000Z\ttwo\n" +
-                        "1970-01-01T02:00:00.000000Z\tthree\n",
+                """
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\tone
+                        1970-01-01T01:00:00.000000Z\ttwo
+                        1970-01-01T02:00:00.000000Z\tthree
+                        """,
                 "select k, mode(f) from tab sample by 1h",
                 "create table tab as (" +
                         "select " +
@@ -271,8 +295,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSpecialCharacters() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "special!@#$%^&*()\n",
+                """
+                        mode
+                        special!@#$%^&*()
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'special!@#$%^&*()' as f from long_sequence(3) " +
@@ -290,8 +316,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithUnicodeStrings() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "unicode_αβγ_δε\n",
+                """
+                        mode
+                        unicode_αβγ_δε
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'unicode_αβγ_δε' as f from long_sequence(3) " +
@@ -309,8 +337,10 @@ public class ModeStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithWhereClause() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "filtered_value\n",
+                """
+                        mode
+                        filtered_value
+                        """,
                 "select mode(f) from tab where filter < 5",
                 "create table tab as (" +
                         "select " +

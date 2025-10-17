@@ -34,13 +34,19 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
-        assertQuery("avg\n" +
-                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
-                "5261.376146789\n", false, true, false);
+        assertQuery("""
+                avg
+                5261.376146789
+                """, "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", """
+                avg
+                5261.376146789
+                """, false, true, false);
 
         assertQuery(
-                "avg\tsum\n" +
-                        "14.792007\t3711402281\n",
+                """
+                        avg\tsum
+                        14.792007\t3711402281
+                        """,
                 "select round(avg(f),6) avg, sum(b) sum from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
@@ -51,16 +57,22 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery("sum\n" +
-                "null\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
-                "123\n", false, true, false);
+        assertQuery("""
+                sum
+                null
+                """, "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", """
+                sum
+                123
+                """, false, true, false);
     }
 
     @Test
     public void testSimple() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "467512\n",
+                """
+                        sum
+                        467512
+                        """,
                 "select sum(f) from tab",
                 "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
                 null,

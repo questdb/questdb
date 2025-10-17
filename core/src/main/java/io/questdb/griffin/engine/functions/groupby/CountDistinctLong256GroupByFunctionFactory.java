@@ -53,7 +53,8 @@ public class CountDistinctLong256GroupByFunctionFactory implements FunctionFacto
         return new CountDistinctLong256GroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor()
+                configuration.getCountDistinctLoadFactor(),
+                sqlExecutionContext.getSharedQueryWorkerCount()
         );
     }
 }

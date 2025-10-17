@@ -32,8 +32,10 @@ public class SumShortVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMixedWithCount() throws Exception {
         assertQuery(
-                "sum\tcount\n" +
-                        "20384\t1001\n",
+                """
+                        sum\tcount
+                        20384\t1001
+                        """,
                 "select sum(f), count() from tab",
                 "create table tab as (select rnd_short(0, 42) f from long_sequence(1001))",
                 null,
@@ -45,8 +47,10 @@ public class SumShortVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "1073011\n",
+                """
+                        sum
+                        1073011
+                        """,
                 "select sum(f) from tab",
                 "create table tab as (select rnd_short(0, 12323) f from long_sequence(181))",
                 null,

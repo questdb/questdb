@@ -36,8 +36,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeAllNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "null\n",
+                """
+                        mode
+                        null
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select null::long as f from long_sequence(5))",
                 null,
@@ -49,8 +51,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeBasic() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "1\n",
+                """
+                        mode
+                        1
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select x::long as f from long_sequence(5) " +
@@ -66,8 +70,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "null\n",
+                """
+                        mode
+                        null
+                        """,
                 "select mode(f) from tab",
                 "create table tab (f long)",
                 null,
@@ -79,8 +85,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSingleValue() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "42\n",
+                """
+                        mode
+                        42
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (select 42L as f from long_sequence(1))",
                 null,
@@ -92,8 +100,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeSomeNull() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "5\n",
+                """
+                        mode
+                        5
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::long as f from long_sequence(2) " +
@@ -126,9 +136,11 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "A\t10\n" +
-                        "B\t20\n",
+                """
+                        g\tmode
+                        A\t10
+                        B\t20
+                        """,
                 "select g, mode(f) from tab order by g",
                 "create table tab as (" +
                         "select 'A' as g, 10L as f from long_sequence(3) " +
@@ -148,8 +160,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithLargeValues() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "9.223372036854776E18\n",
+                """
+                        mode
+                        9.223372036854776E18
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 9223372036854775807 as f from long_sequence(3) " +
@@ -165,12 +179,14 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithManyGroups() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "0\t0\n" +
-                        "1\t1000\n" +
-                        "2\t2000\n" +
-                        "3\t3000\n" +
-                        "4\t4000\n",
+                """
+                        g\tmode
+                        0\t0
+                        1\t1000
+                        2\t2000
+                        3\t3000
+                        4\t4000
+                        """,
                 "select g, mode(f) from tab order by g limit 5",
                 "create table tab as (" +
                         "select " +
@@ -187,8 +203,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithNegativeValues() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "-1\n",
+                """
+                        mode
+                        -1
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select -1L as f from long_sequence(3) " +
@@ -206,10 +224,12 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithOrderByAndLimit() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "E\t40\n" +
-                        "D\t30\n" +
-                        "C\t20\n",
+                """
+                        g\tmode
+                        E\t40
+                        D\t30
+                        C\t20
+                        """,
                 "select g, mode(f) from tab order by g desc limit 3",
                 "create table tab as (" +
                         "select " +
@@ -234,8 +254,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithRandomData() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "123456\n",
+                """
+                        mode
+                        123456
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 123456L as f from long_sequence(10) " +
@@ -251,10 +273,12 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithSampleBy() throws Exception {
         assertQuery(
-                "k\tmode\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\n" +
-                        "1970-01-01T01:00:00.000000Z\t2\n" +
-                        "1970-01-01T02:00:00.000000Z\t3\n",
+                """
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\t1
+                        1970-01-01T01:00:00.000000Z\t2
+                        1970-01-01T02:00:00.000000Z\t3
+                        """,
                 "select k, mode(f) from tab sample by 1h",
                 "create table tab as (" +
                         "select " +
@@ -273,8 +297,10 @@ public class ModeLongGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testModeWithWhereClause() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "100\n",
+                """
+                        mode
+                        100
+                        """,
                 "select mode(f) from tab where filter < 5",
                 "create table tab as (" +
                         "select " +

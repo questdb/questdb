@@ -60,8 +60,10 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstBoolean() throws Exception {
         assertQuery(
-                "a\n" +
-                        "false\n",
+                """
+                        a
+                        false
+                        """,
                 "select first(a)a from tab",
                 "create table tab as (select false a union select true a union select true a)",
                 null,
@@ -73,8 +75,10 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstBoolean2() throws Exception {
         assertQuery(
-                "a\n" +
-                        "true\n",
+                """
+                        a
+                        true
+                        """,
                 "select first(a)a from tab",
                 "create table tab as (select true a union select false a union select false a)",
                 null,

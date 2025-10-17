@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
 public class GroupByUtf8SequenceLongHashMapBenchmark {
     private static final GroupByAllocator allocator = new FastGroupByAllocator(128 * 1024, Numbers.SIZE_1GB);
     private static final int initialCapacity = 64;
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.5;
     private static final GroupByUtf8SequenceLongHashMap groupByUtf8SequenceLongHashMap = new GroupByUtf8SequenceLongHashMap(initialCapacity, loadFactor, 0, 0);
     private static final Rnd rnd = new Rnd();
     private static final Utf8SequenceLongHashMap utf8SequenceLongHashMap = new Utf8SequenceLongHashMap(initialCapacity);

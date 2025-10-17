@@ -60,8 +60,10 @@ public class FirstCharGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstChar() throws Exception {
         assertQuery(
-                "a\n" +
-                        "1\n",
+                """
+                        a
+                        1
+                        """,
                 "select first(a) a from tab",
                 "create table tab as (select '1' a union select '2' a union select '3' a)",
                 null,

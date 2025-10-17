@@ -32,8 +32,10 @@ public class LastByteGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLastByte() throws Exception {
         assertQuery(
-                "a\n" +
-                        "3\n",
+                """
+                        a
+                        3
+                        """,
                 "select last(a) a from tab",
                 "create table tab as (select 1::byte a union select 2::byte a union select 3::byte a)",
                 null,

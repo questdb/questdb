@@ -35,22 +35,28 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery(
-                "avg\n" +
-                        "5261.376146789\n",
+                """
+                        avg
+                        5261.376146789
+                        """,
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
                 null,
                 "alter table tab add column b int",
-                "avg\n" +
-                        "5261.376146789\n",
+                """
+                        avg
+                        5261.376146789
+                        """,
                 false,
                 true,
                 false
         );
 
         assertQuery(
-                "avg\tsum\n" +
-                        "14.792007\t37172355\n",
+                """
+                        avg\tsum
+                        14.792007\t37172355
+                        """,
                 "select round(avg(f),6) avg, sum(b) sum from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
                 null,
@@ -62,14 +68,18 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "null\n",
+                """
+                        sum
+                        null
+                        """,
                 "select sum(f) from tab",
                 "create table tab as (select cast(null as int) f from long_sequence(33))",
                 null,
                 "insert into tab select 4567866 from long_sequence(1)",
-                "sum\n" +
-                        "4567866\n",
+                """
+                        sum
+                        4567866
+                        """,
                 false,
                 true,
                 false
@@ -79,8 +89,10 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertQuery(
-                "sum\n" +
-                        "8524012131\n",
+                """
+                        sum
+                        8524012131
+                        """,
                 "select sum(f) from tab",
                 "create table tab as (select rnd_int(-78783, 123239980, 2) f from long_sequence(181))",
                 null,

@@ -54,14 +54,18 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery(
-                "avg\n" +
-                        "5261.376146789\n",
+                """
+                        avg
+                        5261.376146789
+                        """,
                 "select round(avg(f),9) avg from tab",
                 "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))",
                 null,
                 "alter table tab add column b " + timestampType.getTypeName(),
-                "avg\n" +
-                        "5261.376146789\n",
+                """
+                        avg
+                        5261.376146789
+                        """,
                 false,
                 true,
                 false
@@ -81,8 +85,10 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery(
-                "min\n" +
-                        "\n",
+                """
+                        min
+                        
+                        """,
                 "select min(f) from tab",
                 "create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
                 null,
@@ -97,8 +103,10 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedMaxTimestampOrNullThenMaxLong() throws Exception {
         assertQuery(
-                "i\tmin\n" +
-                        "1\t\n",
+                """
+                        i\tmin
+                        1\t
+                        """,
                 "select i, min(f) from tab",
                 "create table tab as (select cast(1 as int) i, cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
                 null,
@@ -114,8 +122,10 @@ public class MinTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testMaxTimestampOrNullThenMaxLong() throws Exception {
         assertQuery(
-                "min\n" +
-                        "\n",
+                """
+                        min
+                        
+                        """,
                 "select min(f) from tab",
                 "create table tab as (select cast(null as " + timestampType.getTypeName() + ") f from long_sequence(33))",
                 null,

@@ -53,7 +53,8 @@ public final class CountDistinctUuidGroupByFunctionFactory implements FunctionFa
         return new CountDistinctUuidGroupByFunction(
                 args.getQuick(0),
                 configuration.getCountDistinctCapacity(),
-                configuration.getCountDistinctLoadFactor()
+                configuration.getCountDistinctLoadFactor(),
+                sqlExecutionContext.getSharedQueryWorkerCount()
         );
     }
 }

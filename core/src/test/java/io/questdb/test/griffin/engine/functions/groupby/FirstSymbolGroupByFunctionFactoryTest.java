@@ -32,10 +32,12 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
-                "a\tsym\n" +
-                        "-1\tbb\n" +
-                        "0\taa\n" +
-                        "1\tcc\n",
+                """
+                        a\tsym
+                        -1\tbb
+                        0\taa
+                        1\tcc
+                        """,
                 "select a, first(sym) sym from tab order by a",
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
@@ -47,8 +49,10 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotKeyed() throws Exception {
         assertMemoryLeak(() -> assertQuery(
-                "sym\n" +
-                        "aa\n",
+                """
+                        sym
+                        aa
+                        """,
                 "select first(sym) sym from tab",
                 "create table tab as (select rnd_int() % 2 a, rnd_symbol('aa', 'bb', 'cc') sym from long_sequence(10))",
                 null,
@@ -59,29 +63,31 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("b\ta\tk\n" +
-                        "\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\tl1\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "\tl1\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\tl1\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\tl1\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\tss4\t1970-01-03T09:00:00.000000Z\n" +
-                        "\tl1\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\tss4\t1970-01-03T09:00:00.000000Z\n",
+        assertQuery("""
+                        b\ta\tk
+                        \tkl2\t1970-01-03T00:00:00.000000Z
+                        VTJW\tl1\t1970-01-03T00:00:00.000000Z
+                        RXGZ\tkl2\t1970-01-03T00:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T00:00:00.000000Z
+                        CPSW\tkl2\t1970-01-03T00:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T00:00:00.000000Z
+                        RXGZ\tss4\t1970-01-03T03:00:00.000000Z
+                        \tl1\t1970-01-03T03:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T03:00:00.000000Z
+                        CPSW\tl1\t1970-01-03T03:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T03:00:00.000000Z
+                        VTJW\tss4\t1970-01-03T03:00:00.000000Z
+                        CPSW\tkl2\t1970-01-03T06:00:00.000000Z
+                        \tkl2\t1970-01-03T06:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T06:00:00.000000Z
+                        VTJW\tl1\t1970-01-03T06:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T06:00:00.000000Z
+                        RXGZ\tkl2\t1970-01-03T06:00:00.000000Z
+                        CPSW\tss4\t1970-01-03T09:00:00.000000Z
+                        \tl1\t1970-01-03T09:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T09:00:00.000000Z
+                        VTJW\tss4\t1970-01-03T09:00:00.000000Z
+                        """,
                 "select b, first(a) a, k from x sample by 3h align to first observation",
                 "create table x as " +
                         "(" +
@@ -101,36 +107,38 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(35)" +
                         ") timestamp(k)",
-                "b\ta\tk\n" +
-                        "\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\tl1\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T00:00:00.000000Z\n" +
-                        "CPSW\tkl2\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "\tl1\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\tl1\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\tss4\t1970-01-03T03:00:00.000000Z\n" +
-                        "CPSW\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\tss4\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\tl1\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\tkl2\t1970-01-03T06:00:00.000000Z\n" +
-                        "CPSW\tss4\t1970-01-03T09:00:00.000000Z\n" +
-                        "\tl1\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\tss4\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\tss4\t1970-01-03T09:00:00.000000Z\n" +
-                        "\tzz9\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZMZV\tzz8\t1970-01-04T03:00:00.000000Z\n" +
-                        "QLDG\tzz9\t1970-01-04T06:00:00.000000Z\n" +
-                        "LOGI\tzz9\t1970-01-04T06:00:00.000000Z\n" +
-                        "QEBN\tzz8\t1970-01-04T06:00:00.000000Z\n" +
-                        "\tzz8\t1970-01-04T06:00:00.000000Z\n" +
-                        "FOUS\tzz9\t1970-01-04T06:00:00.000000Z\n",
+                """
+                        b\ta\tk
+                        \tkl2\t1970-01-03T00:00:00.000000Z
+                        VTJW\tl1\t1970-01-03T00:00:00.000000Z
+                        RXGZ\tkl2\t1970-01-03T00:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T00:00:00.000000Z
+                        CPSW\tkl2\t1970-01-03T00:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T00:00:00.000000Z
+                        RXGZ\tss4\t1970-01-03T03:00:00.000000Z
+                        \tl1\t1970-01-03T03:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T03:00:00.000000Z
+                        CPSW\tl1\t1970-01-03T03:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T03:00:00.000000Z
+                        VTJW\tss4\t1970-01-03T03:00:00.000000Z
+                        CPSW\tkl2\t1970-01-03T06:00:00.000000Z
+                        \tkl2\t1970-01-03T06:00:00.000000Z
+                        HYRX\tss4\t1970-01-03T06:00:00.000000Z
+                        VTJW\tl1\t1970-01-03T06:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T06:00:00.000000Z
+                        RXGZ\tkl2\t1970-01-03T06:00:00.000000Z
+                        CPSW\tss4\t1970-01-03T09:00:00.000000Z
+                        \tl1\t1970-01-03T09:00:00.000000Z
+                        PEHN\tss4\t1970-01-03T09:00:00.000000Z
+                        VTJW\tss4\t1970-01-03T09:00:00.000000Z
+                        \tzz9\t1970-01-04T03:00:00.000000Z
+                        ZMZV\tzz8\t1970-01-04T03:00:00.000000Z
+                        QLDG\tzz9\t1970-01-04T06:00:00.000000Z
+                        LOGI\tzz9\t1970-01-04T06:00:00.000000Z
+                        QEBN\tzz8\t1970-01-04T06:00:00.000000Z
+                        \tzz8\t1970-01-04T06:00:00.000000Z
+                        FOUS\tzz9\t1970-01-04T06:00:00.000000Z
+                        """,
                 false
         );
     }
