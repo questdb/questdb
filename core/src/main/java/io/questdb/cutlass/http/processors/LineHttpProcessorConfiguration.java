@@ -39,7 +39,7 @@ public interface LineHttpProcessorConfiguration {
 
     short getDefaultColumnTypeForInteger();
 
-    int getDefaultColumnTypeForTimestamp();
+    int getDefaultCreateTimestampColumnType();
 
     int getDefaultPartitionBy();
 

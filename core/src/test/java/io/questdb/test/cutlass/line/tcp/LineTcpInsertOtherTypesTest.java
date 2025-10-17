@@ -865,11 +865,13 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     public void testInsertTimestampNS() throws Exception {
         timestampType = TestTimestampType.NANO;
         assertTimestamp(
-                "value\ttimestamp\n" +
-                        "0.0\t2021-09-06T13:12:01.000000000Z\n" +
-                        "1.0\t2021-09-06T13:12:01.000000000Z\n" +
-                        "2.0\t2021-09-06T13:12:01.000000000Z\n" +
-                        "3.0\t2021-09-06T13:12:01.000000000Z\n",
+                """
+                        value\ttimestamp
+                        0.0\t2021-09-06T13:12:01.000000Z
+                        1.0\t2021-09-06T13:12:01.000000Z
+                        2.0\t2021-09-06T13:12:01.000000Z
+                        3.0\t2021-09-06T13:12:01.000000Z
+                        """,
                 new CharSequence[]{
                         "1630933921000000000",
                         "1630933921000000000n",
@@ -885,9 +887,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         timestampType = TestTimestampType.NANO;
         assertTypeNoTable(
                 "value\ttimestamp\n" +
-                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:01.000000000Z\n" +
-                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:02.000000000Z\n" +
-                        "2021-09-06T13:12:01.000000000Z\t1970-01-01T00:00:03.000000000Z\n",
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:01.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:02.000000Z\n" +
+                        "2021-09-06T13:12:01.000000Z\t1970-01-01T00:00:03.000000Z\n",
                 new CharSequence[]{
                         "1630933921000000t",
                         "1630933921000000000n",

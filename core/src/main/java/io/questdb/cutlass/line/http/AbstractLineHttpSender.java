@@ -27,8 +27,6 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -61,8 +59,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 
 public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
@@ -75,12 +71,12 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final ObjList<String> hosts;
+    private final int initialBackoffMillis;
     private final boolean isTls;
+    private final int maxBackoffMillis;
     private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
-    private final int maxBackoffMillis;
-    private final int initialBackoffMillis;
     private final String password;
     private final String path;
     private final IntList ports;
@@ -404,27 +400,11 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
-    @Override
-    public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ');
-        // todo. Not efficient for timestamp > Long.MAX_VALUE, consider introduce a conf like 'timestamp_transmit_use_nanos' ?
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).put('t');
+    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3) {
+            return false;
         }
-        atNow();
-    }
-
-    @Override
-    public void at(Instant timestamp) {
-        request.putAscii(' ');
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).put('t');
-        }
-        atNow();
+        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
     @Override
@@ -491,13 +471,6 @@ public abstract class AbstractLineHttpSender implements Sender {
             return false;
         }
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
-    }
-
-    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
-        if (statusCode == null || statusCode.size() != 3) {
-            return false;
-        }
-        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
     @Override
@@ -570,28 +543,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         rowBookmark = request.getContentLength();
         state = RequestState.TABLE_NAME_SET;
         escapeQuotedString(table);
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
-        }
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
-        }
         return this;
     }
 
@@ -787,6 +738,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
         r.withContent();
         rowBookmark = r.getContentLength();
+        state = RequestState.EMPTY;
         return r;
     }
 

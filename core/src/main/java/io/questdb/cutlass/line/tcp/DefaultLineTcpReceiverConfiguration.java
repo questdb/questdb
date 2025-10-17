@@ -37,8 +37,8 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -117,7 +117,7 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public int getDefaultColumnTypeForTimestamp() {
+    public int getDefaultCreateTimestampColumnType() {
         return ColumnType.TIMESTAMP_MICRO;
     }
 
@@ -139,11 +139,6 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
-        return SHARED_CONFIGURATION;
     }
 
     @Override
@@ -184,6 +179,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getNetworkWorkerPoolConfiguration() {
+        return SHARED_CONFIGURATION;
     }
 
     @Override

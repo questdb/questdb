@@ -24,14 +24,9 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
-
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 
 /**
  * LineTcpSender is for testing purposes only. It has error-prone API and comes with no API guarantees
@@ -57,29 +52,6 @@ public abstract class AbstractLineTcpSender extends AbstractLineSender {
     }
 
     @Override
-    public final void at(long timestamp, ChronoUnit unit) {
-        putAsciiInternal(' ');
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
-        }
-
-        atNow();
-    }
-
-    @Override
-    public final void at(Instant timestamp) {
-        putAsciiInternal(' ');
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('t');
-        }
-        atNow();
-    }
-
-    @Override
     public void cancelRow() {
         throw new LineSenderException("cancelRow() not supported by TCP transport");
     }
@@ -88,28 +60,6 @@ public abstract class AbstractLineTcpSender extends AbstractLineSender {
     public void flush() {
         validateNotClosed();
         sendAll();
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name);
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
-        }
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name);
-        try {
-            put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('n');
-        } catch (ArithmeticException e) {
-            put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
-        }
-        return this;
     }
 
     @Override
