@@ -141,6 +141,21 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                         Frame forward scan on: trades
                             """
             );
+            // key second, aliased, multiple columns
+            assertPlanNoLeakCheck(
+                    "SELECT ts, sym price, price / sum(amount), price price1 FROM trades;",
+                    """
+                            VirtualRecord
+                              functions: [ts,price,price1/sum,price1]
+                                Async Group By workers: 1
+                                  keys: [ts,price,price1]
+                                  values: [sum(amount)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """
+            );
             // key second, multiple column occurrences
             assertPlanNoLeakCheck(
                     "SELECT ts, (price + price) / sum(amount), price FROM trades;",

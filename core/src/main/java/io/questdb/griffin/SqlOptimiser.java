@@ -1570,16 +1570,9 @@ public class SqlOptimiser implements Mutable {
             }
 
             // expose the column in the outer models
-            final QueryColumn selectedColumn;
-            if (outerVirtualModel.getAliasToColumnMap().contains(translatedColumn.getAlias())) {
-                final CharSequence outerAlias = createColumnAlias(translatedColumn.getAlias(), outerVirtualModel);
-                selectedColumn = nextColumn(outerAlias, translatedColumn.getAlias(), columnAst.position);
-            } else {
-                selectedColumn = translatedColumn;
-            }
-            outerVirtualModel.addBottomUpColumn(selectedColumn);
+            outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(selectedColumn);
+                distinctModel.addBottomUpColumn(translatedColumn);
             }
         } else {
             // the column is not referenced by the translating model
@@ -1604,16 +1597,9 @@ public class SqlOptimiser implements Mutable {
             windowModel.addBottomUpColumn(translatedColumn);
 
             // expose the column in the outer models
-            final QueryColumn selectedColumn;
-            if (outerVirtualModel.getAliasToColumnMap().contains(translatedColumn.getAlias())) {
-                final CharSequence outerAlias = createColumnAlias(translatedColumn.getAlias(), outerVirtualModel);
-                selectedColumn = nextColumn(outerAlias, translatedColumn.getAlias(), columnAst.position);
-            } else {
-                selectedColumn = translatedColumn;
-            }
-            outerVirtualModel.addBottomUpColumn(selectedColumn);
+            outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(selectedColumn);
+                distinctModel.addBottomUpColumn(translatedColumn);
             }
         }
     }

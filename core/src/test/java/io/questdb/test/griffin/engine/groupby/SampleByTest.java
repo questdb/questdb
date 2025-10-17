@@ -6315,6 +6315,40 @@ public class SampleByTest extends AbstractCairoTest {
             );
 
             query = """
+                    SELECT ts, max(i) + datediff('m', ts, '2010-01-01')  diff1, MaX(i) + datediff('m', ts, '2010-01-01') diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t61\t61
+                            2020-01-01T01:00:00.000000Z\t5258942\t5258942
+                            2030-01-01T01:00:00.000000Z\t10519263\t10519263
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
                     SELECT ts, max(i), datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
                     FROM 'x'
                     SAMPLE BY 1h;
