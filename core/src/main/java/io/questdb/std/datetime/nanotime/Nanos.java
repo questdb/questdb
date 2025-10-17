@@ -46,11 +46,11 @@ public final class Nanos {
     public static final long DAY_NANOS = 86_400_000_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_NANOS = (long) (365.2425 * DAY_NANOS);
     public static final long HOUR_NANOS = 3_600_000_000_000L;
-    public static final long MICRO_NANOS = 1000;
-    public static final long MILLI_NANOS = 1_000_000;
+    public static final long MICRO_NANOS = 1000L;
+    public static final long MILLI_NANOS = 1_000_000L;
     public static final long MINUTE_NANOS = 60_000_000_000L;
     public static final long MONTH_NANOS_APPROX = 30 * DAY_NANOS;
-    public static final long SECOND_NANOS = 1_000_000_000;
+    public static final long SECOND_NANOS = 1_000_000_000L;
     public static final long WEEK_NANOS = 7 * DAY_NANOS;
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
     private static final int DAYS_0000_TO_1970 = 719527;
