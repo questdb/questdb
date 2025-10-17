@@ -263,6 +263,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    getLastModified0
+ * Signature: (I)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified0
+        (JNIEnv *, jclass, jint);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    length0
  * Signature: (J)J
  */

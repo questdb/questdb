@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors.v1;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -37,6 +38,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -53,7 +55,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -170,41 +171,6 @@ public class ImportsRouter implements HttpRequestHandler {
             }
         }
 
-        private static void copyUtf8ZString(long pUtf8NameZ, Path path) {
-            for (long i = pUtf8NameZ; ; i++) {
-                byte b = Unsafe.getUnsafe().getByte(i);
-                if (b == 0) break;
-                path.put(b);
-            }
-            path.put((byte) 0);
-        }
-
-        private static void writeRelativePathEscaped(Utf8Sink sink, Path path, int rootLen, int currentPathLen) {
-            if (currentPathLen > rootLen) {
-                int relativeStart = rootLen + 1; // Skip root path and separator
-                for (int i = relativeStart; i < currentPathLen; i++) {
-                    char c = (char) path.byteAt(i);
-                    if (c == '\"' || c == '\\') {
-                        sink.putAscii('\\');
-                    }
-                    sink.putAscii(c);
-                }
-                sink.putAscii('/');
-            }
-        }
-
-        private static void writeUtf8StringEscaped(Utf8Sink sink, long pUtf8NameZ) {
-            for (long i = pUtf8NameZ; ; i++) {
-                byte b = Unsafe.getUnsafe().getByte(i);
-                if (b == 0) break;
-                char c = (char) b;
-                if (c == '\"' || c == '\\') {
-                    sink.putAscii('\\');
-                }
-                sink.putAscii(c);
-            }
-        }
-
         private boolean containsAbsOrRelativePath(DirectUtf8Sequence filename) {
             if (Utf8s.startsWithAscii(filename, "/") || Utf8s.startsWithAscii(filename, "\\")) {
                 return true;
@@ -313,60 +279,97 @@ public class ImportsRouter implements HttpRequestHandler {
             if (pFind == -1) {
                 return;
             }
-            state.findStack.push(pFind);
-            state.pathLenStack.push(path.size());
 
             try {
-                while (state.findStack.notEmpty()) {
-                    pFind = state.findStack.peek();
-                    int currentPathLen = state.pathLenStack.peek();
-                    long pUtf8NameZ = state.ff.findName(pFind);
-                    int type = state.ff.findType(pFind);
-                    if (pUtf8NameZ != 0) {
-                        tempSink.clear();
-                        if (state.ff.isDirOrSoftLinkDirNoDots(path, currentPathLen, pUtf8NameZ, type, tempSink)) {
-                            path.trimTo(currentPathLen);
-                            path.concat(pUtf8NameZ).slash();
-                            long childFind = state.ff.findFirst(path.$());
-                            if (childFind != -1) {
-                                state.findStack.push(childFind);
-                                state.pathLenStack.push(path.size());
-                                continue;
-                            }
-                        } else if (type == Files.DT_FILE) {
-                            if (!state.firstFile) {
-                                sink.put(',');
-                            }
-                            state.firstFile = false;
-                            sink.put('{');
-                            sink.putAsciiQuoted("path").put(':').putQuote();
-                            writeRelativePathEscaped(sink, path, rootLen, currentPathLen);
-                            writeUtf8StringEscaped(sink, pUtf8NameZ);
-                            sink.putQuote().put(',');
-                            sink.putAsciiQuoted("name").put(':').putQuote();
-                            writeUtf8StringEscaped(sink, pUtf8NameZ);
-                            sink.putQuote().put(',');
-                            path.trimTo(currentPathLen);
-                            copyUtf8ZString(pUtf8NameZ, path);
-                            long fileSize = state.ff.length(path.$());
-                            long lastModified = state.ff.getLastModified(path.$());
-                            sink.putAsciiQuoted("size").put(':').put(fileSize).put(',');
-                            sink.putAsciiQuoted("lastModified").put(':').put(lastModified);
-                            sink.put('}');
-                        }
+                while (true) {
+                    // Handle empty find pointer - pop from stack
+                    while (pFind <= 0 && state.findStack.notEmpty()) {
+                        pFind = state.findStack.pop();
+                        int pathLen = state.pathLenStack.pop();
+                        path.trimTo(pathLen);
+                    }
+                    if (pFind <= 0) {
+                        break;
                     }
 
+                    long pUtf8NameZ = state.ff.findName(pFind);
+                    if (pUtf8NameZ == 0) {
+                        if (state.ff.findNext(pFind) <= 0) {
+                            state.ff.findClose(pFind);
+                            pFind = 0;
+                        }
+                        continue;
+                    }
+
+                    int type = state.ff.findType(pFind);
+                    tempSink.clear();
+                    Utf8s.utf8ZCopy(pUtf8NameZ, tempSink);
+
+                    // Skip "." and ".." directories
+                    if (!Files.notDots(tempSink)) {
+                        if (state.ff.findNext(pFind) <= 0) {
+                            state.ff.findClose(pFind);
+                            pFind = 0;
+                        }
+                        continue;
+                    }
+
+                    if (type == Files.DT_DIR) {
+                        // Save current findPtr to stack if there are more entries
+                        if (state.ff.findNext(pFind) > 0) {
+                            state.findStack.push(pFind);
+                            state.pathLenStack.push(path.size());
+                        } else {
+                            state.ff.findClose(pFind);
+                        }
+                        // Enter subdirectory
+                        path.concat(tempSink).slash();
+                        pFind = state.ff.findFirst(path.$());
+                        continue;
+                    } else if (type == Files.DT_FILE) {
+                        // Output file information
+                        if (!state.firstFile) {
+                            sink.put(',');
+                        }
+                        state.firstFile = false;
+                        sink.put('{');
+                        sink.putAsciiQuoted("path").put(':').putQuote();
+
+                        // Build relative path
+                        if (path.size() > rootLen) {
+                            Utf8s.utf8ZCopyEscaped(path.ptr() + rootLen + 1, path.end(), sink);
+                        }
+                        Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
+                        sink.putQuote().put(',');
+                        sink.putAsciiQuoted("name").put(':').putQuote();
+                        Utf8s.utf8ZCopyEscaped(pUtf8NameZ, sink);
+                        sink.putQuote().put(',');
+                        // Get file information
+                        int oldLen = path.size();
+                        path.concat(tempSink);
+                        long fileSize = state.ff.length(path.$());
+                        long lastModified = state.ff.getLastModified(path.$());
+                        path.trimTo(oldLen);
+                        sink.putAsciiQuoted("size").put(':').putQuote();
+                        SizePrettyFunctionFactory.toSizePretty(sink, fileSize);
+                        sink.putQuote().put(',');
+                        sink.putAsciiQuoted("lastModified").put(':').putQuote();
+                        MicrosTimestampDriver.INSTANCE.append(sink, lastModified);
+                        sink.putQuote();
+                        sink.put('}');
+                    }
+
+                    // Move to next entry
                     if (state.ff.findNext(pFind) <= 0) {
                         state.ff.findClose(pFind);
-                        state.findStack.pop();
-                        state.pathLenStack.pop();
-
-                        if (state.pathLenStack.notEmpty()) {
-                            path.trimTo(state.pathLenStack.peek());
-                        }
+                        pFind = 0;
                     }
                 }
             } finally {
+                // Clean up any remaining find handles
+                if (pFind > 0) {
+                    state.ff.findClose(pFind);
+                }
                 while (state.findStack.notEmpty()) {
                     state.ff.findClose(state.findStack.pop());
                     state.pathLenStack.pop();
