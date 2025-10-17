@@ -71,6 +71,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
     };
     private final WorkerPoolConfiguration confMatViewRefreshPool;
+    private final WorkerPoolConfiguration confExportPool;
     private final WorkerPoolConfiguration confSharedPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
@@ -201,6 +202,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
 
         this.confMatViewRefreshPool = () -> 0; // shared pool
+        this.confExportPool = () -> 2; // default export pool worker count
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -240,6 +242,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return confMatViewRefreshPool;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return confExportPool;
     }
 
     @Override

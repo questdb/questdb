@@ -1956,7 +1956,7 @@ mod tests {
 
         let random_string: String = (0..len)
             .map(|_| {
-                let c = rng.random_range(range.clone());
+                let c = rng.random_range(range.start..range.end);
                 char::from_u32(c).unwrap_or('�') // Use a replacement character for invalid values
             })
             .collect();

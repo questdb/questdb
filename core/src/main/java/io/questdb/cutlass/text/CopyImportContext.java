@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -33,40 +34,43 @@ import io.questdb.std.Mutable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
-public class CopyContext implements Mutable {
+public class CopyImportContext implements Mutable {
     public static final long INACTIVE_COPY_ID = -1;
-    private final AtomicLong activeCopyID = new AtomicLong(INACTIVE_COPY_ID);
-    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
+    private final AtomicLong activeImportID = new AtomicLong(INACTIVE_COPY_ID);
+    private final AtomicBooleanCircuitBreaker circuitBreaker;
     // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
     private final LongSupplier copyIDSupplier;
-    private SecurityContext originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+    private SecurityContext importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
 
-    public CopyContext(CairoConfiguration configuration) {
+    public CopyImportContext(CairoEngine engine, CairoConfiguration configuration) {
+        this.circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.copyIDSupplier = configuration.getCopyIDSupplier();
     }
 
     public long assignActiveImportId(SecurityContext securityContext) {
         final long id = copyIDSupplier.getAsLong();
-        activeCopyID.set(id);
-        this.originatorSecurityContext = securityContext;
-        return id;
+        if (activeImportID.compareAndSet(INACTIVE_COPY_ID, id)) {
+            this.importOriginatorSecurityContext = securityContext;
+            return id;
+        }
+        return INACTIVE_COPY_ID;
     }
 
     @Override
     public void clear() {
-        activeCopyID.set(INACTIVE_COPY_ID);
-        originatorSecurityContext = DenyAllSecurityContext.INSTANCE;
+        activeImportID.set(INACTIVE_COPY_ID);
+        importOriginatorSecurityContext = DenyAllSecurityContext.INSTANCE;
     }
 
-    public long getActiveCopyID() {
-        return activeCopyID.get();
+    public long getActiveImportID() {
+        return activeImportID.get();
     }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
-    public SecurityContext getOriginatorSecurityContext() {
-        return originatorSecurityContext;
+    public SecurityContext getImportOriginatorSecurityContext() {
+        return importOriginatorSecurityContext;
     }
 }

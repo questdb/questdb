@@ -70,7 +70,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, config, MemoryTag.NATIVE_CB5) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;

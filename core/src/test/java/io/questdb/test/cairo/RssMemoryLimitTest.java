@@ -68,7 +68,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
             }
-            capture.waitFor("QueryProgress err ");
+            capture.waitForRegex("QueryProgress err .*memoryTag=45");
             capture.assertLoggedRE(" exe \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
             capture.assertLoggedRE(" err \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
         });
@@ -122,7 +122,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                     0,
                     "global RSS memory limit exceeded"
             );
-            capture.waitFor("QueryProgress err ");
+            capture.waitForRegex("QueryProgress err .*memoryTag=30");
             capture.assertLoggedRE(" exe \\[.*, sql=`select a, sum\\(b\\) from test");
             capture.assertLoggedRE(" err \\[.*, sql=`select a, sum\\(b\\) from test");
         });

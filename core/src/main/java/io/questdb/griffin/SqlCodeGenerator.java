@@ -2504,6 +2504,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .$(", fd=").$(executionContext.getRequestFd())
                             .I$();
                     return new AsyncJitFilteredRecordCursorFactory(
+                            executionContext.getCairoEngine(),
                             configuration,
                             executionContext.getMessageBus(),
                             factory,
@@ -2549,6 +2550,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
+                        executionContext.getCairoEngine(),
                         configuration,
                         executionContext.getMessageBus(),
                         factory,
@@ -3194,6 +3196,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
 
                         master = new AsyncFilteredRecordCursorFactory(
+                                executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
@@ -3245,6 +3248,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // make it a post-join filter (same as for post join where clause above)
                     if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                         master = new AsyncFilteredRecordCursorFactory(
+                                executionContext.getCairoEngine(),
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
@@ -3585,6 +3589,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
             return new LatestByAllIndexedRecordCursorFactory(
+                    executionContext.getCairoEngine(),
                     configuration,
                     metadata,
                     partitionFrameCursorFactory,
@@ -3783,6 +3788,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     assert nested != null;
 
                                     return new AsyncTopKRecordCursorFactory(
+                                            executionContext.getCairoEngine(),
                                             configuration,
                                             executionContext.getMessageBus(),
                                             orderedMetadata,
@@ -4733,6 +4739,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (tempKeyIndexesInBase.size() == 0) {
                     return new GroupByNotKeyedVectorRecordCursorFactory(
+                            executionContext.getCairoEngine(),
                             configuration,
                             factory,
                             meta,
@@ -4768,6 +4775,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return generateFill(
                             model,
                             new GroupByRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
                                     configuration,
                                     factory,
                                     meta,
@@ -4883,6 +4891,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert tempOuterProjectionFunctions.size() == groupByFunctions.size();
 
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
+                                executionContext.getCairoEngine(),
                                 asm,
                                 configuration,
                                 executionContext.getMessageBus(),
@@ -4926,6 +4935,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
+                                    executionContext.getCairoEngine(),
                                     asm,
                                     configuration,
                                     executionContext.getMessageBus(),
@@ -6406,6 +6416,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
             if (myMeta.isColumnIndexed(latestByColumnIndex)) {
                 return new LatestByAllIndexedRecordCursorFactory(
+                        executionContext.getCairoEngine(),
                         configuration,
                         myMeta,
                         new FullPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, ORDER_DESC),

@@ -26,12 +26,14 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,42 +65,65 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // wildcard usage, e.g. create x as select * from y. When "y" changes, such as via
     // drop column, column indices will shift.
     private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
-    private final long batchO3MaxLag;
-    private final long batchSize;
     private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
     private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
-    private final boolean ignoreIfExists;
-    private final String likeTableName;
-    // position of the "like" table name in the SQL text, for error reporting
-    private final int likeTableNamePosition;
     private final String selectText;
-    private final int selectTextPosition;
     private final String sqlText;
-    private final String tableName;
-    private final int tableNamePosition;
-    private final String volumeAlias;
-    private final int volumePosition;
+    private long batchO3MaxLag;
+    private long batchSize;
     private int defaultSymbolCapacity = -1;
+    private boolean ignoreIfExists;
+    private String likeTableName;
+    // position of the "like" table name in the SQL text, for error reporting
+    private int likeTableNamePosition;
     private int maxUncommittedRows;
+    private boolean needRegister = true;
     private long o3MaxLag;
     private int partitionBy;
+    private int partitionByPosition;
+    private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
+    private int selectTextPosition;
+    private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
+    private String tableName;
+    private int tableNamePosition;
     private String timestampColumnName;
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
     private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private String volumeAlias;
+    private int volumePosition;
     private boolean walEnabled;
+
+    public CreateTableOperationImpl(
+            String selectText,
+            String tableName,
+            int partitionBy,
+            boolean walEnabled,
+            int defaultSymbolCapacity,
+            String sqlText,
+            boolean needRegister
+    ) {
+        this.selectText = selectText;
+        this.tableName = tableName;
+        this.partitionBy = partitionBy;
+        this.defaultSymbolCapacity = defaultSymbolCapacity;
+        this.walEnabled = walEnabled;
+        this.sqlText = sqlText;
+        this.needRegister = needRegister;
+    }
 
     public CreateTableOperationImpl(
             @NotNull String sqlText,
             @NotNull String tableName,
             int tableNamePosition,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String volumeAlias,
             int volumePosition,
             @Nullable String likeTableName,
@@ -109,6 +134,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
+        this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.likeTableName = likeTableName;
@@ -127,6 +153,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             @NotNull String tableName,
             int tableNamePosition,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String volumeAlias,
             int volumePosition,
             boolean ignoreIfExists,
@@ -146,6 +173,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
+        this.partitionByPosition = partitionByPosition;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -201,6 +229,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
+     * @param tableKind                   table kind, REGULAR_TABLE, TEMP_PARQUET_EXPORT see TableUtils.TABLE_KIND_* constants
      */
     public CreateTableOperationImpl(
             String sqlText,
@@ -210,6 +239,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int selectTextPosition,
             boolean ignoreIfExists,
             int partitionBy,
+            int partitionByPosition,
             @Nullable String timestampColumnName,
             int timestampColumnNamePosition,
             @Nullable String volumeAlias,
@@ -222,7 +252,8 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
-            long batchO3MaxLag
+            long batchO3MaxLag,
+            int tableKind
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -230,6 +261,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.selectText = selectText;
         this.selectTextPosition = selectTextPosition;
         this.partitionBy = partitionBy;
+        this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
@@ -246,6 +278,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        this.tableKind = tableKind;
 
         // This constructor is for a "create as select", column names will be scraped from the record
         // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
@@ -294,6 +327,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getColumnType(int index) {
         return getLowAt(index * 2);
+    }
+
+    @Override
+    public CopyDataProgressReporter getCopyDataProgressReporter() {
+        return reporter;
     }
 
     @Override
@@ -361,6 +399,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         int capacity = getHighAt(index * 2);
         assert capacity != -1 : "Symbol capacity is not set";
         return capacity;
+    }
+
+    @Override
+    public int getTableKind() {
+        return tableKind;
     }
 
     @Override
@@ -460,8 +503,26 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return walEnabled;
     }
 
+    @Override
+    public boolean needRegister() {
+        return needRegister;
+    }
+
+    @Override
+    public void setCopyDataProgressReporter(CopyDataProgressReporter reporter) {
+        this.reporter = reporter;
+    }
+
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setTableKind(int tableKind) {
+        this.tableKind = tableKind;
+    }
+
+    public void setTableName(String tableName) {
+        this.tableName = tableName;
     }
 
     public void setTimestampColumnName(String timestampColumnName) {
@@ -524,56 +585,61 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // data keyed on column index. We assume that "columnBits" are free to use
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
-        assert selectText != null;
-        columnBits.clear();
-        if (timestampColumnName == null) {
-            timestampIndex = metadata.getTimestampIndex();
+        assert this.selectText != null;
+        this.columnBits.clear();
+        if (this.timestampColumnName == null) {
+            this.timestampIndex = metadata.getTimestampIndex();
             timestampType = metadata.getTimestampType();
         } else {
-            timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
-            if (timestampIndex == -1) {
-                throw SqlException.position(timestampColumnNamePosition)
-                        .put("designated timestamp column doesn't exist [name=").put(timestampColumnName).put(']');
+            this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
+            if (this.timestampIndex == -1) {
+                throw SqlException.position(this.timestampColumnNamePosition)
+                        .put("designated timestamp column doesn't exist [name=").put(this.timestampColumnName).put(']');
             }
-            timestampType = metadata.getColumnType(timestampIndex);
+            timestampType = metadata.getColumnType(this.timestampIndex);
             if (!ColumnType.isTimestamp(timestampType)) {
-                throw SqlException.position(timestampColumnNamePosition)
+                throw SqlException.position(this.timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
         }
-        ObjList<CharSequence> castColNames = colNameToCastClausePos.keys();
+        if (this.timestampIndex == -1 && this.partitionBy != PartitionBy.NONE) {
+            throw SqlException.position(this.partitionByPosition)
+                    .put("partitioning is possible only on tables with designated timestamps");
+        }
+
+        ObjList<CharSequence> castColNames = this.colNameToCastClausePos.keys();
         for (int i = 0, n = castColNames.size(); i < n; i++) {
             CharSequence castColName = castColNames.get(i);
             if (metadata.getColumnIndexQuiet(castColName) < 0) {
-                throw SqlException.position(colNameToCastClausePos.get(castColName))
+                throw SqlException.position(this.colNameToCastClausePos.get(castColName))
                         .put("CAST column doesn't exist [column=").put(castColName).put(']');
             }
         }
-        ObjList<CharSequence> indexColNames = colNameToIndexClausePos.keys();
+        ObjList<CharSequence> indexColNames = this.colNameToIndexClausePos.keys();
         for (int i = 0, n = indexColNames.size(); i < n; i++) {
             CharSequence indexedColName = indexColNames.get(i);
             if (metadata.getColumnIndexQuiet(indexedColName) < 0) {
-                throw SqlException.position(colNameToIndexClausePos.get(indexedColName))
+                throw SqlException.position(this.colNameToIndexClausePos.get(indexedColName))
                         .put("INDEX column doesn't exist [column=").put(indexedColName).put(']');
             }
         }
-        ObjList<CharSequence> dedupColNames = colNameToDedupClausePos.keys();
+        ObjList<CharSequence> dedupColNames = this.colNameToDedupClausePos.keys();
         for (int i = 0, n = dedupColNames.size(); i < n; i++) {
             CharSequence dedupColName = dedupColNames.get(i);
             if (metadata.getColumnIndexQuiet(dedupColName) < 0) {
-                throw SqlException.position(colNameToDedupClausePos.get(dedupColName))
+                throw SqlException.position(this.colNameToDedupClausePos.get(dedupColName))
                         .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
             }
         }
 
-        columnNames.clear();
+        this.columnNames.clear();
         boolean hasDedup = false;
         boolean isTimestampDeduped = false;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final String columnName = metadata.getColumnName(i);
-            final TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
+            final TableColumnMetadata augMeta = this.augmentedColumnMetadata.get(columnName);
             if (!TableUtils.isValidColumnName(columnName, 255)) {
-                throw SqlException.position(tableNamePosition)
+                throw SqlException.position(this.tableNamePosition)
                         .put("invalid column name [name=")
                         .put(columnName)
                         .put(", position=")
@@ -594,7 +660,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     columnType = fromType;
                 }
                 if (!isCompatibleCast(fromType, columnType)) {
-                    throw SqlException.unsupportedCast(colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
+                    throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
                 }
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
@@ -608,7 +674,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                             .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
                             .put(columnName).put("::").put("type");
                 }
-                symbolCapacity = defaultSymbolCapacity;
+                symbolCapacity = this.defaultSymbolCapacity;
                 symbolCacheFlag = true;
                 symbolIndexed = false;
                 isDedupKey = false;
@@ -620,12 +686,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             }
             if (isDedupKey) {
                 hasDedup = true;
-                if (i == timestampIndex) {
+                if (i == this.timestampIndex) {
                     isTimestampDeduped = true;
                 }
             }
-            columnNames.add(columnName);
-            addColumnBits(
+            this.columnNames.add(columnName);
+            this.addColumnBits(
                     columnType,
                     symbolCacheFlag,
                     symbolCapacity,
@@ -638,7 +704,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             // Report the error's position in SQL as the position of the first column in the DEDUP list
             int firstDedupColumnPos = Integer.MAX_VALUE;
             for (int i = 0, n = dedupColNames.size(); i < n; i++) {
-                int dedupColPos = colNameToDedupClausePos.get(dedupColNames.get(i));
+                int dedupColPos = this.colNameToDedupClausePos.get(dedupColNames.get(i));
                 if (firstDedupColumnPos > dedupColPos) {
                     firstDedupColumnPos = dedupColPos;
                 }

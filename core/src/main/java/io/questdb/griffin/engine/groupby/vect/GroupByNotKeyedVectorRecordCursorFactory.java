@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
@@ -81,6 +82,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final int workerCount;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
+            CairoEngine engine,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
@@ -97,7 +99,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
             this.workerCount = workerCount;
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
             this.workStealingStrategy.of(startedCounter);
             this.frameMemoryPools = new ObjList<>(workerCount);

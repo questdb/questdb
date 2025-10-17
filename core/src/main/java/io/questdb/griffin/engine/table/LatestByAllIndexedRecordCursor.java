@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -54,7 +55,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final long indexShift = 0;
     private final DirectLongList prefixes;
     private final DirectLongList rows;
-    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+    private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
     private long aLimit;
     private long argumentsAddress;
@@ -66,6 +67,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private int sharedQueryWorkerCount;
 
     public LatestByAllIndexedRecordCursor(
+            CairoEngine engine,
             @NotNull CairoConfiguration configuration,
             @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
@@ -73,6 +75,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull DirectLongList prefixes
     ) {
         super(configuration, metadata);
+        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;

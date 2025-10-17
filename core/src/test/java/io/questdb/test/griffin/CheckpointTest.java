@@ -143,7 +143,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 return 100;
             }
         };
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
             @Override
             protected boolean testConnection(long fd) {
                 return false;

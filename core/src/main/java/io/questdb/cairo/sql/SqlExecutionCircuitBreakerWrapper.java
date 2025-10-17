@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
@@ -41,8 +42,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
 
-    public SqlExecutionCircuitBreakerWrapper(@NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
-        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
+    public SqlExecutionCircuitBreakerWrapper(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
+        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2);
     }
 
     @Override

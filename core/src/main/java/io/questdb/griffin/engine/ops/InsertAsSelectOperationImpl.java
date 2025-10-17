@@ -91,12 +91,12 @@ public class InsertAsSelectOperationImpl implements InsertOperation {
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext) {
         return createMethod(executionContext, engine);
     }
 
     @Override
-    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
+    public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
 

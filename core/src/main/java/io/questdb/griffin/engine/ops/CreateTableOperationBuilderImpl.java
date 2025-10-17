@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,6 +66,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private QueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
@@ -97,6 +99,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     selectTextPosition,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
+                    partitionByExpr == null ? 0 : partitionByExpr.position,
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
                     timestampExpr != null ? timestampExpr.position : 0,
                     Chars.toString(volumeAlias),
@@ -109,7 +112,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     o3MaxLag,
                     columnModels,
                     batchSize,
-                    batchO3MaxLag
+                    batchO3MaxLag,
+                    tableKind
             );
         }
 
@@ -123,6 +127,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
                     getPartitionByFromExpr(),
+                    partitionByExpr == null ? 0 : partitionByExpr.position,
                     Chars.toString(volumeAlias),
                     volumePosition,
                     likeTableNameToken.getTableName(),
@@ -136,6 +141,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
                 getPartitionByFromExpr(),
+                partitionByExpr == null ? 0 : partitionByExpr.position,
                 Chars.toString(volumeAlias),
                 volumePosition,
                 ignoreIfExists,
@@ -173,6 +179,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
+        tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
 
     public int getColumnCount() {

@@ -40,6 +40,7 @@ import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
@@ -52,7 +53,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.net.HttpURLConnection;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class HttpErrorHandlingTest extends BootstrapTest {
 
@@ -65,7 +65,6 @@ public class HttpErrorHandlingTest extends BootstrapTest {
 
     @Test
     public void testUnexpectedErrorDuringSQLExecutionHandled() throws Exception {
-        final AtomicInteger counter = new AtomicInteger(0);
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -79,7 +78,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, int opts) {
-                                        if (counter.incrementAndGet() > 78) {
+                                        if (Utf8s.endsWithAscii(name, "x" + Files.SEPARATOR + "_meta")) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

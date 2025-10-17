@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
@@ -39,6 +40,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long defaultMaxTime;
+    private final CairoEngine engine;
     private final int memoryTag;
     private final NetworkFacade nf;
     private final int throttle;
@@ -50,7 +52,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private int testCount;
     private long timeout;
 
-    public NetworkSqlExecutionCircuitBreaker(@NotNull SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
+    public NetworkSqlExecutionCircuitBreaker(CairoEngine engine, @NotNull SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.throttle = configuration.getCircuitBreakerThrottle();
@@ -67,6 +69,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             this.timeout = Long.MAX_VALUE;
         }
         this.defaultMaxTime = this.timeout;
+        this.engine = engine;
     }
 
     @Override
@@ -89,7 +92,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return true;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return true;
         }
         return testConnection(fd);
@@ -119,6 +122,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return configuration;
     }
 
+    public long getDefaultMaxTime() {
+        return defaultMaxTime;
+    }
+
     @Override
     public long getFd() {
         return fd;
@@ -138,7 +145,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (clock.getTicks() - timeout > millis) {
             return STATE_TIMEOUT;
         }
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             return STATE_CANCELLED;
         }
         if (testConnection(fd)) {
@@ -236,7 +243,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     private void testCancelled() {
-        if (cancelledFlag != null && cancelledFlag.get()) {
+        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
             throw CairoException.queryCancelled(fd);
         }
     }

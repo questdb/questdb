@@ -93,7 +93,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine,
                 new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
                     public boolean checkConnection() {

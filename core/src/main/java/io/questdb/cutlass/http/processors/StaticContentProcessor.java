@@ -105,6 +105,11 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         return requiredAuthType;
     }
 
+    @Override
+    public boolean ignoreConnectionLimitCheck() {
+        return true;
+    }
+
     public LogRecord logInfoWithFd(HttpConnectionContext context) {
         return LOG.info().$('[').$(context.getFd()).$("] ");
     }

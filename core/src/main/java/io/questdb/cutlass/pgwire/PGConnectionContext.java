@@ -60,6 +60,7 @@ import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
@@ -171,6 +172,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
+    private final AssociativeCache<TypesAndSelect> tasCache;
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
@@ -192,7 +194,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private int sendBufferSize;
     private SuspendEvent suspendEvent;
-    private final AssociativeCache<TypesAndSelect> tasCache;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
@@ -458,7 +459,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (PGMessageProcessingException e) {
-                LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                // Special handling for access control errors: to distinguish them from other parsing errors for better diagnostics
+                if (!Chars.startsWith(e.getFlyweightMessage(), "Access")) {
+                    LOG.error().$safe(e.getFlyweightMessage()).I$();
+                } else {
+                    LOG.error().$("failed to parse message [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                }
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }
