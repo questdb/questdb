@@ -512,6 +512,24 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStressSymbolEnablePreTouch() throws Exception {
+        testParallelStressSymbol(
+                "select /*+ ENABLE_PRE_TOUCH(x) */ * from x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                "v\ts\n" +
+                        "3393210801760647293\tA\n" +
+                        "3433721896286859656\tA\n" +
+                        "3619114107112892010\tA\n" +
+                        "3669882909701240516\tA\n" +
+                        "3820631780839257855\tA\n" +
+                        "4039070554630775695\tA\n" +
+                        "4290477379978201771\tA\n",
+                4,
+                1,
+                SqlJitMode.JIT_MODE_DISABLED
+        );
+    }
+
+    @Test
     public void testParallelStressSymbolMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
         testParallelStressSymbol(symbolQueryNoLimit, expectedSymbolNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }

@@ -53,6 +53,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "1.0");
     }
 
     @Test
@@ -140,7 +141,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
                     "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
-            testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED, false);
+            testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
         });
     }
 
@@ -238,15 +239,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
     @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
-            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "1.0");
+            execute(
+                    "create table t1 as (select " +
+                            " x," +
+                            " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
+                            "from long_sequence(10)) timestamp(ts) partition by day"
+            );
 
-            execute("create table t1 as (select " +
-                    " x," +
-                    " timestamp_sequence(to_timestamp('1970-01-01', 'yyyy-MM-dd'), 100000L) ts " +
-                    "from long_sequence(10)) timestamp(ts) partition by day");
-
-            final String query = "select 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
+            final String query = "select /*+ ENABLE_PRE_TOUCH(t1) */ 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
             final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
                     "1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951\n" +
                     "1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772\n" +
@@ -637,26 +637,26 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
-    private void testFilterWithColTops(String query, String expected, int jitMode, boolean preTouch) throws Exception {
+    private void testFilterWithColTops(String query, String expected, int jitMode) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
-            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
-            if (preTouch) {
-                node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "1.0");
-            }
 
-            execute("create table t1 as (select " +
-                    " x," +
-                    " timestamp_sequence(0, 1000000) ts " +
-                    "from long_sequence(20)) timestamp(ts)");
+            execute(
+                    "create table t1 as (select " +
+                            " x," +
+                            " timestamp_sequence(0, 1000000) ts " +
+                            "from long_sequence(20)) timestamp(ts)"
+            );
 
             execute("alter table t1 add column j long");
 
-            execute("insert into t1 select " +
-                    " x," +
-                    " timestamp_sequence(100000000, 1000000) ts," +
-                    " rnd_long() j " +
-                    "from long_sequence(20)");
+            execute(
+                    "insert into t1 select " +
+                            " x," +
+                            " timestamp_sequence(100000000, 1000000) ts," +
+                            " rnd_long() j " +
+                            "from long_sequence(20)"
+            );
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -664,18 +664,18 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
-        final String query = "select * from t1 where x >= 3 and x <= 4";
+        final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where x >= 3 and x <= 4";
         final String expected = "x\tts\tj\n" +
                 "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
                 "4\t1970-01-01T00:00:03.000000Z\tnull\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
                 "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
 
-        testFilterWithColTops(query, expected, jitMode, preTouch);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
     private void testSelectAllFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
-        final String query = "select * from t1 where j < 0";
+        final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where j < 0";
         final String expected = "x\tts\tj\n" +
                 "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
                 "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
@@ -687,14 +687,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
                 "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
 
-        testFilterWithColTops(query, expected, jitMode, preTouch);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
-
-            final String query = "select * from x where b = true and kk < 10";
+            final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(x) */" : "") + " * from x where b = true and kk < 10";
             final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +
                     "2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258367\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2\n" +
                     "3\t844704299\ttrue\t\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
@@ -727,11 +725,13 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " rnd_geohash(40) hash8c" +
                     " from long_sequence(100)) timestamp(k)";
 
-            assertQuery(expected,
+            assertQueryNoLeakCheck(
+                    expected,
                     query,
                     ddl,
                     "k",
-                    true);
+                    true
+            );
             assertSqlRunWithJit(query);
         });
     }
@@ -739,12 +739,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testSelectSingleColumnFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         // The column order is important here, since we want
         // query and table column indexes to be different.
-        final String query = "select j from t1 where j <> null and x < 3";
+        final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " j from t1 where j <> null and x < 3";
         final String expected = "j\n" +
                 "4689592037643856\n" +
                 "4729996258992366\n";
 
-        testFilterWithColTops(query, expected, jitMode, preTouch);
+        testFilterWithColTops(query, expected, jitMode);
     }
 
     private void testSingleBindVariable(int jitMode) throws Exception {

@@ -118,8 +118,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {

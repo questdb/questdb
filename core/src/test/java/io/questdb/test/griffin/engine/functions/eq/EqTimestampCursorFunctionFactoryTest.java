@@ -186,7 +186,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                       functions: [ts::varchar]
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: x [pre-touch]
+                                            Frame forward scan on: x
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -420,7 +420,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                                       functions: [ts::varchar]
                                         PageFrame
                                             Row forward scan
-                                            Frame forward scan on: x [pre-touch]
+                                            Frame forward scan on: x
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
