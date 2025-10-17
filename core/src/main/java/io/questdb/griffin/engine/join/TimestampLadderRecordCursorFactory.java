@@ -43,15 +43,15 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Specialized cursor factory for "timestamp ladder" pattern optimization.
- * This pattern occurs when a table with a timestamp column is cross-joined with
- * an arithmetic sequence, and the result is ordered by the sum of the timestamp
- * and the sequence offset.
+ * Specialized cursor factory to optimize the "timestamp ladder" crosss-join used
+ * in markout analysis. A table with a timestamp column is cross-joined with an
+ * arithmetic sequence of time offsets, and the result must be ordered by the sum
+ * of the LSH timestamp and RHS time offset.
  * <p>
  * Example query:
  * <pre>
  * WITH offsets AS (
- *     SELECT sec_offs, 1_000_000 * sec_offs usec_offs
+ *     SELECT 1_000_000 * sec_offs usec_offs
  *     FROM (SELECT x-601 AS sec_offs FROM long_sequence(1201))
  * )
  * SELECT id, order_ts + usec_offs AS ts
@@ -59,8 +59,8 @@ import org.jetbrains.annotations.NotNull;
  * ORDER BY order_ts + usec_offs
  * </pre>
  * <p>
- * Instead of materializing all cross-join results and then sorting, this factory
- * emits rows directly in the correct order by leveraging the structure of the pattern.
+ * Instead of emitting the cross-join results in the usual order, materializing all of
+ * them, and then sorting them, this factory emits rows directly in the correct order.
  */
 public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final TimestampLadderRecordCursor cursor;
@@ -173,9 +173,9 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * Record cursor that emits cross-join results in timestamp order.
      * <p>
      * The slave cursor (arithmetic sequence) is fully materialized into a RecordArray
-     * for efficient random access during the optimized iteration.
+     * for efficient random access during iteration.
      * <p>
-     * Uses a merge algorithm that maintains a circular linked list of SlaveRowIterator
+     * The algorithm maintains a circular linked list of SlaveRowIterator
      * objects (one per master row) that emit rows in sorted timestamp order.
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
