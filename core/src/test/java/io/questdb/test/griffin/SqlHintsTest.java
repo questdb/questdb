@@ -59,21 +59,21 @@ public class SqlHintsTest extends AbstractTest {
     public void testAsOfJoinUseIndexSearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsofIndexSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
 
             model.addHint(SqlHints.ASOF_INDEX_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsofIndexSearchHint(model, "tableA", "tableB"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
 
             // case insensitive
-            Assert.assertTrue(SqlHints.hasAsofIndexSearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsofIndexSearchHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsofIndexSearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsofIndexSearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsofIndexSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
         });
     }
 
@@ -81,21 +81,43 @@ public class SqlHintsTest extends AbstractTest {
     public void testAsOfJoinUseLinearSearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAsofLinearSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
 
             model.addHint(SqlHints.ASOF_LINEAR_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAsofLinearSearchHint(model, "tableA", "tableB"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
 
             // case insensitive
-            Assert.assertTrue(SqlHints.hasAsofLinearSearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAsofLinearSearchHint(model, "TABLEA", "TABLEB"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAsofLinearSearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAsofLinearSearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAsofLinearSearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
+        });
+    }
+
+    @Test
+    public void testColumnPreTouchHint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            QueryModel model = new QueryModel.QueryModelFactory().newInstance();
+            Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
+
+            model.addHint(SqlHints.ENABLE_PRE_TOUCH_HINT, "myTable");
+            Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "myTable"));
+
+            // case insensitive
+            Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "mytable"));
+            Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "MYTABLE"));
+
+            model.clear();
+            Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
+
+            // parameter-less hint is ignored
+            model.addHint(SqlHints.ENABLE_PRE_TOUCH_HINT, null);
+            Assert.assertFalse(SqlHints.hasEnablePreTouchHint(model, "myTable"));
         });
     }
 }

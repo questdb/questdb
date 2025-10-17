@@ -2477,6 +2477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
+        final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
@@ -2519,7 +2520,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            executionContext.getSharedQueryWorkerCount()
+                            executionContext.getSharedQueryWorkerCount(),
+                            enablePreTouch
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     // for these errors we are intentionally **not** rethrowing the exception
@@ -2561,7 +2563,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        enablePreTouch
                 );
             } catch (Throwable e) {
                 Misc.free(filter);
@@ -2747,8 +2750,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 boolean asOfAvoidBinarySearch = SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean asOfIndexSearch = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean asOfLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean asOfIndexSearch = SqlHints.hasAsOfIndexSearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -3023,7 +3026,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
                                 boolean ltAvoidBinarySearch = SqlHints.hasAvoidLtJoinBinarySearchHint(model, masterAlias, slaveModel.getName());
-                                boolean ltLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean ltLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -3205,7 +3208,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedQueryWorkerCount()
+                                executionContext.getSharedQueryWorkerCount(),
+                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(
@@ -3255,7 +3259,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedQueryWorkerCount()
+                                executionContext.getSharedQueryWorkerCount(),
+                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, filter);
