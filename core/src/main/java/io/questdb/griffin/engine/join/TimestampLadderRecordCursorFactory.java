@@ -252,7 +252,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                 return true;
             }
 
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             advanceMasterIfPending();
             SlaveRowIterator nextIter = currentIter.nextIterator();
