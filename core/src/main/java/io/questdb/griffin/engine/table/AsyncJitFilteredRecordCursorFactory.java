@@ -90,7 +90,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            int sharedQueryWorkerCount
+            int sharedQueryWorkerCount,
+            boolean enablePreTouch
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
@@ -119,7 +120,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 compiledFilter,
                 bindVarMemory,
                 bindVarFunctions,
-                columnTypes
+                columnTypes,
+                enablePreTouch
         );
         this.frameSequence = new PageFrameSequence<>(
                 engine,
@@ -441,9 +443,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 CompiledFilter compiledFilter,
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions,
-                IntList columnTypes
+                IntList columnTypes,
+                boolean enablePreTouch
         ) {
-            super(configuration, filter, perWorkerFilters, columnTypes);
+            super(configuration, filter, perWorkerFilters, columnTypes, enablePreTouch);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
