@@ -3734,6 +3734,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByWithLimit17() throws Exception {
+        assertPlan(
+                "create table di (i int)",
+                "select i, count(*) c from di order by c limit 2",
+                "Long Top K lo: 2\n" +
+                        "  keys: [c asc]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
     public void testGroupByWithLimit2() throws Exception {
         assertPlan(
                 "create table di (x int, y long)",

@@ -1213,6 +1213,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelKeyedGroupByWithLongTopK5() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, sum(quantity) s FROM tab ORDER BY s ASC LIMIT 5",
+                "key\ts\n" +
+                        "k1\t3237600\n" +
+                        "k2\t3239200\n" +
+                        "k3\t3240800\n" +
+                        "k4\t3242400\n" +
+                        "k0\t3244000\n",
+                "Long Top K lo: 5"
+        );
+    }
+
+    @Test
     public void testParallelMultiJsonKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
