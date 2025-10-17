@@ -28,6 +28,8 @@ import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -41,6 +43,7 @@ import java.util.regex.Pattern;
 
 public class TestHttpClient implements QuietCloseable {
     protected static final CharSequenceObjHashMap<String> PARQUET_GET_PARAM = new CharSequenceObjHashMap<>();
+    private static final Log LOG = LogFactory.getLog(TestHttpClient.class);
     protected final Utf8StringSink sink = new Utf8StringSink();
     protected int port = 9001;
     private HttpClient httpClient;
@@ -132,7 +135,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            reqToSink(req, sink, username, password, token, null, null);
+            reqToSink(req, sink, username, password, token, null);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {
@@ -227,7 +230,7 @@ public class TestHttpClient implements QuietCloseable {
                 }
             }
 
-            reqToSink(req, sink, username, password, null, null, null);
+            reqToSink(req, sink, username, password, null, null);
             TestUtils.assertContains(sink.toString(), expectedResponse);
         } finally {
             if (!keepConnection) {
@@ -381,14 +384,13 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    private void reqToSink(
+    protected String reqToSink(
             HttpClient.Request req,
             Utf8StringSink sink,
             @Nullable CharSequence username,
             @Nullable CharSequence password,
             @Nullable CharSequence token,
-            CharSequenceObjHashMap<String> queryParams,
-            CharSequence expectedStatus
+            CharSequenceObjHashMap<String> queryParams
     ) {
         if (queryParams != null) {
             for (int i = 0, n = queryParams.size(); i < n; i++) {
@@ -410,17 +412,17 @@ public class TestHttpClient implements QuietCloseable {
         HttpClient.ResponseHeaders rsp = req.send();
         rsp.await();
 
-        if (expectedStatus != null) {
-            TestUtils.assertEquals(expectedStatus, rsp.getStatusCode());
-        }
-
         Response chunkedResponse = rsp.getResponse();
         Fragment fragment;
+
+        String statusCode = Utf8s.toString(rsp.getStatusCode());
 
         sink.clear();
         while ((fragment = chunkedResponse.recv()) != null) {
             Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
         }
+
+        return statusCode;
     }
 
     protected void toSink0(
@@ -461,7 +463,14 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         HttpClient.Request req = httpClient.newRequest(host, port);
         req.GET().url(url).query("query", sql);
-        reqToSink(req, sink, username, password, token, queryParams, expectedStatus);
+        String respCode = reqToSink(req, sink, username, password, token, queryParams);
+        if (expectedStatus != null) {
+            if (!expectedStatus.equals(respCode)) {
+                LOG.error().$("unexpected status code received, expected ").$(expectedStatus)
+                        .$(", but was ").$(respCode).$(". Response: ").$safe(sink).$();
+                Assert.fail("expected response code " + expectedStatus + " but got " + respCode);
+            }
+        }
     }
 
     static {
