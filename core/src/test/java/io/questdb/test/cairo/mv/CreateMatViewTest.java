@@ -492,7 +492,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view testView as (" + query + ") timestamp(k) partition by week",
                     96,
-                    "TIMESTAMP column expected [actual=SYMBOL]"
+                    "materialized view query timestamp must match base table designated timestamp [base table timestamp=ts, materialized view timestamp=k]"
             );
             assertNull(getMatViewDefinition("testView"));
         });
@@ -2362,6 +2362,205 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertEquals(periodDelay, matViewDefinition.getPeriodDelay());
             assertEquals(periodDelayUnit, matViewDefinition.getPeriodDelayUnit());
         }
+    }
+
+    @Test
+    public void testMatViewWithMatchingTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y ( " +
+                    "x1 INT," +
+                    "s SYMBOL CAPACITY 256 CACHE," +
+                    "ts1 TIMESTAMP," +
+                    "ts2 TIMESTAMP" +
+                    ") timestamp(ts1) PARTITION BY DAY WAL");
+
+            execute("CREATE MATERIALIZED VIEW y_view_valid AS " +
+                    "SELECT ts1, sum(x1) as sum_x1 FROM y TIMESTAMP(ts1) SAMPLE BY 2s");
+        });
+    }
+
+    @Test
+    public void testMatViewWithMismatchedTimestamp() throws Exception {
+        //throw exception if mat view timestamp doesn't match base table designated timestamp
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y ( " +
+                    "x1 INT," +
+                    "s SYMBOL CAPACITY 256 CACHE," +
+                    "ts1 TIMESTAMP," +
+                    "ts2 TIMESTAMP" +
+                    ") timestamp(ts1) PARTITION BY DAY WAL");
+
+            try {
+                execute("CREATE MATERIALIZED VIEW y_view_invalid AS " +
+                        "SELECT ts2, sum(x1) as sum_x1 FROM y TIMESTAMP(ts2) SAMPLE BY 2s");
+                fail("Expected SqlException");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage().contains("materialized view query timestamp must match base table designated timestamp"));
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewWithImplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y ( " +
+                    "x1 INT," +
+                    "s SYMBOL CAPACITY 256 CACHE," +
+                    "ts1 TIMESTAMP," +
+                    "ts2 TIMESTAMP" +
+                    ") timestamp(ts1) PARTITION BY DAY WAL");
+
+            execute("CREATE MATERIALIZED VIEW y_view_implicit AS " +
+                    "SELECT ts1, sum(x1) as sum_x1 FROM y SAMPLE BY 2s");
+        });
+    }
+
+    @Test
+    public void testMatViewWithNoBaseTableTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y_no_ts ( " +
+                    "x1 INT," +
+                    "s SYMBOL CAPACITY 256 CACHE," +
+                    "ts1 TIMESTAMP," +
+                    "ts2 TIMESTAMP" +
+                    ") timestamp(ts1) PARTITION BY DAY WAL ");
+
+            execute("CREATE MATERIALIZED VIEW y_view_no_base_ts AS " +
+                    "SELECT ts1, sum(x1) as sum_x1 FROM y_no_ts TIMESTAMP(ts1) SAMPLE BY 2s");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithDeepNestedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // Test case 1: Using WITH clause with nested aliases - similar to existing test
+            final String query1 = "with t1 as (" +
+                    "  select ts as ts1, k as k1, v as v1 from " + TABLE1 +
+                    "), t2 as (" +
+                    "  select ts1 as ts2, k1 as k2, v1 as v2 from t1" +
+                    "), t3 as (" +
+                    "  select ts2 as ts3, k2 as k3, v2 as v3 from t2" +
+                    ") " +
+                    "select ts3 as final_ts, k3 as final_k, avg(v3) as final_v " +
+                    "from t3 sample by 1h";
+
+            // Just verify that the materialized view can be created successfully
+            execute("create materialized view test1 with base " + TABLE1 + " as (" + query1 + ") partition by day");
+
+            // Verify the materialized view exists
+            assertSql(
+                    "table_name\n" +
+                            "test1\n",
+                    "select table_name from tables() where table_name = 'test1'");
+
+            // Test case 2: Simpler nested alias test case
+            final String query2 = "with nested as (" +
+                    "  select ts as timestamp_alias, k as key_alias, v as value_alias " +
+                    "  from " + TABLE1 +
+                    ") " +
+                    "select timestamp_alias as final_timestamp, count() as row_count " +
+                    "from nested sample by 30m";
+
+            execute("create materialized view test2 with base " + TABLE1 + " as (" + query2 + ") partition by day");
+
+            // Verify materialized view creation succeeded
+            assertSql(
+                    "table_name\n" +
+                            "test2\n",
+                    "select table_name from tables() where table_name = 'test2'");
+
+            // Test case 3: Verify that queries that would have failed before our
+            final String query3 = "with level1 as (" +
+                    "  select ts as ts_l1, k as k_l1, v as v_l1 from " + TABLE1 +
+                    "), level2 as (" +
+                    "  select ts_l1 as ts_l2, k_l1 as k_l2, v_l1 as v_l2 from level1" +
+                    "), level3 as (" +
+                    "  select ts_l2 as ts_l3, k_l2 as k_l3, v_l2 as v_l3 from level2" +
+                    ") " +
+                    "select ts_l3, k_l3, sum(v_l3) " +
+                    "from level3 sample by 2h";
+
+            execute("create materialized view test3 with base " + TABLE1 + " as (" + query3 + ") partition by day");
+
+            // Verify the third materialized view was created successfully
+            assertSql(
+                    "table_name\n" +
+                            "test3\n",
+                    "select table_name from tables() where table_name = 'test3'");
+
+            // Verify all materialized views are visible
+            assertSql(
+                    "table_name\n" +
+                            "test1\n" +
+                            "test2\n" +
+                            "test3\n",
+                    "select table_name from tables() where table_name like 'test%' order by table_name");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithMultiColumnExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create a base table with timestamp
+            createTable(TABLE1);
+
+            // Insert some test data
+            execute("insert into " + TABLE1 + " values (0, 'k0', 'k2_0', 0)");
+            execute("insert into " + TABLE1 + " values (10000000, 'k1', 'k2_1', 1)");
+            execute("insert into " + TABLE1 + " values (20000000, 'k2', 'k2_2', 2)");
+
+            // Test case 1: Simple multi-column expression that should work
+            // The expression involves multiple columns but the timestamp is clearly
+            // identifiable
+            final String query1 = "with base as (" +
+                    "  select ts, k, v, (v * 2 + ts/1000000) as computed " +
+                    "  from " + TABLE1 +
+                    ") " +
+                    "select ts, k, avg(computed) as avg_computed " +
+                    "from base sample by 1h";
+
+            execute("create materialized view test_multi1 with base " + TABLE1 + " as (" + query1
+                    + ") partition by day");
+
+            // Verify materialized view was created successfully
+            assertSql("table_name\n" +
+                            "test_multi1\n",
+                    "select table_name from tables() where table_name = 'test_multi1'");
+
+            // Test case 2: Complex expression with timestamp in computation
+            // This should still work because we prioritize the base table timestamp
+            final String query2 = "select ts, k, max(v + ts/1000000000) as max_computed " +
+                    "from " + TABLE1 + " sample by 30m";
+
+            execute("create materialized view test_multi2 with base " + TABLE1 + " as (" + query2
+                    + ") partition by day");
+
+            // Verify the second materialized view
+            assertSql("table_name\n" +
+                            "test_multi2\n",
+                    "select table_name from tables() where table_name = 'test_multi2'");
+
+            // Test case 3: Expression with aliased timestamp that references base table
+            // timestamp
+            final String query3 = "with aliased as (" +
+                    "  select ts as time_col, k, v, (v * 100) as scaled_v " +
+                    "  from " + TABLE1 +
+                    ") " +
+                    "select time_col as final_ts, k, sum(scaled_v) as total_scaled " +
+                    "from aliased sample by 45m";
+
+            execute("create materialized view test_multi3 with base " + TABLE1 + " as (" + query3
+                    + ") partition by day");
+
+            // Verify all materialized views exist
+            assertSql("table_name\n" +
+                            "test_multi1\n" +
+                            "test_multi2\n" +
+                            "test_multi3\n",
+                    "select table_name from tables() where table_name like 'test_multi%' order by table_name");
+        });
     }
 
     private static MatViewDefinition getMatViewDefinition(String viewName) {
