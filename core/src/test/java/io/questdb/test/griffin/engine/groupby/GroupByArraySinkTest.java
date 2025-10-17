@@ -212,12 +212,9 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
 
                 sink.put(derivedArray);
 
-                double[] transposedValues = {1.0, 4.0, 2.0, 5.0, 3.0, 6.0};
-                ArrayView expected = create2DArray(allocator, nDims, 3, 2, transposedValues);
-
                 ArrayView result = sink.getArray();
                 Assert.assertTrue(result.isVanilla());
-                TestUtils.assertEquals(expected, result);
+                TestUtils.assertEquals(derivedArray, result);
             }
         });
     }
