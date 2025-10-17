@@ -190,4 +190,253 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
                             "WHERE top > 3 * deep");
         });
     }
+
+
+    @Test
+    public void testBasicArrayOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x] id, timestamp_sequence(0,1000000000) as ts" +
+                    "  from long_sequence(10)" +
+                    ") timestamp(ts) partition by hour");
+
+            assertQuery(
+                    "id\n" +
+                            "[10.0]\n" +
+                            "[9.0]\n" +
+                            "[8.0]\n" +
+                            "[7.0]\n" +
+                            "[6.0]\n" +
+                            "[5.0]\n" +
+                            "[4.0]\n" +
+                            "[3.0]\n" +
+                            "[2.0]\n" +
+                            "[1.0]\n",
+                    "select id from x order by id[1] desc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testArrayOrderByAsc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x] id, timestamp_sequence(0,1000000000) as ts" +
+                    "  from long_sequence(5)" +
+                    ") timestamp(ts) partition by hour");
+
+            assertQuery(
+                    "id\n" +
+                            "[1.0]\n" +
+                            "[2.0]\n" +
+                            "[3.0]\n" +
+                            "[4.0]\n" +
+                            "[5.0]\n",
+                    "select id from x order by id[1] asc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+
+    @Test
+    public void testArrayOrderByDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x] id, timestamp_sequence(0,1000000000) as ts" +
+                    "  from long_sequence(5)" +
+                    ") timestamp(ts) partition by hour");
+
+            assertQuery(
+                    "id\n" +
+                            "[5.0]\n" +
+                            "[4.0]\n" +
+                            "[3.0]\n" +
+                            "[2.0]\n" +
+                            "[1.0]\n",
+                    "select id from x order by id[1] desc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+
+    @Test
+    public void testMultiElementArrayOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x, x*10, x*100] data, x::string name" +
+                    "  from long_sequence(5)" +
+                    ")");
+
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[1.0,10.0,100.0]\t1\n" +
+                            "[2.0,20.0,200.0]\t2\n" +
+                            "[3.0,30.0,300.0]\t3\n" +
+                            "[4.0,40.0,400.0]\t4\n" +
+                            "[5.0,50.0,500.0]\t5\n",
+                    "select data, name from x order by data[1] asc",
+                    null,
+                    true,
+                    true);
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[5.0,50.0,500.0]\t5\n" +
+                            "[4.0,40.0,400.0]\t4\n" +
+                            "[3.0,30.0,300.0]\t3\n" +
+                            "[2.0,20.0,200.0]\t2\n" +
+                            "[1.0,10.0,100.0]\t1\n",
+                    "select data, name from x order by data[3] desc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testArrayOrderByWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x] data, x::string name" +
+                    "  from long_sequence(10)" +
+                    ")");
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[10.0]\t10\n" +
+                            "[9.0]\t9\n" +
+                            "[8.0]\t8\n",
+                    "select data, name from x order by data[1] desc limit 3",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testArrayOrderByInSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x] data, x::string name" +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[5.0]\t5\n" +
+                            "[4.0]\t4\n" +
+                            "[3.0]\t3\n",
+                    "select * from (select data, name from x order by data[1] desc) limit 3",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testMultipleArrayColumnsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x % 3] group_data, array[x] id_data, x::string name" +
+                    "  from long_sequence(9)" +
+                    ")");
+
+            assertQuery(
+                    "group_data\tid_data\tname\n" +
+                            "[0.0]\t[3.0]\t3\n" +
+                            "[0.0]\t[6.0]\t6\n" +
+                            "[0.0]\t[9.0]\t9\n" +
+                            "[1.0]\t[1.0]\t1\n" +
+                            "[1.0]\t[4.0]\t4\n" +
+                            "[1.0]\t[7.0]\t7\n" +
+                            "[2.0]\t[2.0]\t2\n" +
+                            "[2.0]\t[5.0]\t5\n" +
+                            "[2.0]\t[8.0]\t8\n",
+                    "select group_data, id_data, name from x order by group_data[1] asc, id_data[1] asc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+    @Test
+    public void testComplexArrayExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x, x*2] data1, array[x*3, x*4] data2, x id" +
+                    "  from long_sequence(5)" +
+                    ")");
+
+            assertQuery(
+                    "data1\tdata2\tid\n" +
+                            "[1.0,2.0]\t[3.0,4.0]\t1\n" +
+                            "[2.0,4.0]\t[6.0,8.0]\t2\n" +
+                            "[3.0,6.0]\t[9.0,12.0]\t3\n" +
+                            "[4.0,8.0]\t[12.0,16.0]\t4\n" +
+                            "[5.0,10.0]\t[15.0,20.0]\t5\n",
+                    "select data1, data2, id from x order by data1[1] asc, data2[2] asc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+
+    @Test
+    public void testArrayOrderByWithDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[x % 3] data, x id" +
+                    "  from long_sequence(9)" +
+                    ")");
+
+            assertQuery(
+                    "data\n" +
+                            "[0.0]\n" +
+                            "[1.0]\n" +
+                            "[2.0]\n",
+                    "select distinct data from x order by data[1] asc",
+                    null,
+                    true,
+                    true);
+        });
+    }
+
+
+    @Test
+    public void testArrayOrderByIndexBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select array[1.0, 2.0] data, x::string name" +
+                    "  from long_sequence(3)" +
+                    ")");
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[1.0,2.0]\t1\n" +
+                            "[1.0,2.0]\t2\n" +
+                            "[1.0,2.0]\t3\n",
+                    "select data, name from x order by data[1] asc",
+                    null,
+                    true,
+                    true);
+
+            assertQuery(
+                    "data\tname\n" +
+                            "[1.0,2.0]\t1\n" +
+                            "[1.0,2.0]\t2\n" +
+                            "[1.0,2.0]\t3\n",
+                    "select data, name from x order by data[2] asc",
+                    null,
+                    true,
+                    true);
+        });
+    }
 }
