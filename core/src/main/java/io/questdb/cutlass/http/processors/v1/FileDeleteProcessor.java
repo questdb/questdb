@@ -17,6 +17,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_PATH;
@@ -26,12 +27,14 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
     private static final Log LOG = LogFactory.getLog(FileDeleteProcessor.class);
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final FilesRootDir filesRoot;
     private final byte requiredAuthType;
 
-    public FileDeleteProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+    public FileDeleteProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration, FilesRootDir filesRoot) {
         engine = cairoEngine;
         ff = cairoEngine.getConfiguration().getFilesFacade();
         requiredAuthType = configuration.getRequiredAuthType();
+        this.filesRoot = filesRoot;
     }
 
     @Override
@@ -49,51 +52,53 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         HttpRequestHeader request = context.getRequestHeader();
-        CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
-        if (Chars.isBlank(importRoot)) {
-            sendError(context, 400, "sql.copy.input.root is not configured");
+        CharSequence root = FilesRootDir.getRootPath(filesRoot, engine.getConfiguration());
+        if (Chars.isBlank(root)) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put(filesRoot.getConfigName()).put(" is not configured");
+            sendException(context, 400, sink);
             return;
         }
 
         final DirectUtf8Sequence path = request.getUrlParam(URL_PARAM_PATH);
         if (path == null || path.size() == 0) {
-            sendError(context, 400, "missing required parameter: path");
+            sendException(context, 400, "missing required parameter: path");
             return;
         }
 
         if (FileGetProcessor.containsAbsOrRelativePath(path)) {
-            sendError(context, 403, "traversal not allowed in path");
+            sendException(context, 403, "traversal not allowed in path");
             return;
         }
-        Path filePath = Path.getThreadLocal(importRoot);
+        Path filePath = Path.getThreadLocal(root);
         filePath.concat(path);
         if (!ff.exists(filePath.$())) {
-            sendError(context, 404, "path not found");
+            sendException(context, 404, "path not found");
             return;
         }
         boolean isDirectory = Files.isDirOrSoftLinkDir(filePath.$());
         if (isDirectory) {
             if (!Files.rmdir(filePath, false)) {
-                LOG.error().$("failed to delete import directory [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
-                sendError(context, 500, "failed to delete directory - may not be empty or have permission issues");
+                LOG.error().$("failed to delete directory [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
+                sendException(context, 500, "failed to delete directory - may not be empty or have permission issues");
                 return;
             }
-            LOG.info().$("deleted import directory [path=").$(filePath).I$();
+            LOG.info().$("deleted directory [path=").$(filePath).I$();
         } else {
             if (!ff.removeQuiet(filePath.$())) {
-                LOG.error().$("failed to delete import file [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
-                sendError(context, 500, "failed to delete file");
+                LOG.error().$("failed to delete file [path=").$(filePath).$(", errno=").$(ff.errno()).I$();
+                sendException(context, 500, "failed to delete file");
                 return;
             }
-            LOG.info().$("deleted import file [path=").$(filePath).I$();
+            LOG.info().$("deleted file [path=").$(filePath).I$();
         }
         sendSuccess(context, path);
     }
 
-    private void sendError(
+    private void sendException(
             HttpConnectionContext context,
             int errorCode,
-            String message
+            CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
         sink.putAscii("{\"error\":\"").putAscii(message).putAscii("\"}");

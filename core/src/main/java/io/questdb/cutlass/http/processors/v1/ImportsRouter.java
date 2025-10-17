@@ -40,9 +40,9 @@ public class ImportsRouter implements HttpRequestHandler {
     private final HttpMultipartContentProcessor postProcessor;
 
     public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        postProcessor = new FileUploadProcessor(cairoEngine, configuration);
-        getProcessor = new FileGetProcessor(cairoEngine, configuration);
-        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration);
+        postProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
     }
 
     public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {

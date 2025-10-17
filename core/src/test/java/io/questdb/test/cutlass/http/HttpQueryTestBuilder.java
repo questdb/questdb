@@ -44,6 +44,7 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
+import io.questdb.cutlass.http.processors.v1.ImportsRouter;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -200,6 +201,18 @@ public class HttpQueryTestBuilder {
                                 engine,
                                 workerPool.getWorkerCount()
                         ) : new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestHandlerFactory() {
+                    @Override
+                    public ObjList<String> getUrls() {
+                        return ImportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
+                    }
+
+                    @Override
+                    public HttpRequestHandler newInstance() {
+                        return new ImportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
                     }
                 });
 

@@ -29,9 +29,10 @@ import io.questdb.std.str.Utf8StringSink;
 import java.io.Closeable;
 import java.util.function.LongSupplier;
 
-import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON_API;
+import static io.questdb.cutlass.http.HttpConstants.CONTENT_TYPE_JSON;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_OVERWRITE;
 import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
+import static io.questdb.cutlass.http.processors.v1.FileGetProcessor.containsAbsOrRelativePath;
 
 /**
  * multiple form/data requests can come in to upload multiple files at once
@@ -39,10 +40,11 @@ import static io.questdb.cutlass.http.HttpResponseSink.HTTP_MULTI_STATUS;
 public class FileUploadProcessor implements HttpMultipartContentProcessor {
     private static final Log LOG = LogFactory.getLog(FileUploadProcessor.class);
     private static final LocalValue<State> LV = new LocalValue<>();
-    HttpConnectionContext context;
-    CairoEngine engine;
-    byte requiredAuthType;
-    State state;
+    private final CairoEngine engine;
+    private final FilesRootDir filesRoot;
+    private final byte requiredAuthType;
+    private HttpConnectionContext context;
+    private State state;
 
     /**
      * Handles basic file upload (mainly for parquet, csv).
@@ -53,9 +55,10 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
      * 422 if the file ends with .parquet and it cannot be decoded
      * 500 for other errors
      */
-    public FileUploadProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+    public FileUploadProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration, FilesRootDir filesRoot) {
         engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
+        this.filesRoot = filesRoot;
     }
 
     @Override
@@ -91,26 +94,33 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
 
     @Override
     public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
-        if (Chars.isBlank(importRoot)) {
-            sendErrorWithSuccessInfo(context, 400, "invalid destination directory (sql.copy.input.root) [path=" + importRoot + ']');
+        CharSequence root = FilesRootDir.getRootPath(filesRoot, engine.getConfiguration());
+        if (Chars.isBlank(root)) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put(filesRoot.getConfigName()).put(" is not configured");
+            sendErrorWithSuccessInfo(context, 400, sink);
         }
 
-        final DirectUtf8Sequence filename = partHeader.getContentDispositionName();
-        if (filename == null || filename.size() == 0) {
+        final DirectUtf8Sequence file = partHeader.getContentDispositionName();
+        if (file == null || file.size() == 0) {
             sendErrorWithSuccessInfo(context, 400, "received Content-Disposition without a filename");
             return;
         }
 
-        state.currentFilename = filename.toString();
-        state.of(filename, importRoot);
+        if (containsAbsOrRelativePath(file)) {
+            sendErrorWithSuccessInfo(context, 403, "path traversal not allowed in filename");
+            return;
+        }
+
+        state.currentFilename = file.toString();
+        state.of(file, root);
         state.overwrite = HttpKeywords.isTrue(context.getRequestHeader().getUrlParam(URL_PARAM_OVERWRITE));
         if (!state.overwrite && state.ff.exists(state.realPath.$())) {
             // error 409 conflict
             sendErrorWithSuccessInfo(context, 409, "file already exists and overwriting is disabled");
             return;
         }
-        LOG.info().$("starting import [src=").$(filename)
+        LOG.info().$("starting import [src=").$(file)
                 .$(", dest=").$(state.realPath).I$();
     }
 
@@ -186,37 +196,35 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         context.resumeResponseSend();
         State state = LV.get(context);
         HttpChunkedResponse response = context.getChunkedResponse();
-        assert state.errorMsg == null || state.errorMsg.size() < 1;
         encodeSuccessJson(response, state);
         response.sendChunk(true);
         response.done();
     }
 
     private void encodeSuccessJson(HttpChunkedResponse response, State state) {
-        response.put("{\"data\":[");
+        response.put("{\"successful\":[");
+        encodeSuccessfulFilesList(response, state);
+        response.put("]}");
+    }
+
+    private void encodeSuccessfulFilesList(HttpChunkedResponse response, State state) {
         for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
-            response.put("{\"type\":\"imports\",\"id\":\"");
-            response.put(state.successfulFiles.getQuick(i));
-            response.put("\"}");
+            response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
             if (i + 1 < n) {
                 response.put(",");
             }
         }
-        response.put("]}");
     }
 
-    private void sendErrorWithSuccessInfo(HttpConnectionContext context, int errorCode, String errorMsg) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
+    private void sendErrorWithSuccessInfo(HttpConnectionContext context, int errorCode, CharSequence errorMsg) throws PeerIsSlowToReadException, PeerDisconnectedException, ServerDisconnectException {
         try {
             final HttpChunkedResponse response = context.getChunkedResponse();
             if (state.successfulFiles.size() > 0) {
-                response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON_API);
+                response.status(HTTP_MULTI_STATUS, CONTENT_TYPE_JSON);
                 response.sendHeader();
                 response.sendChunk(false);
                 response.put("{\"successful\":[");
-                for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
-                    response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
-                    if (i + 1 < n) response.put(",");
-                }
+                encodeSuccessfulFilesList(response, state);
                 response.put("],\"failed\":[{\"path\":\"").put(state.currentFilename)
                         .put("\",\"error\":\"").put(errorMsg)
                         .put("\",\"code\":").put(errorCode)
@@ -224,13 +232,16 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.sendChunk(true);
                 response.done();
             } else {
-                LOG.error().$("POST /imports failed [status=").$(errorCode).$(", fd=").$(context.getFd()).$(", msg=").$(errorMsg).I$();
-                response.status(errorCode, errorMsg);
+                LOG.error().$("import file(s) failed [status=").$(errorCode).$(", fd=").$(context.getFd()).$(", msg=").$(errorMsg).I$();
+                response.status(errorCode, CONTENT_TYPE_JSON);
                 response.sendHeader();
                 response.sendChunk(false);
                 response.put("{\"errors\":[{\"status\":\"").put(errorCode)
-                        .put("\",\"detail\":\"").put(errorMsg)
-                        .put("\",\"name\":\"").put(state.currentFilename).put("\"}]}");
+                        .put("\",\"detail\":\"").put(errorMsg);
+                if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
+                    response.put("\",\"name\":\"").put(state.currentFilename);
+                }
+                response.put("\"}]}");
                 response.sendChunk(true);
                 response.shutdownWrite();
                 throw ServerDisconnectException.INSTANCE;
@@ -244,15 +255,10 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         try {
             HttpChunkedResponse response = context.getChunkedResponse();
             response.bookmark();
-            response.status(200, CONTENT_TYPE_JSON_API);
+            response.status(200, CONTENT_TYPE_JSON);
             response.sendHeader();
             response.sendChunk(false);
-            response.put("{\"successful\":[");
-            for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
-                response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
-                if (i + 1 < n) response.put(",");
-            }
-            response.put("]}");
+            encodeSuccessJson(response, state);
             response.sendChunk(true);
             response.done();
         } finally {
@@ -311,7 +317,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             Misc.free(realPath);
         }
 
-        public void of(DirectUtf8Sequence filename, CharSequence importRoot) {
+        public void of(DirectUtf8Sequence filename, CharSequence root) {
             // clear prev
             if (fd != -1) {
                 Files.close(fd);
@@ -322,10 +328,10 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 Numbers.appendHex(importId, id, true);
             }
             written = 0;
-            tempPath.of(importRoot).concat(importId);
+            tempPath.of(root).concat(importId);
             tempPathBaseLen = tempPath.size();
             tempPath.concat(filename);
-            realPath.of(importRoot).concat(filename);
+            realPath.of(root).concat(filename);
         }
 
         public void of(long lo, long hi) {

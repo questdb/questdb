@@ -34,7 +34,6 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static java.net.HttpURLConnection.HTTP_OK;
@@ -45,14 +44,14 @@ public class FileGetProcessor implements HttpRequestProcessor {
     static final int FILE_SEND_COMPLETED = FILE_SEND_CHUNK + 1;
     private static final Log LOG = LogFactory.getLog(FileGetProcessor.class);
     private static final LocalValue<State> LV = new LocalValue<>();
-    CairoEngine engine;
-    FilesFacade ff;
-    byte requiredAuthType;
+    private final CairoEngine engine;
+    private final FilesRootDir filesRoot;
+    private final byte requiredAuthType;
 
-    public FileGetProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+    public FileGetProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration, FilesRootDir root) {
         engine = cairoEngine;
         requiredAuthType = configuration.getRequiredAuthType();
-        ff = cairoEngine.getConfiguration().getFilesFacade();
+        this.filesRoot = root;
     }
 
     @Override
@@ -69,18 +68,19 @@ public class FileGetProcessor implements HttpRequestProcessor {
             LV.set(context, state = new State(engine.getConfiguration().getFilesFacade()));
         }
         HttpChunkedResponse response = context.getChunkedResponse();
-        CharSequence importRoot = engine.getConfiguration().getSqlCopyInputRoot();
-        if (Chars.isBlank(importRoot)) {
-            sendException(400, response, "sql.copy.input.root is not configured", state);
+        CharSequence root = FilesRootDir.getRootPath(filesRoot, engine.getConfiguration());
+        if (Chars.isBlank(root)) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put(filesRoot.getConfigName()).put(" is not configured");
+            sendException(400, response, sink, state);
             return;
         }
 
         HttpRequestHeader request = context.getRequestHeader();
         final DirectUtf8Sequence file = request.getUrlParam(URL_PARAM_FILENAME);
-
         if (file == null || file.size() == 0) {
-            // No filename parameter - list all files in import directory
-            sendFileList(context, importRoot, state);
+            // No filename parameter - list all files in root directory
+            sendFileList(context, root, state);
             return;
         }
 
@@ -181,13 +181,13 @@ public class FileGetProcessor implements HttpRequestProcessor {
         path.concat(state.file);
         state.fd = state.ff.openRO(path.$());
         if (state.fd < 0) {
-            sendException(404, response, "file not found in import files", state);
+            sendException(404, response, "file not found", state);
             return;
         }
 
         state.fileSize = state.ff.length(state.fd);
         if (state.fileSize > 0) {
-            state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_IMPORT);
+            state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_DEFAULT);
             if (state.fileAddress == 0) {
                 sendException(500, response, "failed to memory-map file", state);
             }
@@ -316,9 +316,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
             throw PeerDisconnectedException.INSTANCE;
         }
         headerJsonError(errorCode, response);
-        response.putAscii('{')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message).putQuote()
-                .putAscii('}');
+        response.putAscii("{\"error\":\"").putAscii(message).putAscii("\"}");
         response.sendChunk(true);
     }
 
@@ -339,26 +337,26 @@ public class FileGetProcessor implements HttpRequestProcessor {
 
     private void sendFileList(
             HttpConnectionContext context,
-            CharSequence importRoot,
+            CharSequence root,
             State state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink listSink = state.sink;
         listSink.put('[');
         try {
-            scanDirectory(importRoot, listSink, state);
+            scanDirectory(root, listSink, state);
             listSink.put(']');
             context.simpleResponse().sendStatusJsonContent(HTTP_OK, listSink, false);
         } catch (CairoException e) {
-            LOG.error().$("failed to list import files: ").$(e.getFlyweightMessage()).I$();
+            LOG.error().$("failed to list files: ").$(e.getFlyweightMessage()).I$();
             HttpChunkedResponse response = context.getChunkedResponse();
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put("failed to list import contents, error: ").put(e.getFlyweightMessage());
+            sink.put("failed to list files, error: ").put(e.getFlyweightMessage());
             sendException(500, response, sink, state);
         } catch (Throwable e) {
-            LOG.error().$("failed to list import files: ").$(e).I$();
+            LOG.error().$("failed to list files: ").$(e).I$();
             HttpChunkedResponse response = context.getChunkedResponse();
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put("failed to list import contents, error: ").put(e.getMessage());
+            sink.put("failed to list files, error: ").put(e.getMessage());
             sendException(500, response, sink, state);
         }
     }
@@ -393,7 +391,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         public void clear() {
             try {
                 if (fileAddress != 0) {
-                    ff.munmap(fileAddress, fileSize, MemoryTag.MMAP_IMPORT);
+                    ff.munmap(fileAddress, fileSize, MemoryTag.MMAP_DEFAULT);
                 }
             } catch (Exception e) {
                 LOG.error().$("failed to unmap memory [fileAddress=").$(fileAddress).$("]").$();
@@ -423,7 +421,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
+            clear();
         }
 
         public long getFd() {
