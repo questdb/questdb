@@ -1,8 +1,9 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cutlass.http.HttpSessionStore.SessionInfo.NO_SESSION;
 
 public class DefaultHttpSessionStore implements HttpSessionStore {
     public static final DefaultHttpSessionStore INSTANCE = new DefaultHttpSessionStore();
@@ -11,12 +12,11 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public void createSession(@NotNull PrincipalContext context, StringSink sessionIdSink, long fd) {
-        sessionIdSink.clear();
+    public void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext) {
     }
 
     @Override
-    public void destroySession(@NotNull CharSequence sessionId, long fd) {
+    public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
     }
 
     @Override
@@ -25,7 +25,7 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public SessionInfo verifySession(@NotNull CharSequence sessionId, StringSink sessionIdSink, long fd) {
-        return null;
+    public @NotNull SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+        return NO_SESSION;
     }
 }

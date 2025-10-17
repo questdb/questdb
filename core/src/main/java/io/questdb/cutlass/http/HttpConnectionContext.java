@@ -71,6 +71,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpSessionStore.SessionInfo.NO_SESSION;
 import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
@@ -501,7 +502,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final PrincipalContext principalContext;
             if (authenticator.authenticate(headerParser)) {
                 principalContext = authenticator;
-            } else if (sessionInfo != null) {
+            } else if (sessionInfo != null && sessionInfo != NO_SESSION) {
                 principalContext = sessionInfo;
             } else {
                 // authenticationNanos stays 0, when it fails this value is irrelevant
@@ -512,19 +513,23 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
             securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
 
-            final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
-
-            // create session if we do not have one yet, and cookies are enabled, and the client requested it
-            if (
-                    Utf8s.equalsNcAscii(TRUE, sessionParam)
-                            && (sessionInfo == null || !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
-                            && configuration.getHttpContextConfiguration().areCookiesEnabled()
-            ) {
-                sessionStore.createSession(authenticator, sessionIdSink, getFd());
-            } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
-                // close session if client requested it
-                // note that this request is still going to be processed
-                sessionStore.destroySession(sessionInfo.getSessionId(), getFd());
+            if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+                // create session if
+                // - we do not have one yet and the client requested one with 'session=true' or
+                // - sent an expired/evicted session id or
+                // - changed credentials without sending logout
+                final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+                if (
+                        (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionInfo == null)
+                                || (sessionInfo == NO_SESSION)
+                                || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
+                ) {
+                    sessionStore.createSession(authenticator, this);
+                } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null && sessionInfo != NO_SESSION) {
+                    // close session if client requested it
+                    // note that this request is still going to be processed
+                    sessionStore.destroySession(sessionInfo.getSessionId(), this);
+                }
             }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }

@@ -1,6 +1,8 @@
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -11,19 +13,18 @@ public interface HttpSessionStore {
     /**
      * Create a new session
      *
-     * @param context       Principal context, such as an HTTP authenticator used to log the user in
-     * @param sessionIdSink Populated with the id of the newly created session
-     * @param fd            fd of connection the session belongs to
+     * @param principalContext Principal context, such as an HTTP authenticator used to log the user in
+     * @param httpContext      HTTP context associated with the user's connection
      */
-    void createSession(@NotNull PrincipalContext context, StringSink sessionIdSink, long fd);
+    void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext);
 
     /**
      * Closes a session
      *
-     * @param sessionId id of the session to be closed
-     * @param fd        fd of connection the session belongs to
+     * @param sessionId   id of the session to be closed
+     * @param httpContext HTTP context associated with the user's connection
      */
-    void destroySession(@NotNull CharSequence sessionId, long fd);
+    void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     /**
      * Session lookup by principal
@@ -44,14 +45,17 @@ public interface HttpSessionStore {
     /**
      * Verify session id and return the associated session if the session is valid.
      *
-     * @param sessionId     session id to verify
-     * @param sessionIdSink Populated with the new session id if the session has been rotated
-     * @param fd            fd of connection the session belongs to
+     * @param sessionId   session id to verify
+     * @param httpContext HTTP context associated with the user's connection
      * @return session associated with the session id, or null if the session does not exist
      */
-    SessionInfo verifySession(@NotNull CharSequence sessionId, StringSink sessionIdSink, long fd);
+    @NotNull
+    SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     class SessionInfo implements PrincipalContext {
+        public static SessionInfo NO_SESSION = new SessionInfo(
+                "NO_SESSION", "NO_SESSION", null, SecurityContext.AUTH_TYPE_NONE, -1L, -1L
+        );
         private final byte authType;
         private final ObjList<CharSequence> groupsA = new ObjList<>();
         private final ObjList<CharSequence> groupsB = new ObjList<>();
@@ -127,6 +131,19 @@ public interface HttpSessionStore {
 
             // publish new groups
             groups = target;
+        }
+
+        @Override
+        public String toString() {
+            final StringSink sink = Misc.getThreadLocalSink();
+            sink.put("SessionInfo [principal=").put(principal)
+                    .put(", groups=").put(groups)
+                    .put(", authType=").put(authType)
+                    .put(", expiresAt=").put(expiresAt)
+                    .put(", rotateAt=").put(rotateAt)
+                    .put(", sessionId=").put(sessionId)
+                    .put("]");
+            return sink.toString();
         }
     }
 }
