@@ -229,6 +229,10 @@ public final class Files {
         return getLastModified(lpsz.ptr());
     }
 
+    public static long getLastModified0(long fd) {
+        return getLastModified0(toOsFd(fd));
+    }
+
     /**
      * Returns vm.max_map_count kernel limit on Linux or 0 on other OSes.
      */
@@ -655,6 +659,8 @@ public final class Files {
     private static native int getFileSystemStatus(long lpszName);
 
     private native static long getLastModified(long lpszName);
+
+    private native static long getLastModified0(int fd);
 
     private native static long getPageSize();
 

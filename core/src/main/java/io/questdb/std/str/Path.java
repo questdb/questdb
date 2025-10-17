@@ -198,6 +198,10 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         return put(str, from, to);
     }
 
+    public long end() {
+        return tailPtr;
+    }
+
     public void extend(int newCapacity) {
         assert newCapacity > capacity;
         int size = size();

@@ -33,6 +33,8 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
+    public static final String CONTENT_TYPE_OCTET_STREAM = "application/octet-stream";
+    public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_VALUE_SEPARATOR = '=';
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
@@ -72,6 +74,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_O3_MAX_LAG = new Utf8String("o3MaxLag");
     public static final Utf8String URL_PARAM_OVERWRITE = new Utf8String("overwrite");
     public static final Utf8String URL_PARAM_PARTITION_BY = new Utf8String("partitionBy");
+    public static final Utf8String URL_PARAM_PATH = new Utf8String("path");
     public static final Utf8String URL_PARAM_QUERY = new Utf8String("query");
     public static final Utf8String URL_PARAM_QUOTE_LARGE_NUM = new Utf8String("quoteLargeNum");
     public static final Utf8String URL_PARAM_SKIP_LEV = new Utf8String("skipLev");
@@ -81,6 +84,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
+    public static final Utf8String URL_PREFIX_API_V1 = new Utf8String("/api/v1");
 
     private HttpConstants() {
     }
