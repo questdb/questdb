@@ -22,24 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-public class CastVarcharToDateFunctionFactory implements FunctionFactory {
+public class NowNanoFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "now_ns()";
 
     @Override
     public String getSignature() {
-        return "cast(Øm)";
+        return SIGNATURE;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
@@ -50,24 +57,44 @@ public class CastVarcharToDateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        return new Func();
     }
 
-    private static class Func extends AbstractCastToDateFunction {
-        public Func(Function arg) {
-            super(arg);
+    private static class Func extends TimestampFunction implements Function {
+        private long now;
+
+        public Func() {
+            super(ColumnType.TIMESTAMP_NANO);
         }
 
         @Override
-        public long getDate(Record rec) {
-            // we defensively get CharSequence instead of relying on getVarChar().asAsciiSequence(). Why?
-            // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
-            final CharSequence value = arg.getStrA(rec);
-            try {
-                return value == null ? Numbers.LONG_NULL : MillsTimestampDriver.floor(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NULL;
-            }
+        public long getTimestamp(Record rec) {
+            return now;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            now = executionContext.getNow(ColumnType.TIMESTAMP_NANO);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
         }
     }
 }

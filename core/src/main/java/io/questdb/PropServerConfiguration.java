@@ -431,7 +431,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
-    private final boolean sqlParallelFilterPreTouchEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelReadParquetEnabled;
@@ -1751,7 +1750,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = queryWorkers > 0 ? Math.min(queryWorkers, 4) : 0;
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
-            this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
             this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
@@ -2678,6 +2676,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE);
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
             registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
+            registerDeprecated(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2738,7 +2737,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             if (!deprecated.isEmpty()) {
-                sb.append("    Deprecated settings (recognized but superseded by newer settings):\n");
+                sb.append("    Deprecated settings (recognized but optionally superseded by newer settings):\n");
                 for (Map.Entry<String, String> entry : deprecated.entrySet()) {
                     sb.append("        * ");
                     sb.append(entry.getKey());
@@ -4130,11 +4129,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
-        }
-
-        @Override
-        public boolean isSqlParallelFilterPreTouchEnabled() {
-            return sqlParallelFilterPreTouchEnabled;
         }
 
         @Override
