@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
@@ -97,6 +98,7 @@ public class Services {
             return null;
         }
 
+        final HttpSessionStore sessionStore = serverConfiguration.getFactoryProvider().getHttpSessionStore();
         final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
@@ -104,6 +106,7 @@ public class Services {
                 networkSharedPool,
                 serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 cookieHandler,
+                sessionStore,
                 headerParserFactory
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(

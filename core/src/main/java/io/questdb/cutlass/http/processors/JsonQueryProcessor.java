@@ -314,8 +314,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
-        return context.getCookieHandler().processCookies(context, securityContext);
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
     }
 
     @Override
@@ -377,10 +377,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             JsonQueryProcessorState state,
             Metrics metrics
     ) {
-        if (e instanceof CairoException) {
-            CairoException ce = (CairoException) e;
+        if (e instanceof CairoException ce) {
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                state.info().$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
                         .$("`, q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
@@ -877,7 +876,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setCookie(response.headers(), context.getSecurityContext());
+        context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
+        final CharSequence sessionId = context.getSessionIdSink();
+        if (!sessionId.isEmpty()) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
+        }
         response.sendHeader();
     }
 

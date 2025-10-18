@@ -54,6 +54,8 @@ import io.questdb.network.SocketFactory;
 import io.questdb.network.SuspendEvent;
 import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.AssociativeCache;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectPool;
@@ -63,16 +65,20 @@ import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
-import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
+import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpSessionStore.SessionInfo.NO_SESSION;
 import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
+    private static final String FALSE = "false";
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
+    private static final String TRUE = "true";
     private final HttpAuthenticator authenticator;
     private final ChunkedContentParser chunkedContentParser = new ChunkedContentParser();
     private final HttpServerConfiguration configuration;
@@ -88,6 +94,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
+    private final CharSequenceObjHashMap<CharSequence> parsedCookies = new CharSequenceObjHashMap<>();
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
@@ -98,6 +105,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private final StringSink sessionIdSink = new StringSink();
+    private final HttpSessionStore sessionStore;
     private long authenticationNanos = 0L;
     private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
@@ -123,6 +132,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 configuration,
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
+                DefaultHttpSessionStore.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
                 HttpServer.NO_OP_CACHE
         );
@@ -132,6 +142,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             HttpServerConfiguration configuration,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
+            HttpSessionStore sessionStore,
             HttpHeaderParserFactory headerParserFactory,
             AssociativeCache<RecordCursorFactory> selectCache
     ) {
@@ -142,6 +153,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         this.configuration = configuration;
         this.cookieHandler = cookieHandler;
+        this.sessionStore = sessionStore;
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
@@ -216,6 +228,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.responseSink.close();
         this.receivedBytes = 0;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.sessionIdSink.clear();
         this.authenticator.close();
         LOG.debug().$("closed [fd=").$(fd).I$();
     }
@@ -261,6 +274,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return nCompletedRequests;
     }
 
+    public CharSequenceObjHashMap<CharSequence> getParsedCookiesMap() {
+        return parsedCookies;
+    }
+
     public HttpRawSocket getRawResponseSocket() {
         return responseSink.getRawSocket();
     }
@@ -286,6 +303,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return selectCache;
     }
 
+    public @NotNull StringSink getSessionIdSink() {
+        return sessionIdSink;
+    }
+
     @Override
     public SuspendEvent getSuspendEvent() {
         return suspendEvent;
@@ -301,19 +322,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
-        boolean keepGoing;
-        switch (operation) {
-            case IOOperation.READ:
-                keepGoing = handleClientRecv(selector, rescheduleContext);
-                break;
-            case IOOperation.WRITE:
-                keepGoing = handleClientSend();
-                break;
-            case IOOperation.HEARTBEAT:
-                throw registerDispatcherHeartBeat();
-            default:
-                throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
-        }
+        boolean keepGoing = switch (operation) {
+            case IOOperation.READ -> handleClientRecv(selector, rescheduleContext);
+            case IOOperation.WRITE -> handleClientSend();
+            case IOOperation.HEARTBEAT -> throw registerDispatcherHeartBeat();
+            default -> throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
+        };
 
         boolean useful = keepGoing;
         if (keepGoing) {
@@ -351,6 +365,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.receivedBytes = 0;
         this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
+        this.sessionIdSink.clear();
         this.authenticator.clear();
         this.totalReceived = 0;
         this.chunkedContentParser.clear();
@@ -481,16 +496,41 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
-            if (!authenticator.authenticate(headerParser)) {
+
+            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this);
+
+            final PrincipalContext principalContext;
+            if (authenticator.authenticate(headerParser)) {
+                principalContext = authenticator;
+            } else if (sessionInfo != null && sessionInfo != NO_SESSION) {
+                principalContext = sessionInfo;
+            } else {
                 // authenticationNanos stays 0, when it fails this value is irrelevant
                 return false;
             }
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    authenticator.getPrincipal(),
-                    authenticator.getGroups(),
-                    authenticator.getAuthType(),
-                    SecurityContextFactory.HTTP
-            );
+
+            // auth successful, create security context from auth info
+            final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
+            securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
+
+            if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+                // create session if
+                // - we do not have one yet and the client requested one with 'session=true' or
+                // - sent an expired/evicted session id or
+                // - changed credentials without sending logout
+                final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+                if (
+                        (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionInfo == null)
+                                || (sessionInfo == NO_SESSION)
+                                || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
+                ) {
+                    sessionStore.createSession(authenticator, this);
+                } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null && sessionInfo != NO_SESSION) {
+                    // close session if client requested it
+                    // note that this request is still going to be processed
+                    sessionStore.destroySession(sessionInfo.getSessionId(), this);
+                }
+            }
             authenticationNanos = clock.getTicks() - authenticationStart;
         }
         return true;
@@ -855,13 +895,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             try {
                 if (newRequest) {
+                    final boolean cookiesEnabled = configuration.getHttpContextConfiguration().areCookiesEnabled();
+                    if (cookiesEnabled) {
+                        if (!cookieHandler.parseCookies(this)) {
+                            processor = rejectProcessor;
+                        }
+                    }
+
                     if (processor.requiresAuthentication() && !configureSecurityContext()) {
                         final byte requiredAuthType = processor.getRequiredAuthType();
                         processor = rejectProcessor.withAuthenticationType(requiredAuthType).reject(HTTP_UNAUTHORIZED);
                     }
 
-                    if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
-                        if (!processor.processCookies(this, securityContext)) {
+                    if (cookiesEnabled) {
+                        if (!processor.processServiceAccountCookie(this, securityContext)) {
                             processor = rejectProcessor;
                         }
                     }

@@ -74,6 +74,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_PARTITION_BY = new Utf8String("partitionBy");
     public static final Utf8String URL_PARAM_QUERY = new Utf8String("query");
     public static final Utf8String URL_PARAM_QUOTE_LARGE_NUM = new Utf8String("quoteLargeNum");
+    public static final Utf8String URL_PARAM_SESSION = new Utf8String("session");
     public static final Utf8String URL_PARAM_SKIP_LEV = new Utf8String("skipLev");
     public static final Utf8String URL_PARAM_SRC = new Utf8String("src");
     public static final Utf8String URL_PARAM_STATUS_FORMAT = new Utf8String("f");

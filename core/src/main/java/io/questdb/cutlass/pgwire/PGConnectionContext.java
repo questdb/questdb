@@ -171,6 +171,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
+    private final AssociativeCache<TypesAndSelect> tasCache;
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
@@ -192,7 +193,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private int sendBufferSize;
     private SuspendEvent suspendEvent;
-    private final AssociativeCache<TypesAndSelect> tasCache;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
@@ -596,10 +596,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (r == SocketAuthenticator.OK) {
                 try {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getGroups(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.PGWIRE
+                            authenticator, SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();

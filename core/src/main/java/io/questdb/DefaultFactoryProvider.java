@@ -33,9 +33,11 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
+import io.questdb.cutlass.http.DefaultHttpSessionStore;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.pgwire.DefaultPGAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.PlainSocketFactory;
@@ -63,6 +65,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public @NotNull SocketFactory getHttpMinSocketFactory() {
         return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull HttpSessionStore getHttpSessionStore() {
+        return DefaultHttpSessionStore.INSTANCE;
     }
 
     @Override
