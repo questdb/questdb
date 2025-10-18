@@ -4634,30 +4634,13 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryPreTouchEnabledForFilteredQueryWithHint() throws Exception {
-        testJsonQuery(
-                10,
-                "GET /query?query=" + urlEncodeQuery("select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'") + " HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "0204\r\n" +
-                        "{\"query\":\"select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            createTableX(engine, 10);
+            testHttpClient.assertGet(
+                    "{\"query\":\"explain select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"Async Filter workers: 1\"],[\"&nbsp;&nbsp;filter: i='A' [pre-touch]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"count\":5}",
+                    "explain select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'"
+            );
+        });
     }
 
     @Test
@@ -10024,29 +10007,21 @@ public class IODispatcherTest extends AbstractTest {
         boolean valid;
     }
 
-    private static class TestJsonQueryProcessorFactory implements HttpRequestHandlerFactory {
-        private final CairoEngine engine;
-        private final HttpFullFatServerConfiguration httpConfiguration;
-        private final int workerCount;
-
-        public TestJsonQueryProcessorFactory(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration, int workerCount) {
-            this.engine = engine;
-            this.httpConfiguration = httpConfiguration;
-            this.workerCount = workerCount;
-        }
+    private record TestJsonQueryProcessorFactory(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration,
+                                                 int workerCount) implements HttpRequestHandlerFactory {
 
         @Override
-        public ObjList<String> getUrls() {
-            return new ObjList<>("/query");
-        }
+            public ObjList<String> getUrls() {
+                return new ObjList<>("/query");
+            }
 
-        @Override
-        public HttpRequestHandler newInstance() {
-            return new JsonQueryProcessor(
-                    httpConfiguration.getJsonQueryProcessorConfiguration(),
-                    engine,
-                    workerCount
-            );
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new JsonQueryProcessor(
+                        httpConfiguration.getJsonQueryProcessorConfiguration(),
+                        engine,
+                        workerCount
+                );
+            }
         }
-    }
 }
