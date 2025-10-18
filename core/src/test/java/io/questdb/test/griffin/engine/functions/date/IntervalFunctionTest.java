@@ -434,7 +434,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
                     """
                             Async Filter workers: 1
-                              filter: ((ts in today() or ts in tomorrow()) or ts in yesterday()) [pre-touch]
+                              filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x
@@ -446,7 +446,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
                     """
                             Async Filter workers: 1
-                              filter: ((ts in today() or ts in tomorrow()) or ts in yesterday()) [pre-touch]
+                              filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: x

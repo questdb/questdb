@@ -175,6 +175,9 @@ public class Bootstrap {
             if (bootstrapConfiguration.useSite()) {
                 // site
                 extractSite();
+            } else {
+                // extract conf regardless
+                extractConfDir(buffer);
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);

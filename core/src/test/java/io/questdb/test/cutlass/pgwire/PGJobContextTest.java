@@ -3913,20 +3913,21 @@ if __name__ == "__main__":
                     query = "explain select * from xx where x > ? and x < ?::double limit 10";
                 }
                 try (PreparedStatement statement = connection.prepareStatement(query)) {
+                    final StringSink expectedResult = new StringSink();
                     for (int i = 0; i < 3; i++) {
                         System.out.println(i);
                         statement.setLong(1, i);
                         statement.setDouble(2, (i + 1) * 10);
                         statement.execute();
                         sink.clear();
+                        expectedResult.clear();
                         try (ResultSet rs = statement.getResultSet()) {
-                            StringSink expectedResult = new StringSink();
                             if (mode == Mode.SIMPLE) {
                                 // simple mode inlines variables in the sql text
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
+                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -3935,7 +3936,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
+                                        "  filter: ($0::long<x and x<$1::double)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -9721,7 +9722,7 @@ create table tab as (
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
-                                        "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
+                                        "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: tab\n",

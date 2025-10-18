@@ -1372,11 +1372,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return true;
     }

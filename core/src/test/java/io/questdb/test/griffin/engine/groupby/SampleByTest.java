@@ -6805,7 +6805,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  keys: [ts,s]\n" +
                             "  values: [first(v)]\n" +
                             "    Async Filter workers: 1\n" +
-                            "      filter: s='B' [pre-touch]\n" +
+                            "      filter: s='B'\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tab\n" +
