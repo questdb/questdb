@@ -10546,17 +10546,17 @@ public class IODispatcherTest extends AbstractTest {
                                                  int workerCount) implements HttpRequestHandlerFactory {
 
         @Override
-            public ObjList<String> getUrls() {
-                return new ObjList<>("/query");
-            }
-
-            @Override
-            public HttpRequestHandler newInstance() {
-                return new JsonQueryProcessor(
-                        httpConfiguration.getJsonQueryProcessorConfiguration(),
-                        engine,
-                        workerCount
-                );
-            }
+        public ObjList<String> getUrls() {
+            return new ObjList<>("/query");
         }
+
+        @Override
+        public HttpRequestHandler newInstance() {
+            return new JsonQueryProcessor(
+                    httpConfiguration.getJsonQueryProcessorConfiguration(),
+                    engine,
+                    workerCount
+            );
+        }
+    }
 }
