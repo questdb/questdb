@@ -20,6 +20,11 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
+    public SessionInfo getSession(@NotNull CharSequence sessionId) {
+        return null;
+    }
+
+    @Override
     public ObjList<SessionInfo> getSessions(@NotNull CharSequence principal) {
         return null;
     }

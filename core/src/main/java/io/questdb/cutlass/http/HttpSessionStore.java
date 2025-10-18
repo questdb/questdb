@@ -27,6 +27,14 @@ public interface HttpSessionStore {
     void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     /**
+     * Lookup session by id
+     *
+     * @param sessionId session id of the session
+     * @return session associated with the session id, or null if the session does not exist
+     */
+    SessionInfo getSession(@NotNull CharSequence sessionId);
+
+    /**
      * Session lookup by principal
      *
      * @param principal entity name
@@ -47,7 +55,7 @@ public interface HttpSessionStore {
      *
      * @param sessionId   session id to verify
      * @param httpContext HTTP context associated with the user's connection
-     * @return session associated with the session id, or null if the session does not exist
+     * @return session associated with the session id, or NO_SESSION if the session does not exist
      */
     @NotNull
     SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
