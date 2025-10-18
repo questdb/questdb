@@ -3410,7 +3410,8 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
-        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())) {
+        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())
+                || !(model.getTableNameFunction() instanceof ProjectedPageFrame)) {
             parquetProjectionPushdown(model.getNestedModel());
             return;
         }
@@ -3427,7 +3428,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         ((ProjectedPageFrame) model.getTableNameFunction()).setProjectionMetadata(projectionMetadata);
-
     }
 
     private void parseFunctionAndEnumerateColumns(
