@@ -181,26 +181,26 @@ SELECT percentile_cont(x, 0.5) over ()
 FROM (SELECT 1e15::double as x UNION ALL SELECT 2e15::double as x UNION ALL SELECT 3e15::double as x)
 LIMIT 1
 ----
-2.000000e+15
+2e+15
 
 # Test with very small percentiles using aggregate
 query R
 SELECT quantile_cont(x, 0.01)
-FROM (select x from long_sequence(100))
+FROM long_sequence(100)
 ----
 1.990000
 
 # Test with very large percentiles using aggregate
 query R
 SELECT quantile_cont(x, 0.99)
-FROM (select x from long_sequence(100))
+FROM long_sequence(100)
 ----
 99.010000
 
 # Test different data types with window function
 query R
 SELECT percentile_cont(x::int, 0.5) over ()
-FROM (select x::int from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
 5.500000
@@ -214,14 +214,14 @@ LIMIT 1
 
 query R
 SELECT percentile_cont(x::float, 0.5) over ()
-FROM (select x::float from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
 5.500000
 
 query R
 SELECT percentile_cont(x::double, 0.5) over ()
-FROM (select x::double from long_sequence(10))
+FROM long_sequence(10)
 LIMIT 1
 ----
 5.500000
@@ -243,7 +243,7 @@ from data;
 # Test window function with whole partition on large dataset
 query R
 SELECT percentile_cont(x, 0.99) over ()
-FROM (select x from long_sequence(1000))
+FROM long_sequence(1000)
 WHERE x = 1000
 ----
 990.010000
