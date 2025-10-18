@@ -67,20 +67,14 @@ public final class DecimalUtil {
      */
     public static @NotNull ConstantFunction createDecimalConstant(long hh, long hl, long lh, long ll, int precision, int scale) {
         int type = ColumnType.getDecimalType(precision, scale);
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Constant((byte) ll, type);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Constant((short) ll, type);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Constant((int) ll, type);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Constant(ll, type);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Constant(lh, ll, type);
-            default:
-                return new Decimal256Constant(hh, hl, lh, ll, type);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> new Decimal8Constant((byte) ll, type);
+            case ColumnType.DECIMAL16 -> new Decimal16Constant((short) ll, type);
+            case ColumnType.DECIMAL32 -> new Decimal32Constant((int) ll, type);
+            case ColumnType.DECIMAL64 -> new Decimal64Constant(ll, type);
+            case ColumnType.DECIMAL128 -> new Decimal128Constant(lh, ll, type);
+            default -> new Decimal256Constant(hh, hl, lh, ll, type);
+        };
     }
 
     /**
@@ -95,26 +89,35 @@ public final class DecimalUtil {
      */
     public static @NotNull ConstantFunction createNullDecimalConstant(int precision, int scale) {
         int type = ColumnType.getDecimalType(precision, scale);
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Constant(Decimals.DECIMAL8_NULL, type);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Constant(Decimals.DECIMAL16_NULL, type);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Constant(Decimals.DECIMAL32_NULL, type);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Constant(Decimals.DECIMAL64_NULL, type);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, type);
-            default:
-                return new Decimal256Constant(
-                        Decimals.DECIMAL256_HH_NULL,
-                        Decimals.DECIMAL256_HL_NULL,
-                        Decimals.DECIMAL256_LH_NULL,
-                        Decimals.DECIMAL256_LL_NULL,
-                        type
-                );
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> new Decimal8Constant(Decimals.DECIMAL8_NULL, type);
+            case ColumnType.DECIMAL16 -> new Decimal16Constant(Decimals.DECIMAL16_NULL, type);
+            case ColumnType.DECIMAL32 -> new Decimal32Constant(Decimals.DECIMAL32_NULL, type);
+            case ColumnType.DECIMAL64 -> new Decimal64Constant(Decimals.DECIMAL64_NULL, type);
+            case ColumnType.DECIMAL128 ->
+                    new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, type);
+            default -> new Decimal256Constant(
+                    Decimals.DECIMAL256_HH_NULL,
+                    Decimals.DECIMAL256_HL_NULL,
+                    Decimals.DECIMAL256_LH_NULL,
+                    Decimals.DECIMAL256_LL_NULL,
+                    type
+            );
+        };
+    }
+
+    /**
+     * Returns a decimal instance from a sqlExecutionContext that can fit any number of {@code precision} digits.
+     *
+     * @param executionContext to retrieve an instance of the decimal
+     */
+    @TestOnly
+    public static @NotNull Decimal getDecimal(SqlExecutionContext executionContext, int precision) {
+        return switch (Decimals.getStorageSizePow2(precision)) {
+            case 0, 1, 2, 3 -> executionContext.getDecimal64();
+            case 4 -> executionContext.getDecimal128();
+            default -> executionContext.getDecimal256();
+        };
     }
 
     /**
@@ -122,24 +125,20 @@ public final class DecimalUtil {
      * It may return null if the type cannot be implicitly cast.
      */
     public static Function getImplicitCastFunction(Function arg, int position, int toType, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        switch (ColumnType.tagOf(arg.getType())) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                return CastDecimalToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
-            case ColumnType.BYTE:
-                return CastByteToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
-            case ColumnType.SHORT:
-                return CastShortToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
-            case ColumnType.INT:
-                return CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
-            case ColumnType.LONG:
-                return CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext.getDecimal256());
-        }
-        return null;
+        return switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    CastDecimalToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.BYTE ->
+                    CastByteToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.SHORT ->
+                    CastShortToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.INT ->
+                    CastIntToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext);
+            case ColumnType.LONG ->
+                    CastLongToDecimalFunctionFactory.newInstance(position, arg, toType, sqlExecutionContext.getDecimal256());
+            default -> null;
+        };
     }
 
     /**
@@ -149,54 +148,13 @@ public final class DecimalUtil {
         if (ColumnType.isDecimal(fromType)) {
             return fromType;
         }
-        switch (fromType) {
-            case ColumnType.LONG:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Long.MAX_VALUE), 0);
-            case ColumnType.INT:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Integer.MAX_VALUE), 0);
-            case ColumnType.SHORT:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Short.MAX_VALUE), 0);
-            case ColumnType.BYTE:
-                return ColumnType.getDecimalType(Numbers.getPrecision(Byte.MAX_VALUE), 0);
-        }
-        return 0;
-    }
-
-    /**
-     * Returns the precision and scale that can accommodate a specific type.
-     * Note that all types aren't supported, only those are:
-     * - Decimals
-     * - Long
-     * - Int
-     * - Short
-     * - Byte
-     * - Timestamp
-     * - Date
-     *
-     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
-     * if the type is not supported.
-     */
-    public static int getTypePrecisionScale(int type) {
-        int tag = ColumnType.tagOf(type);
-        if (ColumnType.isDecimalType(tag)) {
-            short p = (short) ColumnType.getDecimalPrecision(type);
-            short s = (short) ColumnType.getDecimalScale(type);
-            return Numbers.encodeLowHighShorts(p, s);
-        }
-        switch (tag) {
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.LONG:
-                return Numbers.encodeLowHighShorts((short) 19, (short) 0);
-            case ColumnType.INT:
-                return Numbers.encodeLowHighShorts((short) 10, (short) 0);
-            case ColumnType.SHORT:
-                return Numbers.encodeLowHighShorts((short) 5, (short) 0);
-            case ColumnType.BYTE:
-                return Numbers.encodeLowHighShorts((short) 3, (short) 0);
-            default:
-                return 0;
-        }
+        return switch (fromType) {
+            case ColumnType.LONG -> ColumnType.getDecimalType(Numbers.getPrecision(Long.MAX_VALUE), 0);
+            case ColumnType.INT -> ColumnType.getDecimalType(Numbers.getPrecision(Integer.MAX_VALUE), 0);
+            case ColumnType.SHORT -> ColumnType.getDecimalType(Numbers.getPrecision(Short.MAX_VALUE), 0);
+            case ColumnType.BYTE -> ColumnType.getDecimalType(Numbers.getPrecision(Byte.MAX_VALUE), 0);
+            default -> 0;
+        };
     }
 
     /**
@@ -830,22 +788,33 @@ public final class DecimalUtil {
     }
 
     /**
-     * Returns a decimal instance from a sqlExecutionContext that can fit any number of {@code precision} digits.
+     * Returns the precision and scale that can accommodate a specific type.
+     * Note that all types aren't supported, only those are:
+     * - Decimals
+     * - Long
+     * - Int
+     * - Short
+     * - Byte
+     * - Timestamp
+     * - Date
      *
-     * @param executionContext to retrieve an instance of the decimal
+     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
+     * if the type is not supported.
      */
-    @TestOnly
-    public static @NotNull Decimal getDecimal(SqlExecutionContext executionContext, int precision) {
-        switch (Decimals.getStorageSizePow2(precision)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                return executionContext.getDecimal64();
-            case 4:
-                return executionContext.getDecimal128();
-            default:
-                return executionContext.getDecimal256();
+    public static int getTypePrecisionScale(int type) {
+        int tag = ColumnType.tagOf(type);
+        if (ColumnType.isDecimalType(tag)) {
+            short p = (short) ColumnType.getDecimalPrecision(type);
+            short s = (short) ColumnType.getDecimalScale(type);
+            return Numbers.encodeLowHighShorts(p, s);
         }
+        return switch (tag) {
+            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
+                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
+            case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
+            case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
+            case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
+            default -> 0;
+        };
     }
 }

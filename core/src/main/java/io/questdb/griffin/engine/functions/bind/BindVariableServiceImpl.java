@@ -1488,10 +1488,6 @@ public class BindVariableServiceImpl implements BindVariableService {
         throw ex;
     }
 
-    private void setArray(int index) throws SqlException {
-        setArray(index, null);
-    }
-
     private void setArrayType(int index, int colType) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists

@@ -192,73 +192,43 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         int columnType = metadata.getColumnType(index);
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-                return BooleanColumn.newInstance(index);
-            case ColumnType.BYTE:
-                return ByteColumn.newInstance(index);
-            case ColumnType.SHORT:
-                return ShortColumn.newInstance(index);
-            case ColumnType.CHAR:
-                return new CharColumn(index);
-            case ColumnType.INT:
-                return IntColumn.newInstance(index);
-            case ColumnType.LONG:
-                return LongColumn.newInstance(index);
-            case ColumnType.FLOAT:
-                return FloatColumn.newInstance(index);
-            case ColumnType.DOUBLE:
-                return DoubleColumn.newInstance(index);
-            case ColumnType.STRING:
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN -> BooleanColumn.newInstance(index);
+            case ColumnType.BYTE -> ByteColumn.newInstance(index);
+            case ColumnType.SHORT -> ShortColumn.newInstance(index);
+            case ColumnType.CHAR -> new CharColumn(index);
+            case ColumnType.INT -> IntColumn.newInstance(index);
+            case ColumnType.LONG -> LongColumn.newInstance(index);
+            case ColumnType.FLOAT -> FloatColumn.newInstance(index);
+            case ColumnType.DOUBLE -> DoubleColumn.newInstance(index);
+            case ColumnType.STRING ->
                 // we cannot use a pooled StrColumn instance, because it is not thread-safe
-                return new StrColumn(index);
-            case ColumnType.VARCHAR:
+                    new StrColumn(index);
+            case ColumnType.VARCHAR ->
                 // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
-                return new VarcharColumn(index);
-            case ColumnType.SYMBOL:
-                return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
-            case ColumnType.BINARY:
-                return BinColumn.newInstance(index);
-            case ColumnType.DATE:
-                return DateColumn.newInstance(index);
-            case ColumnType.TIMESTAMP:
-                return TimestampColumn.newInstance(index, columnType);
-            case ColumnType.RECORD:
-                return new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOBYTE:
-                return GeoByteColumn.newInstance(index, columnType);
-            case ColumnType.GEOSHORT:
-                return GeoShortColumn.newInstance(index, columnType);
-            case ColumnType.GEOINT:
-                return GeoIntColumn.newInstance(index, columnType);
-            case ColumnType.GEOLONG:
-                return GeoLongColumn.newInstance(index, columnType);
-            case ColumnType.NULL:
-                return NullConstant.NULL;
-            case ColumnType.LONG256:
-                return Long256Column.newInstance(index);
-            case ColumnType.LONG128:
-                return Long128Column.newInstance(index);
-            case ColumnType.UUID:
-                return UuidColumn.newInstance(index);
-            case ColumnType.IPv4:
-                return IPv4Column.newInstance(index);
-            case ColumnType.INTERVAL:
-                return IntervalColumn.newInstance(index, columnType);
-            case ColumnType.ARRAY:
-                return new ArrayColumn(index, columnType);
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-            case ColumnType.DECIMAL128:
-            case ColumnType.DECIMAL256:
-                return new DecimalColumn(index, columnType);
-            default:
-                throw SqlException.position(position)
-                        .put("unsupported column type ")
-                        .put(ColumnType.nameOf(columnType));
-        }
+                    new VarcharColumn(index);
+            case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
+            case ColumnType.BINARY -> BinColumn.newInstance(index);
+            case ColumnType.DATE -> DateColumn.newInstance(index);
+            case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType);
+            case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
+            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
+            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
+            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType);
+            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType);
+            case ColumnType.NULL -> NullConstant.NULL;
+            case ColumnType.LONG256 -> Long256Column.newInstance(index);
+            case ColumnType.LONG128 -> Long128Column.newInstance(index);
+            case ColumnType.UUID -> UuidColumn.newInstance(index);
+            case ColumnType.IPv4 -> IPv4Column.newInstance(index);
+            case ColumnType.INTERVAL -> IntervalColumn.newInstance(index, columnType);
+            case ColumnType.ARRAY -> new ArrayColumn(index, columnType);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> new DecimalColumn(index, columnType);
+            default -> throw SqlException.position(position)
+                    .put("unsupported column type ")
+                    .put(ColumnType.nameOf(columnType));
+        };
     }
 
     @Override
@@ -271,18 +241,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public Function createBindVariable(SqlExecutionContext sqlExecutionContext, int position, CharSequence name, int expressionType) throws SqlException {
         this.sqlExecutionContext = sqlExecutionContext;
         if (name != null) {
-            if (name.length() > 0) {
+            if (!name.isEmpty()) {
                 if (expressionType != ExpressionNode.BIND_VARIABLE) {
                     return new StrConstant(name);
                 }
-                switch (name.charAt(0)) {
-                    case ':':
-                        return createNamedParameter(position, name);
-                    case '$':
-                        return parseIndexedParameter(position, name);
-                    default:
-                        return new StrConstant(name);
-                }
+                return switch (name.charAt(0)) {
+                    case ':' -> createNamedParameter(position, name);
+                    case '$' -> parseIndexedParameter(position, name);
+                    default -> new StrConstant(name);
+                };
             } else return StrConstant.EMPTY;
         }
         return NullConstant.NULL;
@@ -697,14 +664,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (Chars.isQuoted(tok)) {
-            switch (len) {
-                case 3: // this is 'x' - char
-                    return CharConstant.newInstance(tok.charAt(1));
-                case 2: // this is '' - char
-                    return StrConstant.EMPTY;
-                default:
-                    return new StrConstant(tok);
-            }
+            return switch (len) {
+                case 3 -> // this is 'x' - char
+                        CharConstant.newInstance(tok.charAt(1));
+                case 2 -> // this is '' - char
+                        StrConstant.EMPTY;
+                default -> new StrConstant(tok);
+            };
         }
 
         // special case E'str' - we treat it like normal string for now
@@ -928,8 +894,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         assignType = ColumnType.DOUBLE;
                         break;
                     case ColumnType.ARRAY:
-                        assignType = castToType;
-                        break;
                     case ColumnType.DECIMAL8:
                     case ColumnType.DECIMAL16:
                     case ColumnType.DECIMAL32:
@@ -1551,7 +1515,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      * @return adaptive timestamp type (nano if detected and within range, otherwise original)
      */
     private int getAdaptiveTimestampType(CharSequence timestampStr, int sigArgType) {
-        if (timestampStr == null || timestampStr.length() == 0) {
+        if (timestampStr == null || timestampStr.isEmpty()) {
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 

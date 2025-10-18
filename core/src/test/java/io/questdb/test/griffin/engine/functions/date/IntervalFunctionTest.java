@@ -37,13 +37,14 @@ import io.questdb.std.Interval;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class IntervalFunctionTest extends AbstractCairoTest {
     private static final IntervalFunction function = new IntervalFunction(ColumnType.INTERVAL_TIMESTAMP_MICRO) {
         @Override
-        public Interval getInterval(Record rec) {
+        public @NotNull Interval getInterval(Record rec) {
             return Interval.NULL;
         }
     };
