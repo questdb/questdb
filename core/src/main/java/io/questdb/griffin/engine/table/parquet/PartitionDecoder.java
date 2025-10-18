@@ -286,6 +286,15 @@ public class PartitionDecoder implements QuietCloseable {
             return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
         }
 
+        public int getColumnIndex(CharSequence name) {
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (columnNames.getQuick(i).equals(name)) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
         public CharSequence getColumnName(int columnIndex) {
             return columnNames.getQuick(columnIndex);
         }

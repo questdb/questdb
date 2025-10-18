@@ -47,6 +47,8 @@ import io.questdb.std.str.Path;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
+    public ObjList<CharSequence> names;
+
 
     @Override
     public String getSignature() {

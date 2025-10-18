@@ -27,12 +27,15 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ProjectedPageFrame;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -3395,6 +3398,36 @@ public class SqlOptimiser implements Mutable {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
+    }
+
+    /**
+     * Reconfigures a parquet reading model to project columns
+     *
+     * @param model
+     */
+    private void parquetProjectionPushdown(QueryModel model) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        if (model.getTableName() == null || !SqlKeywords.isReadParquetKeyword(model.getTableName())) {
+            parquetProjectionPushdown(model.getNestedModel());
+            return;
+        }
+
+        assert model.getTableNameFunction() instanceof ProjectedPageFrame;
+
+        GenericRecordMetadata existingMetadata = (GenericRecordMetadata) model.getTableNameFunction().getMetadata();
+        GenericRecordMetadata projectionMetadata = new GenericRecordMetadata();
+        for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+            QueryColumn column = model.getColumns().getQuick(i);
+            int existingIndex = existingMetadata.getColumnIndex(column.getName());
+            TableColumnMetadata existingColumn = existingMetadata.getColumnMetadata(existingIndex);
+            projectionMetadata.add(existingColumn);
+        }
+
+        ((ProjectedPageFrame) model.getTableNameFunction()).setProjectionMetadata(projectionMetadata);
+
     }
 
     private void parseFunctionAndEnumerateColumns(
@@ -7196,6 +7229,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            parquetProjectionPushdown(rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point, models may have functions than need to be freed
@@ -7281,6 +7315,20 @@ public class SqlOptimiser implements Mutable {
             }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
+    }
+
+    private static class ColumnNameCollector implements PostOrderTreeTraversalAlgo.Visitor {
+        public CharSequenceHashSet columnNames = new CharSequenceHashSet(); // todo: allocating
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == LITERAL) {
+                if (!columnNames.contains(node.token)) {
+                    columnNames.add(node.token);
+                }
+            }
+        }
+
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
