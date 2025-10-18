@@ -52,6 +52,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -719,50 +720,46 @@ public final class TableUtils {
         }
     }
 
-    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
-        // In theory, we can have a column type where `NULL` value will be different `LONG` values,
-        // then this should return different values on longIndex. At the moment there are no such types.
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-                return 0L;
-            case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
-            case ColumnType.FLOAT:
-                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
-            case ColumnType.DOUBLE:
-                return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.INT:
-                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            case ColumnType.LONG256:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-            case ColumnType.INTERVAL:
+    public static long getNullLong(int columnType, int longIndex) {
+        // We can have a column type where `NULL` value will be different `LONG` values,
+        // then this should return different values on longIndex.
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
+            case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
+            case ColumnType.FLOAT ->
+                    Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
+            case ColumnType.DOUBLE -> Double.doubleToLongBits(Double.NaN);
+            case ColumnType.INT -> Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG128,
+                 ColumnType.UUID, ColumnType.INTERVAL ->
                 // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
-                return Numbers.LONG_NULL;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOLONG:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-                return GeoHashes.NULL;
-            case ColumnType.IPv4:
-                return Numbers.IPv4_NULL;
-            case ColumnType.VARCHAR:
-            case ColumnType.BINARY:
-            case ColumnType.ARRAY:
-                return NULL_LEN;
-            case ColumnType.STRING:
-                return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            default:
+                    Numbers.LONG_NULL;
+            case ColumnType.GEOBYTE, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.GEOINT -> GeoHashes.NULL;
+            case ColumnType.IPv4 -> Numbers.IPv4_NULL;
+            case ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> NULL_LEN;
+            case ColumnType.STRING -> Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            case ColumnType.DECIMAL8 -> Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
+                if (longIndex == 0) {
+                    yield Decimals.DECIMAL128_HI_NULL;
+                }
+                yield Decimals.DECIMAL128_LO_NULL;
+            }
+            case ColumnType.DECIMAL256 -> switch (longIndex) {
+                case 0 -> Decimals.DECIMAL256_HH_NULL;
+                case 1 -> Decimals.DECIMAL256_HL_NULL;
+                case 2 -> Decimals.DECIMAL256_LH_NULL;
+                default -> Decimals.DECIMAL256_LL_NULL;
+            };
+            default -> {
                 assert false : "Invalid column type: " + columnType;
-                return 0;
-        }
+                yield 0;
+            }
+        };
     }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
@@ -1625,6 +1622,28 @@ public final class TableUtils {
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
+                break;
+            case ColumnType.INTERVAL:
+                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
+                break;
+            case ColumnType.DECIMAL8:
+                Vect.memset(addr, count, Decimals.DECIMAL8_NULL);
+                break;
+            case ColumnType.DECIMAL16:
+                Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count);
+                break;
+            case ColumnType.DECIMAL32:
+                Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count);
+                break;
+            case ColumnType.DECIMAL64:
+                Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count);
+                break;
+            case ColumnType.DECIMAL128:
+                Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count);
+                break;
+            case ColumnType.DECIMAL256:
+                Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count);
                 break;
             default:
                 break;

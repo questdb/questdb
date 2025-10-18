@@ -149,7 +149,7 @@ public class Decimal256DivideBenchmark {
             case "MIXED_256_128":
                 // Division of 256-bit by 128-bit value: large 256-bit / normal 128-bit
                 decimal256Dividend = new Decimal256();
-                decimal256Dividend.setFromLong(123456789098765432L, 6);
+                decimal256Dividend.ofLong(123456789098765432L, 6);
                 decimal256Divisor = Decimal256.fromDouble(123.456, 3);
                 bigDecimalDividend = new BigDecimal("123456789098.765432");
                 bigDecimalDivisor = new BigDecimal("123.456");

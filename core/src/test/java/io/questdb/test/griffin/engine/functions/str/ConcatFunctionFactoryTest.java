@@ -123,6 +123,24 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimals() throws Exception {
+        CreateTableTestUtils.createDecimalsTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
+
+        execute(
+                "insert into decimals values" +
+                        "(null, null, null, null, null, null, now())," +
+                        "(1.2m, 34.56m, 789.012m, 3456.7891m, 23456.78901m, 234567.890123m, now())"
+        );
+
+        assertSql(
+                "concat\n" +
+                        "nullnullnullnullnullnull\n" +
+                        "1.234.56789.0123456.789123456.78901234567.890123\n",
+                "select concat(dec8, dec16, dec32, dec64, dec128, dec256) from decimals"
+        );
+    }
+
+    @Test
     public void testNoArgs() throws Exception {
         assertException(
                 "select concat();",

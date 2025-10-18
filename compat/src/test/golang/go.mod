@@ -3,7 +3,9 @@ module gorunner
 go 1.23.0
 
 require (
+	github.com/jackc/pgx-shopspring-decimal v0.0.0-20220624020537-1d36b5a1853e
 	github.com/jackc/pgx/v5 v5.7.4
+	github.com/shopspring/decimal v1.4.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

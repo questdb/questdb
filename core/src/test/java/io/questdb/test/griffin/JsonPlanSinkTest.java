@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.JsonPlanSink;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
+import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
@@ -57,6 +58,27 @@ public class JsonPlanSinkTest {
     }
 
     @Test
+    public void testSinkDecimal() {
+        String expected = "[\n" +
+                "  {\n" +
+                "    \"Plan\": {\n" +
+                "        \"Node Type\": \"test\",\n" +
+                "        \"long\": \"123.00\",\n" +
+                "        \"long_null\": \"null\",\n" +
+                "        \"decimal128\": \"2268949.521066274849224\",\n" +
+                "        \"decimal128_null\": \"null\",\n" +
+                "        \"decimal256\": \"772083513452561734106970858370490908534443021.732119385735180\",\n" +
+                "        \"decimal256_null\": \"null\"\n" +
+                "    }\n" +
+                "  }\n" +
+                "]";
+
+        JsonPlanSink sink = new JsonPlanSink();
+        sink.of(new DecimalTestFactory(), null);
+        Assert.assertEquals(expected, sink.getSink().toString());
+    }
+
+    @Test
     public void testSinkWithNumericalValues() {
         String expected = "[\n" +
                 "  {\n" +
@@ -74,6 +96,48 @@ public class JsonPlanSinkTest {
         JsonPlanSink sink = new JsonPlanSink();
         sink.of(new NumericalTestFactory(), null);
         Assert.assertEquals(expected, sink.getSink().toString());
+    }
+
+    static class DecimalTestFactory implements RecordCursorFactory {
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("test");
+            sink.attr("long");
+            sink.valDecimal(12300, 5, 2);
+            sink.attr("long_null");
+            sink.valDecimal(Decimals.DECIMAL64_NULL, 5, 2);
+            sink.attr("decimal128");
+            sink.valDecimal(123, 456, 38, 15);
+            sink.attr("decimal128_null");
+            sink.valDecimal(
+                    Decimals.DECIMAL128_HI_NULL,
+                    Decimals.DECIMAL128_LO_NULL,
+                    38,
+                    10
+            );
+            sink.attr("decimal256");
+            sink.valDecimal(123, 456, 789, 12, 75, 15);
+            sink.attr("decimal256_null");
+            sink.valDecimal(
+                    Decimals.DECIMAL256_HH_NULL,
+                    Decimals.DECIMAL256_HL_NULL,
+                    Decimals.DECIMAL256_LH_NULL,
+                    Decimals.DECIMAL256_LL_NULL,
+                    75,
+                    15
+            );
+        }
     }
 
     static class NumericalTestFactory implements RecordCursorFactory {

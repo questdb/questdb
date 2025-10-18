@@ -93,6 +93,56 @@ public class NamedParameterLinkFunction implements Function {
     }
 
     @Override
+    public long getDecimal128Hi(Record rec) {
+        return getBase().getDecimal128Hi(rec);
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        return getBase().getDecimal128Lo(rec);
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return getBase().getDecimal16(rec);
+    }
+
+    @Override
+    public long getDecimal256HH(Record rec) {
+        return getBase().getDecimal256HH(rec);
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        return getBase().getDecimal256HL(rec);
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        return getBase().getDecimal256LH(rec);
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        return getBase().getDecimal256LL(rec);
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return getBase().getDecimal32(rec);
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return getBase().getDecimal64(rec);
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return getBase().getDecimal8(rec);
+    }
+
+    @Override
     public double getDouble(Record rec) {
         return getBase().getDouble(rec);
     }

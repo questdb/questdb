@@ -33,6 +33,7 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Decimal256;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -63,6 +64,16 @@ public class LineUdpSender extends AbstractLineSender {
     @Override
     public void cancelRow() {
         throw new LineSenderException("cancelRow() not supported by UDP transport");
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

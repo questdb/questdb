@@ -13,3 +13,4 @@ chrono = "0.4"
 thiserror = "2.0.12"
 postgres-protocol = "0.6.8"
 fallible-iterator = "0.2.0"
+rust_decimal = { version = "1.38.0", features = ["db-postgres"] }

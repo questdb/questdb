@@ -280,6 +280,7 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
+        _ => todo!(),
     }
 }
 
