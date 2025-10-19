@@ -25,7 +25,6 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 

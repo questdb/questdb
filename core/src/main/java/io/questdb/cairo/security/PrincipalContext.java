@@ -1,4 +1,4 @@
-package io.questdb.cutlass.http;
+package io.questdb.cairo.security;
 
 import io.questdb.std.ObjList;
 

@@ -1,6 +1,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;

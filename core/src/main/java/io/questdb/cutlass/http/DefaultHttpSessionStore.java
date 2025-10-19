@@ -1,5 +1,6 @@
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 

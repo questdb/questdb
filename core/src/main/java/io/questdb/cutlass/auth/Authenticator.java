@@ -25,7 +25,7 @@
 package io.questdb.cutlass.auth;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.PrincipalContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;

@@ -28,7 +28,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.http.PrincipalContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;

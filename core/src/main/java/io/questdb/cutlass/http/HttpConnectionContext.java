@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.BufferOverflowException;
