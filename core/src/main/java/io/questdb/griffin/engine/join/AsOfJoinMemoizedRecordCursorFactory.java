@@ -258,9 +258,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 validityPeriodStart = validityPeriodEnd = Numbers.LONG_NULL;
             }
 
-            long rowLo = slaveTimeFrame.getRowLo();
-            int keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-            long keyedRowId = Rows.toLocalRowID(slaveRecB.getRowId());
+            long rowId = slaveRecB.getRowId();
+            long frameRowLo = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
 
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
@@ -296,13 +295,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                             break;
                         }
                         didJumpOverValidityPeriod = true;
-                        long rememberedNoMatchRow = -rememberedRowId - 1;
-                        keyedFrameIndex = Rows.toPartitionIndex(rememberedNoMatchRow);
-                        keyedRowId = Rows.toLocalRowID(rememberedNoMatchRow);
-                        slaveTimeFrameCursor.jumpTo(keyedFrameIndex);
+                        rowId = -rememberedRowId - 1;
+                        int frameIndex = Rows.toPartitionIndex(rowId);
+                        slaveTimeFrameCursor.jumpTo(frameIndex);
                         slaveTimeFrameCursor.open();
-                        slaveTimeFrameCursor.recordAt(slaveRecB, rememberedNoMatchRow);
-                        rowLo = slaveTimeFrame.getRowLo();
+                        slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
+                        frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                         slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     }
                 }
@@ -310,47 +308,46 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     // We have been searching outside the remembered period and are past the tolerance interval.
                     // Stop and report no match.
                     record.hasSlave(false);
-                    long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId);
                     // memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
-                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1, false);
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -rowId - 1, false);
                     break;
                 }
                 int thisSymbolKey = slaveRecB.getInt(slaveSymbolColumnIndex);
                 if (thisSymbolKey == slaveSymbolKey) {
                     record.hasSlave(true);
                     // We found the symbol that we don't remember. Memorize it now.
-                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, slaveRecB.getRowId(), false);
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, rowId, false);
                     break;
                 } else {
                     // This isn't the symbol we're looking for, but memorize it anyway in the hope that some future
                     // master row will need it.
-                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, slaveRecB.getRowId(), true);
+                    memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, rowId, true);
                 }
 
                 // move the slave cursor backwards
-                keyedRowId--;
-                if (keyedRowId < rowLo) {
+                if (rowId > frameRowLo) {
+                    rowId--;
+                } else {
                     // we exhausted this frame, let's try the previous one
                     if (!slaveTimeFrameCursor.prev()) {
                         // there is no previous frame, search space is exhausted
-                        long minRowScannedWithoutMatch = Rows.toRowID(keyedFrameIndex, keyedRowId + 1);
                         long rememberedNoMatchRowId = -rememberedRowId - 1;
-                        if (!didJumpOverValidityPeriod || minRowScannedWithoutMatch < rememberedNoMatchRowId) {
+                        if (!didJumpOverValidityPeriod || rowId < rememberedNoMatchRowId) {
                             // This isn't the edge case where we just jumped over the remembered period
                             // with no symbol, only to realize there's nothing left beyond it.
                             // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
-                            memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -minRowScannedWithoutMatch - 1, false);
+                            memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -rowId - 1, false);
                         }
                         record.hasSlave(false);
                         break;
                     }
                     slaveTimeFrameCursor.open();
 
-                    keyedFrameIndex = slaveTimeFrame.getFrameIndex();
-                    keyedRowId = slaveTimeFrame.getRowHi() - 1;
-                    rowLo = slaveTimeFrame.getRowLo();
+                    int frameIndex = slaveTimeFrame.getFrameIndex();
+                    frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                    rowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
-                slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
         }
