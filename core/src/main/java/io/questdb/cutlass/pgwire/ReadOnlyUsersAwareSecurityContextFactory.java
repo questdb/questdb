@@ -31,6 +31,7 @@ import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityContextFactory {
     private final boolean httpReadOnly;
@@ -50,7 +51,7 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     }
 
     @Override
-    public SecurityContext getInstance(@Transient PrincipalContext principalContext, byte interfaceId) {
+    public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
         return switch (interfaceId) {
             case SecurityContextFactory.HTTP -> httpReadOnly
                     ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)

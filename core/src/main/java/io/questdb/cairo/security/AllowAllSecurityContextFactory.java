@@ -27,6 +27,7 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     public static final AllowAllSecurityContextFactory INSTANCE = new AllowAllSecurityContextFactory();
@@ -35,7 +36,7 @@ public class AllowAllSecurityContextFactory implements SecurityContextFactory {
     }
 
     @Override
-    public SecurityContext getInstance(@Transient PrincipalContext principalContext, byte interfaceId) {
+    public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
         return AllowAllSecurityContext.INSTANCE;
     }
 }

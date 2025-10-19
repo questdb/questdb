@@ -27,13 +27,14 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContextFactory {
     byte HTTP = 0;
     byte ILP = 2;
     byte PGWIRE = 1;
 
-    SecurityContext getInstance(@Transient PrincipalContext principalContext, byte interfaceId);
+    SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId);
 
     default SecurityContext getRootContext() {
         return AllowAllSecurityContext.INSTANCE;

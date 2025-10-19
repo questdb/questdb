@@ -27,12 +27,13 @@ package io.questdb.cairo.security;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.PrincipalContext;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public final class ReadOnlySecurityContextFactory implements SecurityContextFactory {
     public static final ReadOnlySecurityContextFactory INSTANCE = new ReadOnlySecurityContextFactory();
 
     @Override
-    public SecurityContext getInstance(@Transient PrincipalContext principalContext, byte interfaceId) {
+    public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
         return ReadOnlySecurityContext.INSTANCE;
     }
 }
