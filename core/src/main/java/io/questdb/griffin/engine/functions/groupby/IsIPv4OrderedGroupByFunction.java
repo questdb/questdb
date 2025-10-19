@@ -95,6 +95,11 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putBool(valueIndex, true);
     }

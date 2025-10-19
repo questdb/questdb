@@ -209,7 +209,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 true,
                 true,
                 false,
-                "Sort light lo: 6\n" +
+                "Long Top K lo: 6\n" +
                         "  keys: [Time desc]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [Time]\n" +
