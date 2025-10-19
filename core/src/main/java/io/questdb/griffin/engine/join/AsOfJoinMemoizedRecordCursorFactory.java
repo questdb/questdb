@@ -128,6 +128,10 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
         private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
+        long bottomRowId = Long.MIN_VALUE;
+        long scannedRangeMaxTimestamp = Long.MIN_VALUE;
+        long scannedRangeMinRowId = Long.MAX_VALUE;
+        long scannedRangeMinTimestamp = Long.MAX_VALUE;
         private StaticSymbolTable symbolTable;
 
         public AsOfJoinMemoizedRecordCursor(
@@ -156,6 +160,23 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             symKeyToValidityPeriodStart.clear();
             symKeyToValidityPeriodEnd.clear();
             columnAccessHelper.of(slaveCursor);
+            scannedRangeMaxTimestamp = Long.MIN_VALUE;
+            scannedRangeMinRowId = Long.MAX_VALUE;
+            scannedRangeMinTimestamp = Long.MAX_VALUE;
+            bottomRowId = Long.MIN_VALUE;
+        }
+
+        private void carefullyExtendScannedRange(long masterTimestamp, long slaveTimestamp, long rowId) {
+            // Extend the remembered scanned range's lower bound with the currently scanned range's lower bound.
+            if (scannedRangeMinTimestamp > slaveTimestamp) {
+                scannedRangeMinTimestamp = slaveTimestamp;
+                scannedRangeMinRowId = rowId;
+            }
+            // Extend the remembered scanned range's upper bound, but only if the existing range
+            // overlaps the range scanned in this invocation of performKeyMatching().
+            if (scannedRangeMaxTimestamp >= slaveTimestamp) {
+                scannedRangeMaxTimestamp = masterTimestamp;
+            }
         }
 
         private boolean isSlaveWithinToleranceInterval(long masterTimestamp, long slaveTimestamp) {
@@ -255,7 +276,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 validityPeriodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
             } else {
                 rememberedRowId = NOT_REMEMBERED;
-                validityPeriodStart = validityPeriodEnd = Numbers.LONG_NULL;
+                validityPeriodStart = scannedRangeMinTimestamp;
+                validityPeriodEnd = scannedRangeMaxTimestamp;
             }
 
             long rowId = slaveRecB.getRowId();
@@ -263,18 +285,21 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                boolean didExtendValidityPeriod = false;
-                boolean didJumpOverValidityPeriod = false;
                 if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
-                    // Our search is now within the validity period of the remembered symbol. Let's use it.
-                    // The above check also ensures that rememberedRowId != NOT_REMEMBERED.
-                    if (masterTimestamp > validityPeriodEnd) {
-                        // We started our search from timestamp that is more recent than the remembered period.
+                    // Our search is now either within the validity period of the remembered symbol or within
+                    // the remembered scanned range. Let's apply this knowledge.
+                    if (rememberedRowId != NOT_REMEMBERED && masterTimestamp > validityPeriodEnd) {
+                        // We're within the validity period of the remembered symbol.
+                        // We started our search from a timestamp that is more recent than the remembered period.
                         // The fact that we got to this point means we haven't found a more recent symbol.
                         // Therefore, the remembered symbol is still the applicable one. Same for the remembered
                         // non-existence of symbol. We can extend the validity period end to current masterTimestamp.
                         symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
-                        didExtendValidityPeriod = true;
+                        // Extend the remembered scanned range, but only if the existing one overlaps
+                        // the range scanned in this invocation of performKeyMatching().
+                        if (scannedRangeMaxTimestamp >= slaveTimestamp) {
+                            scannedRangeMaxTimestamp = masterTimestamp;
+                        }
                     }
                     if (rememberedRowId >= 0) {
                         // We saw this symbol at rememberedRowId. We can now reuse it and complete the search.
@@ -285,17 +310,26 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                             record.hasSlave(false);
                         }
                         break;
+                    } else if (rememberedRowId != NOT_REMEMBERED) {
+                        // We remembered a period within which the symbol doesn't occur. Since masterTimestamp is
+                        // always at least as large as any previous masterTimestamp, we can complete the search
+                        // now with no slave found.
+                        record.hasSlave(false);
+                        break;
                     } else {
-                        // We remembered a period within which the symbol doesn't occur. Jump over the entire
-                        // period and continue searching, unless the remembered period extends beyond the
-                        // tolerance interval. If we have just extended the validity period, it definitely
-                        // extends beyond the tolerance interval.
-                        if (didExtendValidityPeriod || !isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
+                        // We're within the remembered scanned range, if any. Since the symbol isn't remembered,
+                        // we know it doesn't occur within this range because we memorize all the symbols we observe
+                        // while scanning for any symbol. Jump over the entire period and continue searching, unless the
+                        // period to be skipped extends beyond the tolerance interval.
+                        if (!isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(false);
                             break;
                         }
-                        didJumpOverValidityPeriod = true;
-                        rowId = -rememberedRowId - 1;
+                        rowId = scannedRangeMinRowId;
+                        if (rowId == bottomRowId) {
+                            record.hasSlave(false);
+                            break;
+                        }
                         int frameIndex = Rows.toPartitionIndex(rowId);
                         slaveTimeFrameCursor.jumpTo(frameIndex);
                         slaveTimeFrameCursor.open();
@@ -310,6 +344,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     record.hasSlave(false);
                     // memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -rowId - 1, false);
+                    carefullyExtendScannedRange(masterTimestamp, slaveTimestamp, rowId);
                     break;
                 }
                 int thisSymbolKey = slaveRecB.getInt(slaveSymbolColumnIndex);
@@ -317,6 +352,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     record.hasSlave(true);
                     // We found the symbol that we don't remember. Memorize it now.
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, rowId, false);
+                    carefullyExtendScannedRange(masterTimestamp, slaveTimestamp, rowId);
                     break;
                 } else {
                     // This isn't the symbol we're looking for, but memorize it anyway in the hope that some future
@@ -324,20 +360,23 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, thisSymbolKey, rowId, true);
                 }
 
-                // move the slave cursor backwards
+                // Move the slave cursor backwards
                 if (rowId > frameRowLo) {
                     rowId--;
                 } else {
-                    // we exhausted this frame, let's try the previous one
+                    // We exhausted this frame, let's try the previous one.
                     if (!slaveTimeFrameCursor.prev()) {
-                        // there is no previous frame, search space is exhausted
-                        long rememberedNoMatchRowId = -rememberedRowId - 1;
-                        if (!didJumpOverValidityPeriod || rowId < rememberedNoMatchRowId) {
-                            // This isn't the edge case where we just jumped over the remembered period
-                            // with no symbol, only to realize there's nothing left beyond it.
-                            // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
-                            memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -rowId - 1, false);
-                        }
+                        bottomRowId = rowId;
+                        // There is no previous frame, search space is exhausted.
+                        // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1)
+                        memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, -rowId - 1, false);
+                        // We searched to the bottom, so we can unconditionally set the remembered scanned
+                        // range's lower bound to the current slaveTimestamp.
+                        scannedRangeMinTimestamp = slaveTimestamp;
+                        scannedRangeMinRowId = rowId;
+                        // masterTimestamp is always at least as large as any previous masterTimestamp,
+                        // unconditionally set the remembered scanned range's upper bound to it.
+                        scannedRangeMaxTimestamp = masterTimestamp;
                         record.hasSlave(false);
                         break;
                     }
