@@ -32,6 +32,7 @@ public interface HttpSessionStore {
      * @param sessionId session id of the session
      * @return session associated with the session id, or null if the session does not exist
      */
+    @Nullable
     SessionInfo getSession(@NotNull CharSequence sessionId);
 
     /**
