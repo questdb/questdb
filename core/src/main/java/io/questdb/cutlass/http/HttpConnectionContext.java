@@ -522,7 +522,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 if (
                         (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionInfo == null)
                                 || (sessionInfo == NO_SESSION)
-                                || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getPrincipal()))
+                                || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
                 ) {
                     sessionStore.createSession(authenticator, this);
                 } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null && sessionInfo != NO_SESSION) {

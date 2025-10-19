@@ -38,7 +38,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -99,7 +98,7 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public Clock getNanosecondClock() {
+                public NanosecondClock getNanosecondClock() {
                     return nanosecondClock;
                 }
             };

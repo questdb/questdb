@@ -88,12 +88,12 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
@@ -4723,7 +4723,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Clock getNanosecondClock() {
+        public NanosecondClock getNanosecondClock() {
             return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
@@ -4776,7 +4776,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -5016,7 +5016,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
