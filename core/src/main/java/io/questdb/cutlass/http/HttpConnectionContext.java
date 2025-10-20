@@ -459,7 +459,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 forceDisconnectOnComplete = true;
                 return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
-            if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
+            if (processor.reservedOneAdminConnection() && numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
                 rejectProcessor.getMessageSink()
                         .put("non-admin user reached connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)

@@ -50,12 +50,12 @@ public interface HttpRequestProcessor {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    default boolean ignoreConnectionLimitCheck() {
-        return false;
-    }
-
     default short getSupportedRequestTypes() {
         return METHOD_GET;
+    }
+
+    default boolean ignoreConnectionLimitCheck() {
+        return false;
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {
@@ -83,6 +83,10 @@ public interface HttpRequestProcessor {
 
     default boolean requiresAuthentication() {
         return getRequiredAuthType() != SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    default boolean reservedOneAdminConnection() {
+        return false;
     }
 
     default void resumeRecv(HttpConnectionContext context) {

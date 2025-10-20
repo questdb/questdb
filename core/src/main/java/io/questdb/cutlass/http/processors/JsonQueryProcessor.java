@@ -325,6 +325,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
+    public boolean reservedOneAdminConnection() {
+        return true;
+    }
+
+    @Override
     public void resumeSend(
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
