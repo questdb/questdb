@@ -274,8 +274,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We started the search from a more recent timestamp, went backwards,
                 // and either found a new symbol or gave up, before reaching the remembered period.
                 // We must remember all the new data, same as when the symbol is new.
-                long periodEnd = value.getLong(2);
-                assert slaveTimestamp > periodEnd : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + periodEnd;
+                assert slaveTimestamp > value.getLong(2)
+                        : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + value.getLong(2);
             }
 
             // Store all three values in the map (creating new entry or updating existing)
@@ -316,7 +316,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
+                if (slaveTimestamp <= validityPeriodEnd) {
+                    assert slaveTimestamp >= validityPeriodStart : "slaveTimestamp < validityPeriodStart";
                     // Our search is now either within the validity period of the remembered symbol or within
                     // the remembered scanned range. Let's apply this knowledge.
                     if (rememberedRowId != NOT_REMEMBERED && masterTimestamp > validityPeriodEnd) {
