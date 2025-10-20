@@ -46,6 +46,37 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
+/**
+ * Optimized ASOF JOIN implementation for single symbol column joins that uses memoization
+ * to avoid redundant backward scans of the slave table.
+ * <p>
+ * This factory is specialized for joins where the join key is a single symbol column.
+ * It significantly outperforms {@link AsOfJoinFastRecordCursorFactory} when:
+ * <ul>
+ *   <li>The same symbols appear repeatedly in the master table (high key repetition)</li>
+ *   <li>Symbols are sparsely distributed in the slave table (requiring long backward scans)</li>
+ * </ul>
+ * <p>
+ * <b>Key Optimization Strategies:</b>
+ * <ol>
+ *   <li><b>Symbol Location Caching:</b> Maintains a map of previously found symbols with their
+ *       row locations and validity periods. When it encounters a symbol again and the master
+ *       timestamp falls within the validity period, it reuses the cached location without scanning.</li>
+ *   <li><b>Validity Period Extension:</b> When it reuses a cached result, it extends the validity period
+ *       to cover the current master timestamp, increasing cache effectiveness.</li>
+ *   <li><b>Opportunistic Caching:</b> While scanning for a target symbol, it caches all encountered symbols,
+ *       making future lookups for those symbols essentially free.</li>
+ *   <li><b>Range Skipping:</b> Tracks a contiguous scanned timestamp range. When searching for
+ *       an uncached symbol, it skips the entire known range if the symbol isn't present.</li>
+ *   <li><b>Negative Result Caching:</b> Memorizes when it didn't find a symbol, preventing redundant
+ *       scans of the same range.</li>
+ * </ol>
+ * <b>Example Use Case:</b> Joining high-frequency tick data (master) with reference data (slave)
+ * on a security symbol, where some symbols occur rarely in the slave, but repeatedly in the master.
+ *
+ * @see AsOfJoinFastRecordCursorFactory
+ * @see AbstractKeyedAsOfJoinRecordCursor
+ */
 public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinMemoizedRecordCursor cursor;
@@ -144,6 +175,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
         private StaticSymbolTable symbolTable;
+
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
