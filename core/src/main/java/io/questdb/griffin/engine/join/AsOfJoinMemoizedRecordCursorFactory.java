@@ -144,7 +144,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
         private StaticSymbolTable symbolTable;
-
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
@@ -401,7 +400,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 int thisSymbolKey = slaveRecB.getInt(slaveSymbolColumnIndex);
                 if (thisSymbolKey == slaveSymbolKey) {
                     record.hasSlave(true);
-                    // We found the symbol that we don't already remember. Memorize it now.
+                    // We found the row with the symbol, and we don't remember it from before. Memorize it now.
                     memorizeSymbolLocation(masterTimestamp, slaveTimestamp, slaveSymbolKey, rowId, false);
                     carefullyExtendScannedRange(masterTimestamp, slaveTimestamp, rowId);
                     break;
