@@ -127,6 +127,10 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
+        private static final int SLOT_REMEMBERED_ROWID = 0;
+        private static final int SLOT_VALIDITY_PERIOD_END = 2;
+        private static final int SLOT_VALIDITY_PERIOD_START = 1;
+
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         private long scannedRangeMaxTimestamp = Long.MIN_VALUE;
@@ -274,17 +278,17 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We started the search from a more recent timestamp, went backwards,
                 // and either found a new symbol or gave up, before reaching the remembered period.
                 // We must remember all the new data, same as when the symbol is new.
-                assert slaveTimestamp > value.getLong(2)
-                        : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + value.getLong(2);
+                assert slaveTimestamp > value.getLong(SLOT_VALIDITY_PERIOD_END)
+                        : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + value.getLong(SLOT_VALIDITY_PERIOD_END);
             }
 
             // Store all three values in the map (creating new entry or updating existing)
             MapKey storeKey = rememberedSymbols.withKey();
             storeKey.putInt(slaveSymbolKey);
             MapValue storeValue = storeKey.createValue();
-            storeValue.putLong(0, slaveRowId);              // rowId
-            storeValue.putLong(1, slaveTimestamp);          // validityPeriodStart
-            storeValue.putLong(2, masterTimestamp);         // validityPeriodEnd
+            storeValue.putLong(SLOT_REMEMBERED_ROWID, slaveRowId);
+            storeValue.putLong(SLOT_VALIDITY_PERIOD_START, slaveTimestamp);
+            storeValue.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
         }
 
         @Override
@@ -302,9 +306,9 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             rememberedKey.putInt(slaveSymbolKey);
             MapValue value = rememberedKey.findValue();
             if (value != null) {
-                rememberedRowId = value.getLong(0);
-                validityPeriodStart = value.getLong(1);
-                validityPeriodEnd = value.getLong(2);
+                rememberedRowId = value.getLong(SLOT_REMEMBERED_ROWID);
+                validityPeriodStart = value.getLong(SLOT_VALIDITY_PERIOD_START);
+                validityPeriodEnd = value.getLong(SLOT_VALIDITY_PERIOD_END);
             } else {
                 rememberedRowId = NOT_REMEMBERED;
                 validityPeriodStart = scannedRangeMinTimestamp;
@@ -330,7 +334,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         updateKey.putInt(slaveSymbolKey);
                         MapValue updateValue = updateKey.findValue();
                         assert updateValue != null : "updateValue == null";
-                        updateValue.putLong(2, masterTimestamp);  // Update validityPeriodEnd
+                        updateValue.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
                         // Extend the remembered scanned range, but only if the existing one overlaps
                         // the range scanned in this invocation of performKeyMatching().
                         if (scannedRangeMaxTimestamp >= slaveTimestamp) {
