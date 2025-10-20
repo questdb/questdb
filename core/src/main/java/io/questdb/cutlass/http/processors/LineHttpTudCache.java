@@ -222,7 +222,7 @@ public class LineHttpTudCache implements QuietCloseable {
                     throw parseException.of("invalid column type", columnName);
                 }
             }
-            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false);
+            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
         if (tableToken != null && tableToken.isMatView()) {
             throw parseException.of("cannot modify materialized view", tableToken.getTableName());

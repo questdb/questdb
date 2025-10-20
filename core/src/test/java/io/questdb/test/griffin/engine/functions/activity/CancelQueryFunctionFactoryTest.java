@@ -60,16 +60,16 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         readOnlyUserContext = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
-        readOnlyUserContext.with(new AtomicBooleanCircuitBreaker());
+        readOnlyUserContext.with(new AtomicBooleanCircuitBreaker(engine));
 
         regularUserContext = new SqlExecutionContextImpl(engine, 1).with(new RegularUserContext());
-        regularUserContext.with(new AtomicBooleanCircuitBreaker());
+        regularUserContext.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext1.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext1.with(new AtomicBooleanCircuitBreaker(engine));
 
         adminUserContext2 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
-        adminUserContext2.with(new AtomicBooleanCircuitBreaker());
+        adminUserContext2.with(new AtomicBooleanCircuitBreaker(engine));
     }
 
     @Test
@@ -98,7 +98,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     started.countDown();
                     try {
                         SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
-                        context.with(new AtomicBooleanCircuitBreaker());
+                        context.with(new AtomicBooleanCircuitBreaker(engine));
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             TestUtils.assertSql(compiler, context, query, new StringSink(), "t\n1\n");
