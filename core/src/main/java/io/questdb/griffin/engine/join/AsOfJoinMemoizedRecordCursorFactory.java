@@ -133,6 +133,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
+        // These track a contiguous range of slave timestamps that we've already scanned.
+        // This range doesn't cover everything we've scanned (there may be many disjoint ranges),
+        // but we guarantee we did scan everything inside it.
+        // Remembering this helps us avoid rescanning vast ranges of the slave table for
+        // symbols that occur way in the past from masterTimestamp.
         private long scannedRangeMaxTimestamp = Long.MIN_VALUE;
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
@@ -180,12 +185,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             rememberedSymbols.clear();
             columnAccessHelper.of(slaveCursor);
 
-            // These track a contiguous range of slave timestamps that we've already scanned.
-            // This range doesn't cover everything we've scanned (there may be many disjoint ranges),
-            // but we guarantee we did scan everything inside it.
-            // Remembering this helps us avoid rescanning vast ranges of the slave table for
-            // symbols that occur way in the past from masterTimestamp.
-            scannedRangeMaxTimestamp = Long.MIN_VALUE;
             scannedRangeMinRowId = Long.MAX_VALUE;
             scannedRangeMinTimestamp = Long.MAX_VALUE;
 
