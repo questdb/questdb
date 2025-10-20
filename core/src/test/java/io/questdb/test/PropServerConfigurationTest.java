@@ -1659,7 +1659,7 @@ public class PropServerConfigurationTest {
         pathsThatCanBePinned.add(new FuzzItem("http.context.table.status", "/chk", HttpFullFatServerConfiguration::getContextPathTableStatus));
         pathsThatCanBePinned.add(new FuzzItem("http.context.warnings", "/warnings", HttpFullFatServerConfiguration::getContextPathWarnings));
         pathsThatCanBePinned.add(new FuzzItem("http.context.execute", "/exec", HttpFullFatServerConfiguration::getContextPathExec));
-
+        pathsThatCanBePinned.add(new FuzzItem("http.context.api.v1", "/api/v1", HttpFullFatServerConfiguration::getContextPathApiV1));
         String webConsolePath = rnd.nextString(64);
         Properties properties = new Properties();
         properties.setProperty("http.context.web.console", webConsolePath);

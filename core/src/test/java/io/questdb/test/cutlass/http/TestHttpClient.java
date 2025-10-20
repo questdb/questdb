@@ -205,13 +205,26 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
-    public void assertGet(CharSequence url, String expectedResponse) {
-        assertGet(url, expectedResponse, (CharSequenceObjHashMap<String>) null, null, null, null);
-    }
-
     public void assertGetBinary(
             CharSequence url,
             byte[] expectedResponse,
+            CharSequence expectedStatus
+    ) {
+        try {
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
+            reqToSink(req, sink, null, null, null, null, expectedStatus);
+            TestUtils.assertEquals(expectedResponse, sink);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetCharSequence(
+            CharSequence url,
+            CharSequence expectedResponse,
             CharSequence expectedStatus
     ) {
         try {

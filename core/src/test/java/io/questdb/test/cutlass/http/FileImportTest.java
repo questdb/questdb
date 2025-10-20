@@ -155,11 +155,11 @@ public class FileImportTest extends AbstractCairoTest {
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
                     .run((engine, sqlExecutionContext) -> {
-                        testHttpClient.assertGetBinary(
+                        testHttpClient.assertGetCharSequence(
                                 "/api/v1/imports",
                                 ("[{\"path\":\"" + file2 + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
                                         "{\"path\":\"" + file3 + "\",\"name\":\"file3\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:03.000Z\"}," +
-                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]").getBytes(),
+                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]"),
                                 "200"
                         );
                         testHttpClient.assertGetBinary(
@@ -438,9 +438,10 @@ public class FileImportTest extends AbstractCairoTest {
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
-                        testHttpClient.assertGet(
+                        testHttpClient.assertGetBinary(
                                 "/api/v1/imports",
-                                "{\"error\":\"sql.copy.input.root is not configured\"}"
+                                "{\"error\":\"sql.copy.input.root is not configured\"}".getBytes(),
+                                "400"
                         );
                     });
         });
