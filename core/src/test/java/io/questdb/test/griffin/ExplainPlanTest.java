@@ -45,6 +45,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
@@ -1006,8 +1007,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 limit 10",
-                "Sort light lo: 10\n" +
-                        "  keys: [ts]\n" +
+                "Long Top K lo: 10\n" +
+                        "  keys: [ts asc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      filter: null\n" +
@@ -1022,7 +1023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 desc limit 10",
-                "Sort light lo: 10\n" +
+                "Long Top K lo: 10\n" +
                         "  keys: [ts desc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
@@ -2834,6 +2835,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Chars.contains(tmpPlanSink.getSink(), "io.questdb")
                                     );
                                 }
+
+                                if (function instanceof GroupByFunction) {
+                                    assertFalse(
+                                            "group by function " + factory.getSignature() + " should not be marked as constant",
+                                            function.isConstant()
+                                    );
+                                }
                             } finally {
                                 Misc.free(function);
 
@@ -3660,6 +3668,96 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByWithLimit13() throws Exception {
+        assertPlan(
+                "create table di (x int, y long)",
+                "select y, 42, count(*) c from di order by c limit 42",
+                "Long Top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [y,42,c]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit14() throws Exception {
+        assertPlan(
+                "create table di (x int, y long, z double)",
+                "select y, c from (select y, z, count(*) c from di) order by c limit 42",
+                "Long Top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y,z]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit15() throws Exception {
+        assertPlan(
+                "create table di (y long, ts timestamp)",
+                "select y, c from (select ts, y, count(*) c from di) order by ts limit 13",
+                "SelectedRecord\n" +
+                        "    Long Top K lo: 13\n" +
+                        "      keys: [ts asc]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y,ts]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit16() throws Exception {
+        assertPlan(
+                "create table di (ts timestamp)",
+                "select ts, 42, count(*) c from di order by ts limit 2",
+                "Long Top K lo: 2\n" +
+                        "  keys: [ts asc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [ts,42,c]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit17() throws Exception {
+        assertPlan(
+                "create table di (i int)",
+                "select i, count(*) c from di order by c limit 2",
+                "Long Top K lo: 2\n" +
+                        "  keys: [c asc]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
     public void testGroupByWithLimit2() throws Exception {
         assertPlan(
                 "create table di (x int, y long)",
@@ -3790,7 +3888,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
-                "Sort light lo: 10\n" +
+                "Long Top K lo: 10\n" +
                         "  keys: [ts desc]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [ts]\n" +
