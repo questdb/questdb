@@ -184,11 +184,19 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
             columnAccessHelper.of(slaveCursor);
+            earliestRowId = Long.MIN_VALUE;
+        }
 
+        @Override
+        public void toTop() {
+            super.toTop();
+            // toTop() is called from super.of(), so we may end up here before we have reopened rememberedSymbols
+            if (rememberedSymbols.isOpen()) {
+                rememberedSymbols.clear();
+            }
             scannedRangeMinRowId = Long.MAX_VALUE;
             scannedRangeMinTimestamp = Long.MAX_VALUE;
-
-            earliestRowId = Long.MIN_VALUE;
+            scannedRangeMaxTimestamp = Long.MIN_VALUE;
         }
 
         private void carefullyExtendScannedRange(long masterTimestamp, long slaveTimestamp, long rowId) {
