@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
@@ -54,7 +55,6 @@ import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -729,8 +729,9 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, ColumnType.CHAR);
     }
 
+    @SuppressWarnings("unused")
     public static long implicitCastStrAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.STRING);
+        return MillsTimestampDriver.INSTANCE.implicitCast(value, ColumnType.STRING);
     }
 
     public static double implicitCastStrAsDouble(CharSequence value) {
@@ -903,8 +904,8 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.CHAR);
     }
 
-    public static long implicitCastVarcharAsDate(CharSequence value) {
-        return implicitCastStrVarcharAsDate0(value, ColumnType.VARCHAR);
+    public static long implicitCastVarcharAsDate(Utf8Sequence value) {
+        return MillsTimestampDriver.INSTANCE.implicitCastVarchar(value);
     }
 
     public static double implicitCastVarcharAsDouble(Utf8Sequence value) {
@@ -1115,15 +1116,6 @@ public class SqlUtil {
             throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
         return k;
-    }
-
-    private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
-        try {
-            return DateFormatUtils.parseDate(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.DATE);
-        }
     }
 
     static CharSequence createColumnAlias(

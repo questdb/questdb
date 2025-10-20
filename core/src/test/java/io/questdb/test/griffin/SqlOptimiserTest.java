@@ -291,9 +291,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             String expectedSql = "1\tURL\tc\n" +
                     "1\tabc\t2\n" +
-                    "1\tghi\t1\n" +
-                    "1\tdef\t1\n";
-            String expectedPlan = "Sort light lo: 10\n" +
+                    "1\tdef\t1\n" +
+                    "1\tghi\t1\n";
+            String expectedPlan = "Long Top K lo: 10\n" +
                     "  keys: [c desc]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [1,URL,c]\n" +
@@ -2048,6 +2048,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    // issue 6256
+    @Test
+    public void testOrderByJoinCursorFuncNpe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP);");
+            execute("insert into tango values(100000)");
+            execute("insert into tango values(100001)");
+            assertQueryNoLeakCheck("column\n" +
+                            "1970-01-01T00:00:00.100001Z\n" +
+                            "1970-01-01T00:00:00.100002Z\n",
+                    "SELECT ts + x  FROM tango CROSS JOIN (SELECT x FROM long_sequence(1)) ORDER BY x;",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     @Test
     public void testOrderByNotChooseByParent() throws Exception {
         assertMemoryLeak(() -> {
@@ -2596,7 +2614,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [first(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
@@ -2617,7 +2635,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [last(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
@@ -2638,7 +2656,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [max(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
@@ -2659,7 +2677,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [min(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
@@ -2679,7 +2697,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
@@ -2700,7 +2718,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
@@ -2721,7 +2739,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
@@ -2741,7 +2759,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
@@ -4650,7 +4668,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [first(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
@@ -4675,7 +4693,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [last(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
@@ -4700,7 +4718,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [max(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
@@ -4725,7 +4743,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [min(ts)]\n" +
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: x=3 [pre-touch]\n" +
+                            "          filter: x=3\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
@@ -4749,7 +4767,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
@@ -4774,7 +4792,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
@@ -4799,7 +4817,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
@@ -4823,7 +4841,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
-                            "      filter: x=3 [pre-touch]\n" +
+                            "      filter: x=3\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"

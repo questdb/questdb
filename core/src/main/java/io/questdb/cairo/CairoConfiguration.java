@@ -317,6 +317,8 @@ public interface CairoConfiguration {
 
     int getMatViewMaxRefreshRetries();
 
+    long getMatViewMaxRefreshStepUs();
+
     long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
@@ -750,8 +752,6 @@ public interface CairoConfiguration {
     boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
-
-    boolean isSqlParallelFilterPreTouchEnabled();
 
     boolean isSqlParallelGroupByEnabled();
 

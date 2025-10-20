@@ -92,6 +92,11 @@ public class FirstByteGroupByFunction extends ByteFunction implements GroupByFun
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

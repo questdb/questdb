@@ -247,7 +247,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException, NumericException {
-        testFuzz00(engine, compiler, sqlExecutionContext, timestampTypeName, TestUtils.generateRandom(LOG, 970596704993L, 1744736957813L));
+        testFuzz00(engine, compiler, sqlExecutionContext, timestampTypeName, TestUtils.generateRandom(LOG));
     }
 
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws SqlException {

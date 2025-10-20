@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -33,7 +34,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 
 public class CastVarcharToDateFunctionFactory implements FunctionFactory {
 
@@ -64,7 +64,7 @@ public class CastVarcharToDateFunctionFactory implements FunctionFactory {
             // Date literal may contain non-ascii characters, for example hyphens, days of the week etc.
             final CharSequence value = arg.getStrA(rec);
             try {
-                return value == null ? Numbers.LONG_NULL : DateFormatUtils.parseDate(value);
+                return value == null ? Numbers.LONG_NULL : MillsTimestampDriver.floor(value);
             } catch (NumericException e) {
                 return Numbers.LONG_NULL;
             }

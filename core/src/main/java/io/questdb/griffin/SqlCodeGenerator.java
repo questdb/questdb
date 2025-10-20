@@ -310,8 +310,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -2478,6 +2478,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
+        final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
@@ -2520,7 +2521,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            executionContext.getSharedQueryWorkerCount()
+                            executionContext.getSharedQueryWorkerCount(),
+                            enablePreTouch
                     );
                 } catch (SqlException | LimitOverflowException ex) {
                     // for these errors we are intentionally **not** rethrowing the exception
@@ -2562,7 +2564,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        enablePreTouch
                 );
             } catch (Throwable e) {
                 Misc.free(filter);
@@ -2747,8 +2750,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, selfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 long asOfToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
-                                boolean hasIndexHint = SqlHints.hasAsofIndexSearchHint(model, masterAlias, slaveModel.getName());
-                                boolean hasLinearHint = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasIndexHint = SqlHints.hasAsOfIndexSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean hasLinearHint = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 boolean hasMemoizedHint = SqlHints.hasAsofMemoizedSearchHint(model, masterAlias, slaveModel.getName());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -3028,7 +3031,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 long ltToleranceInterval = tolerance(slaveModel, masterMetadata.getTimestampType(), slaveMetadata.getTimestampType());
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                boolean ltLinearSearch = SqlHints.hasAsofLinearSearchHint(model, masterAlias, slaveModel.getName());
+                                boolean ltLinearSearch = SqlHints.hasAsOfLinearSearchHint(model, masterAlias, slaveModel.getName());
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -3210,7 +3213,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedQueryWorkerCount()
+                                executionContext.getSharedQueryWorkerCount(),
+                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(
@@ -3260,7 +3264,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                executionContext.getSharedQueryWorkerCount()
+                                executionContext.getSharedQueryWorkerCount(),
+                                SqlHints.hasEnablePreTouchHint(model, masterAlias)
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, filter);
@@ -3746,11 +3751,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final long lo = loFunc.getLong(null);
                             if (lo > 0 && lo <= Integer.MAX_VALUE) {
                                 // Long top K has decent performance even though being single-threaded,
-                                // so we try to go with it before the parallel top K factory.
-                                if (listColumnFilterA.size() == 1 && recordCursorFactory.recordCursorSupportsLongTopK()) {
+                                // so we prefer it over the parallel top K factory.
+                                if (listColumnFilterA.size() == 1) {
                                     final int index = listColumnFilterA.getQuick(0);
                                     final int columnIndex = (index > 0 ? index : -index) - 1;
-                                    if (metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                    if (recordCursorFactory.recordCursorSupportsLongTopK(columnIndex)) {
                                         return new LongTopKRecordCursorFactory(
                                                 orderedMetadata,
                                                 recordCursorFactory,

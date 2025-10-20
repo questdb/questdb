@@ -116,7 +116,6 @@ public interface FunctionFactory {
      * <p>
      * SQL Compiler will use this as a hint to determine type of variadic arguments when they have the
      * UNDEFINED type at compile time.
-     * <p>
      *
      * @param sqlPos sql position of the argument being resolved
      * @param argPos index of the argument being resolved

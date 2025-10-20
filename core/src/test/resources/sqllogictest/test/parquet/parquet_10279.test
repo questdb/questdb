@@ -1,4 +1,4 @@
-# name: test/sql/copy/parquet/parquet_10279.test
+# name: test/parquet/parquet_10279.test
 # description: Issue #10279: Data loss with parquet INT64 and DELTA encoding
 # group: [parquet]
 

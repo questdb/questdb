@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
@@ -511,6 +512,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewMaxRefreshRetries() {
         return 10;
+    }
+
+    @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return Micros.YEAR_MICROS_NONLEAP;
     }
 
     @Override
@@ -1362,11 +1368,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
     }
 
