@@ -224,7 +224,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
                 // This is purely an assertion branch, to make sure our logic holds.
                 // Let's explain the logic! We'll use this notation:
-                //   ! ---- | we found the symbal at the start of this period
+                //   ! ---- | we found the symbol at the start of this period
                 //   x ---- | we did not find the symbol anywhere within this period
                 //   ? ---- | we may or may not have found the symbol within this period
                 //
