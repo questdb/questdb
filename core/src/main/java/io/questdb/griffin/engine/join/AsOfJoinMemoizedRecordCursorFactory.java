@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,7 +42,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.IntLongHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -64,13 +69,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         this.cursor = new AsOfJoinMemoizedRecordCursor(
+                configuration,
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
+                slaveFactory.getMetadata().getTimestampType()
         );
     }
 
@@ -122,12 +127,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
-
-        // These three hashmaps are used in strict parallel, always putting the same key in each.
-        // When accessing them, we can look up the key index only once, and use it for all three maps.
-        private final IntLongHashMap symKeyToRowId = new IntLongHashMap();
-        private final IntLongHashMap symKeyToValidityPeriodEnd = new IntLongHashMap();
-        private final IntLongHashMap symKeyToValidityPeriodStart = new IntLongHashMap();
+        private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         private long scannedRangeMaxTimestamp = Long.MIN_VALUE;
         private long scannedRangeMinRowId = Long.MAX_VALUE;
@@ -135,30 +135,45 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private StaticSymbolTable symbolTable;
 
         public AsOfJoinMemoizedRecordCursor(
+                CairoConfiguration configuration,
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType,
-                int lookahead
+                int slaveTimestampType
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            super(
+                    columnSplit,
+                    nullRecord,
+                    masterTimestampIndex,
+                    masterTimestampType,
+                    slaveTimestampIndex,
+                    slaveTimestampType,
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+            valueTypes.add(ColumnType.LONG);
+            valueTypes.add(ColumnType.LONG);
+            rememberedSymbols = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
         }
 
         @Override
         public void close() {
             super.close();
             symbolTable = null;
+            rememberedSymbols.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
             symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
-            symKeyToRowId.clear();
-            symKeyToValidityPeriodStart.clear();
-            symKeyToValidityPeriodEnd.clear();
+            rememberedSymbols.reopen();
+            rememberedSymbols.clear();
             columnAccessHelper.of(slaveCursor);
 
             // These track a contiguous range of slave timestamps that we've already scanned.
@@ -197,8 +212,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 long slaveRowId,
                 boolean onlyIfNew
         ) {
-            int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
-            if (slaveKeyIndex < 0) {
+            MapKey key = rememberedSymbols.withKey();
+            key.putInt(slaveSymbolKey);
+            MapValue value = key.findValue();
+
+            if (value != null) {
                 if (onlyIfNew) {
                     // We remember this symbol, but should memorize it only if new, so return.
                     return;
@@ -256,13 +274,17 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We started the search from a more recent timestamp, went backwards,
                 // and either found a new symbol or gave up, before reaching the remembered period.
                 // We must remember all the new data, same as when the symbol is new.
-                long periodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
+                long periodEnd = value.getLong(2);
                 assert slaveTimestamp > periodEnd : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + periodEnd;
             }
 
-            symKeyToRowId.putAt(slaveKeyIndex, slaveSymbolKey, slaveRowId);
-            symKeyToValidityPeriodStart.putAt(slaveKeyIndex, slaveSymbolKey, slaveTimestamp);
-            symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
+            // Store all three values in the map (creating new entry or updating existing)
+            MapKey storeKey = rememberedSymbols.withKey();
+            storeKey.putInt(slaveSymbolKey);
+            MapValue storeValue = storeKey.createValue();
+            storeValue.putLong(0, slaveRowId);              // rowId
+            storeValue.putLong(1, slaveTimestamp);          // validityPeriodStart
+            storeValue.putLong(2, masterTimestamp);         // validityPeriodEnd
         }
 
         @Override
@@ -275,12 +297,14 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             }
             final CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
             final int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
-            final int slaveKeyIndex = symKeyToRowId.keyIndex(slaveSymbolKey);
             final long rememberedRowId, validityPeriodStart, validityPeriodEnd;
-            if (slaveKeyIndex < 0) {
-                rememberedRowId = symKeyToRowId.valueAt(slaveKeyIndex);
-                validityPeriodStart = symKeyToValidityPeriodStart.valueAt(slaveKeyIndex);
-                validityPeriodEnd = symKeyToValidityPeriodEnd.valueAt(slaveKeyIndex);
+            MapKey rememberedKey = rememberedSymbols.withKey();
+            rememberedKey.putInt(slaveSymbolKey);
+            MapValue value = rememberedKey.findValue();
+            if (value != null) {
+                rememberedRowId = value.getLong(0);
+                validityPeriodStart = value.getLong(1);
+                validityPeriodEnd = value.getLong(2);
             } else {
                 rememberedRowId = NOT_REMEMBERED;
                 validityPeriodStart = scannedRangeMinTimestamp;
@@ -296,12 +320,16 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     // Our search is now either within the validity period of the remembered symbol or within
                     // the remembered scanned range. Let's apply this knowledge.
                     if (rememberedRowId != NOT_REMEMBERED && masterTimestamp > validityPeriodEnd) {
-                        // We're within the validity period of the remembered symbol.
-                        // We started our search from a timestamp that is more recent than the remembered period.
+                        // We're within the validity period of the remembered symbol. We started our search from a
+                        // timestamp that is at least as recent as the remembered period end.
                         // The fact that we got to this point means we haven't found a more recent symbol.
                         // Therefore, the remembered symbol is still the applicable one. Same for the remembered
                         // non-existence of symbol. We can extend the validity period end to current masterTimestamp.
-                        symKeyToValidityPeriodEnd.putAt(slaveKeyIndex, slaveSymbolKey, masterTimestamp);
+                        MapKey updateKey = rememberedSymbols.withKey();
+                        updateKey.putInt(slaveSymbolKey);
+                        MapValue updateValue = updateKey.findValue();
+                        assert updateValue != null : "updateValue == null";
+                        updateValue.putLong(2, masterTimestamp);  // Update validityPeriodEnd
                         // Extend the remembered scanned range, but only if the existing one overlaps
                         // the range scanned in this invocation of performKeyMatching().
                         if (scannedRangeMaxTimestamp >= slaveTimestamp) {
