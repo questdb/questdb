@@ -36,10 +36,6 @@ public final class SqlHints {
     public static final String ASOF_MEMOIZED_SEARCH_HINT = "asof_memoized_search";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    public static final String LT_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_lt_binary_search";
 
     public static boolean hasAsOfIndexSearchHint(
             @NotNull QueryModel queryModel,
@@ -63,18 +59,6 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_MEMOIZED_SEARCH_HINT, tableNameA, tableNameB);
-    }
-
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static boolean hasAvoidLtJoinBinarySearchHint(
-            @NotNull QueryModel queryModel,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
-    ) {
-        return hasHintWithParams(queryModel, LT_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters
