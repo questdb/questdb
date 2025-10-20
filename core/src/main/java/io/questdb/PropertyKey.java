@@ -273,6 +273,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_ALLOW_DEFLATE_BEFORE_SEND("http.allow.deflate.before.send"),
     HTTP_SERVER_KEEP_ALIVE("http.server.keep.alive"),
     HTTP_SERVER_COOKIES_ENABLED("http.server.cookies.enabled"),
+    HTTP_SESSION_TIMEOUT("http.session.timeout"),
     HTTP_VERSION("http.version"),
     HTTP_STATIC_PUBLIC_DIRECTORY("http.static.public.directory"),
     HTTP_NET_CONNECTION_HINT("http.net.connection.hint"),

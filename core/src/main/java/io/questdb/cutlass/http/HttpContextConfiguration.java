@@ -70,5 +70,7 @@ public interface HttpContextConfiguration {
 
     boolean getServerKeepAlive();
 
+    long getSessionTimeout();
+
     boolean readOnlySecurityContext();
 }

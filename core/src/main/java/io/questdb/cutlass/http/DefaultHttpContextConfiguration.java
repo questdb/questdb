@@ -133,6 +133,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public long getSessionTimeout() {
+        return 1_800_000_000L; // 30 minutes
+    }
+
+    @Override
     public boolean readOnlySecurityContext() {
         return false;
     }
