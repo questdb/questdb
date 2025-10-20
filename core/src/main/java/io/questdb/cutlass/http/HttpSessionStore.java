@@ -43,6 +43,7 @@ public interface HttpSessionStore {
      * @param principal entity name
      * @return List of sessions associated with the principal, or null if no active sessions exist
      */
+    @TestOnly
     @Nullable
     ObjList<SessionInfo> getSessions(@NotNull CharSequence principal);
 
