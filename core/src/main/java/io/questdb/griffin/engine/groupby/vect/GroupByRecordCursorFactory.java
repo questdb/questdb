@@ -55,6 +55,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -227,6 +228,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -313,10 +320,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (!isRostiBuilt) {
-                buildRosti();
-                isRostiBuilt = true;
-            }
+            buildRostiConditionally();
 
             if (count < size) {
                 counter.add(size - count);
@@ -351,10 +355,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isRostiBuilt) {
-                buildRosti();
-                isRostiBuilt = true;
-            }
+            buildRostiConditionally();
             while (count < size) {
                 byte b = Unsafe.getUnsafe().getByte(ctrl);
                 if ((b & 0x80) != 0) {
@@ -367,6 +368,24 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 return true;
             }
             return false;
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildRostiConditionally();
+            final long offset = columnSkewIndex.getQuick(columnIndex);
+            while (count < size) {
+                byte b = Unsafe.getUnsafe().getByte(ctrl);
+                if ((b & 0x80) != 0) {
+                    ctrl++;
+                    continue;
+                }
+                count++;
+                final long pRow = slots + ((ctrl - ctrlStart) << shift);
+                final long v = Unsafe.getUnsafe().getLong(pRow + offset);
+                list.add(pRow, v);
+                ctrl++;
+            }
         }
 
         @Override
@@ -509,7 +528,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 }
             } catch (DataUnavailableException e) {
-                // We're not yet done, so no need to cancel the circuit breaker. 
+                // We're not yet done, so no need to cancel the circuit breaker.
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
@@ -631,6 +650,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     .$(", ownCount=").$(ownCount)
                     .$(", reclaimed=").$(reclaimed)
                     .$(", queuedCount=").$(queuedCount).I$();
+        }
+
+        private void buildRostiConditionally() {
+            if (!isRostiBuilt) {
+                buildRosti();
+                isRostiBuilt = true;
+            }
         }
 
         private class RostiRecord implements Record {

@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -166,8 +167,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
-    public boolean recordCursorSupportsLongTopK() {
-        return true;
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int columnType = getMetadata().getColumnType(columnIndex);
+        return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
     }
 
     @Override
