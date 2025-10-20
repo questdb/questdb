@@ -64,6 +64,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_CREATE = new Utf8String("create");
     public static final Utf8String URL_PARAM_DELIMITER = new Utf8String("delimiter");
     public static final Utf8String URL_PARAM_EXPLAIN = new Utf8String("explain");
+    public static final Utf8String URL_PARAM_FILE = new Utf8String("file");
     public static final Utf8String URL_PARAM_FILENAME = new Utf8String("filename");
     public static final Utf8String URL_PARAM_FMT = new Utf8String("fmt");
     public static final Utf8String URL_PARAM_FORCE_HEADER = new Utf8String("forceHeader");
@@ -74,7 +75,6 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_O3_MAX_LAG = new Utf8String("o3MaxLag");
     public static final Utf8String URL_PARAM_OVERWRITE = new Utf8String("overwrite");
     public static final Utf8String URL_PARAM_PARTITION_BY = new Utf8String("partitionBy");
-    public static final Utf8String URL_PARAM_PATH = new Utf8String("path");
     public static final Utf8String URL_PARAM_QUERY = new Utf8String("query");
     public static final Utf8String URL_PARAM_QUOTE_LARGE_NUM = new Utf8String("quoteLargeNum");
     public static final Utf8String URL_PARAM_SKIP_LEV = new Utf8String("skipLev");

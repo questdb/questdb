@@ -20,7 +20,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
-import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_PATH;
+import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_FILE;
 import static java.net.HttpURLConnection.HTTP_OK;
 
 public class FileDeleteProcessor implements HttpRequestProcessor {
@@ -60,20 +60,20 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             return;
         }
 
-        final DirectUtf8Sequence path = request.getUrlParam(URL_PARAM_PATH);
+        final DirectUtf8Sequence path = request.getUrlParam(URL_PARAM_FILE);
         if (path == null || path.size() == 0) {
-            sendException(context, 400, "missing required parameter: path");
+            sendException(context, 400, "missing required parameter: file");
             return;
         }
 
         if (FileGetProcessor.containsAbsOrRelativePath(path)) {
-            sendException(context, 403, "traversal not allowed in path");
+            sendException(context, 403, "traversal not allowed in file");
             return;
         }
         Path filePath = Path.getThreadLocal(root);
         filePath.concat(path);
         if (!ff.exists(filePath.$())) {
-            sendException(context, 404, "path not found");
+            sendException(context, 404, "file(s) not found");
             return;
         }
         boolean isDirectory = Files.isDirOrSoftLinkDir(filePath.$());
@@ -110,7 +110,7 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             DirectUtf8Sequence path
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        sink.putAscii("{\"message\":\"path deleted successfully\",\"path\":\"").put(path).put("\"}");
+        sink.putAscii("{\"message\":\"file(s) deleted successfully\",\"path\":\"").put(path).put("\"}");
         context.simpleResponse().sendStatusJsonContent(HTTP_OK, sink, false);
     }
 }

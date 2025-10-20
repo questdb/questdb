@@ -77,21 +77,29 @@ public class FileGetProcessor implements HttpRequestProcessor {
         }
 
         HttpRequestHeader request = context.getRequestHeader();
-        final DirectUtf8Sequence file = request.getUrlParam(URL_PARAM_FILENAME);
+        final DirectUtf8Sequence file = request.getUrlParam(URL_PARAM_FILE);
         if (file == null || file.size() == 0) {
-            // No filename parameter - list all files in root directory
+            // No file parameter - list all files in root directory
             sendFileList(context, root, state);
             return;
         }
 
-        // Filename provided - download specific file
+        // File provided - download specific file
         if (containsAbsOrRelativePath(file)) {
-            sendException(403, response, "path traversal not allowed in filename", state);
+            sendException(403, response, "path traversal not allowed in file", state);
             return;
         }
         state.file = file;
         state.contentType = getContentType(file);
         doResumeSend(context, state);
+    }
+
+    @Override
+    public void parkRequest(HttpConnectionContext context, boolean paused) {
+        State state = LV.get(context);
+        if (state != null) {
+            state.paused = paused;
+        }
     }
 
     @Override
@@ -101,6 +109,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
         try {
             State state = LV.get(context);
             if (state != null) {
+                if (!state.paused) {
+                    context.resumeResponseSend();
+                } else {
+                    state.paused = false;
+                }
                 if (state.file == null || state.file.size() == 0) {
                     context.simpleResponse().sendStatusJsonContent(HTTP_OK, state.sink, false);
                 } else {
@@ -116,6 +129,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
             HttpConnectionContext context,
             State state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (!state.paused) {
+            context.resumeResponseSend();
+        } else {
+            state.paused = false;
+        }
         final HttpChunkedResponse response = context.getChunkedResponse();
         OUT:
         while (true) {
@@ -123,8 +141,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                 switch (state.state) {
                     case FILE_SEND_INIT:
                         initFileSending(response, state);
-                        state.state = FILE_SEND_CHUNK;
-                        // fall through
+                        break;
                     case FILE_SEND_CHUNK:
                         sendFileChunk(response, state);
                         if (state.fileOffset >= state.fileSize) {
@@ -144,6 +161,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
                     LOG.info().$("Response buffer is too small").$();
                     throw PeerDisconnectedException.INSTANCE;
                 }
+            } catch (CairoException e) {
+                sendException(500, response, e.getFlyweightMessage(), state);
             }
         }
         response.done();
@@ -179,9 +198,20 @@ public class FileGetProcessor implements HttpRequestProcessor {
     private void initFileSending(HttpChunkedResponse response, State state) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Path path = Path.getThreadLocal(engine.getConfiguration().getSqlCopyInputRoot());
         path.concat(state.file);
+        if (!state.ff.exists(path.$())) {
+            sendException(404, response, "file not found", state);
+            state.state = FILE_SEND_COMPLETED;
+            return;
+        }
+        if (state.ff.isDirOrSoftLinkDir(path.$())) {
+            sendException(400, response, "cannot download directory", state);
+            state.state = FILE_SEND_COMPLETED;
+            return;
+        }
         state.fd = state.ff.openRO(path.$());
         if (state.fd < 0) {
             sendException(404, response, "file not found", state);
+            state.state = FILE_SEND_COMPLETED;
             return;
         }
 
@@ -190,13 +220,13 @@ public class FileGetProcessor implements HttpRequestProcessor {
             state.fileAddress = TableUtils.mapRO(state.ff, state.fd, state.fileSize, MemoryTag.MMAP_DEFAULT);
             if (state.fileAddress == 0) {
                 sendException(500, response, "failed to memory-map file", state);
+                state.state = FILE_SEND_COMPLETED;
+                return;
             }
-        } else {
-            sendException(400, response, "unprocessable entity: file is empty", state);
-            return;
         }
 
         header(response, state);
+        state.state = FILE_SEND_CHUNK;
     }
 
     private void scanDirectory(
@@ -380,6 +410,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
         long fileOffset;
         long fileSize;
         boolean firstFile = true;
+        boolean paused;
         Utf8StringSink sink = new Utf8StringSink();
         int state;
 
@@ -409,6 +440,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
                 fd = -1;
             }
 
+            paused = false;
             fileSize = 0;
             fileOffset = 0;
             state = FILE_SEND_INIT;
