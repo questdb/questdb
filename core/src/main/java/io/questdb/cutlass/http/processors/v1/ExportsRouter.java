@@ -34,21 +34,21 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 
-public class ImportsRouter implements HttpRequestHandler {
+public class ExportsRouter implements HttpRequestHandler {
     private final HttpRequestProcessor deleteProcessor;
     private final HttpRequestProcessor getProcessor;
     private final HttpMultipartContentProcessor postProcessor;
 
-    public ImportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        postProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
-        getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
-        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.IMPORTS);
+    public ExportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
+        postProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
+        deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
     }
 
     public static ObjList<String> getRoutes(ObjList<String> parentRoutes) {
         ObjList<String> out = new ObjList<>(parentRoutes.size());
         for (int i = 0; i < parentRoutes.size(); i++) {
-            out.extendAndSet(i, parentRoutes.get(i) + "/imports");
+            out.extendAndSet(i, parentRoutes.get(i) + "/exports");
         }
         return out;
     }

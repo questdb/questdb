@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.http.processors.v1.ExportsRouter;
 import io.questdb.cutlass.http.processors.v1.ImportsRouter;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -272,6 +273,18 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestHandler newInstance() {
                 return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return ExportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ExportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
 

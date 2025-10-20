@@ -28,15 +28,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.io.File;
-import java.io.FileInputStream;
 
 public class FileImportTest extends AbstractCairoTest {
     @Before
@@ -46,12 +46,86 @@ public class FileImportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetImportAbsPath() throws Exception {
+    public void testFileImportExistsError() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"x.parquet"}, new byte[][]{parquetData}, false);
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 409 Conflict\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "6b\r\n" +
+                                                "{\"errors\":[{\"status\":\"409\",\"detail\":\"file already exists and overwriting is disabled\",\"name\":\"x.parquet\"}]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                    });
+        });
+    }
+
+    @Test
+    public void testFileImportOverWriting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"x.parquet"}, new byte[][]{parquetData}, true);
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "1c\r\n" +
+                                                "{\"successful\":[\"x.parquet\"]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                    });
+        });
+    }
+
+    @Test
+    public void testImportAbsPath() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
             byte[] parquetData = createParquetFile("x");
             String fileName = Os.isWindows() ? root + "\\test.parquet" : "/test.parquet";
-            byte[] parquetImportRequest = createParquetImportRequest(fileName, parquetData);
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{fileName}, new byte[][]{parquetData}, false);
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
@@ -79,6 +153,106 @@ public class FileImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiFilesImport() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            execute("create table y as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(5))");
+            byte[] parquetData1 = createParquetFile("y");
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"xx.parquet", "yy.parquet"}, new byte[][]{parquetData, parquetData1}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "2a\r\n" +
+                                                "{\"successful\":[\"xx.parquet\",\"yy.parquet\"]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                        assertQueryNoLeakCheck("id\tname\tprice\ttimestamp\tcategory\n" +
+                                        "9\tPEHN\t0.0011075361080621349\t2023-11-22T22:30:14.635691Z\t\n" +
+                                        "10\t\t0.8001121139739173\t2023-03-25T05:30:24.048489Z\tSXUX\n",
+                                "select * from read_parquet('xx.parquet') limit -2", null, null, true, true);
+                        assertQueryNoLeakCheck("id\tname\tprice\ttimestamp\tcategory\n" +
+                                        "4\tEKGH\t0.8940917126581895\t\tDOTS\n" +
+                                        "5\t\t0.6806873134626418\t2023-05-24T09:33:20.501727Z\t\n",
+                                "select * from read_parquet('yy.parquet') limit -2", null, null, true, true);
+                    });
+        });
+    }
+
+    @Test
+    public void testMultiFilesPartFail() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            execute("create table y as (select" +
+                    " cast(x as int) id," +
+                    " rnd_str(4,4,4,2) as name," +
+                    " rnd_double() as price," +
+                    " rnd_timestamp('2023-01-01','2023-12-31',2) as timestamp," +
+                    " rnd_symbol(4,4,4,2) as category" +
+                    " from long_sequence(5))");
+            byte[] parquetData1 = createParquetFile("y");
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"xx.parquet", "y.parquet"}, new byte[][]{parquetData, parquetData1}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 207 Multi status\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "82\r\n" +
+                                                "{\"successful\":[\"xx.parquet\"],\"failed\":[{\"path\":\"y.parquet\",\"error\":\"file already exists and overwriting is disabled\",\"code\":409}]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                    });
+        });
+    }
+
+    @Test
     public void testParquetImportBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -90,7 +264,7 @@ public class FileImportTest extends AbstractCairoTest {
                     " from long_sequence(1000))");
 
             byte[] parquetData = createParquetFile("x");
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
@@ -143,7 +317,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             byte[] parquetData = createParquetFile("large_x");
             String fileName = Os.isWindows() ? "dir\\dir1\\large_test.parquet" : "dir/dir1/large_test.parquet";
-            byte[] parquetImportRequest = createParquetImportRequest(fileName, parquetData);
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{fileName}, new byte[][]{parquetData}, false);
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
                     .withWorkerCount(2)
@@ -190,7 +364,7 @@ public class FileImportTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
             byte[] parquetData = createParquetFile("x");
             String fileName = Os.isWindows() ? "..\\test.parquet" : "../test.parquet";
-            byte[] parquetImportRequest = createParquetImportRequest(fileName, parquetData);
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{fileName}, new byte[][]{parquetData}, false);
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
@@ -223,7 +397,7 @@ public class FileImportTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
             byte[] parquetData = createParquetFile("x");
 
-            byte[] parquetImportRequest = createParquetImportRequest("test.parquet", parquetData);
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
@@ -240,13 +414,77 @@ public class FileImportTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "4f\r\n" +
-                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.export.root is not configured\"}]}\r\n" +
+                                                "4e\r\n" +
+                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.input.root is not configured\"}]}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
                     });
         });
+    }
+
+    private byte[] createMultipleParquetImportRequest(String[] filenames, byte[][] parquetDataArray, boolean overwrite) {
+        String boundary = "------------------------boundary123";
+        String header = "POST /api/v1/imports?overwrite=" + overwrite;
+        header += " HTTP/1.1\r\n" +
+                "Host: localhost:9001\r\n" +
+                "User-Agent: curl/7.64.0\r\n" +
+                "Accept: */*\r\n" +
+                "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n" +
+                "\r\n";
+
+        StringSink bodySink = new StringSink();
+        int totalDataLength = 0;
+
+        for (int i = 0; i < filenames.length; i++) {
+            bodySink.put("--").put(boundary).put("\r\n");
+            bodySink.put("Content-Disposition: form-data; name=\"").put(filenames[i]).put("\"\r\n");
+            bodySink.put("Content-Type: application/octet-stream\r\n");
+            bodySink.put("\r\n");
+            totalDataLength += parquetDataArray[i].length;
+            if (i < filenames.length - 1) {
+                bodySink.put("\r\n");
+            }
+        }
+
+        String footer = "\r\n--" + boundary + "--";
+        String bodyText = bodySink.toString();
+
+        byte[] headerBytes = header.getBytes();
+        byte[] bodyBytes = bodyText.getBytes();
+        byte[] footerBytes = footer.getBytes();
+
+        int bodyLength = bodyBytes.length + totalDataLength + footerBytes.length;
+        header = header.replace("Content-Type:", "Content-Length: " + bodyLength + "\r\nContent-Type:");
+        headerBytes = header.getBytes();
+
+        byte[] requestBytes = new byte[headerBytes.length + bodyBytes.length + totalDataLength + footerBytes.length];
+        int offset = 0;
+
+        System.arraycopy(headerBytes, 0, requestBytes, offset, headerBytes.length);
+        offset += headerBytes.length;
+
+        for (int i = 0; i < filenames.length; i++) {
+            String partHeader = "--" + boundary + "\r\n" +
+                    "Content-Disposition: form-data; name=\"" + filenames[i] + "\"\r\n" +
+                    "Content-Type: application/octet-stream\r\n" +
+                    "\r\n";
+            byte[] partHeaderBytes = partHeader.getBytes();
+            System.arraycopy(partHeaderBytes, 0, requestBytes, offset, partHeaderBytes.length);
+            offset += partHeaderBytes.length;
+
+            System.arraycopy(parquetDataArray[i], 0, requestBytes, offset, parquetDataArray[i].length);
+            offset += parquetDataArray[i].length;
+
+            if (i < filenames.length - 1) {
+                byte[] separator = "\r\n".getBytes();
+                System.arraycopy(separator, 0, requestBytes, offset, separator.length);
+                offset += separator.length;
+            }
+        }
+
+        System.arraycopy(footerBytes, 0, requestBytes, offset, footerBytes.length);
+        return requestBytes;
     }
 
     private byte[] createParquetFile(String tableName) throws Exception {
@@ -259,40 +497,19 @@ public class FileImportTest extends AbstractCairoTest {
             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
             PartitionEncoder.encode(partitionDescriptor, path);
             Assert.assertTrue("Parquet file should exist", Files.exists(path.$()));
-            File parquetFile = new File(path.toString());
-            byte[] parquetData = new byte[(int) parquetFile.length()];
-            try (FileInputStream fis = new FileInputStream(parquetFile)) {
-                int bytesRead = fis.read(parquetData);
-                Assert.assertEquals("Should read entire file", parquetFile.length(), bytesRead);
+            long fd = Files.openRO(path.$());
+            int len = (int) Files.length(fd);
+            long addr = Files.mmap(fd, len, 0, Files.MAP_RO, MemoryTag.MMAP_IMPORT);
+            try {
+                byte[] parquetData = new byte[len];
+                for (int i = 0; i < len; i++) {
+                    parquetData[i] = Unsafe.getUnsafe().getByte(addr + i);
+                }
+                return parquetData;
+            } finally {
+                Files.close(fd);
+                Files.munmap(addr, len, MemoryTag.MMAP_IMPORT);
             }
-            return parquetData;
         }
-    }
-
-    private byte[] createParquetImportRequest(String filename, byte[] parquetData) {
-        String boundary = "------------------------boundary123";
-        String header = "POST /api/v1/imports";
-        header += " HTTP/1.1\r\n" +
-                "Host: localhost:9001\r\n" +
-                "User-Agent: curl/7.64.0\r\n" +
-                "Accept: */*\r\n" +
-                "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n" +
-                "\r\n" +
-                "--" + boundary + "\r\n" +
-                "Content-Disposition: form-data; name=\"" + filename + "\"\r\n" +
-                "Content-Type: application/octet-stream\r\n" +
-                "\r\n";
-        String footer = "\r\n--" + boundary + "--";
-        byte[] headerBytes = header.getBytes();
-        byte[] footerBytes = footer.getBytes();
-
-        int bodyLength = headerBytes.length + parquetData.length + footerBytes.length - header.split("\r\n\r\n")[0].length() - 4;
-        header = header.replace("Content-Type:", "Content-Length: " + bodyLength + "\r\nContent-Type:");
-        headerBytes = header.getBytes();
-        byte[] requestBytes = new byte[headerBytes.length + parquetData.length + footerBytes.length];
-        System.arraycopy(headerBytes, 0, requestBytes, 0, headerBytes.length);
-        System.arraycopy(parquetData, 0, requestBytes, headerBytes.length, parquetData.length);
-        System.arraycopy(footerBytes, 0, requestBytes, headerBytes.length + parquetData.length, footerBytes.length);
-        return requestBytes;
     }
 }
