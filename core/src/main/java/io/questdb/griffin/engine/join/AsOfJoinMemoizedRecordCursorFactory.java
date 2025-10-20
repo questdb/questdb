@@ -51,11 +51,9 @@ import io.questdb.std.Rows;
  * to avoid redundant backward scans of the slave table.
  * <p>
  * This factory is specialized for joins where the join key is a single symbol column.
- * It significantly outperforms {@link AsOfJoinFastRecordCursorFactory} when:
- * <ul>
- *   <li>The same symbols appear repeatedly in the master table (high key repetition)</li>
- *   <li>Symbols are sparsely distributed in the slave table (requiring long backward scans)</li>
- * </ul>
+ * It significantly outperforms {@link AsOfJoinFastRecordCursorFactory} when some symbols
+ * appearing on the master side are sparsely distributed in the slave table, requiring long
+ * backward scans.
  * <p>
  * <b>Key Optimization Strategies:</b>
  * <ol>
@@ -72,7 +70,7 @@ import io.questdb.std.Rows;
  *       scans of the same range.</li>
  * </ol>
  * <b>Example Use Case:</b> Joining high-frequency tick data (master) with reference data (slave)
- * on a security symbol, where some symbols occur rarely in the slave, but repeatedly in the master.
+ * on a security symbol, where some symbols get infrequent price updates.
  *
  * @see AsOfJoinFastRecordCursorFactory
  * @see AbstractKeyedAsOfJoinRecordCursor
@@ -174,6 +172,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private long scannedRangeMaxTimestamp = Long.MIN_VALUE;
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
+
         private StaticSymbolTable symbolTable;
 
         public AsOfJoinMemoizedRecordCursor(
@@ -328,8 +327,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         protected void performKeyMatching(long masterTimestamp) {
             if (columnAccessHelper.isShortCircuit(masterRecord)) {
-                // the master record's symbol does not match any symbol in the slave table,
-                // so we can skip the key matching part and report no match.
+                // The master record's symbol does not match any symbol in the slave table,
+                // we can immediately report no match and return.
                 record.hasSlave(false);
                 return;
             }
@@ -356,8 +355,8 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp <= validityPeriodEnd) {
                     assert slaveTimestamp >= validityPeriodStart : "slaveTimestamp < validityPeriodStart";
-                    // Our search is now either within the validity period of the remembered symbol or within
-                    // the remembered scanned range. Let's apply this knowledge.
+                    // Our search is now either within the validity period of the remembered symbol
+                    // or within the remembered scanned range. Let's apply this knowledge.
                     if (rememberedRowId != NOT_REMEMBERED && masterTimestamp > validityPeriodEnd) {
                         // We're within the validity period of the remembered symbol. We started our search from a
                         // timestamp that is at least as recent as the remembered period end.
@@ -391,18 +390,18 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         //   search either the whole tolerance interval, or reach the start of the slave table.
                         // - Invariant 2: masterTimestamp (the upper bound of the tolerance interval) is always
                         //   at least as large as any previous masterTimestamp.
-                        // - Invariant 3: before reaching this point, we already scanned everything from masterTimestamp
-                        //   going back to the upper bound of the remembered period.
+                        // - Invariant 3: before reaching this point, we already scanned everything from
+                        //   masterTimestamp going back to the upper bound of the remembered period.
                         // - Invariant 4: we already extended the remembered period in the block above.
                         //
                         // Therefore, we're all done. Report no slave row and return.
                         record.hasSlave(false);
                         break;
                     } else {
-                        // We're within the remembered scanned range, if any. Since the symbol isn't remembered,
-                        // we know it doesn't occur within this range because we memorize all the symbols we observe
-                        // while scanning for any symbol. Jump over the entire period and continue searching, unless the
-                        // period to be skipped extends beyond the tolerance interval.
+                        // We're within the remembered scanned range. Since the symbol isn't remembered, we know
+                        // it doesn't occur within this range because we memorize all the symbols we observe
+                        // while scanning for any symbol. Jump over the entire period and continue searching,
+                        // unless the period to be skipped extends beyond the tolerance interval.
                         if (!isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(false);
                             break;
