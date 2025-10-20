@@ -840,6 +840,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByArrayLastKeyed() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        testParallelGroupByArray(
+                "SELECT last(darr), key FROM tab order by key",
+                "last\tkey\n" +
+                        "[[0.9038068796506257,0.5249321062686694],[0.28934577745726665,null]]\tk0\n" +
+                        "[[0.9656394022309033,0.6778564558839208,0.6590341607692226],[null,0.9738523496829667],[0.7594296619518549,0.5514604042904348]]\tk1\n" +
+                        "[[null,0.19751370382305056,0.6778564558839208],[0.7594296619518549,0.5514604042904348]]\tk2\n" +
+                        "[[0.20447441837877756,0.34608426119452515],[0.10459352312331183,null]]\tk3\n" +
+                        "[[0.5024642209722164,null,0.5024642209722164],[0.12503042190293423,null]]\tk4\n"
+        );
+    }
+
+    @Test
+    public void testParallelGroupByArrayLastNonKeyed() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        testParallelGroupByArray(
+                "SELECT last(darr) FROM tab",
+                "last\n" +
+                        "[[0.5024642209722164,null,0.5024642209722164],[0.12503042190293423,null]]\n"
+        );
+    }
+
+    @Test
     public void testParallelGroupByArrayFunction() throws Exception {
         Assume.assumeTrue(!convertToParquet && enableParallelGroupBy);
         assertMemoryLeak(() -> {
@@ -3463,6 +3487,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(32) ageolong," +
                                         " rnd_str(5,16,3) astring," +
                                         " rnd_uuid4() auuid," +
+                                        " rnd_double_array(2, 2, 3) darr," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(10000)) timestamp(ts) partition by day",
                                 sqlExecutionContext
