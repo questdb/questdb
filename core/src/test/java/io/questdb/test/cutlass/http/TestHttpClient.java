@@ -220,7 +220,7 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence password
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
 
             if (queryParams != null) {

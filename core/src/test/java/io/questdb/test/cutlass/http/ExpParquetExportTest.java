@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;

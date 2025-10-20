@@ -786,7 +786,6 @@ public class SqlParser {
             if (selectText != null) {
                 throw SqlException.$(startOfSelect, "subqueries are not supported for `COPY-FROM`");
             }
-            assert target != null;
 
             model.setType(ExportModel.COPY_TYPE_FROM);
 
@@ -857,7 +856,7 @@ public class SqlParser {
         if (isToKeyword(tok)) {
             // Disable COPY TO when export root is not configured
             if (Chars.isBlank(configuration.getSqlCopyExportRoot())) {
-                throw SqlException.$(0, "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
+                throw SqlException.$(lexer.lastTokenPosition(), "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]");
             }
 
             tok = optTok(lexer);

@@ -314,7 +314,7 @@ public final class TableUtils {
             Path dirPath = Path.getThreadLocal(dir);
             if (ff.exists(dirPath.slash$())) {
                 if (!ff.rmdir(dirPath)) {
-                    log.error().$("error during temp directory cleanup [path=").$(dir).$(" errno=").$(Os.errno()).$(']').$();
+                    log.error().$("error during temp directory cleanup [path=").$(dir).$(" errno=").$(ff.errno()).$(']').$();
                 }
             }
         } catch (Throwable e) {

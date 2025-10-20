@@ -37,13 +37,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final CairoEngine engine;
     private final int throttle;
-    protected volatile AtomicBoolean cancelledFlag;
+    protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
     private long fd = -1;
     private int testCount = 0;
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine) {
         this(engine, 0);
-        cancelledFlag = new AtomicBoolean(false);
     }
 
     public AtomicBooleanCircuitBreaker(CairoEngine engine, int throttle) {

@@ -48,6 +48,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.util.Objects;
+
 @SuppressWarnings("unused")
 public class ExportActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
@@ -95,7 +97,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         public boolean hasNext() throws DataUnavailableException {
             while (++entryIndex < size) {
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
-                    if (isAdmin || entry.getPrincipal().equals(principal)) {
+                    if (isAdmin || Objects.equals(entry.getPrincipal(), principal)) {
                         return true;
                     }
                 }

@@ -72,6 +72,9 @@ public class ParquetCompression {
     }
 
     public static long packCompressionCodecLevel(int codec, long level) {
+        if (codec < 0 || codec >= MAX_ENUM_INT) {
+            throw new IllegalArgumentException("Invalid codec: " + codec + ", must be in range [0, " + MAX_ENUM_INT + ")");
+        }
         return (level << 32) | CODEC_MAPPING[codec];
     }
 

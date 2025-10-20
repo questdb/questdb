@@ -53,6 +53,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -90,10 +91,6 @@ public class HttpQueryTestBuilder {
     private boolean telemetry;
     private String temp;
     private int workerCount = 1;
-
-    public ObjList<SqlExecutionContextImpl> getSqlExecutionContexts() {
-        return sqlExecutionContexts;
-    }
 
     public int getWorkerCount() {
         return this.workerCount;
@@ -188,13 +185,13 @@ public class HttpQueryTestBuilder {
                 telemetryJob = new TelemetryJob(engine);
             }
 
-            if (cairoConfiguration.getSqlCopyInputRoot() != null) {
+            if (!Chars.isBlank(cairoConfiguration.getSqlCopyInputRoot())) {
                 CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(engine, workerCount);
                 workerPool.assign(copyImportRequestJob);
                 workerPool.freeOnExit(copyImportRequestJob);
             }
 
-            if (cairoConfiguration.getSqlCopyExportRoot() != null) {
+            if (!Chars.isBlank(cairoConfiguration.getSqlCopyExportRoot())) {
                 final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
                 workerPool.assign(copyExportRequestJob);
                 workerPool.freeOnExit(copyExportRequestJob);

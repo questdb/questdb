@@ -323,7 +323,7 @@ public class SerialParquetExporter implements Closeable {
                 }
 
                 if (ff.rename(tempPath.$(), toParquet.$()) != Files.FILES_RENAME_OK) {
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.MOVE_FILES, ff.errno())
                             .put("could not copy export file [from=")
                             .put(tempPath)
                             .put(", to=")
@@ -350,7 +350,7 @@ public class SerialParquetExporter implements Closeable {
         if (!destExists) {
             int moveResult = ff.rename(tempPath.$(), toParquet.$());
             if (moveResult != Files.FILES_RENAME_OK) {
-                throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.MOVE_FILES, ff.errno())
                         .put("could not rename export directory [from=")
                         .put(tempPath)
                         .put(", to=")
@@ -362,7 +362,7 @@ public class SerialParquetExporter implements Closeable {
                 ff.removeQuiet(toParquet.$());
                 int moveResult = ff.rename(tempPath.$(), toParquet.$());
                 if (moveResult != Files.FILES_RENAME_OK) {
-                    throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+                    throw CopyExportException.instance(CopyExportRequestTask.Phase.MOVE_FILES, ff.errno())
                             .put("could not rename export directory after file removal [from=")
                             .put(tempPath)
                             .put(", to=")
@@ -391,7 +391,7 @@ public class SerialParquetExporter implements Closeable {
         }
         int moveResult = ff.rename(tempPath.$(), toParquet.$());
         if (moveResult != Files.FILES_RENAME_OK) {
-            throw CopyExportException.instance(CopyExportRequestTask.Phase.CONVERTING_PARTITIONS, ff.errno())
+            throw CopyExportException.instance(CopyExportRequestTask.Phase.MOVE_FILES, ff.errno())
                     .put("could not rename export file [from=")
                     .put(tempPath)
                     .put(", to=")

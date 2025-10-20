@@ -667,7 +667,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getParquetExportCopyReportFrequencyLines() {
-        return 50_0000;
+        return 500_000;
     }
 
     @Override

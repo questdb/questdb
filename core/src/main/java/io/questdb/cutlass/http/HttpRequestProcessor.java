@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;

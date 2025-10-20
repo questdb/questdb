@@ -440,12 +440,10 @@ public class CopyExportTest extends AbstractCairoTest {
 
             final FilesFacade ff = configuration.getFilesFacade();
 
-            // Create a read-only directory to simulate permission failure using FilesFacade
+            // Create a file where a directory is expected to force a failure
             try (Path readOnlyPath = new Path()) {
                 readOnlyPath.of(exportRoot).concat("readonly").$();
-                ff.mkdir(readOnlyPath.$(), 755);
-                // Note: Setting read-only via FilesFacade would be platform-specific
-                // For test purposes, we'll test with invalid path instead
+                ff.touch(readOnlyPath.$()); // now 'readonly' is a file, not a directory
             }
 
             CopyExportRunnable stmt = () ->
@@ -1654,7 +1652,7 @@ public class CopyExportTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "");
             assertException(
                     "copy test_table to 'output' with format parquet",
-                    0,
+                    28,
                     "COPY TO is disabled ['cairo.sql.copy.export.root' is not set?]"
             );
         });

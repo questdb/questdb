@@ -35,7 +35,6 @@ import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.http.ex.RetryFailedOperationException;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
-import io.questdb.cutlass.http.processors.ActiveConnectionTracker;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

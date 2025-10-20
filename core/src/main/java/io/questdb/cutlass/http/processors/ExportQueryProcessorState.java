@@ -156,16 +156,16 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     private void cleanupParquetState() {
-        if (parquetFileFd != -1) {
-            filesFacade.close(parquetFileFd);
-            parquetFileFd = -1;
-            copyExportResult.cleanUpTempPath(filesFacade);
-        }
         if (parquetFileAddress != 0) {
             filesFacade.munmap(parquetFileAddress, parquetFileSize, MemoryTag.NATIVE_PARQUET_EXPORTER);
             parquetFileAddress = 0;
             parquetFileSize = 0;
         }
+        if (parquetFileFd != -1) {
+            filesFacade.close(parquetFileFd);
+            parquetFileFd = -1;
+        }
+        copyExportResult.cleanUpTempPath(filesFacade);
     }
 
     void setQueryCacheable(boolean queryCacheable) {

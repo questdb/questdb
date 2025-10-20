@@ -22,10 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
-import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.metrics.AtomicLongGauge;
 import org.jetbrains.annotations.NotNull;
 
