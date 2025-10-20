@@ -1494,6 +1494,106 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorToTop() throws Exception {
+        assertMemoryLeak(() -> {
+            // This test verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
+            // The CROSS JOIN forces the ASOF JOIN cursor to be reset via toTop() for each row in the multiplier table.
+            // After toTop(), the memoization cache (rememberedSymbols map and scanned range tracking) must be cleared
+            // so that the second iteration produces identical results to the first iteration.
+
+            // Create left table for ASOF JOIN
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE trades (
+                                symbol SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            // Insert trades with repeating symbols and interleaved timestamps
+            // This will test that memoization correctly caches and reuses previous matches
+            execute("INSERT INTO trades VALUES ('AAPL', 150.0, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO trades VALUES ('GOOGL', 100.0, '2024-01-01T11:00:00.000000Z')");
+            execute("INSERT INTO trades VALUES ('MSFT', 200.0, '2024-01-01T12:00:00.000000Z')");
+            execute("INSERT INTO trades VALUES ('AAPL', 151.0, '2024-01-01T13:00:00.000000Z')");  // AAPL again - should reuse memoized data
+            execute("INSERT INTO trades VALUES ('GOOGL', 101.0, '2024-01-01T14:00:00.000000Z')"); // GOOGL again
+            execute("INSERT INTO trades VALUES ('TSLA', 250.0, '2024-01-01T15:00:00.000000Z')"); // New symbol
+            execute("INSERT INTO trades VALUES ('AAPL', 152.0, '2024-01-01T16:00:00.000000Z')");  // AAPL third time
+            execute("INSERT INTO trades VALUES ('MSFT', 201.0, '2024-01-01T17:00:00.000000Z')"); // MSFT again
+
+            // Create right table for ASOF JOIN
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE quotes (
+                                symbol SYMBOL,
+                                bid DOUBLE,
+                                ask DOUBLE,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+            // Insert quotes with interleaved timestamps relative to trades
+            // This creates a complex pattern where memoization needs to track multiple symbols
+            execute("INSERT INTO quotes VALUES ('AAPL', 149.5, 150.5, '2024-01-01T09:00:00.000000Z')");  // Before first AAPL trade
+            execute("INSERT INTO quotes VALUES ('GOOGL', 99.5, 100.5, '2024-01-01T10:30:00.000000Z')"); // Between AAPL and GOOGL trades
+            execute("INSERT INTO quotes VALUES ('MSFT', 199.5, 200.5, '2024-01-01T11:30:00.000000Z')"); // Between GOOGL and MSFT trades
+            execute("INSERT INTO quotes VALUES ('AAPL', 150.5, 151.5, '2024-01-01T12:30:00.000000Z')");  // Between MSFT and 2nd AAPL trade
+            execute("INSERT INTO quotes VALUES ('GOOGL', 100.5, 101.5, '2024-01-01T13:30:00.000000Z')"); // Between 2nd AAPL and 2nd GOOGL
+            execute("INSERT INTO quotes VALUES ('TSLA', 249.5, 250.5, '2024-01-01T14:30:00.000000Z')"); // Between 2nd GOOGL and TSLA trade
+            execute("INSERT INTO quotes VALUES ('AAPL', 151.5, 152.5, '2024-01-01T15:30:00.000000Z')");  // Between TSLA and 3rd AAPL
+            execute("INSERT INTO quotes VALUES ('MSFT', 200.5, 201.5, '2024-01-01T16:30:00.000000Z')"); // Between 3rd AAPL and 2nd MSFT
+
+            // Create a small table to CROSS JOIN with - this will cause toTop() to be called
+            execute("CREATE TABLE multiplier (id INT)");
+            execute("INSERT INTO multiplier VALUES (1)");
+            execute("INSERT INTO multiplier VALUES (2)");
+
+            // CROSS JOIN will iterate through the ASOF JOIN result multiple times,
+            // calling toTop() on the ASOF JOIN cursor for each row in the multiplier table
+            String query = """
+                    SELECT m.id, asof_result.* FROM multiplier m
+                    CROSS JOIN (
+                      SELECT /*+ asof_memoized_search(t q) */ t.symbol, t.price, q.bid, q.ask
+                      FROM trades t
+                      ASOF JOIN quotes q ON t.symbol = q.symbol
+                    ) asof_result
+                    """;
+
+            // Expected results: Each trade matches with the most recent quote at or before its timestamp
+            // The pattern repeats twice (once for each multiplier row), testing that toTop() properly clears state
+            String expected = """
+                    id\tsymbol\tprice\tbid\task
+                    1\tAAPL\t150.0\t149.5\t150.5
+                    1\tGOOGL\t100.0\t99.5\t100.5
+                    1\tMSFT\t200.0\t199.5\t200.5
+                    1\tAAPL\t151.0\t150.5\t151.5
+                    1\tGOOGL\t101.0\t100.5\t101.5
+                    1\tTSLA\t250.0\t249.5\t250.5
+                    1\tAAPL\t152.0\t151.5\t152.5
+                    1\tMSFT\t201.0\t200.5\t201.5
+                    2\tAAPL\t150.0\t149.5\t150.5
+                    2\tGOOGL\t100.0\t99.5\t100.5
+                    2\tMSFT\t200.0\t199.5\t200.5
+                    2\tAAPL\t151.0\t150.5\t151.5
+                    2\tGOOGL\t101.0\t100.5\t101.5
+                    2\tTSLA\t250.0\t249.5\t250.5
+                    2\tAAPL\t152.0\t151.5\t152.5
+                    2\tMSFT\t201.0\t200.5\t201.5
+                    """;
+
+            assertQueryNoLeakCheck(expected, query, null, false, true);
+
+            // Verify the plan uses Memoized scan
+            sink.clear();
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Memoized Scan");
+        });
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }
