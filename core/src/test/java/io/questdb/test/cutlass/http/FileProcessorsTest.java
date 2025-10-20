@@ -28,6 +28,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -40,7 +41,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class FileImportTest extends AbstractCairoTest {
+public class FileProcessorsTest extends AbstractCairoTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
 
     @AfterClass
@@ -54,6 +55,12 @@ public class FileImportTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         inputRoot = root + Files.SEPARATOR + "import";
+        Path path = Path.getThreadLocal(inputRoot);
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        if (ff.exists(path.$())) {
+            ff.rmdir(path, false);
+            Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
+        }
     }
 
     @Test
@@ -474,18 +481,18 @@ public class FileImportTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "69\r\n" +
-                                                "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤\uFE0F.parquet\"]}\r\n" +
+                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\\\x3.parquet\",\"dir1\\\\dir2\\\\x4.parquet\",\"dir3\\\\❤️.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
-                        String pathSeparator = Os.isWindows() ? "//" : "/";
+                        String pathSep = "[/\\\\\\\\]";
                         testHttpClient.assertGetRegexp(
                                 "/api/v1/imports",
-                                "\\[\\{\"path\":\"dir3" + pathSeparator + "❤️\\.parquet\",\"name\":\"❤️\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                "\\[\\{\"path\":\"dir3" + pathSep + "❤️\\.parquet\",\"name\":\"❤️\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
                                         "\\{\"path\":\"x2\\.parquet\",\"name\":\"x2\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
                                         "\\{\"path\":\"x1\\.parquet\",\"name\":\"x1\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"dir1" + pathSeparator + "dir2" + pathSeparator + "x4\\.parquet\",\"name\":\"x4\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"dir1" + pathSeparator + "x3\\.parquet\",\"name\":\"x3\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"dir1" + pathSep + "dir2" + pathSep + "x4\\.parquet\",\"name\":\"x4\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"dir1" + pathSep + "x3\\.parquet\",\"name\":\"x3\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
                                         "\\{\"path\":\"x\\.parquet\",\"name\":\"x\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}\\]");
                     });
         });
