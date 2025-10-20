@@ -122,6 +122,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
