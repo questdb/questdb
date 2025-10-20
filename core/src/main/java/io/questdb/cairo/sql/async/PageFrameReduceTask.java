@@ -43,6 +43,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     public static final byte TYPE_TOP_K = 3;
+    public static final byte TYPE_WINDOW_JOIN = 4;
     private static final String exceptionMessage = "unexpected filter error";
 
     private final DirectLongList auxAddresses;

@@ -97,8 +97,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function filter,
-            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
         super(groupByMetadata);
