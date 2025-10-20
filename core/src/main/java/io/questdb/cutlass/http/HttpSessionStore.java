@@ -7,6 +7,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public interface HttpSessionStore {
 
@@ -32,6 +33,7 @@ public interface HttpSessionStore {
      * @param sessionId session id of the session
      * @return session associated with the session id, or null if the session does not exist
      */
+    @TestOnly
     @Nullable
     SessionInfo getSession(@NotNull CharSequence sessionId);
 
@@ -48,6 +50,7 @@ public interface HttpSessionStore {
      * Overrides the token generator used to generate session ids.
      * Useful for testing.
      */
+    @TestOnly
     default void setTokenGenerator(TokenGenerator tokenGenerator) {
     }
 
