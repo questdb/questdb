@@ -178,8 +178,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                             executionContext,
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
-                                    "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
-                                    "'wal.apply.worker.count', 'mat.view.refresh.worker.count'" +
+                                    "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
+                                    "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count'," +
+                                    "'http.export.connection.limit'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -275,6 +276,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.copy.max.index.chunk.size\tQDB_CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE\t104857600\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.copy.model.pool.capacity\tQDB_CAIRO_SQL_COPY_MODEL_POOL_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.copy.queue.capacity\tQDB_CAIRO_SQL_COPY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.copy.export.queue.capacity\tQDB_CAIRO_SQL_COPY_EXPORT_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.capacity\tQDB_CAIRO_SQL_COUNT_DISTINCT_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.load.factor\tQDB_CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR\t0.75\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
@@ -409,6 +411,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.connection.pool.initial.capacity\tQDB_HTTP_CONNECTION_POOL_INITIAL_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "http.connection.string.pool.capacity\tQDB_HTTP_CONNECTION_STRING_POOL_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "http.net.accept.loop.timeout\tQDB_HTTP_NET_ACCEPT_LOOP_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
+                                    "http.export.timeout\tQDB_HTTP_EXPORT_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
                                     "http.enabled\tQDB_HTTP_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.frozen.clock\tQDB_HTTP_FROZEN_CLOCK\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.health.check.authentication.required\tQDB_HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED\ttrue\tdefault\tfalse\tfalse\n" +
@@ -561,6 +564,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "mat.view.refresh.worker.haltOnError\tQDB_MAT_VIEW_REFRESH_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.yield.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.sleep.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.nap.threshold\tQDB_EXPORT_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.affinity\tQDB_EXPORT_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.sleep.timeout\tQDB_EXPORT_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.haltOnError\tQDB_EXPORT_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.yield.threshold\tQDB_EXPORT_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
+                                    "export.worker.sleep.threshold\tQDB_EXPORT_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "net.test.connection.buffer.size\tQDB_NET_TEST_CONNECTION_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "pg.binary.param.count.capacity\tQDB_PG_BINARY_PARAM_COUNT_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
                                     "pg.character.store.capacity\tQDB_PG_CHARACTER_STORE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
@@ -646,8 +655,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.encoder.parquet.version\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_VERSION\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\t0\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\tZSTD\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
                                     "http.min.request.header.buffer.size\tQDB_HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE\t4096\tdefault\tfalse\tfalse\n" +
                                     "http.min.allow.deflate.before.send\tQDB_HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.multipart.header.buffer.size\tQDB_HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\tfalse\n" +
@@ -663,8 +672,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "log.timestamp.locale\tQDB_LOG_TIMESTAMP_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "log.timestamp.timezone\tQDB_LOG_TIMESTAMP_TIMEZONE\tZ\tdefault\tfalse\tfalse\n" +
                                     "query.tracing.enabled\tQDB_QUERY_TRACING_ENABLED\tfalse\tdefault\tfalse\ttrue\n" +
-                                    "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
-                                    "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\tfalse\n" +
+                                    "http.json.query.connection.limit\tQDB_HTTP_JSON_QUERY_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
+                                    "http.ilp.connection.limit\tQDB_HTTP_ILP_CONNECTION_LIMIT\t-1\tdefault\tfalse\ttrue\n" +
                                     "query.timeout\tQDB_QUERY_TIMEOUT\t60000\tdefault\tfalse\tfalse\n" +
                                     "http.context.table.status\tQDB_HTTP_CONTEXT_TABLE_STATUS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.execute\tQDB_HTTP_CONTEXT_EXECUTE\t\tdefault\tfalse\tfalse\n" +
@@ -686,7 +695,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.column.alias.expression.enabled\tQDB_CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.alias.generated.max.size\tQDB_CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.file.descriptor.cache.enabled\tQDB_CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue"
+                                    "cairo.sql.jit.max.in.list.size.threshold\tQDB_CAIRO_SQL_JIT_MAX_IN_LIST_SIZE_THRESHOLD\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.auto.scale.symbol.capacity\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.auto.scale.symbol.capacity.threshold\tQDB_CAIRO_AUTO_SCALE_SYMBOL_CAPACITY_THRESHOLD\t0.8\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.table.prefix\tQDB_CAIRO_PARQUET_EXPORT_TABLE_PREFIX\tzzz.copy.\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.statistics.enabled\tQDB_CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.raw.array.encoding.enabled\tQDB_CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.version\tQDB_CAIRO_PARQUET_EXPORT_VERSION\t1\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.row.group.size\tQDB_CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.data.page.size\tQDB_CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.compression.codec\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC\tZSTD\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.compression.level\tQDB_CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL\t9\tdefault\tfalse\tfalse\n" +
+                                    "cairo.parquet.export.copy.report.frequency.lines\tQDB_CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES\t500000\tdefault\tfalse\ttrue\n" +
+                                    "cairo.resource.pool.tracing.enabled\tQDB_CAIRO_RESOURCE_POOL_TRACING_ENABLED\tfalse\tdefault\tfalse\tfalse\n"
                     )
                             .split("\n");
 

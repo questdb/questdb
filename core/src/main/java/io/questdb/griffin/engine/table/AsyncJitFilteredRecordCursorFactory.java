@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -78,6 +79,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
@@ -120,6 +122,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 columnTypes
         );
         this.frameSequence = new PageFrameSequence<>(
+                engine,
                 configuration,
                 messageBus,
                 atom,

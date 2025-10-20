@@ -26,6 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -97,6 +98,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * Constructs a page frame sequence instance. The returned instance takes ownership of the input atom.
      */
     public PageFrameSequence(
+            CairoEngine engine,
             CairoConfiguration configuration,
             MessageBus messageBus,
             T atom,
@@ -114,7 +116,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.localTaskFactory = localTaskFactory;
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
             this.taskType = taskType;
-            this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
+            this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
         } catch (Throwable th) {
             close();
             throw th;

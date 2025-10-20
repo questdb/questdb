@@ -96,7 +96,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
-        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
     }
 
     @Override
@@ -413,6 +413,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
         return with(securityContext, bindVariableService, null, -1, null);
     }
+
 
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,

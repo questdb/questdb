@@ -74,6 +74,11 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
+                public long getExportTimeout() {
+                    return 300_000;
+                }
+
+                @Override
                 public FactoryProvider getFactoryProvider() {
                     return DefaultFactoryProvider.INSTANCE;
                 }

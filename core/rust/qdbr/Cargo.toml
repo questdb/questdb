@@ -22,7 +22,7 @@ async-trait = "0.1.81"
 clap = "4.5.9"
 tokio = "1.38.0"
 log = "0.4.22"
-serde_json = "1.0.128"
+serde_json = "1.0.145"
 serde = { version = "1.0.210", features = ["derive"] }
 alloc-checked = { version = "0.1.2" }
 

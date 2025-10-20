@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -95,6 +96,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
 
     public GroupByRecordCursorFactory(
+            CairoEngine engine,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
@@ -119,7 +121,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.frameAddressCache = new PageFrameAddressCache(configuration);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-            sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
             workStealingStrategy.of(startedCounter);
             // first column is INT or SYMBOL

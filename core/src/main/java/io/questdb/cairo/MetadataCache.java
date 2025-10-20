@@ -387,7 +387,8 @@ public class MetadataCache implements QuietCloseable {
             CairoConfiguration configuration = engine.getConfiguration();
 
             // sys table
-            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())) {
+            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
+                    && !Chars.startsWith(tableName, configuration.getParquetExportTableNamePrefix())) {
                 return false;
             }
 
