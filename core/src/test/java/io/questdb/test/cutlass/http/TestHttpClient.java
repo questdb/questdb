@@ -187,6 +187,10 @@ public class TestHttpClient implements QuietCloseable {
         }
     }
 
+    public void assertGet(CharSequence url, String expectedResponse) {
+        assertGet(url, expectedResponse, (CharSequenceObjHashMap<String>) null, null, null, null);
+    }
+
     public void assertGetContains(
             CharSequence url,
             CharSequence expectedResponse,
@@ -200,6 +204,40 @@ public class TestHttpClient implements QuietCloseable {
         try {
             toSink0(host, port, url, sql, sink, username, password, token, null, null);
             TestUtils.assertContains(sink.asAsciiCharSequence(), expectedResponse);
+        } finally {
+            if (!keepConnection) {
+                httpClient.disconnect();
+            }
+        }
+    }
+
+    public void assertGetRegexp(CharSequence url, String expectedResponse) {
+        assertGetRegexp(url, expectedResponse, (CharSequenceObjHashMap<String>) null, null, null, null);
+    }
+
+    public void assertGetRegexp(
+            CharSequence url,
+            String expectedResponse,
+            @Nullable CharSequenceObjHashMap<String> queryParams,
+            @Nullable CharSequence username,
+            @Nullable CharSequence password,
+            @Nullable CharSequence token
+    ) {
+        try {
+            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            req.GET().url(url);
+
+            if (queryParams != null) {
+                for (int i = 0, n = queryParams.size(); i < n; i++) {
+                    CharSequence name = queryParams.keys().getQuick(i);
+                    req.query(name, queryParams.get(name));
+                }
+            }
+
+            reqToSink(req, sink, username, password, token, null, null);
+            Pattern pattern = Pattern.compile(expectedResponse);
+            String message = "Expected response to match regexp " + expectedResponse + " but got " + sink + " which does not match";
+            Assert.assertTrue(message, pattern.matcher(sink.toString()).matches());
         } finally {
             if (!keepConnection) {
                 httpClient.disconnect();

@@ -34,15 +34,26 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractTest;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class FileImportTest extends AbstractCairoTest {
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
+
     @Before
     public void setUp() {
         super.setUp();
-        inputRoot = root;
+        inputRoot = root + Files.SEPARATOR + "import";
     }
 
     @Test
@@ -59,7 +70,7 @@ public class FileImportTest extends AbstractCairoTest {
             byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"x.parquet"}, new byte[][]{parquetData}, false);
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -96,7 +107,7 @@ public class FileImportTest extends AbstractCairoTest {
             byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"x.parquet"}, new byte[][]{parquetData}, true);
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -129,7 +140,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -148,6 +159,86 @@ public class FileImportTest extends AbstractCairoTest {
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
+                    });
+        });
+    }
+
+    @Test
+    public void testImportWithoutSqlCopyInputRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(x as int) id from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 400 Bad request\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "4e\r\n" +
+                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.input.root is not configured\"}]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                        testHttpClient.assertGet(
+                                "/api/v1/imports",
+                                "{\"error\":\"sql.copy.input.root is not configured\"}"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testListImportFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(x as int) id from long_sequence(10))");
+            byte[] parquetData = createParquetFile("x");
+            String[] fileNames = Os.isWindows() ?
+                    new String[]{"x1.parquet", "x2.parquet", "dir1\\x3.parquet", "dir1\\dir2\\x4.parquet", "dir3\\❤️.parquet"} :
+                    new String[]{"x1.parquet", "x2.parquet", "dir1/x3.parquet", "dir1/dir2/x4.parquet", "dir3/❤️.parquet"};
+            byte[] parquetImportRequest = createMultipleParquetImportRequest(fileNames, new byte[][]{parquetData, parquetData, parquetData, parquetData, parquetData}, false);
+
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withCopyInputRoot(inputRoot)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        new SendAndReceiveRequestBuilder()
+                                .execute(
+                                        parquetImportRequest,
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "69\r\n" +
+                                                "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤\uFE0F.parquet\"]}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n"
+                                );
+                        String pathSeparator = Os.isWindows() ? "//" : "/";
+                        testHttpClient.assertGetRegexp(
+                                "/api/v1/imports",
+                                "\\[\\{\"path\":\"dir3" + pathSeparator + "❤️\\.parquet\",\"name\":\"❤️\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"x2\\.parquet\",\"name\":\"x2\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"x1\\.parquet\",\"name\":\"x1\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"dir1" + pathSeparator + "dir2" + pathSeparator + "x4\\.parquet\",\"name\":\"x4\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"dir1" + pathSeparator + "x3\\.parquet\",\"name\":\"x3\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
+                                        "\\{\"path\":\"x\\.parquet\",\"name\":\"x\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}\\]");
                     });
         });
     }
@@ -175,7 +266,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -229,7 +320,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -268,7 +359,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -321,7 +412,7 @@ public class FileImportTest extends AbstractCairoTest {
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
                     .withWorkerCount(2)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
                     .run((engine, sqlExecutionContext) -> {
@@ -368,7 +459,7 @@ public class FileImportTest extends AbstractCairoTest {
 
             new HttpQueryTestBuilder()
                     .withTempFolder(root)
-                    .withCopyInputRoot(root)
+                    .withCopyInputRoot(inputRoot)
                     .withWorkerCount(1)
                     .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                     .withTelemetry(false)
@@ -384,38 +475,6 @@ public class FileImportTest extends AbstractCairoTest {
                                                 "\r\n" +
                                                 "4f\r\n" +
                                                 "{\"errors\":[{\"status\":\"403\",\"detail\":\"path traversal not allowed in filename\"}]}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n"
-                                );
-                    });
-        });
-    }
-
-    @Test
-    public void testParquetImportWithoutSqlCopyInputRoot() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x as (select cast(x as int) id from long_sequence(10))");
-            byte[] parquetData = createParquetFile("x");
-
-            byte[] parquetImportRequest = createMultipleParquetImportRequest(new String[]{"test.parquet"}, new byte[][]{parquetData}, false);
-
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withWorkerCount(1)
-                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                    .withTelemetry(false)
-                    .run((engine, sqlExecutionContext) -> {
-                        new SendAndReceiveRequestBuilder()
-                                .execute(
-                                        parquetImportRequest,
-                                        "HTTP/1.1 400 Bad request\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "4e\r\n" +
-                                                "{\"errors\":[{\"status\":\"400\",\"detail\":\"sql.copy.input.root is not configured\"}]}\r\n" +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -493,7 +552,8 @@ public class FileImportTest extends AbstractCairoTest {
                 PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                 TableReader reader = engine.getReader(tableName)
         ) {
-            path.of(root).concat(tableName).put(".parquet");
+            path.of(inputRoot).concat(tableName).put(".parquet");
+            Files.mkdirs(path, engine.getConfiguration().getMkDirMode());
             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
             PartitionEncoder.encode(partitionDescriptor, path);
             Assert.assertTrue("Parquet file should exist", Files.exists(path.$()));
