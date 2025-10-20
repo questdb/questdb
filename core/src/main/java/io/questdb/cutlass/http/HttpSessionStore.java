@@ -1,6 +1,5 @@
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -59,13 +58,9 @@ public interface HttpSessionStore {
      * @param httpContext HTTP context associated with the user's connection
      * @return session associated with the session id, or NO_SESSION if the session does not exist
      */
-    @NotNull
     SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     class SessionInfo implements PrincipalContext {
-        public static SessionInfo NO_SESSION = new SessionInfo(
-                "NO_SESSION", "NO_SESSION", null, SecurityContext.AUTH_TYPE_NONE, -1L, -1L
-        );
         private final byte authType;
         private final ObjList<CharSequence> groupsA = new ObjList<>();
         private final ObjList<CharSequence> groupsB = new ObjList<>();

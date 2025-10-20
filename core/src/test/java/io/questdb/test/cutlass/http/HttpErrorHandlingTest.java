@@ -34,7 +34,6 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
-import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -133,7 +132,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                             }
 
                                             @Override
-                                            public HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context) {
+                                            public CharSequence processSessionCookie(HttpConnectionContext context) {
                                                 return null;
                                             }
                                         };

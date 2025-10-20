@@ -43,7 +43,7 @@ public class DefaultHttpCookieHandler implements HttpCookieHandler {
     }
 
     @Override
-    public HttpSessionStore.SessionInfo processSessionCookie(HttpConnectionContext context) {
+    public CharSequence processSessionCookie(HttpConnectionContext context) {
         return null;
     }
 }

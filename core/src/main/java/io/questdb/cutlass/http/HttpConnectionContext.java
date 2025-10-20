@@ -72,7 +72,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static io.questdb.cutlass.http.HttpSessionStore.SessionInfo.NO_SESSION;
 import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
@@ -132,9 +131,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this(
                 configuration,
                 socketFactory,
-                DefaultHttpCookieHandler.INSTANCE,
-                DefaultHttpSessionStore.INSTANCE,
-                DefaultHttpHeaderParserFactory.INSTANCE,
                 HttpServer.NO_OP_CACHE
         );
     }
@@ -142,9 +138,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public HttpConnectionContext(
             HttpServerConfiguration configuration,
             SocketFactory socketFactory,
-            HttpCookieHandler cookieHandler,
-            HttpSessionStore sessionStore,
-            HttpHeaderParserFactory headerParserFactory,
             AssociativeCache<RecordCursorFactory> selectCache
     ) {
         super(
@@ -153,12 +146,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 LOG
         );
         this.configuration = configuration;
-        this.cookieHandler = cookieHandler;
-        this.sessionStore = sessionStore;
+        this.cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+        this.sessionStore = configuration.getFactoryProvider().getHttpSessionStore();
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
-        this.headerParser = headerParserFactory.newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
+        this.headerParser = configuration.getFactoryProvider().getHttpHeaderParserFactory().newParser(contextConfiguration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(contextConfiguration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(configuration);
@@ -498,12 +491,16 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final Clock clock = configuration.getHttpContextConfiguration().getNanosecondClock();
             final long authenticationStart = clock.getTicks();
 
-            final HttpSessionStore.SessionInfo sessionInfo = cookieHandler.processSessionCookie(this);
+            final CharSequence sessionId = cookieHandler.processSessionCookie(this);
+            HttpSessionStore.SessionInfo sessionInfo = null;
+            if (sessionId != null) {
+                sessionInfo = sessionStore.verifySession(sessionId, this);
+            }
 
             final PrincipalContext principalContext;
             if (authenticator.authenticate(headerParser)) {
                 principalContext = authenticator;
-            } else if (sessionInfo != null && sessionInfo != NO_SESSION) {
+            } else if (sessionInfo != null) {
                 principalContext = sessionInfo;
             } else {
                 // authenticationNanos stays 0, when it fails this value is irrelevant
@@ -515,18 +512,23 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
 
             if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
+                // the client can request a session by sending 'session=true',
+                // and close the session by sending 'session=false'
+                // we do not create a session for clients by default to avoid excessive session creating
+                // for clients which do not support/care about cookies, such as apps using the REST API
+                final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
+
                 // create session if
                 // - we do not have one yet and the client requested one with 'session=true' or
-                // - sent an expired/evicted session id or
+                // - the client sent an expired/evicted session id or
                 // - changed credentials without sending logout
-                final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
                 if (
-                        (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionInfo == null)
-                                || (sessionInfo == NO_SESSION)
+                        (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionId == null)
+                                || (sessionId != null && sessionInfo == null)
                                 || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
                 ) {
                     sessionStore.createSession(authenticator, this);
-                } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null && sessionInfo != NO_SESSION) {
+                } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
                     // close session if client requested it
                     // note that this request is still going to be processed
                     sessionStore.destroySession(sessionInfo.getSessionId(), this);

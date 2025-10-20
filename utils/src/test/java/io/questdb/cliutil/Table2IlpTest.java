@@ -31,11 +31,8 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorImpl;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
@@ -488,16 +485,10 @@ public class Table2IlpTest {
             return null;
         }
 
-        final HttpSessionStore sessionStore = serverConfiguration.getFactoryProvider().getHttpSessionStore();
-        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 workerPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
-                cookieHandler,
-                sessionStore,
-                headerParserFactory
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory()
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),

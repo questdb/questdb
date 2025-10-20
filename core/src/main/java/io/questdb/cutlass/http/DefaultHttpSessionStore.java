@@ -4,8 +4,6 @@ import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cutlass.http.HttpSessionStore.SessionInfo.NO_SESSION;
-
 public class DefaultHttpSessionStore implements HttpSessionStore {
     public static final DefaultHttpSessionStore INSTANCE = new DefaultHttpSessionStore();
 
@@ -31,7 +29,7 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public @NotNull SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
-        return NO_SESSION;
+    public SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+        return null;
     }
 }

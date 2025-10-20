@@ -71,29 +71,10 @@ public class HttpServer implements Closeable {
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
 
-    // used for min http server only
-    public HttpServer(
-            HttpServerConfiguration configuration,
-            WorkerPool pool,
-            SocketFactory socketFactory
-    ) {
-        this(
-                configuration,
-                pool,
-                socketFactory,
-                DefaultHttpCookieHandler.INSTANCE,
-                DefaultHttpSessionStore.INSTANCE,
-                DefaultHttpHeaderParserFactory.INSTANCE
-        );
-    }
-
     public HttpServer(
             HttpServerConfiguration configuration,
             WorkerPool networkSharedPool,
-            SocketFactory socketFactory,
-            HttpCookieHandler cookieHandler,
-            HttpSessionStore sessionStore,
-            HttpHeaderParserFactory headerParserFactory
+            SocketFactory socketFactory
     ) {
         this.workerCount = networkSharedPool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
@@ -114,7 +95,7 @@ public class HttpServer implements Closeable {
             this.selectCache = NO_OP_CACHE;
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, cookieHandler, sessionStore, headerParserFactory, selectCache);
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
         networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
@@ -364,13 +345,10 @@ public class HttpServer implements Closeable {
         public HttpContextFactory(
                 HttpServerConfiguration configuration,
                 SocketFactory socketFactory,
-                HttpCookieHandler cookieHandler,
-                HttpSessionStore sessionStore,
-                HttpHeaderParserFactory headerParserFactory,
                 AssociativeCache<RecordCursorFactory> selectCache
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, socketFactory, cookieHandler, sessionStore, headerParserFactory, selectCache),
+                    () -> new HttpConnectionContext(configuration, socketFactory, selectCache),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }
