@@ -77,7 +77,7 @@ public class HttpRequestValidator {
             requestType |= requestHeader.isPostRequest() ? METHOD_POST : METHOD_PUT;
         } else if (requestHeader.isDeleteRequest()) {
             if (chunked || multipart || contentLength > 0) {
-                rejectProcessor.reject(HTTP_BAD_REQUEST, "GET request method cannot have content");
+                rejectProcessor.reject(HTTP_BAD_REQUEST, "DELETE request method cannot have content");
                 return;
             }
             requestType = METHOD_DELETE;
