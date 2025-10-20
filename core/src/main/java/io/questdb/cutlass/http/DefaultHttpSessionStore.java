@@ -29,6 +29,10 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
+    public void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
+    }
+
+    @Override
     public SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         return null;
     }

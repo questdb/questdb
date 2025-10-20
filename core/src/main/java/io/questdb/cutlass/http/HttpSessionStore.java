@@ -55,6 +55,14 @@ public interface HttpSessionStore {
     }
 
     /**
+     * Update the external groups of the user
+     *
+     * @param principal entity name
+     * @param groups    external groups of entity
+     */
+    void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups);
+
+    /**
      * Verify session id and return the associated session if the session is valid.
      *
      * @param sessionId   session id to verify
