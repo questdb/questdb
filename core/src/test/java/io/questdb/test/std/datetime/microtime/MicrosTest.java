@@ -678,6 +678,10 @@ public class MicrosTest {
         // HTTP 1.0 format with 2-digit year
         Assert.assertEquals(1760975876000000L, parseHTTP("Mon, 20-Oct-25 15:57:56 GMT"));
         Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13-Apr-25 11:54:08 GMT"));
+        // ANSI C asctime format
+        Assert.assertEquals(1760975876000000L, parseHTTP("Mon Oct 20 15:57:56 2025"));
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun Apr 13 11:54:08 2025"));
+        Assert.assertEquals(784111777000000L, parseHTTP("Sun Nov  6 08:49:37 1994"));
     }
 
     @Test

@@ -590,6 +590,26 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testCookiesWithAnsiCFormat() {
+        // ANSI C asctime format (e.g., Mon Oct 20 15:57:56 2025)
+        String v = "GET /ok HTTP/1.1\r\n" +
+                "Set-Cookie: token=xyz789; Domain=test.org; Path=/api; Expires=Sun Nov  6 08:49:37 1994\r\n" +
+                "\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            HttpCookie cookie = hp.getCookie(new Utf8String("token"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("xyz789", cookie.value);
+            TestUtils.assertEquals("test.org", cookie.domain);
+            TestUtils.assertEquals("/api", cookie.path);
+            Assert.assertEquals(784111777000000L, cookie.expires);
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testCookiesWithTheSameKeys() {
         // reorder the cookie attributes to make sure they don't affect each other
         assertPreferredCookie(
