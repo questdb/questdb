@@ -1035,7 +1035,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (sink.isEmpty()) {
+                if (sink.length() == 0) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);
