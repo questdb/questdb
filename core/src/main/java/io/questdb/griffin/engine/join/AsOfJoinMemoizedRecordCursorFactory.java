@@ -329,14 +329,13 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (columnAccessHelper.isShortCircuit(masterRecord)) {
+            int slaveSymbolKey = columnAccessHelper.getSlaveKey(masterRecord);
+            if (slaveSymbolKey == StaticSymbolTable.VALUE_NOT_FOUND) {
                 // The master record's symbol does not match any symbol in the slave table,
                 // we can immediately report no match and return.
                 record.hasSlave(false);
                 return;
             }
-            final CharSequence masterSymbolValue = columnAccessHelper.getMasterValue(masterRecord);
-            final int slaveSymbolKey = symbolTable.keyOf(masterSymbolValue);
             final long rememberedRowId, validityPeriodStart, validityPeriodEnd;
             MapKey rememberedKey = rememberedSymbols.withKey();
             rememberedKey.putInt(slaveSymbolKey);
