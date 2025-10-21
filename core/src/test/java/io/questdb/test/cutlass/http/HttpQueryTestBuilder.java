@@ -43,8 +43,9 @@ import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.parquet.CopyExportRequestJob;
+import io.questdb.cutlass.http.processors.v1.ExportsRouter;
 import io.questdb.cutlass.http.processors.v1.ImportsRouter;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -213,18 +214,30 @@ public class HttpQueryTestBuilder {
             });
 
             httpServer.bind(new HttpRequestHandlerFactory() {
-                    @Override
-                    public ObjList<String> getUrls() {
-                        return ImportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
-                    }
+                @Override
+                public ObjList<String> getUrls() {
+                    return ImportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
+                }
 
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new ImportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-                });
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new ImportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                }
+            });
 
-                this.sqlExecutionContexts = new ObjList<>();
+            httpServer.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjList<String> getUrls() {
+                    return ExportsRouter.getRoutes(httpConfiguration.getContextPathApiV1());
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new ExportsRouter(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                }
+            });
+
+            this.sqlExecutionContexts = new ObjList<>();
 
             httpServer.bind(new HttpRequestHandlerFactory() {
                 @Override

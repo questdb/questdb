@@ -60,13 +60,13 @@ import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -74,7 +74,6 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final ActiveConnectionTracker activeConnectionTracker;
 
     // used for min http server only
     public HttpServer(
@@ -426,17 +425,6 @@ public class HttpServer implements Closeable {
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
             final DirectUtf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
             HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
-
-            if (requestHandler == null) {
-                if (Utf8s.startsWith(normalizedUrl, HttpConstants.URL_PREFIX_API_V1)) { // configurable
-                    // fallback to find most specific selector
-                    DirectUtf8String partialUrl = routingUrl.get().of(normalizedUrl.lo(), normalizedUrl.hi());
-                    int hi;
-                    while (requestHandler == null && (hi = Utf8s.lastIndexOfAscii(partialUrl, '/')) > 1) {
-                        requestHandler = requestHandlerMap.get(partialUrl.setHi(hi));
-                    }
-                }
-            }
             return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }

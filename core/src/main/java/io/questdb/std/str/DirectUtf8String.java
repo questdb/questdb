@@ -94,11 +94,6 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         return lo;
     }
 
-    public DirectUtf8String setHi(long hi) {
-        this.hi = hi;
-        return this;
-    }
-
     public void shl(long delta) {
         this.lo -= delta;
         this.hi -= delta;

@@ -859,7 +859,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, new Utf8String("Request range not satisfiable"));
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
-        httpStatusMap.put(HTTP_CREATED, new Utf8String("Created"));
         httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
         httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
     }
