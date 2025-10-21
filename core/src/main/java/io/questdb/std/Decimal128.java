@@ -546,6 +546,22 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
+     * Adds a 64-bit two's-complement value {@code b} to {@code result} in place without performing overflow checks.
+     * <p>
+     * The {@code long} operand is treated as a Decimal64 that already shares the same scale as {@code result};
+     * callers must guarantee the scale alignment and that the sum remains representable as a {@link Decimal128}.
+     *
+     * @param result accumulator mutated with the addition
+     * @param b      Decimal64 addend stored in a signed 64-bit integer
+     */
+    public static void uncheckedAdd(Decimal128 result, long b) {
+        long r = result.low + b;
+        long carry = hasCarry(result.low, r) ? 1L : 0L;
+        result.low = r;
+        result.high += carry + (b < 0 ? -1L : 0L);
+    }
+
+    /**
      * Add another Decimal128 to this one (in-place)
      *
      * @param other the Decimal128 to add

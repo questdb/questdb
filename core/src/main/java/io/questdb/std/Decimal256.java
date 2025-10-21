@@ -686,6 +686,36 @@ public class Decimal256 implements Sinkable, Decimal {
     }
 
     /**
+     * Adds the two's-complement representation of {@link Decimal128} {@code b} to {@code result} in place.
+     * <p>
+     * The 128-bit operand is sign-extended to 256 bits before performing the addition. This helper assumes
+     * that both operands already share the same scale and that the resulting value fits within a {@link Decimal256};
+     * callers must enforce those preconditions because no overflow or scale validation is performed here.
+     *
+     * @param result the accumulator that receives the sum (updated in place)
+     * @param b      the 128-bit value to add, interpreted using two's-complement semantics
+     */
+    public static void uncheckedAdd(Decimal256 result, Decimal128 b) {
+        long sign = b.getHigh() < 0 ? -1L : 0L;
+        long r = result.ll + b.getLow();
+        long carry = hasCarry(result.ll, r) ? 1L : 0L;
+        result.ll = r;
+
+        long t = result.lh + carry;
+        carry = hasCarry(result.lh, t) ? 1L : 0L;
+        r = t + b.getHigh();
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.lh = r;
+
+        t = result.hl + carry;
+        carry = hasCarry(result.hl, t) ? 1L : 0L;
+        r = t + sign;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.hl = r;
+        result.hh = result.hh + carry + sign;
+    }
+
+    /**
      * In-place addition.
      *
      * @throws NumericException if overflow occurs

@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
@@ -2660,6 +2661,37 @@ public class Decimal256Test {
         a.setScale(Decimal256.MAX_SCALE);
         a.subtract(0, 0, 0, 1, Decimal256.MAX_SCALE);
         Assert.assertEquals("0.9999999999999999999999999999999999999999999999999999999999999999999999999998", a.toString());
+    }
+
+    @Test
+    public void testUncheckedAddDecimal128HighWordContribution() {
+        Decimal256 result = Decimal256.fromLong(0, 0);
+        Decimal128 addend = Decimal128.fromBigDecimal(new BigDecimal("18446744073709551616"));
+
+        Decimal256.uncheckedAdd(result, addend);
+
+        Assert.assertEquals("18446744073709551616", result.toString());
+    }
+
+    @Test
+    public void testUncheckedAddDecimal128KeepsScale() {
+        Decimal256 result = Decimal256.fromLong(150, 2);
+        Decimal128 addend = Decimal128.fromLong(25, 2);
+
+        Decimal256.uncheckedAdd(result, addend);
+
+        Assert.assertEquals(2, result.getScale());
+        Assert.assertEquals("1.75", result.toString());
+    }
+
+    @Test
+    public void testUncheckedAddDecimal128NegativeSignExtension() {
+        Decimal256 result = Decimal256.fromLong(50, 2);
+        Decimal128 addend = Decimal128.fromLong(-125, 2);
+
+        Decimal256.uncheckedAdd(result, addend);
+
+        Assert.assertEquals("-0.75", result.toString());
     }
 
     private void printPowerTable(long[][] table) {

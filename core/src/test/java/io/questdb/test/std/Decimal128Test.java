@@ -1659,8 +1659,6 @@ public class Decimal128Test {
         Assert.assertTrue(d256.isNull());
     }
 
-    // ofString tests
-
     @Test
     public void testToDecimal256WithHighScale() {
         Decimal128 d128 = Decimal128.fromDouble(1.23456789012345678, 17);
@@ -1689,6 +1687,8 @@ public class Decimal128Test {
         Decimal128 negative = new Decimal128(-1, -1, 2); // Two's complement representation
         Assert.assertTrue(negative.toDouble() < 0);
     }
+
+    // ofString tests
 
     @Test
     public void testToSinkBasic() {
@@ -1816,8 +1816,6 @@ public class Decimal128Test {
         Assert.assertEquals("0.000", sink.toString());
     }
 
-    // toDecimal256 tests
-
     @Test
     public void testToSinkZeroScale() {
         Decimal128 decimal = Decimal128.fromLong(123, 0);
@@ -1835,6 +1833,40 @@ public class Decimal128Test {
 
         Assert.assertTrue(str.contains("123"));
         Assert.assertTrue(str.contains("45"));
+    }
+
+    @Test
+    public void testUncheckedAddDecimal64CarryIntoHigh() {
+        Decimal128 result = new Decimal128(0, -2L, 0);
+
+        Decimal128.uncheckedAdd(result, 3L);
+
+        Assert.assertEquals(1L, result.getHigh());
+        Assert.assertEquals(1L, result.getLow());
+        Assert.assertEquals(0, result.toBigDecimal().compareTo(new BigDecimal("18446744073709551617")));
+    }
+
+    // toDecimal256 tests
+
+    @Test
+    public void testUncheckedAddDecimal64KeepsScale() {
+        Decimal128 result = Decimal128.fromLong(150, 2);
+
+        Decimal128.uncheckedAdd(result, 25);
+
+        Assert.assertEquals(2, result.getScale());
+        Assert.assertEquals(0, result.toBigDecimal().compareTo(new BigDecimal("1.75")));
+    }
+
+    @Test
+    public void testUncheckedAddDecimal64NegativeSignExtension() {
+        Decimal128 result = Decimal128.fromLong(50, 2);
+
+        Decimal128.uncheckedAdd(result, -125);
+
+        Assert.assertEquals(2, result.getScale());
+        Assert.assertEquals(0, result.toBigDecimal().compareTo(new BigDecimal("-0.75")));
+        Assert.assertEquals(-1L, result.getHigh());
     }
 
     @Test
