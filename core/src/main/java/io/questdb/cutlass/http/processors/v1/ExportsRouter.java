@@ -26,7 +26,6 @@ package io.questdb.cutlass.http.processors.v1;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.HttpKeywords;
-import io.questdb.cutlass.http.HttpMultipartContentProcessor;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
@@ -37,10 +36,8 @@ import io.questdb.std.str.DirectUtf8Sequence;
 public class ExportsRouter implements HttpRequestHandler {
     private final HttpRequestProcessor deleteProcessor;
     private final HttpRequestProcessor getProcessor;
-    private final HttpMultipartContentProcessor postProcessor;
 
     public ExportsRouter(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration) {
-        postProcessor = new FileUploadProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
         getProcessor = new FileGetProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
         deleteProcessor = new FileDeleteProcessor(cairoEngine, configuration, FilesRootDir.EXPORTS);
     }
@@ -56,9 +53,7 @@ public class ExportsRouter implements HttpRequestHandler {
     @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         DirectUtf8Sequence method = requestHeader.getMethod();
-        if (HttpKeywords.isPOST(method)) {
-            return postProcessor;
-        } else if (HttpKeywords.isGET(method)) {
+        if (HttpKeywords.isGET(method)) {
             return getProcessor;
         } else if (HttpKeywords.isDELETE(method)) {
             return deleteProcessor;
