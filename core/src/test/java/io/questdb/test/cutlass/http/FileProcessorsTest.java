@@ -330,7 +330,6 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
                         int fileCountAfterDelete = responseAfterDelete.split("\\{\"path\":").length - 1;
                         Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
-                        
                         testHttpClient.assertDelete(
                                 "/api/v1/imports?file=nonExists",
                                 "{\"error\":\"file(s) not found\"}",
