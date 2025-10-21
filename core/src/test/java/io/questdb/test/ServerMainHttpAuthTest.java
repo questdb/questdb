@@ -28,16 +28,22 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.HttpConstants;
+import io.questdb.cutlass.http.HttpCookie;
+import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.test.cutlass.http.SettingsEndpointTest.assertSettingsRequest;
+import static org.junit.Assert.*;
 
 public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -77,6 +83,84 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 // no need to start the server, just check that the configuration is loaded
                 Assert.assertEquals(USER, serverMain.getConfiguration().getHttpServerConfiguration().getUsername());
                 Assert.assertEquals(PASSWORD, serverMain.getConfiguration().getHttpServerConfiguration().getPassword());
+            }
+        });
+    }
+
+    @Test
+    public void testHttpServerAccess_authWithSession() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                final String sessionId;
+
+                // authenticate and open the session
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
+                             .GET()
+                             .url("/exec")
+                             .query("query", "select 1")
+                             .query("session", "true")
+                             .authBasic(USER, PASSWORD)
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("200", statusCode);
+                    sessionId = assertSessionCookie(responseHeaders);
+                }
+
+                final HttpSessionStore sessionStore = serverMain.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
+                Assert.assertNotNull(sessions);
+                Assert.assertEquals(1, sessions.size());
+                Assert.assertEquals(sessionId, sessions.get(0).getSessionId());
+
+                // use the session id without the auth header
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
+                             .GET()
+                             .url("/exec")
+                             .query("query", "select 1")
+                             .setCookie(HttpConstants.SESSION_COOKIE_NAME, sessionId)
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("200", statusCode);
+                }
+
+                // send wrong session id
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
+                             .GET()
+                             .url("/exec")
+                             .query("query", "select 1")
+                             .setCookie(HttpConstants.SESSION_COOKIE_NAME, sessionId + "whatever")
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("401", statusCode);
+                }
+
+                // close the session
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
+                             .GET()
+                             .url("/exec")
+                             .query("query", "select 1")
+                             .query("session", "false")
+                             .setCookie(HttpConstants.SESSION_COOKIE_NAME, sessionId)
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("200", statusCode);
+                }
+
+                Assert.assertEquals(0, sessions.size());
             }
         });
     }
@@ -220,5 +304,15 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    private static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
+        final HttpCookie sessionCookie = responseHeaders.getCookie(SESSION_COOKIE_NAME_UTF8);
+        assertNotNull(sessionCookie);
+        assertEquals(SESSION_COOKIE_NAME, sessionCookie.cookieName.toString());
+        assertTrue(sessionCookie.httpOnly);
+        assertEquals(-1L, sessionCookie.expires);
+        assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
+        return sessionCookie.value.toString();
     }
 }
