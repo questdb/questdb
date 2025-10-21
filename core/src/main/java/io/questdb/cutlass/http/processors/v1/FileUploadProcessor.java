@@ -1,7 +1,6 @@
 package io.questdb.cutlass.http.processors.v1;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpKeywords;
@@ -21,6 +20,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -46,6 +46,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     private HttpConnectionContext context;
     private State state;
 
+
     /**
      * Handles basic file upload (mainly for parquet, csv).
      * Returns:
@@ -56,8 +57,8 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
      * 500 for other errors
      */
     public FileUploadProcessor(CairoEngine cairoEngine, JsonQueryProcessorConfiguration configuration, FilesRootDir filesRoot) {
-        engine = cairoEngine;
-        requiredAuthType = configuration.getRequiredAuthType();
+        this.engine = cairoEngine;
+        this.requiredAuthType = configuration.getRequiredAuthType();
         this.filesRoot = filesRoot;
     }
 
@@ -70,22 +71,32 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     public void onChunk(long lo, long hi) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (hi > lo) {
             state.of(lo, hi);
+            FilesFacade ff = state.ff;
 
             // on first entry, open file for writing
             if (state.fd == -1) {
-                TableUtils.createDirsOrFail(state.ff, state.tempPath, engine.getConfiguration().getMkDirMode());
-                state.fd = Files.openRW(state.tempPath.$());
+                if (ff.mkdirs(state.tempPath, engine.getConfiguration().getMkDirMode()) != 0) {
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put("could not create directories [path=").put(state.tempPath).put(", errno=").put(Os.errno()).put(']');
+                    sendErrorWithSuccessInfo(context, 500, sink);
+                    return;
+                }
+                state.fd = ff.openRW(state.tempPath.$(), engine.getConfiguration().getWriterFileOpenOpts());
                 if (state.fd == -1) {
-                    sendErrorWithSuccessInfo(context, 500, "cannot open file for writing [path=" + state.tempPath + ']');
+                    StringSink sink = Misc.getThreadLocalSink();
+                    sink.put("cannot open file for writing [path=").put(state.tempPath).put(']');
+                    sendErrorWithSuccessInfo(context, 500, sink);
                     return;
                 }
                 state.written = 0;
             }
 
             final long chunkSize = hi - lo;
-            long bytesWritten = Files.write(state.fd, lo, chunkSize, state.written);
+            long bytesWritten = ff.write(state.fd, lo, chunkSize, state.written);
             if (bytesWritten != chunkSize) {
-                sendErrorWithSuccessInfo(context, 500, "failed to write chunk [expected=" + chunkSize + ", actual=" + bytesWritten + ']');
+                StringSink sink = Misc.getThreadLocalSink();
+                sink.put("failed to write chunk [expected=").put(chunkSize).put(']').put(", actual=").put(bytesWritten).put(']');
+                sendErrorWithSuccessInfo(context, 500, sink);
                 return;
             }
             state.written += chunkSize;
@@ -127,21 +138,29 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
     @Override
     public void onPartEnd() throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (state.fd != -1) {
-            Files.close(state.fd);
+            state.ff.close(state.fd);
             state.fd = -1;
         }
 
         if (state.ff.exists(state.realPath.$())) {
             if (!state.overwrite) {
                 state.ff.removeQuiet(state.tempPath.$());
-                sendErrorWithSuccessInfo(context, 409, "file already exists and overwriting is disabled [path=" + state.realPath + ", overwrite=false]");
+                StringSink sink = Misc.getThreadLocalSink();
+                sink.put("ile already exists and overwriting is disabled [path=").put(state.tempPath).put(", overwrite=false]");
+                sendErrorWithSuccessInfo(context, 409, sink);
                 return;
             } else {
                 state.ff.removeQuiet(state.realPath.$());
             }
         }
 
-        TableUtils.createDirsOrFail(state.ff, state.realPath, engine.getConfiguration().getMkDirMode());
+        if (state.ff.mkdirs(state.realPath, engine.getConfiguration().getMkDirMode()) != 0) {
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put("could not create directories [path=").put(state.realPath).put(", errno=").put(Os.errno()).put(']');
+            sendErrorWithSuccessInfo(context, 500, sink);
+            return;
+        }
+
         int renameResult = state.ff.rename(state.tempPath.$(), state.realPath.$());
         if (renameResult != Files.FILES_RENAME_OK) {
             int errno = state.ff.errno();
@@ -150,8 +169,9 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                     .$(", errno=").$(errno)
                     .$(", renameResult=").$(renameResult).I$();
             state.ff.remove(state.tempPath.$());
-            sendErrorWithSuccessInfo(context, 500, "cannot rename temporary file [tempPath=" + state.tempPath +
-                    ", realPath=" + state.realPath + ", errno=" + errno + ", renameResult=" + renameResult + ']');
+            StringSink sink = Misc.getThreadLocalSink();
+            sink.put("cannot rename temporary file [tempPath=").put(state.tempPath).put(", realPath=").put(state.realPath).put(", errno=").put(errno).put(", renameResult=").put(renameResult).put(']');
+            sendErrorWithSuccessInfo(context, 500, sink);
             return;
         }
 
@@ -299,7 +319,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             successfulFiles.clear();
             currentFilename = null;
             if (fd != -1) {
-                Files.close(fd);
+                ff.close(fd);
                 fd = -1;
             }
             importId.clear();
@@ -320,7 +340,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
         public void of(DirectUtf8Sequence filename, CharSequence root) {
             // clear prev
             if (fd != -1) {
-                Files.close(fd);
+                ff.close(fd);
                 fd = -1;
             }
             if (importId.isEmpty()) {

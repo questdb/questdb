@@ -38,8 +38,7 @@ public enum FilesRootDir {
     public static CharSequence getRootPath(FilesRootDir type, CairoConfiguration configuration) {
         return switch (type) {
             case IMPORTS -> configuration.getSqlCopyInputRoot();
-            // todo fix to real export root when export merged
-            case EXPORTS -> configuration.getSqlCopyInputRoot();
+            case EXPORTS -> configuration.getSqlCopyExportRoot();
         };
     }
 
