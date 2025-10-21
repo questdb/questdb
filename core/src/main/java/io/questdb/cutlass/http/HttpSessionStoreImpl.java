@@ -1,0 +1,185 @@
+package io.questdb.cutlass.http;
+
+import io.questdb.ServerConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.security.PrincipalContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.Iterator;
+import java.util.Map;
+
+import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
+
+public class HttpSessionStoreImpl implements HttpSessionStore {
+    private static final Log LOG = LogFactory.getLog(HttpSessionStoreImpl.class);
+    private static final int MAX_GENERATION_ATTEMPTS = 5;
+    private static final int SESSION_ID_SIZE_BYTES = 32;
+    protected final ConcurrentHashMap<ObjList<SessionInfo>> sessionsByEntity = new ConcurrentHashMap<>();
+    private final long evictionCheckInterval;
+    private final MicrosecondClock microsClock;
+    private final long rotatedSessionEvictionTime;
+    private final long rotationPeriod;
+    private final long sessionTimeout;
+    private final ConcurrentHashMap<SessionInfo> sessionsById = new ConcurrentHashMap<>();
+    private long nextEvictionCheckAt;
+    private TokenGenerator tokenGenerator = new TokenGeneratorImpl(SESSION_ID_PREFIX, SESSION_ID_SIZE_BYTES);
+
+    public HttpSessionStoreImpl(ServerConfiguration serverConfiguration) {
+        microsClock = serverConfiguration.getCairoConfiguration().getMicrosecondClock();
+        sessionTimeout = serverConfiguration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
+        rotationPeriod = sessionTimeout / 2;
+        rotatedSessionEvictionTime = rotationPeriod / 2;
+        evictionCheckInterval = sessionTimeout / 10;
+        nextEvictionCheckAt = microsClock.getTicks() + evictionCheckInterval;
+    }
+
+    @Override
+    public void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext) {
+        // if multiple queries are fired from the client parallel,
+        // we can end up creating more sessions for the same client.
+        // however, the inactive ones will time out eventually, and will be closed
+        final String sessionId = generateSessionId();
+        final SessionInfo session = newSession(principalContext, sessionId);
+        registerSession(session);
+        LOG.info().$("session registered [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
+
+        final StringSink sessionIdSink = httpContext.getSessionIdSink();
+        sessionIdSink.clear();
+        sessionIdSink.put(sessionId);
+    }
+
+    @Override
+    public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+        synchronized (this) {
+            final SessionInfo session = sessionsById.remove(sessionId);
+            if (session != null) {
+                // leaving the session list in the map to avoid creating garbage when user logs in again
+                sessionsByEntity.get(session.getPrincipal()).remove(session);
+                LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
+            }
+        }
+    }
+
+    @TestOnly
+    @Override
+    public SessionInfo getSession(@NotNull CharSequence sessionId) {
+        return sessionsById.get(sessionId);
+    }
+
+    @TestOnly
+    @Override
+    public @Nullable ObjList<SessionInfo> getSessions(@NotNull CharSequence principal) {
+        return sessionsByEntity.get(principal);
+    }
+
+    @TestOnly
+    @Override
+    public void setTokenGenerator(TokenGenerator tokenGenerator) {
+        this.tokenGenerator = tokenGenerator;
+    }
+
+    @Override
+    public SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+        final SessionInfo sessionInfo = sessionsById.get(sessionId);
+        if (sessionInfo == null) {
+            // no session
+            return null;
+        }
+        final long currentMicros = microsClock.getTicks();
+        if (sessionInfo.getExpiresAt() < currentMicros) {
+            // session expired, remove it
+            destroySession(sessionId, httpContext);
+            return null;
+        } else {
+            // extend the lifetime of the session
+            final long expiresAt = currentMicros + sessionTimeout;
+            sessionInfo.setExpiresAt(expiresAt);
+        }
+        if (sessionInfo.getRotateAt() < currentMicros) {
+            final String newSessionId = generateSessionId();
+            final long nextRotationAt = currentMicros + rotationPeriod;
+            sessionInfo.rotate(newSessionId, nextRotationAt);
+            sessionsById.put(newSessionId, sessionInfo);
+            LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(sessionInfo.getPrincipal()).$(']').$();
+
+            final StringSink sessionIdSink = httpContext.getSessionIdSink();
+            sessionIdSink.clear();
+            sessionIdSink.put(newSessionId);
+        }
+        if (nextEvictionCheckAt < currentMicros) {
+            // evict expired sessions periodically
+            evictExpiredSessions(currentMicros);
+            nextEvictionCheckAt = currentMicros + evictionCheckInterval;
+        }
+        return sessionInfo;
+    }
+
+    private synchronized void evictExpiredSessions(long currentMicros) {
+        final Iterator<Map.Entry<CharSequence, SessionInfo>> iterator = sessionsById.entrySet().iterator();
+        while (iterator.hasNext()) {
+            final Map.Entry<CharSequence, SessionInfo> entry = iterator.next();
+            final CharSequence sessionId = entry.getKey();
+            final SessionInfo sessionInfo = entry.getValue();
+            if (sessionInfo.getExpiresAt() < currentMicros) {
+                // expired session
+                sessionsByEntity.get(sessionInfo.getPrincipal()).remove(sessionInfo);
+                iterator.remove();
+                LOG.info().$("expired session evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
+            } else if (!Chars.equals(sessionId, sessionInfo.getSessionId())) {
+                // rotated session id
+                final long evictRotatedAt = sessionInfo.getRotateAt() - rotatedSessionEvictionTime;
+                if (evictRotatedAt < currentMicros) {
+                    // rotation tolerance period is over, old session id is not valid anymore
+                    iterator.remove();
+                    LOG.info().$("rotated session id evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
+                }
+            }
+        }
+    }
+
+    // although only reads the concurrent map, it is synchronized to protect the
+    // token generator which is not threadsafe, and it also protects the collision check
+    private synchronized String generateSessionId() {
+        for (int i = 0; i < MAX_GENERATION_ATTEMPTS; i++) {
+            final CharSequence sessionId = tokenGenerator.newToken();
+            if (!sessionsById.containsKey(sessionId)) {
+                return sessionId.toString();
+            }
+        }
+        // all attempts led to collisions, unlikely to happen, but fail anyway
+        throw CairoException.nonCritical().put("session id collision occurred, try one more time");
+    }
+
+    private SessionInfo newSession(PrincipalContext principalContext, @NotNull String sessionId) {
+        final long currentMicros = microsClock.getTicks();
+        return new SessionInfo(
+                sessionId,
+                Chars.toString(principalContext.getPrincipal()),
+                principalContext.getGroups(),
+                principalContext.getAuthType(),
+                currentMicros + sessionTimeout,
+                currentMicros + rotationPeriod
+        );
+    }
+
+    private synchronized void registerSession(SessionInfo session) {
+        sessionsById.put(session.getSessionId(), session);
+
+        final String entityName = session.getPrincipal();
+        ObjList<SessionInfo> sessions = sessionsByEntity.get(entityName);
+        if (sessions == null) {
+            sessions = new ObjList<>();
+            sessionsByEntity.put(entityName, sessions);
+        }
+        sessions.add(session);
+    }
+}

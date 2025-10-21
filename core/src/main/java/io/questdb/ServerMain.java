@@ -30,25 +30,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
-import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
-import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
-import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -59,7 +45,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
@@ -68,8 +53,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.File;
-import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -141,46 +124,6 @@ public class ServerMain implements Closeable {
             protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedQueryWorkerCount) {
             }
         };
-    }
-
-    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
-        String username = httpConfig.getUsername();
-        if (Chars.empty(username)) {
-            return DefaultHttpAuthenticatorFactory.INSTANCE;
-        }
-        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
-    }
-
-    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
-        LineAuthenticatorFactory authenticatorFactory;
-        // create default authenticator for Line TCP protocol
-        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
-            // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getDbRoot()).getParent();
-            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
-        } else {
-            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
-        }
-        return authenticatorFactory;
-    }
-
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGConfiguration pgConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
-            boolean pgWireReadOnlyContext = pgConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
-        }
     }
 
     public static void main(String[] args) {

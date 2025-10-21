@@ -7,7 +7,7 @@ import org.jetbrains.annotations.NotNull;
 public class DefaultHttpSessionStore implements HttpSessionStore {
     public static final DefaultHttpSessionStore INSTANCE = new DefaultHttpSessionStore();
 
-    private DefaultHttpSessionStore() {
+    protected DefaultHttpSessionStore() {
     }
 
     @Override
@@ -26,10 +26,6 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     @Override
     public ObjList<SessionInfo> getSessions(@NotNull CharSequence principal) {
         return null;
-    }
-
-    @Override
-    public void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
     }
 
     @Override

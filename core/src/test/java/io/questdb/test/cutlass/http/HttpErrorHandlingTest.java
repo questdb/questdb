@@ -122,18 +122,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                     public @NotNull HttpCookieHandler getHttpCookieHandler() {
                                         return new HttpCookieHandler() {
                                             @Override
-                                            public boolean parseCookies(HttpConnectionContext context) {
-                                                return true;
-                                            }
-
-                                            @Override
                                             public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public CharSequence processSessionCookie(HttpConnectionContext context) {
-                                                return null;
                                             }
                                         };
                                     }

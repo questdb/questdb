@@ -34,7 +34,9 @@ public final class HttpConstants {
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    public static final char COOKIE_SEPARATOR = ';';
     public static final char COOKIE_VALUE_SEPARATOR = '=';
+    public static final String DELETED_COOKIE = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
@@ -55,6 +57,11 @@ public final class HttpConstants {
     public static final String METHOD_POST = "POST";
     @SuppressWarnings("unused")
     public static final String METHOD_PUT = "PUT";
+    public static final long SESSION_COOKIE_MAX_AGE_SECONDS = 2592000L;
+    public static final String SESSION_COOKIE_ATTRIBUTES = "; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_COOKIE_MAX_AGE_SECONDS;
+    public static final String SESSION_COOKIE_NAME = "qdb_session";
+    public static final Utf8String SESSION_COOKIE_NAME_UTF8 = new Utf8String(SESSION_COOKIE_NAME);
+    public static final String SESSION_ID_PREFIX = "qs1";
     public static final Utf8String URL_PARAM_ATOMICITY = new Utf8String("atomicity");
     public static final Utf8String URL_PARAM_ATTACHMENT = new Utf8String("attachment");
     public static final Utf8String URL_PARAM_COLS = new Utf8String("cols");
