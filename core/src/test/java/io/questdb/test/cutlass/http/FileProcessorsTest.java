@@ -483,7 +483,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "69\r\n" +
-                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\\\x3.parquet\",\"dir1\\\\dir2\\\\x4.parquet\",\"dir3\\\\❤️.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\x3.parquet\",\"dir1\\dir2\\x4.parquet\",\"dir3\\❤️.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
