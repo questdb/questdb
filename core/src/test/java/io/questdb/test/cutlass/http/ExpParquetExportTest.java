@@ -829,7 +829,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 try {
                     serverMain.getEngine().execute("create table test (x int)");
                     Assert.fail("read only should fail creating a table");
-                } catch (AssertionError ex) {
+                } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getMessage(), "Could not create table, instance is read only");
                 }
             }
