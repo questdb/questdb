@@ -468,8 +468,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                "2e\r\n" +
-                                                (Os.isWindows() ? "{\"successful\":[\"dir\\dir1\\large_test.parquet\"]}\r\n" : "{\"successful\":[\"dir/dir1/large_test.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "30\r\n" : "2e\r\n") +
+                                                (Os.isWindows() ? "{\"successful\":[\"dir\\\\dir1\\\\large_test.parquet\"]}\r\n" : "{\"successful\":[\"dir/dir1/large_test.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
@@ -605,8 +605,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Transfer-Encoding: chunked\r\n" +
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
-                                                (Os.isWindows() ? "6a\r\n" : "69\r\n") +
-                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\x3.parquet\",\"dir1\\dir2\\x4.parquet\",\"dir3\\special.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "6e\r\n" : "69\r\n") +
+                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\\\x3.parquet\",\"dir1\\\\dir2\\\\x4.parquet\",\"dir3\\\\special.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
