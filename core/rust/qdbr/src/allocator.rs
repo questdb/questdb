@@ -546,17 +546,17 @@ mod tests {
             let barrier = barrier.clone();
             threads.push(std::thread::spawn(move || {
                 let mut allocations = Vec::with_capacity(2048);
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 barrier.wait();
                 let iterations = 10_000usize;
                 // Keep on allocating and deallocating randomly.
                 for _ in 0..iterations {
-                    let op_index = rng.gen_range(0..ops.len());
+                    let op_index = rng.random_range(0..ops.len());
                     let op = ops[op_index];
                     match op {
                         Op::Allocate => {
-                            let size = rng.gen_range(1..=1024);
-                            let alignment_index = rng.gen_range(0..=4);
+                            let size = rng.random_range(1..=1024);
+                            let alignment_index = rng.random_range(0..=4);
                             let alignment = alignments[alignment_index];
                             let layout = std::alloc::Layout::from_size_align(size, alignment)
                                 .expect("layout creation failed");
@@ -565,8 +565,8 @@ mod tests {
                             alloc_count += 1;
                         }
                         Op::AllocateZeroed => {
-                            let size = rng.gen_range(1..=1024);
-                            let alignment_index = rng.gen_range(0..=4);
+                            let size = rng.random_range(1..=1024);
+                            let alignment_index = rng.random_range(0..=4);
                             let alignment = alignments[alignment_index];
                             let layout = std::alloc::Layout::from_size_align(size, alignment)
                                 .expect("layout creation failed");
@@ -577,11 +577,11 @@ mod tests {
                         Op::Grow => {
                             // grow one at random, if any
                             if !allocations.is_empty() {
-                                let grow_index = rng.gen_range(0..allocations.len());
+                                let grow_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[grow_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
-                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_size = layout.size() + rng.random_range(1..=1024);
                                 let new_layout =
                                     std::alloc::Layout::from_size_align(new_size, layout.align())
                                         .expect("layout creation failed");
@@ -595,11 +595,11 @@ mod tests {
                         Op::GrowZeroed => {
                             // grow one at random, if any
                             if !allocations.is_empty() {
-                                let grow_index = rng.gen_range(0..allocations.len());
+                                let grow_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[grow_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
-                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_size = layout.size() + rng.random_range(1..=1024);
                                 let new_layout =
                                     std::alloc::Layout::from_size_align(new_size, layout.align())
                                         .expect("layout creation failed");
@@ -615,19 +615,19 @@ mod tests {
                         Op::Shrink => {
                             // shrink one at random, if any
                             if !allocations.is_empty() {
-                                let shrink_index = rng.gen_range(0..allocations.len());
+                                let shrink_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations[shrink_index];
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
                                 if layout.size() > 1 {
-                                    let shrink_by = rng.gen_range(1..layout.size());
+                                    let shrink_by = rng.random_range(1..layout.size());
                                     assert!(shrink_by < layout.size());
                                     let new_size = layout.size() - shrink_by;
                                     let new_layout = std::alloc::Layout::from_size_align(
                                         new_size,
                                         layout.align(),
                                     )
-                                    .expect("layout creation failed");
+                                        .expect("layout creation failed");
                                     let allocation = unsafe {
                                         allocator.shrink(allocation, layout, new_layout).unwrap()
                                     };
@@ -639,7 +639,7 @@ mod tests {
                         Op::Deallocate => {
                             // dealloc one at random, if any
                             if !allocations.is_empty() {
-                                let pop_index = rng.gen_range(0..allocations.len());
+                                let pop_index = rng.random_range(0..allocations.len());
                                 let (allocation, layout) = allocations.remove(pop_index);
                                 let allocation =
                                     NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
