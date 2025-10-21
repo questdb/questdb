@@ -58,14 +58,12 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
-        synchronized (this) {
-            final SessionInfo session = sessionsById.remove(sessionId);
-            if (session != null) {
-                // leaving the session list in the map to avoid creating garbage when user logs in again
-                sessionsByEntity.get(session.getPrincipal()).remove(session);
-                LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
-            }
+    public synchronized void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+        final SessionInfo session = sessionsById.remove(sessionId);
+        if (session != null) {
+            // leaving the session list in the map to avoid creating garbage when user logs in again
+            sessionsByEntity.get(session.getPrincipal()).remove(session);
+            LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
         }
     }
 
@@ -97,6 +95,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
         final long currentMicros = microsClock.getTicks();
         if (sessionInfo.getExpiresAt() < currentMicros) {
             // session expired, remove it
+            // multiple threads can enter here, destroySession() is threadsafe
             destroySession(sessionId, httpContext);
             return null;
         } else {
@@ -105,15 +104,28 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
             sessionInfo.setExpiresAt(expiresAt);
         }
         if (sessionInfo.getRotateAt() < currentMicros) {
-            final String newSessionId = generateSessionId();
-            final long nextRotationAt = currentMicros + rotationPeriod;
-            sessionInfo.rotate(newSessionId, nextRotationAt);
-            sessionsById.put(newSessionId, sessionInfo);
-            LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(sessionInfo.getPrincipal()).$(']').$();
+            // if multiple threads detected that the session id should be rotated,
+            // tryLock() makes sure that only one thread will rotate
+            if (sessionInfo.tryLock()) {
+                try {
+                    // check again if we need to rotate
+                    // maybe another thread just rotated the session id, and released the lock
+                    // after we checked 'rotateAt', but before we acquired the lock
+                    if (sessionInfo.getRotateAt() < currentMicros) {
+                        final String newSessionId = generateSessionId();
+                        final long nextRotationAt = currentMicros + rotationPeriod;
+                        sessionInfo.rotate(newSessionId, nextRotationAt);
+                        sessionsById.put(newSessionId, sessionInfo);
+                        LOG.info().$("session rotated [fd=").$(httpContext.getFd()).$(", principal=").$(sessionInfo.getPrincipal()).$(']').$();
 
-            final StringSink sessionIdSink = httpContext.getSessionIdSink();
-            sessionIdSink.clear();
-            sessionIdSink.put(newSessionId);
+                        final StringSink sessionIdSink = httpContext.getSessionIdSink();
+                        sessionIdSink.clear();
+                        sessionIdSink.put(newSessionId);
+                    }
+                } finally {
+                    sessionInfo.unlock();
+                }
+            }
         }
         if (nextEvictionCheckAt < currentMicros) {
             // evict expired sessions periodically

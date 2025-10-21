@@ -9,6 +9,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public interface HttpSessionStore {
 
     /**
@@ -68,6 +70,7 @@ public interface HttpSessionStore {
         private final byte authType;
         private final ObjList<CharSequence> groupsA = new ObjList<>();
         private final ObjList<CharSequence> groupsB = new ObjList<>();
+        private final AtomicBoolean lock = new AtomicBoolean();
         private final String principal;
         private volatile long expiresAt;
         private volatile ObjList<CharSequence> groups = groupsB;
@@ -111,11 +114,6 @@ public interface HttpSessionStore {
             return sessionId;
         }
 
-        public void rotate(String newSessionId, long nextRotationAt) {
-            this.sessionId = newSessionId;
-            this.rotateAt = nextRotationAt;
-        }
-
         public void setExpiresAt(long expiresAt) {
             this.expiresAt = expiresAt;
         }
@@ -153,6 +151,19 @@ public interface HttpSessionStore {
                     .put(", sessionId=").put(sessionId)
                     .put("]");
             return sink.toString();
+        }
+
+        void rotate(String newSessionId, long nextRotationAt) {
+            this.sessionId = newSessionId;
+            this.rotateAt = nextRotationAt;
+        }
+
+        boolean tryLock() {
+            return lock.compareAndSet(false, true);
+        }
+
+        void unlock() {
+            lock.set(false);
         }
     }
 }
