@@ -63,19 +63,18 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
-        ArrayView array = arg.getArray(record);
-        sink.of(0);
-        sink.put(array);
-        mapValue.putLong(valueIndex + 1, sink.ptr());
+        updateLast(mapValue, record, rowId);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
+        updateLast(mapValue, record, rowId);
+    }
+
+    private void updateLast(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         ArrayView array = arg.getArray(record);
-        long ptr = mapValue.getLong(valueIndex + 1);
-        sink.of(ptr);
+        sink.of(0);
         sink.put(array);
         mapValue.putLong(valueIndex + 1, sink.ptr());
     }
@@ -139,7 +138,12 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
         long destRowId = destValue.getLong(valueIndex);
         if (srcRowId != Numbers.LONG_NULL && (srcRowId > destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
-            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            long srcPtr = srcValue.getLong(valueIndex + 1);
+            sink.of(srcPtr);
+            ArrayView array = sink.getArray();
+            sink.of(0);
+            sink.put(array);
+            destValue.putLong(valueIndex + 1, sink.ptr());
         }
     }
 
