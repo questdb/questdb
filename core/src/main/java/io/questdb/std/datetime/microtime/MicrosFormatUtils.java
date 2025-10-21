@@ -380,7 +380,8 @@ public class MicrosFormatUtils {
 
         final String[] httpPatterns = new String[]{ // priority sorted
                 "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
-                "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
+                "E, d-MMM-yyyy HH:mm:ss Z",     // Microsoft EntraID
+                "E, d-MMM-yy HH:mm:ss Z"        // HTTP 1.0 (2-digit year)
         };
         HTTP_FORMATS = new DateFormat[httpPatterns.length];
         for (int i = 0; i < httpPatterns.length; i++) {

@@ -675,6 +675,9 @@ public class MicrosTest {
         Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 07-Mar-2025 19:23:19 GMT"));
         Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7 Mar 2025 19:23:19 GMT"));
         Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7-Mar-2025 19:23:19 GMT"));
+        // HTTP 1.0 format with 2-digit year
+        Assert.assertEquals(1760975876000000L, parseHTTP("Mon, 20-Oct-25 15:57:56 GMT"));
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13-Apr-25 11:54:08 GMT"));
     }
 
     @Test
