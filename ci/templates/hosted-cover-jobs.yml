@@ -44,7 +44,7 @@ jobs:
         #          javadoc_profile: ""
         linux-cairo-root:
           imageName: "ubuntu-latest"
-          poolName: "vmss-uksouth-spot"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cairo-root"
@@ -54,7 +54,7 @@ jobs:
           javadoc_profile: ""
         linux-cairo-sub:
           imageName: "ubuntu-latest"
-          poolName: "vmss-uksouth-spot"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cairo-sub"
@@ -64,7 +64,7 @@ jobs:
           javadoc_profile: ""
         linux-pgwire:
           imageName: "ubuntu-latest"
-          poolName: "vmss-uksouth-spot"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-cutlass"
@@ -73,7 +73,7 @@ jobs:
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "vmss-uksouth-spot"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"
