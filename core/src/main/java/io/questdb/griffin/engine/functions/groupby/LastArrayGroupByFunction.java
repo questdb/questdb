@@ -52,32 +52,38 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     }
 
     @Override
+    public void clear() {
+        sink.of(0);
+    }
+
+    @Override
     public void close() {
         Misc.free(arg);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        updateArray(mapValue, record, rowId);
+        mapValue.putLong(valueIndex, rowId);
+        ArrayView array = arg.getArray(record);
+        sink.clear();
+        sink.of(0);
+        sink.put(array);
+        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        updateArray(mapValue, record, rowId);
+        mapValue.putLong(valueIndex, rowId);
+        ArrayView array = arg.getArray(record);
+        sink.clear();
+        sink.of(0);
+        sink.put(array);
+        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
     public Function getArg() {
         return this.arg;
-    }
-
-    private void updateArray(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
-        ArrayView array = arg.getArray(record);
-        long ptr = mapValue.getLong(valueIndex + 1);
-        sink.of(ptr);
-        sink.put(array);
-        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
@@ -132,7 +138,7 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId > destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
         }
@@ -144,7 +150,6 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
 
     @Override
     public void setNull(MapValue mapValue) {
-
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
