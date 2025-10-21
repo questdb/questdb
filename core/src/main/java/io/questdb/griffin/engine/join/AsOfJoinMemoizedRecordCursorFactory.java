@@ -229,11 +229,14 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             // Extend the remembered scanned range's lower bound with the currently scanned range's lower bound.
             if (slaveTimestamp < scannedRangeMinTimestamp) {
                 scannedRangeMinTimestamp = slaveTimestamp;
+                if (rowId < 0) {
+                    rowId = -rowId - 1;
+                }
                 scannedRangeMinRowId = rowId;
             }
             // Extend the remembered scanned range's upper bound, but only if the existing range
             // overlaps the range scanned in this invocation of performKeyMatching().
-            if (scannedRangeMaxTimestamp >= slaveTimestamp) {
+            if (scannedRangeMaxTimestamp == Long.MIN_VALUE || scannedRangeMaxTimestamp >= slaveTimestamp) {
                 scannedRangeMaxTimestamp = masterTimestamp;
             }
         }
@@ -351,10 +354,10 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             long rowId = slaveRecB.getRowId();
             long frameRowLo = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
 
+            boolean didJumpOverScannedRange = false;
             for (; ; ) {
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (slaveTimestamp <= validityPeriodEnd) {
-                    assert slaveTimestamp >= validityPeriodStart : "slaveTimestamp < validityPeriodStart";
+                if (slaveTimestamp >= validityPeriodStart && slaveTimestamp <= validityPeriodEnd) {
                     // Our search is now either within the validity period of the remembered symbol
                     // or within the remembered scanned range. Let's apply this knowledge.
                     if (rememberedRowId != NOT_REMEMBERED && masterTimestamp > validityPeriodEnd) {
@@ -368,11 +371,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         MapValue updateValue = updateKey.findValue();
                         assert updateValue != null : "updateValue == null";
                         updateValue.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
-                        // Extend the remembered scanned range, but only if the existing one overlaps
-                        // the range scanned in this invocation of performKeyMatching().
-                        if (scannedRangeMaxTimestamp >= slaveTimestamp) {
-                            scannedRangeMaxTimestamp = masterTimestamp;
-                        }
+                        carefullyExtendScannedRange(masterTimestamp, validityPeriodStart, rememberedRowId);
                     }
                     if (rememberedRowId >= 0) {
                         // We saw this symbol at rememberedRowId. We can now reuse it and complete the search.
@@ -397,7 +396,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         // Therefore, we're all done. Report no slave row and return.
                         record.hasSlave(false);
                         break;
-                    } else {
+                    } else if (!didJumpOverScannedRange) {
                         // We're within the remembered scanned range. Since the symbol isn't remembered, we know
                         // it doesn't occur within this range because we memorize all the symbols we observe
                         // while scanning for any symbol. Jump over the entire period and continue searching,
@@ -411,6 +410,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                             record.hasSlave(false);
                             break;
                         }
+                        didJumpOverScannedRange = true;
                         int frameIndex = Rows.toPartitionIndex(rowId);
                         slaveTimeFrameCursor.jumpTo(frameIndex);
                         slaveTimeFrameCursor.open();
