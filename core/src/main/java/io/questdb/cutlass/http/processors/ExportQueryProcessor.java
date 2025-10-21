@@ -823,7 +823,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private void logInternalError(Throwable e, ExportQueryProcessorState state) {
-        if (e instanceof CairoException ce) {
+        if (e instanceof CairoException) {
+            CairoException ce = (CairoException) e;
             if (ce.isInterruption()) {
                 info(state).$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
                         .$("`, q=`").$safe(state.sqlText)
@@ -1166,7 +1167,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         String contentType = isParquet ? CONTENT_TYPE_PARQUET : CONTENT_TYPE_CSV;
         String fileExtension = isParquet ? FILE_EXTENSION_PARQUET : FILE_EXTENSION_CSV;
         response.status(statusCode, contentType);
-        if (!state.fileName.isEmpty()) {
+        if (state.fileName.length() != 0) {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"").put(state.fileName).putAscii(fileExtension).putAscii("\"").putEOL();
         } else {
             response.headers().putAscii("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).putAscii(fileExtension).putAscii("\"").putEOL();

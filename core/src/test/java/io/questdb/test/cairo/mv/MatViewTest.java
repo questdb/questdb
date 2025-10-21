@@ -5365,10 +5365,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    """
-                            view_name\tview_status
-                            price_1h\tinvalid
-                            """,
+                    "view_name\tview_status\n" +
+                            "price_1h\tinvalid\n",
                     "select view_name, view_status from materialized_views",
                     null,
                     false

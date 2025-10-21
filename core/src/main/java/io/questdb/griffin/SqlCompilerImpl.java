@@ -304,9 +304,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) {
         long rowCount;
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, reportFrequency);
         } else if (metadata.getColumnType(cursorTimestampIndex) == ColumnType.VARCHAR) {
-            rowCount = copyOrderedBatchedVarcharTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatchedVarcharTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, reportFrequency);
         } else {
             rowCount = copyOrderedBatched0(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, reportFrequency);
         }
@@ -685,7 +685,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker,
-            CopyDataProgressReporter reporter
+            CopyDataProgressReporter reporter,
+            int reportFrequency
     ) {
         long commitTarget = batchSize;
         long rowCount = 0;
@@ -709,7 +710,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 writer.ic(o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
-            if (rowCount % 50000 == 0) {
+            if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
                 reporter.onProgress(CopyDataProgressReporter.Stage.Inserting, rowCount);
             }
         }
@@ -1324,18 +1325,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isListKeyword(tok)) {
                 alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
             } else if (isWhereKeyword(tok)) {
-                AlterOperationBuilder alterOperationBuilder = switch (action) {
-                    case PartitionAction.DROP ->
-                            this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
-                    case PartitionAction.DETACH ->
-                            this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
-                    case PartitionAction.CONVERT_TO_PARQUET, PartitionAction.CONVERT_TO_NATIVE -> {
+                AlterOperationBuilder alterOperationBuilder;
+                switch (action) {
+                    case PartitionAction.DROP:
+                        alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
+                        break;
+                    case PartitionAction.DETACH:
+                        alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
+                        break;
+                    case PartitionAction.CONVERT_TO_PARQUET:
+                    case PartitionAction.CONVERT_TO_NATIVE:
                         final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
-                        yield this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
-                    }
-                    default ->
-                            throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
-                };
+                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId(), toParquet);
+                        break;
+                    default:
+                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
+                }
 
                 final int functionPosition = lexer.getPosition();
                 ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);

@@ -246,7 +246,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("export_id", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("worker_id", ColumnType.LONG));
         metadata.add(new TableColumnMetadata("username", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("start_time", ColumnType.TIMESTAMP_MICRO));
+        metadata.add(new TableColumnMetadata("start_time", ColumnType.TIMESTAMP));
         metadata.add(new TableColumnMetadata("phase", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("request_source", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("export_path", ColumnType.STRING));

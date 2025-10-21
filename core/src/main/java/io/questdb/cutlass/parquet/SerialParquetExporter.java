@@ -148,7 +148,6 @@ public class SerialParquetExporter implements Closeable {
 
             boolean emptyTable = true;
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
-                final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
                 entry.setTotalPartitionCount(partitionCount);
@@ -185,7 +184,7 @@ public class SerialParquetExporter implements Closeable {
 
                                 fromParquet.concat(tableToken.getDirName());
                                 TableUtils.setPathForParquetPartition(
-                                        fromParquet, timestampType, partitionBy, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
+                                        fromParquet, partitionBy, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
                                 if (exportResult != null) {
                                     exportResult.addFilePath(fromParquet, false, 0);
                                     entry.setFinishedPartitionCount(partitionIndex + 1);
@@ -194,7 +193,7 @@ public class SerialParquetExporter implements Closeable {
 
                                 tempPath.trimTo(tempBaseDirLen);
                                 nameSink.clear();
-                                PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
+                                PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                         .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
                                 tempPath.concat(nameSink).put(".parquet");
 
@@ -217,7 +216,7 @@ public class SerialParquetExporter implements Closeable {
                             numOfFiles++;
                             PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
                             nameSink.clear();
-                            PartitionBy.getPartitionDirFormatMethod(timestampType, partitionBy)
+                            PartitionBy.getPartitionDirFormatMethod(partitionBy)
                                     .format(partitionTimestamp, DateLocaleFactory.EN_LOCALE, null, nameSink);
                             tempPath.trimTo(tempBaseDirLen);
                             tempPath.concat(nameSink).put(".parquet");

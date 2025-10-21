@@ -54,7 +54,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -104,7 +104,7 @@ public class CopyExportContext {
                     Numbers.appendHex(sink, entry.id, true);
                     throw SqlException.$(0, "duplicate sql statement: ").put(sqlText).put(" [id=").put(sink).put(']');
                 }
-                if (!fileName.isEmpty()) {
+                if (fileName.length() != 0) {
                     entry = exportEntriesByFileName.get(fileName);
                     if (entry != null) {
                         StringSink sink = Misc.getThreadLocalSink();
@@ -134,7 +134,7 @@ public class CopyExportContext {
 
             if (trigger == CopyTrigger.SQL) {
                 exportBySqlText.put(sqlText, entry);
-                if (!fileName.isEmpty()) {
+                if (fileName.length() != 0) {
                     exportEntriesByFileName.put(fileName, entry);
                 }
             }
@@ -269,7 +269,7 @@ public class CopyExportContext {
         try {
             activeExports.remove(entry.id);
             exportBySqlText.remove(entry.sqlText);
-            if (!entry.fileName.isEmpty()) {
+            if (entry.fileName.length() != 0) {
                 exportEntriesByFileName.remove(entry.fileName);
             }
             exportTaskEntryPools.release(entry);

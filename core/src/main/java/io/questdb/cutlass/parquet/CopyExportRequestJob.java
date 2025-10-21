@@ -34,7 +34,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;

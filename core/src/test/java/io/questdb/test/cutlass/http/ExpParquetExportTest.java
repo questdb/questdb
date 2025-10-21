@@ -27,10 +27,10 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -372,12 +372,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
                     // Test CSV export (explicit format)
-                    String expectedCsv = """
-                            "x"\r
-                            1\r
-                            2\r
-                            3\r
-                            """;
+                    String expectedCsv =
+                            "\"x\"\r\n" +
+                                    "1\r\n" +
+                                    "2\r\n" +
+                                    "3\r\n";
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM csv_export_test");
@@ -397,11 +396,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
                     // Test without format parameter (should default to CSV)
-                    String expectedCsv = """
-                            "x"\r
-                            1\r
-                            2\r
-                            """;
+                    String expectedCsv =
+                            "\"x\"\r\n" +
+                                    "1\r\n" +
+                                    "2\r\n";
 
                     CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
                     params.put("query", "SELECT * FROM default_format_test");
@@ -736,7 +734,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false",
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), ""
             )) {
-                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                serverMain.getEngine().execute("CREATE TABLE basic_parquet_test AS (" +
                         "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                         "FROM long_sequence(5)" +
                         ")");
@@ -800,7 +798,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "false"
             )) {
-                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                serverMain.getEngine().execute("CREATE TABLE basic_parquet_test AS (" +
                         "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                         "FROM long_sequence(5)" +
                         ")");
@@ -829,7 +827,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                 // Check no regression, table cannot be created on read-only instance
                 try {
-                    serverMain.execute("create table test (x int)");
+                    serverMain.getEngine().execute("create table test (x int)");
                     Assert.fail("read only should fail creating a table");
                 } catch (AssertionError ex) {
                     TestUtils.assertContains(ex.getMessage(), "Could not create table, instance is read only");
@@ -901,11 +899,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestExpLimit),
                     PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(requestJsonLimit)
             )) {
-                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                serverMain.getEngine().execute("CREATE TABLE basic_parquet_test AS (" +
                         "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                         "FROM long_sequence(5)" +
                         ")");
-                serverMain.execute("CREATE TABLE multiple_options_test AS (SELECT x FROM long_sequence(5000))");
+                serverMain.getEngine().execute("CREATE TABLE multiple_options_test AS (SELECT x FROM long_sequence(5000))");
 
                 // Exceed the limit
                 ObjList<HttpClient.ResponseHeaders> respHeaders = new ObjList<>();
@@ -1141,7 +1139,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getPropertyPath(), Integer.toString(fragmentation),
                     PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT.getEnvVarName(), exportRoot
             )) {
-                serverMain.execute("CREATE TABLE basic_parquet_test AS (" +
+                serverMain.getEngine().execute("CREATE TABLE basic_parquet_test AS (" +
                         "SELECT x as id, 'test_' || x as name, x * 1.5 as value, timestamp_sequence(0, 1000000L) as ts " +
                         "FROM long_sequence(5)" +
                         ")");

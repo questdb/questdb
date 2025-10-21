@@ -424,7 +424,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                     } catch (Throwable th) {
                         final LogRecord rec = LOG.error().$("could not load materialized view [view=").$(tableToken);
-                        if (th instanceof CairoException ce) {
+                        if (th instanceof CairoException) {
+                            final CairoException ce = (CairoException) th;
                             rec.$(", msg=").$safe(ce.getFlyweightMessage())
                                     .$(", errno=").$(ce.getErrno());
                         } else {

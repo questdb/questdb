@@ -51,6 +51,7 @@ import java.util.HashSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertTrue;
 
 

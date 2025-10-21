@@ -2000,7 +2000,15 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private record FuzzItem(String key, String value,
-                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
+    private static class FuzzItem {
+        private final Function<HttpFullFatServerConfiguration, ObjList<String>> getter;
+        private final String key;
+        private final String value;
+
+        FuzzItem(String key, String value, Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
+            this.key = key;
+            this.value = value;
+            this.getter = getter;
+        }
     }
 }
