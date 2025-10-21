@@ -55,6 +55,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         inputRoot = root + Files.SEPARATOR + "import";
+        exportRoot = root + Files.SEPARATOR + "export";
         Path path = Path.getThreadLocal(inputRoot);
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         if (ff.exists(path.$())) {
@@ -138,15 +139,109 @@ public class FileProcessorsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetAndDeleteFiles() throws Exception {
+    public void testGetAndDeleteExportFiles() throws Exception {
         String file1 = "file1.csv";
         String file2 = !Os.isWindows() ? "dir2/dir2/dir2/file2.txt" : "dir2\\dir2\\dir2\\file2.txt";
         String file3 = !Os.isWindows() ? "dir2/dir3/file3" : "dir2\\dir3\\file3";
         String dir1 = "dir2" + Files.SEPARATOR + "dir4";
         String dir2 = "dir5";
-        createFile(file1, "file1 content".getBytes(), 1000);
-        createFile(file2, "file2 content".getBytes(), 2000);
-        createFile(file3, "file3 content".getBytes(), 3000);
+        createFile(exportRoot, file1, "file1 content".getBytes(), 1000);
+        createFile(exportRoot, file2, "file2 content".getBytes(), 2000);
+        createFile(exportRoot, file3, "file3 content".getBytes(), 3000);
+        Path path = Path.getThreadLocal(exportRoot);
+        path.concat(dir1);
+        Files.mkdir(path.slash$(), configuration.getMkDirMode());
+        path.trimTo(0);
+        path.concat(exportRoot).concat(dir2);
+        Files.mkdir(path.slash$(), configuration.getMkDirMode());
+
+        assertMemoryLeak(() -> {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(2)
+                    .withCopyExportRoot(exportRoot)
+                    .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                    .withTelemetry(false)
+                    .run((engine, sqlExecutionContext) -> {
+                        String file2JsonPath = Os.isWindows() ? "dir2\\\\dir2\\\\dir2\\\\file2.txt" : "dir2/dir2/dir2/file2.txt";
+                        String file3JsonPath = Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3";
+                        testHttpClient.assertGetCharSequence(
+                                "/api/v1/exports",
+                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
+                                        "{\"path\":\"" + file3JsonPath + "\",\"name\":\"file3\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:03.000Z\"}," +
+                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]"),
+                                "200"
+                        );
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/exports?file=file1.csv",
+                                "file1 content".getBytes(),
+                                "200"
+                        );
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/exports?file=" + file2,
+                                "file2 content".getBytes(),
+                                "200"
+                        );
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/exports?file=" + dir1,
+                                "{\"error\":\"cannot download directory\"}".getBytes(),
+                                "400"
+                        );
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/exports?file=fileNotExists.txt",
+                                "{\"error\":\"file not found\"}".getBytes(),
+                                "404"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports",
+                                "{\"error\":\"missing required parameter: file\"}",
+                                "400"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports?file=" + file3,
+                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\dir3\\file3" : "dir2/dir3/file3") + "\"}",
+                                "200"
+                        );
+                        testHttpClient.assertGetBinary(
+                                "/api/v1/exports",
+                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
+                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]").getBytes(),
+                                "200"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports?file=nonExists",
+                                "{\"error\":\"file(s) not found\"}",
+                                "404"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports?file=dir2",
+                                "{\"message\":\"file(s) deleted successfully\",\"path\":\"dir2\"}",
+                                "200"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports?file=dir2",
+                                "{\"error\":\"file(s) not found\"}",
+                                "404"
+                        );
+                        testHttpClient.assertDelete(
+                                "/api/v1/exports?file=.." + Files.SEPARATOR,
+                                "{\"error\":\"traversal not allowed in file\"}",
+                                "403"
+                        );
+                    });
+        });
+    }
+
+    @Test
+    public void testGetAndDeleteImportFiles() throws Exception {
+        String file1 = "file1.csv";
+        String file2 = !Os.isWindows() ? "dir2/dir2/dir2/file2.txt" : "dir2\\dir2\\dir2\\file2.txt";
+        String file3 = !Os.isWindows() ? "dir2/dir3/file3" : "dir2\\dir3\\file3";
+        String dir1 = "dir2" + Files.SEPARATOR + "dir4";
+        String dir2 = "dir5";
+        createFile(inputRoot, file1, "file1 content".getBytes(), 1000);
+        createFile(inputRoot, file2, "file2 content".getBytes(), 2000);
+        createFile(inputRoot, file3, "file3 content".getBytes(), 3000);
         Path path = Path.getThreadLocal(inputRoot);
         path.concat(dir1);
         Files.mkdir(path.slash$(), configuration.getMkDirMode());
@@ -600,8 +695,8 @@ public class FileProcessorsTest extends AbstractCairoTest {
         });
     }
 
-    private void createFile(CharSequence filePath, byte[] data, long modifyTime) throws Exception {
-        Path path = Path.getThreadLocal(inputRoot);
+    private void createFile(CharSequence rootPath, CharSequence filePath, byte[] data, long modifyTime) throws Exception {
+        Path path = Path.getThreadLocal(rootPath);
         long fd = -1;
         long addr = -1;
         try {

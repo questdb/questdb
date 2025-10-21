@@ -196,7 +196,7 @@ public class FileGetProcessor implements HttpRequestProcessor {
     }
 
     private void initFileSending(HttpChunkedResponse response, State state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        Path path = Path.getThreadLocal(engine.getConfiguration().getSqlCopyInputRoot());
+        Path path = Path.getThreadLocal(FilesRootDir.getRootPath(filesRoot, engine.getConfiguration()));
         path.concat(state.file);
         if (!state.ff.exists(path.$())) {
             sendException(404, response, "file not found", state);
