@@ -474,7 +474,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 633, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 628, params, "test_table");
                 });
     }
 
