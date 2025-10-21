@@ -141,6 +141,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.cookieList.clear();
         this.cookiePool.clear();
         this.ignoredCookieCount = 0;
+        this.getRequest = false;
+        this.postRequest = false;
+        this.putRequest = false;
+        this.deleteRequest = false;
         // do not clear the pool
         // this.pool.clear();
     }

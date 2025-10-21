@@ -147,7 +147,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             if (!state.overwrite) {
                 state.ff.removeQuiet(state.tempPath.$());
                 StringSink sink = Misc.getThreadLocalSink();
-                sink.put("ile already exists and overwriting is disabled [path=").put(state.tempPath).put(", overwrite=false]");
+                sink.put("file already exists and overwriting is disabled [path=").put(state.tempPath).put(", overwrite=false]");
                 sendErrorWithSuccessInfo(context, 409, sink);
                 return;
             } else {
@@ -169,7 +169,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                     .$(", realPath=").$(state.realPath)
                     .$(", errno=").$(errno)
                     .$(", renameResult=").$(renameResult).I$();
-            state.ff.remove(state.tempPath.$());
+            state.ff.removeQuiet(state.tempPath.$());
             StringSink sink = Misc.getThreadLocalSink();
             sink.put("cannot rename temporary file [tempPath=").put(state.tempPath).put(", realPath=").put(state.realPath).put(", errno=").put(errno).put(", renameResult=").put(renameResult).put(']');
             sendErrorWithSuccessInfo(context, 500, sink);
@@ -230,7 +230,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
 
     private void encodeSuccessfulFilesList(HttpChunkedResponse response, State state) {
         for (int i = 0, n = state.successfulFiles.size(); i < n; i++) {
-            response.put("\"").put(state.successfulFiles.getQuick(i)).put("\"");
+            response.putQuote().escapeJsonStr(state.successfulFiles.getQuick(i)).putQuote();
             if (i + 1 < n) {
                 response.put(",");
             }
@@ -246,10 +246,14 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.sendChunk(false);
                 response.put("{\"successful\":[");
                 encodeSuccessfulFilesList(response, state);
-                response.put("],\"failed\":[{\"path\":\"").put(state.currentFilename)
-                        .put("\",\"error\":\"").put(errorMsg)
-                        .put("\",\"code\":").put(errorCode)
-                        .put("}]}");
+                response.put("],\"errors\":[{\"status\":\"").put(errorCode)
+                        .put("\",\"detail\":\"").put(errorMsg);
+                if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
+                    response.put("\",\"meta\":{\"filename\":")
+                            .putQuote().escapeJsonStr(state.currentFilename).putQuote().put("}}]}");
+                } else {
+                    response.put("\"}]}");
+                }
                 response.sendChunk(true);
                 response.done();
             } else {
@@ -260,9 +264,11 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
                 response.put("{\"errors\":[{\"status\":\"").put(errorCode)
                         .put("\",\"detail\":\"").put(errorMsg);
                 if (state.currentFilename != null && !state.currentFilename.isEmpty()) {
-                    response.put("\",\"name\":\"").put(state.currentFilename);
+                    response.put("\",\"meta\":{\"filename\":")
+                            .putQuote().escapeJsonStr(state.currentFilename).putQuote().put("}}]}");
+                } else {
+                    response.put("\"}]}");
                 }
-                response.put("\"}]}");
                 response.sendChunk(true);
                 response.shutdownWrite();
                 throw ServerDisconnectException.INSTANCE;

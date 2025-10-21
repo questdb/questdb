@@ -271,7 +271,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
                 }
                 header.put("Accept-Ranges: bytes").putEOL();
                 header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).putEOL();
-                header.put("ETag: ").put(ff.getLastModified(state.fd)).putEOL();
+                header.put("ETag: ").put('"').put(ff.getLastModified(state.fd)).put('"').putEOL();
                 if (keepAliveHeader != null) {
                     header.put(keepAliveHeader);
                 }

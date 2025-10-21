@@ -101,7 +101,8 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        sink.putAscii("{\"error\":\"").putAscii(message).putAscii("\"}");
+        sink.putAscii("{\"errors\":[{\"status\":\"").put(errorCode)
+                .putAscii("\",\"detail\":\"").putAscii(message).putAscii("\"}]}");
         context.simpleResponse().sendStatusJsonContent(errorCode, sink, false);
     }
 
@@ -110,7 +111,8 @@ public class FileDeleteProcessor implements HttpRequestProcessor {
             DirectUtf8Sequence path
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         Utf8StringSink sink = Misc.getThreadLocalUtf8Sink();
-        sink.putAscii("{\"message\":\"file(s) deleted successfully\",\"path\":\"").put(path).put("\"}");
+        sink.putAscii("{\"message\":\"file(s) deleted successfully\",\"path\":")
+                .putQuote().escapeJsonStr(path).putQuote().put('}');
         context.simpleResponse().sendStatusJsonContent(HTTP_OK, sink, false);
     }
 }

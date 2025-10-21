@@ -165,7 +165,6 @@ public class FileGetProcessor implements HttpRequestProcessor {
                 sendException(500, response, e.getFlyweightMessage(), state);
             }
         }
-        response.done();
     }
 
     private String getContentType(DirectUtf8Sequence filename) {
@@ -346,7 +345,8 @@ public class FileGetProcessor implements HttpRequestProcessor {
             throw PeerDisconnectedException.INSTANCE;
         }
         headerJsonError(errorCode, response);
-        response.putAscii("{\"error\":\"").putAscii(message).putAscii("\"}");
+        response.putAscii("{\"errors\":[{\"status\":\"").put(errorCode)
+                .putAscii("\",\"detail\":\"").putAscii(message).putAscii("\"}]}");
         response.sendChunk(true);
     }
 

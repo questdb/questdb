@@ -64,7 +64,7 @@ public class TestHttpClient implements QuietCloseable {
 
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.DELETE().url(url);
             String repStatus = reqToSink(req, sink, null, null, null, null);
             TestUtils.assertEquals(expectedStatus, repStatus);
@@ -217,7 +217,7 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence expectedStatus
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
             String repStatus = reqToSink(req, sink, null, null, null, null);
             TestUtils.assertEquals(expectedStatus, repStatus);
@@ -235,7 +235,7 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence expectedStatus
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
             String repStatus = reqToSink(req, sink, null, null, null, null);
             TestUtils.assertEquals(expectedStatus, repStatus);
@@ -392,7 +392,7 @@ public class TestHttpClient implements QuietCloseable {
             @Nullable CharSequence token
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
 
             if (queryParams != null) {
@@ -460,7 +460,7 @@ public class TestHttpClient implements QuietCloseable {
             CharSequence expectedStatus
     ) {
         try {
-            HttpClient.Request req = httpClient.newRequest("localhost", 9001);
+            HttpClient.Request req = httpClient.newRequest("localhost", port);
             req.GET().url(url);
             String repStatus = reqToSink(req, sink, null, null, null, null);
             TestUtils.assertEquals(expectedStatus, repStatus);
