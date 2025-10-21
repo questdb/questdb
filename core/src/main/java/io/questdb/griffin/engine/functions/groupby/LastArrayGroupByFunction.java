@@ -63,16 +63,15 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, rowId);
-        ArrayView array = arg.getArray(record);
-        sink.clear();
-        sink.of(0);
-        sink.put(array);
-        mapValue.putLong(valueIndex + 1, sink.ptr());
+        updateLast(mapValue, record, rowId);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
+        updateLast(mapValue, record, rowId);
+    }
+
+    private void updateLast(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
         ArrayView array = arg.getArray(record);
         sink.clear();
@@ -138,7 +137,7 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NULL && (srcRowId > destRowId || destRowId == Numbers.LONG_NULL)) {
+        if (srcRowId > destRowId) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
         }
