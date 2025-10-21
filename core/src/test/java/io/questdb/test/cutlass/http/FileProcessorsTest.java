@@ -585,7 +585,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
             execute("create table x as (select cast(x as int) id from long_sequence(10))");
             byte[] parquetData = createParquetFile("x");
             String[] fileNames = Os.isWindows() ?
-                    new String[]{"x1.parquet", "x2.parquet", "dir1\\x3.parquet", "dir1\\dir2\\x4.parquet", "dir3\\❤️.parquet"} :
+                    new String[]{"x1.parquet", "x2.parquet", "dir1\\x3.parquet", "dir1\\dir2\\x4.parquet", "dir3\\special.parquet"} :
                     new String[]{"x1.parquet", "x2.parquet", "dir1/x3.parquet", "dir1/dir2/x4.parquet", "dir3/❤️.parquet"};
             byte[] parquetImportRequest = createMultipleParquetImportRequest(fileNames, new byte[][]{parquetData, parquetData, parquetData, parquetData, parquetData}, false);
 
@@ -606,16 +606,17 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "Content-Type: application/json; charset=utf-8\r\n" +
                                                 "\r\n" +
                                                 "69\r\n" +
-                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\x3.parquet\",\"dir1\\dir2\\x4.parquet\",\"dir3\\❤️.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
+                                                (Os.isWindows() ? "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1\\x3.parquet\",\"dir1\\dir2\\x4.parquet\",\"dir3\\special.parquet\"]}\r\n" : "{\"successful\":[\"x1.parquet\",\"x2.parquet\",\"dir1/x3.parquet\",\"dir1/dir2/x4.parquet\",\"dir3/❤️.parquet\"]}\r\n") +
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
                         String response = testHttpClient.getResponse("/api/v1/imports", "200");
                         LOG.info().$("========= Import files response=========: ").$(response).$();
-                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet",
-                                response.contains("\"path\":\"dir3" + Files.SEPARATOR + "❤️.parquet\""));
-                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet name",
-                                response.contains("\"name\":\"❤️.parquet\""));
+                        String expectedSpecialFile = Os.isWindows() ? "special.parquet" : "❤️.parquet";
+                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile,
+                                response.contains("\"path\":\"dir3" + Files.SEPARATOR + expectedSpecialFile + "\""));
+                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + expectedSpecialFile + " name",
+                                response.contains("\"name\":\"" + expectedSpecialFile + "\""));
                         Assert.assertTrue("Response should contain x2.parquet",
                                 response.contains("\"path\":\"x2.parquet\""));
                         Assert.assertTrue("Response should contain x1.parquet",
