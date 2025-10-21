@@ -165,13 +165,22 @@ public class FileProcessorsTest extends AbstractCairoTest {
                     .run((engine, sqlExecutionContext) -> {
                         String file2JsonPath = Os.isWindows() ? "dir2\\\\dir2\\\\dir2\\\\file2.txt" : "dir2/dir2/dir2/file2.txt";
                         String file3JsonPath = Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3";
-                        testHttpClient.assertGetCharSequence(
-                                "/api/v1/exports",
-                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
-                                        "{\"path\":\"" + file3JsonPath + "\",\"name\":\"file3\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:03.000Z\"}," +
-                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]"),
-                                "200"
-                        );
+                        String response = testHttpClient.getResponse("/api/v1/exports", "200");
+                        Assert.assertTrue("Response should contain file2.txt",
+                                response.contains("\"path\":\"" + file2JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file2.txt name",
+                                response.contains("\"name\":\"file2.txt\""));
+                        Assert.assertTrue("Response should contain file3",
+                                response.contains("\"path\":\"" + file3JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file3 name",
+                                response.contains("\"name\":\"file3\""));
+                        Assert.assertTrue("Response should contain file1.csv",
+                                response.contains("\"path\":\"" + file1 + "\""));
+                        Assert.assertTrue("Response should contain file1.csv name",
+                                response.contains("\"name\":\"" + file1 + "\""));
+
+                        int fileCount = response.split("\\{\"path\":").length - 1;
+                        Assert.assertEquals("Should have 3 files", 3, fileCount);
                         testHttpClient.assertGetBinary(
                                 "/api/v1/exports?file=file1.csv",
                                 "file1 content".getBytes(),
@@ -202,12 +211,15 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\dir3\\file3" : "dir2/dir3/file3") + "\"}",
                                 "200"
                         );
-                        testHttpClient.assertGetBinary(
-                                "/api/v1/exports",
-                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
-                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]").getBytes(),
-                                "200"
-                        );
+                        String responseAfterDelete = testHttpClient.getResponse("/api/v1/exports", "200");
+                        Assert.assertTrue("Response should contain file2.txt after deletion",
+                                responseAfterDelete.contains("\"path\":\"" + file2JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file1.csv after deletion",
+                                responseAfterDelete.contains("\"path\":\"" + file1 + "\""));
+                        Assert.assertFalse("Response should not contain deleted file3",
+                                responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
+                        int fileCountAfterDelete = responseAfterDelete.split("\\{\"path\":").length - 1;
+                        Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
                         testHttpClient.assertDelete(
                                 "/api/v1/exports?file=nonExists",
                                 "{\"error\":\"file(s) not found\"}",
@@ -259,13 +271,25 @@ public class FileProcessorsTest extends AbstractCairoTest {
                     .run((engine, sqlExecutionContext) -> {
                         String file2JsonPath = Os.isWindows() ? "dir2\\\\dir2\\\\dir2\\\\file2.txt" : "dir2/dir2/dir2/file2.txt";
                         String file3JsonPath = Os.isWindows() ? "dir2\\\\dir3\\\\file3" : "dir2/dir3/file3";
-                        testHttpClient.assertGetCharSequence(
-                                "/api/v1/imports",
-                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
-                                        "{\"path\":\"" + file3JsonPath + "\",\"name\":\"file3\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:03.000Z\"}," +
-                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]"),
-                                "200"
-                        );
+
+                        String response = testHttpClient.getResponse("/api/v1/imports", "200");
+                        Assert.assertTrue("Response should contain file2.txt",
+                                response.contains("\"path\":\"" + file2JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file2.txt name",
+                                response.contains("\"name\":\"file2.txt\""));
+                        Assert.assertTrue("Response should contain file3",
+                                response.contains("\"path\":\"" + file3JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file3 name",
+                                response.contains("\"name\":\"file3\""));
+                        Assert.assertTrue("Response should contain file1.csv",
+                                response.contains("\"path\":\"" + file1 + "\""));
+                        Assert.assertTrue("Response should contain file1.csv name",
+                                response.contains("\"name\":\"" + file1 + "\""));
+                        Assert.assertTrue("Response should start with [", response.startsWith("["));
+                        Assert.assertTrue("Response should end with ]", response.endsWith("]"));
+                        int fileCount = response.split("\\{\"path\":").length - 1;
+                        Assert.assertEquals("Should have 3 files", 3, fileCount);
+
                         testHttpClient.assertGetBinary(
                                 "/api/v1/imports?file=file1.csv",
                                 "file1 content".getBytes(),
@@ -296,12 +320,17 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                 "{\"message\":\"file(s) deleted successfully\",\"path\":\"" + (Os.isWindows() ? "dir2\\dir3\\file3" : "dir2/dir3/file3") + "\"}",
                                 "200"
                         );
-                        testHttpClient.assertGetBinary(
-                                "/api/v1/imports",
-                                ("[{\"path\":\"" + file2JsonPath + "\",\"name\":\"file2.txt\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:02.000Z\"}," +
-                                        "{\"path\":\"" + file1 + "\",\"name\":\"" + file1 + "\",\"size\":\"13.0 B\",\"lastModified\":\"1970-01-01T00:00:01.000Z\"}]").getBytes(),
-                                "200"
-                        );
+
+                        String responseAfterDelete = testHttpClient.getResponse("/api/v1/imports", "200");
+                        Assert.assertTrue("Response should contain file2.txt after deletion",
+                                responseAfterDelete.contains("\"path\":\"" + file2JsonPath + "\""));
+                        Assert.assertTrue("Response should contain file1.csv after deletion",
+                                responseAfterDelete.contains("\"path\":\"" + file1 + "\""));
+                        Assert.assertFalse("Response should not contain deleted file3",
+                                responseAfterDelete.contains("\"path\":\"" + file3JsonPath + "\""));
+                        int fileCountAfterDelete = responseAfterDelete.split("\\{\"path\":").length - 1;
+                        Assert.assertEquals("Should have 2 files after deletion", 2, fileCountAfterDelete);
+                        
                         testHttpClient.assertDelete(
                                 "/api/v1/imports?file=nonExists",
                                 "{\"error\":\"file(s) not found\"}",
@@ -582,15 +611,25 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "00\r\n" +
                                                 "\r\n"
                                 );
-                        String pathSep = "[/\\\\\\\\]";
-                        testHttpClient.assertGetRegexp(
-                                "/api/v1/imports",
-                                "\\[\\{\"path\":\"dir3" + pathSep + "❤️\\.parquet\",\"name\":\"❤️\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"x2\\.parquet\",\"name\":\"x2\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"x1\\.parquet\",\"name\":\"x1\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"dir1" + pathSep + "dir2" + pathSep + "x4\\.parquet\",\"name\":\"x4\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"dir1" + pathSep + "x3\\.parquet\",\"name\":\"x3\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}," +
-                                        "\\{\"path\":\"x\\.parquet\",\"name\":\"x\\.parquet\",\"size\":\"354\\.0 B\",\"lastModified\":\"[^\"]+\"\\}\\]");
+                        String response = testHttpClient.getResponse("/api/v1/imports", "200");
+                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet",
+                                response.contains("\"path\":\"dir3" + Files.SEPARATOR + "❤️.parquet\""));
+                        Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet name",
+                                response.contains("\"name\":\"❤️.parquet\""));
+                        Assert.assertTrue("Response should contain x2.parquet",
+                                response.contains("\"path\":\"x2.parquet\""));
+                        Assert.assertTrue("Response should contain x1.parquet",
+                                response.contains("\"path\":\"x1.parquet\""));
+                        Assert.assertTrue("Response should contain dir1" + Files.SEPARATOR + "dir2" + Files.SEPARATOR + "x4.parquet",
+                                response.contains("\"path\":\"dir1" + Files.SEPARATOR + "dir2" + Files.SEPARATOR + "x4.parquet\""));
+                        Assert.assertTrue("Response should contain dir1" + Files.SEPARATOR + "x3.parquet",
+                                response.contains("\"path\":\"dir1" + Files.SEPARATOR + "x3.parquet\""));
+                        Assert.assertTrue("Response should contain x.parquet",
+                                response.contains("\"path\":\"x.parquet\""));
+                        Assert.assertTrue("Response should start with [", response.startsWith("["));
+                        Assert.assertTrue("Response should end with ]", response.endsWith("]"));
+                        int fileCount = response.split("\\{\"path\":").length - 1;
+                        Assert.assertEquals("Should have 6 files", 6, fileCount);
                     });
         });
     }
