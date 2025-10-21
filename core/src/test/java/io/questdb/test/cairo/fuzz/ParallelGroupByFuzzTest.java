@@ -831,11 +831,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByArray(
                 "SELECT first(darr), key FROM tab order by key",
                 "first\tkey\n" +
-                        "[[null,null,null],[null,0.7883065830055033,null]]\tk0\n" +
-                        "[[null,0.20447441837877756],[null,null]]\tk1\n" +
-                        "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\tk2\n" +
-                        "[[null,0.33608255572515877],[0.690540444367637,null]]\tk3\n" +
-                        "[[null,null],[0.12503042190293423,null]]\tk4\n"
+                        "[0.21583224269349388,0.15786635599554755,null]\tk0\n" +
+                        "[0.2845577791213847,0.20447441837877756]\tk1\n" +
+                        "[0.19202208853547864,0.5093827001617407,0.11427984775756228]\tk2\n" +
+                        "[null,0.7261136209823622]\tk3\n" +
+                        "[0.3100545983862456,0.1985581797355932,0.33608255572515877]\tk4\n"
         );
     }
 
@@ -845,11 +845,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByArray(
                 "SELECT last(darr), key FROM tab order by key",
                 "last\tkey\n" +
-                        "[[0.9038068796506257,0.5249321062686694],[0.28934577745726665,null]]\tk0\n" +
-                        "[[0.9656394022309033,0.6778564558839208,0.6590341607692226],[null,0.9738523496829667],[0.7594296619518549,0.5514604042904348]]\tk1\n" +
-                        "[[null,0.19751370382305056,0.6778564558839208],[0.7594296619518549,0.5514604042904348]]\tk2\n" +
-                        "[[0.20447441837877756,0.34608426119452515],[0.10459352312331183,null]]\tk3\n" +
-                        "[[0.5024642209722164,null,0.5024642209722164],[0.12503042190293423,null]]\tk4\n"
+                        "[0.28934577745726665,null]\tk0\n" +
+                        "[0.7594296619518549,0.5514604042904348]\tk1\n" +
+                        "[0.7594296619518549,0.5514604042904348]\tk2\n" +
+                        "[0.10459352312331183,null]\tk3\n" +
+                        "[0.12503042190293423,null]\tk4\n"
         );
     }
 
@@ -859,7 +859,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByArray(
                 "SELECT last(darr) FROM tab",
                 "last\n" +
-                        "[[0.5024642209722164,null,0.5024642209722164],[0.12503042190293423,null]]\n"
+                        "[0.19548881160742315,0.2934080080690735]\n"
         );
     }
 
@@ -3594,7 +3594,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 compiler,
                                 "create table tab as (select" +
                                         " 'k' || ((50 + x) % 5) key," +
-                                        " rnd_double_array(2, 2, 3) darr," +
+                                        " rnd_double_array(1, 2, 3) darr," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
                                 sqlExecutionContext
