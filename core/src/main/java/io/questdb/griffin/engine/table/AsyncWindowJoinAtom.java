@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -65,12 +66,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Function ownerJoinFilter;
+    private final DirectMapValue ownerMapValue;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<Function> perWorkerJoinFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<DirectMapValue> perWorkerMapValues;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -81,6 +84,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             long joinWindowHi,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            int valueCount,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -93,17 +97,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
+            this.ownerJoinFilter = ownerJoinFilter;
+            this.perWorkerJoinFilters = perWorkerJoinFilters;
+            this.joinWindowLo = joinWindowLo;
+            this.joinWindowHi = joinWindowHi;
+            this.ownerGroupByFunctions = ownerGroupByFunctions;
+            this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
             this.perWorkerFilters = perWorkerFilters;
-            this.ownerGroupByFunctions = ownerGroupByFunctions;
-            this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
-            this.ownerJoinFilter = ownerJoinFilter;
-            this.perWorkerJoinFilters = perWorkerJoinFilters;
-            this.joinWindowLo = joinWindowLo;
-            this.joinWindowHi = joinWindowHi;
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
@@ -122,6 +126,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             perWorkerAllocators = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
+            }
+
+            ownerMapValue = new DirectMapValue(valueCount);
+            perWorkerMapValues = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerMapValues.extendAndSet(i, new DirectMapValue(valueCount));
             }
         } catch (Throwable th) {
             close();
@@ -200,6 +210,18 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public long getJoinWindowLo() {
         return joinWindowLo;
+    }
+
+    public DirectMapValue getMapValue(int slotId) {
+        if (slotId == -1) {
+            return ownerMapValue;
+        }
+        return perWorkerMapValues.getQuick(slotId);
+    }
+
+    // Thread-unsafe, should be used by query owner thread only.
+    public DirectMapValue getOwnerMapValue() {
+        return ownerMapValue;
     }
 
     @Override

@@ -63,8 +63,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private static final PageFrameReducer REDUCER = AsyncWindowJoinRecordCursorFactory::filterAndAggregate;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
-    private final Function filter;
     private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private final ObjList<GroupByFunction> groupByFunctions;
     private final long joinWindowHi;
     private final long joinWindowLo;
     private final RecordCursorFactory masterFactory;
@@ -84,6 +84,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             long joinWindowHi,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
+            int valueCount,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -99,8 +100,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.filter = filter;
-        this.cursor = new AsyncWindowJoinRecordCursor();
+        this.groupByFunctions = groupByFunctions;
+        this.cursor = new AsyncWindowJoinRecordCursor(groupByFunctions);
         final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
                 asm,
                 configuration,
@@ -110,6 +111,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 joinWindowHi,
                 groupByFunctions,
                 perWorkerGroupByFunctions,
+                valueCount,
                 compiledFilter,
                 bindVarMemory,
                 bindVarFunctions,
@@ -145,7 +147,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        cursor.of(execute(executionContext, collectSubSeq, order));
+        cursor.of(execute(executionContext, collectSubSeq, order), executionContext);
         return cursor;
     }
 
@@ -213,8 +215,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     protected void _close() {
         Misc.free(masterFactory);
+        Misc.free(slaveFactory);
         Misc.free(frameSequence);
         Misc.free(cursor);
-        Misc.free(filter);
+        Misc.freeObjListAndClear(groupByFunctions);
     }
 }

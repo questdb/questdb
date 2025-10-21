@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -32,15 +33,21 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 // TODO(puzpuzpuz): implement calculateSize using the filter only
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
-
+    private final ObjList<GroupByFunction> groupByFunctions;
     private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
@@ -52,7 +59,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private boolean isOpen;
     private DirectLongList rows;
 
-    public AsyncWindowJoinRecordCursor() {
+    public AsyncWindowJoinRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
+        this.groupByFunctions = groupByFunctions;
         record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     }
 
@@ -60,6 +68,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
+            Misc.clearObjList(groupByFunctions);
 
             if (frameSequence != null) {
                 LOG.debug()
@@ -86,6 +95,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
+        // TODO(puzpuzpuz): we need to pick up frameSequence or groupby functions depending on the index
         return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
     }
 
@@ -124,6 +134,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
+        // TODO(puzpuzpuz): we need to pick up frameSequence or groupby functions depending on the index
         return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
     }
 
@@ -147,6 +158,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         collectCursor(false);
         frameSequence.toTop();
         frameSequence.getAtom().toTop();
+        GroupByUtils.toTop(groupByFunctions);
         // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
         frameRowIndex = -1;
@@ -238,7 +250,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    void of(PageFrameSequence<AsyncWindowJoinAtom> frameSequence) {
+    void of(PageFrameSequence<AsyncWindowJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         this.frameSequence = frameSequence;
         isOpen = true;
         frameIndex = -1;
@@ -247,5 +259,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameRowCount = -1;
         allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource());
+        Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
     }
 }
