@@ -110,6 +110,7 @@ public class FileUploadProcessor implements HttpMultipartContentProcessor {
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(filesRoot.getConfigName()).put(" is not configured");
             sendErrorWithSuccessInfo(context, 400, sink);
+            return;
         }
 
         final DirectUtf8Sequence file = partHeader.getContentDispositionName();

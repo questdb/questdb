@@ -395,6 +395,11 @@ public class FileGetProcessor implements HttpRequestProcessor {
         if (filename.byteAt(0) == Files.SEPARATOR) {
             return true;
         }
+        // check for windows
+        if (filename.size() >= 2 && filename.byteAt(1) == ':') {
+            return true;
+        }
+
         return Utf8s.containsAscii(filename, "../") || Utf8s.containsAscii(filename, "..\\");
     }
 

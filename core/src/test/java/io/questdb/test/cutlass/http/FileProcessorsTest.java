@@ -611,6 +611,7 @@ public class FileProcessorsTest extends AbstractCairoTest {
                                                 "\r\n"
                                 );
                         String response = testHttpClient.getResponse("/api/v1/imports", "200");
+                        LOG.info().$("========= Import files response=========: ").$(response).$();
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet",
                                 response.contains("\"path\":\"dir3" + Files.SEPARATOR + "❤️.parquet\""));
                         Assert.assertTrue("Response should contain dir3" + Files.SEPARATOR + "❤️.parquet name",

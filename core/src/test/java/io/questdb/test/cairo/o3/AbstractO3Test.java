@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -215,7 +216,13 @@ public class AbstractO3Test extends AbstractTest {
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                code.run();
+            } finally {
+                CLOSEABLE.forEach(Misc::free);
+            }
+        });
     }
 
     static void assertO3DataConsistency(
