@@ -627,7 +627,7 @@ mod tests {
                                         new_size,
                                         layout.align(),
                                     )
-                                        .expect("layout creation failed");
+                                    .expect("layout creation failed");
                                     let allocation = unsafe {
                                         allocator.shrink(allocation, layout, new_layout).unwrap()
                                     };
