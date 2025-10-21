@@ -58,19 +58,22 @@ import io.questdb.std.Rows;
  * <b>Key Optimization Strategies:</b>
  * <ol>
  *   <li><b>Symbol Location Caching:</b> Maintains a map of previously found symbols with their
- *       row locations and validity periods. When it encounters a symbol again and the master
- *       timestamp falls within the validity period, it reuses the cached location without scanning.</li>
- *   <li><b>Validity Period Extension:</b> When it reuses a cached result, it extends the validity period
- *       to cover the current master timestamp, increasing cache effectiveness.</li>
- *   <li><b>Opportunistic Caching:</b> While scanning for a target symbol, it caches all encountered symbols,
- *       making future lookups for those symbols essentially free.</li>
- *   <li><b>Range Skipping:</b> Tracks a contiguous scanned timestamp range. When searching for
- *       an uncached symbol, it skips the entire known range if the symbol isn't present.</li>
- *   <li><b>Negative Result Caching:</b> Memorizes when it didn't find a symbol, preventing redundant
- *       scans of the same range.</li>
+ *       row locations and validity periods. The validity period of a symbol spans from the
+ *       timestamp where it's located to the timestamp where the previous search that found it started.
+ *       As soon as the new search reaches the end of the symbol's validity period, the search completes
+ *       and reuses the cached location.</li>
+ *   <li><b>Negative Result Caching:</b> Memorizes the range where it didn't find a symbol, so it
+ *       can avoid repeating the search with a negative outcome as well.</li>
+ *   <li><b>Validity Period Extension:</b> When it reuses a cached result, it also extends the validity period
+ *       to the current master timestamp.</li>
+ *   <li><b>Drive-By Caching:</b> While scanning for the target symbol, caches all other symbols it encounters
+ *       on the way. This is especially important for rare symbols in the slave table as it prevents repeated
+ *       deep searches.</li>
+ *   <li><b>Scanned Range Skipping:</b> Tracks a contiguous timestamp range that was already scanned. When
+ *       searching for an uncached symbol, skips the entire range. This works thanks to Drive-By Caching,
+ *       and prevents a repeated deep search for a symbol that occurs even earlier than a previously found
+ *       rare symbol.</li>
  * </ol>
- * <b>Example Use Case:</b> Joining high-frequency tick data (master) with reference data (slave)
- * on a security symbol, where some symbols get infrequent price updates.
  *
  * @see AsOfJoinFastRecordCursorFactory
  * @see AbstractKeyedAsOfJoinRecordCursor
