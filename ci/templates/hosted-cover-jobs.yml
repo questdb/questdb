@@ -67,7 +67,7 @@ jobs:
           poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-cutlass"
+          testset: "coverage-pgwire"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
