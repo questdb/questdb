@@ -36,6 +36,7 @@ public final class SqlHints {
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
+    public static final String TIMESTAMP_LADDER_JOIN_HINT = "timestamp_ladder_join";
 
     public static boolean hasAsOfIndexSearchHint(
             @NotNull QueryModel queryModel,
@@ -69,6 +70,14 @@ public final class SqlHints {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
         return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
+    }
+
+    public static boolean hasTimestampLadderHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, TIMESTAMP_LADDER_JOIN_HINT, tableNameA, tableNameB);
     }
 
     private static boolean hasHintWithParams(

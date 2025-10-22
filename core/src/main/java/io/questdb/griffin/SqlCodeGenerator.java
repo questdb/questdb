@@ -1614,17 +1614,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * Detection isn't foolproof and can result in false positives. This is why we must
      * guard it with the query hint.
      *
+     * @param masterAlias        alias for the master LHS of the join
+     * @param masterModel        QueryModel for the LHS of the join
      * @param masterMetadata     Metadata for the LHS of the join
+     * @param slaveModel         QueryModel for the RHS of the join
      * @param slaveMetadata      Metadata for the RHS of the join (should be an arithmetic sequence)
      * @param slaveCursorFactory The RHS cursor factory (should produce an arithmetic sequence)
      * @return TimestampLadderInfo if pattern is detected, null otherwise
      */
     private TimestampLadderInfo detectTimestampLadderPattern(
+            CharSequence masterAlias,
+            QueryModel masterModel,
             RecordMetadata masterMetadata,
+            QueryModel slaveModel,
             RecordMetadata slaveMetadata,
             RecordCursorFactory slaveCursorFactory
     ) {
-        // Check if the RHS is `long_sequence()`, or based on it
+        // Without the query hint, don't even try to detect the pattern
+        if (!SqlHints.hasTimestampLadderHint(masterModel, masterAlias, slaveModel.getName())) {
+            return null;
+        }
+
+        // Ensure the slave table is `long_sequence()`, or based on it
         RecordCursorFactory sourceFac = slaveCursorFactory;
         while (!sourceFac.getClass().getSimpleName().contains("LongSequence")) {
             sourceFac = sourceFac.getBaseFactory();
@@ -1632,31 +1643,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
         }
-        // Check if we have an ORDER BY clause
-        // Use lastSeenOrderByModel which is captured as we descend through nested models
-        QueryModel orderByModel = lastSeenOrderByModel;
-        if (orderByModel == null) {
+        // Ensure the master table has a designated timestamp column
+        int designatedTimestampIndex = masterMetadata.getTimestampIndex();
+        if (designatedTimestampIndex == -1) {
             return null;
         }
 
-        ExpressionNode orderByNode = orderByModel.getOrderBy().getQuick(0);
+        // Ensure we have an ORDER BY clause.
+        // lastSeenOrderByModel was captured as we were descending through nested models
+        if (lastSeenOrderByModel == null) {
+            return null;
+        }
+        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
 
         // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
         ExpressionNode orderByExpr = orderByNode;
         if (orderByNode.type == ExpressionNode.LITERAL) {
-            // Look up the column in the model's alias map to get the actual expression
-            QueryColumn queryColumn = orderByModel.getAliasToColumnMap().get(orderByNode.token);
+            QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
             if (queryColumn != null) {
                 orderByExpr = queryColumn.getAst();
             }
         }
-
-        // Check if ORDER BY is an addition operation
+        // Ensure that ORDER BY is an addition operation
         if (orderByExpr.type != ExpressionNode.OPERATION || !"+".contentEquals(orderByExpr.token)) {
             return null;
         }
-
-        // The ORDER BY should be: timestamp_column + offset_column
+        // The ORDER BY should be timestamp_column + offset_column, or vice versa
         ExpressionNode lhs = orderByExpr.lhs;
         ExpressionNode rhs = orderByExpr.rhs;
         if (lhs == null || rhs == null) {
@@ -1667,19 +1679,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         int timestampColumnIndex = -1;
         ExpressionNode slaveColumnNode = null;
 
-        // Check if LHS is a master timestamp column
+        // Check if LHS is the designated timestamp column from master
         if (lhs.type == ExpressionNode.LITERAL) {
             int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
-            if (colIndex >= 0 && ColumnType.isTimestamp(masterMetadata.getColumnType(colIndex))) {
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
                 timestampColumnIndex = colIndex;
                 slaveColumnNode = rhs;
             }
         }
 
-        // If not found, check if RHS is a master timestamp column and LHS is from slave
+        // If not found, check if RHS is the designated timestamp column from master and LHS is from slave
         if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
             int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
-            if (colIndex >= 0 && ColumnType.isTimestamp(masterMetadata.getColumnType(colIndex))) {
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
                 slaveColumnNode = lhs;
             }
         }
@@ -2833,7 +2846,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                 // Try to detect the timestamp ladder pattern
                                 TimestampLadderInfo ladderInfo = detectTimestampLadderPattern(
+                                        masterAlias,
+                                        model,
                                         masterMetadata,
+                                        slaveModel,
                                         slaveMetadata,
                                         slave
                                 );
