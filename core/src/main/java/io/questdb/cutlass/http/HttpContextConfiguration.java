@@ -42,6 +42,8 @@ public interface HttpContextConfiguration {
 
     boolean getDumpNetworkTraffic();
 
+    int getExportConnectionLimit();
+
     FactoryProvider getFactoryProvider();
 
     int getForceRecvFragmentationChunkSize();

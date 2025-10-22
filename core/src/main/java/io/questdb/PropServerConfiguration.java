@@ -171,6 +171,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoResourcePoolTracingEnabled;
     private final int cairoSQLCopyIdSupplier;
     private final boolean cairoSqlColumnAliasExpressionEnabled;
+    private final int cairoSqlCopyExportQueueCapacity;
+    private final String cairoSqlCopyExportRoot;
     private final int cairoSqlCopyLogRetentionDays;
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
@@ -207,6 +209,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean devModeEnabled;
     private final Set<? extends ConfigPropertyKey> dynamicProperties;
     private final boolean enableTestFactories;
+    private final WorkerPoolConfiguration exportPoolConfiguration = new PropExportPoolConfiguration();
+    private final int[] exportWorkerAffinity;
+    private final int exportWorkerCount;
+    private final boolean exportWorkerHaltOnError;
+    private final long exportWorkerNapThreshold;
+    private final long exportWorkerSleepThreshold;
+    private final long exportWorkerSleepTimeout;
+    private final long exportWorkerYieldThreshold;
     private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
@@ -221,6 +231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final ObjList<String> httpContextPathTableStatus = new ObjList<>();
     private final ObjList<String> httpContextPathWarnings = new ObjList<>();
     private final String httpContextWebConsole;
+    private final long httpExportTimeout;
     private final boolean httpFrozenClock;
     private final PropHttpConcurrentCacheConfiguration httpMinConcurrentCacheConfiguration = new PropHttpConcurrentCacheConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
@@ -344,6 +355,15 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final int parquetExportCompressionCodec;
+    private final int parquetExportCompressionLevel;
+    private final int parquetExportCopyReportFrequencyLines;
+    private final int parquetExportDataPageSize;
+    private final boolean parquetExportRawArrayEncoding;
+    private final int parquetExportRowGroupSize;
+    private final boolean parquetExportStatisticsEnabled;
+    private final CharSequence parquetExportTableNamePrefix;
+    private final int parquetExportVersion;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
     private final int partitionEncoderParquetDataPageSize;
@@ -838,6 +858,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
+
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
         if (!Chars.empty(configuredCairoSqlCopyRoot)) {
             if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {
@@ -862,6 +883,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlCopyWorkRoot = null;
         }
 
+        String configuredCairoSqlCopyExportRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, "export");
+        if (!Chars.empty(configuredCairoSqlCopyExportRoot)) {
+            if (new File(configuredCairoSqlCopyExportRoot).isAbsolute()) {
+                this.cairoSqlCopyExportRoot = configuredCairoSqlCopyExportRoot;
+            } else {
+                if (absDbDir) {
+                    this.cairoSqlCopyExportRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyExportRoot); // ../export
+                } else {
+                    this.cairoSqlCopyExportRoot = new File(installRoot, configuredCairoSqlCopyExportRoot).getAbsolutePath();
+                }
+            }
+        } else {
+            this.cairoSqlCopyExportRoot = null;
+        }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
@@ -895,13 +930,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuWalApplyWorkers = 2;
         int cpuSpare = 0;
+        int exportWorker = 1;
 
         if (cpuAvailable > 32) {
             cpuWalApplyWorkers = 4;
             cpuSpare = 2;
+            exportWorker = 4;
         } else if (cpuAvailable > 16) {
             cpuWalApplyWorkers = 3;
             cpuSpare = 1;
+            exportWorker = 2;
         } else if (cpuAvailable > 8) {
             cpuWalApplyWorkers = 3;
         }
@@ -1088,7 +1126,20 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             int httpJsonQueryConnectionLimit = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT, -1);
             int httpIlpConnectionLimit = getInt(properties, env, PropertyKey.HTTP_ILP_CONNECTION_LIMIT, -1);
-            validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpNetConnectionLimit);
+
+
+            // Set the default as -1000 and if it's not set by the user, we override it later
+            int httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, -1000);
+            // Check the limits are in valid range, without setting final value of httpExportConnectionLimit
+            // So if someone has the json, ilp limits set the new limit does not throw a new validation exception here when export limit is introduced
+            validateHttpConnectionLimits(httpJsonQueryConnectionLimit, httpIlpConnectionLimit, httpExportConnectionLimit, httpNetConnectionLimit);
+
+            if (httpExportConnectionLimit == -1000) {
+                // We set the limit so that parquet exports don't kill web console queries if the limit is not set by the user
+                int httpExportConnectionLimitDefault = Math.min(cpuAvailable, Math.max(httpNetConnectionLimit / 4, 1));
+                // We have to use `getInt()` method so that the SHOW PROPERTIES shows the correct default value
+                httpExportConnectionLimit = getInt(properties, env, PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT, httpExportConnectionLimitDefault);
+            }
 
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,
@@ -1108,7 +1159,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     multipartIdleSpinCount,
                     requestHeaderBufferSize,
                     httpJsonQueryConnectionLimit,
-                    httpIlpConnectionLimit
+                    httpIlpConnectionLimit,
+                    httpExportConnectionLimit
             );
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server
@@ -1230,6 +1282,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, "60") * Micros.SECOND_MILLIS);
             this.queryTimeout = getMillis(properties, env, PropertyKey.QUERY_TIMEOUT, this.queryTimeout);
 
+            // Make export timeout at least as long as query timeout by default
+            this.httpExportTimeout = getMillis(properties, env, PropertyKey.HTTP_EXPORT_TIMEOUT, Math.max(queryTimeout, 300_000));
+
             this.queryWithinLatestByOptimisationEnabled = getBoolean(properties, env, PropertyKey.QUERY_WITHIN_LATEST_BY_OPTIMISATION_ENABLED, false);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
@@ -1324,6 +1379,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
             this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
 
+            // Export pool configuration
+            this.exportWorkerCount = getInt(properties, env, PropertyKey.EXPORT_WORKER_COUNT, exportWorker);
+            this.exportWorkerAffinity = getAffinity(properties, env, PropertyKey.EXPORT_WORKER_AFFINITY, exportWorkerCount);
+            this.exportWorkerHaltOnError = getBoolean(properties, env, PropertyKey.EXPORT_WORKER_HALT_ON_ERROR, false);
+            this.exportWorkerNapThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_NAP_THRESHOLD, 7_000);
+            this.exportWorkerSleepThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
+            this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
+
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
@@ -1392,6 +1456,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getMicros(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
+            this.parquetExportTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_TABLE_PREFIX, "zzz.copy.");
+            this.parquetExportCopyReportFrequencyLines = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COPY_REPORT_FREQUENCY_LINES, 500_000);
+            this.parquetExportVersion = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+            this.parquetExportStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_STATISTICS_ENABLED, true);
+            this.parquetExportCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_CODEC, "ZSTD"));
+
+            this.parquetExportRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_RAW_ARRAY_ENCODING_ENABLED, false);
+            int defaultCompressionLevel = parquetExportCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
+            this.parquetExportCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_COMPRESSION_LEVEL, defaultCompressionLevel);
+            this.parquetExportRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_ROW_GROUP_SIZE, 100_000);
+            this.parquetExportDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARQUET_EXPORT_DATA_PAGE_SIZE, 1_048_576);
             this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
             this.preferencesStringPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PREFERENCES_STRING_POOL_CAPACITY, 64);
 
@@ -1470,6 +1545,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                         ", description=max import chunk size can't be smaller than 16]");
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
+            this.cairoSqlCopyExportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_EXPORT_QUEUE_CAPACITY, 32));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
             this.o3MinLagUs = getMicros(properties, env, PropertyKey.CAIRO_O3_MIN_LAG, 1_000) * 1_000L;
 
@@ -1789,9 +1865,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
         this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
+        this.partitionEncoderParquetCompressionCodec = ParquetCompression.getCompressionCodec(getString(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, "ZSTD"));
         this.partitionEncoderParquetRawArrayEncoding = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, false);
-        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
-        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
+        int defaultCompressionLevel = partitionEncoderParquetCompressionCodec == ParquetCompression.COMPRESSION_ZSTD ? 9 : 0;
+        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, defaultCompressionLevel);
         this.partitionEncoderParquetRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
         this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, Numbers.SIZE_1MB);
 
@@ -1841,6 +1918,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return exportPoolConfiguration;
     }
 
     @Override
@@ -2101,7 +2183,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private void validateHttpConnectionLimits(
-            int httpJsonQueryConnectionLimit, int httpIlpConnectionLimit, int httpNetConnectionLimit
+            int httpJsonQueryConnectionLimit, int httpIlpConnectionLimit, int httpExportConnectionLimit, int httpNetConnectionLimit
     ) throws ServerConfigurationException {
         if (httpJsonQueryConnectionLimit > httpNetConnectionLimit) {
             throw new ServerConfigurationException(
@@ -2117,12 +2199,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
 
-        if (httpJsonQueryConnectionLimit > -1 && httpIlpConnectionLimit > -1
-                && (httpJsonQueryConnectionLimit + httpIlpConnectionLimit) > httpNetConnectionLimit) {
+        if (httpExportConnectionLimit > httpNetConnectionLimit) {
             throw new ServerConfigurationException(
-                    "The sum of the json query and HTTP over ILP connection limits cannot be greater than the overall HTTP connection limit ["
-                            + PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", "
-                            + PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", "
+                    "HTTP export connection limit cannot be greater than the overall HTTP connection limit ["
+                            + PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", "
+                            + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+
+        httpJsonQueryConnectionLimit = Math.max(httpJsonQueryConnectionLimit, 0);
+        httpIlpConnectionLimit = Math.max(httpIlpConnectionLimit, 0);
+        httpExportConnectionLimit = Math.max(httpExportConnectionLimit, 0);
+
+        if ((httpJsonQueryConnectionLimit + httpIlpConnectionLimit + httpExportConnectionLimit) > httpNetConnectionLimit) {
+            throw new ServerConfigurationException(
+                    "The sum of the json query, export and HTTP over ILP connection limits cannot be greater than the overall HTTP connection limit ["
+                            + ((httpJsonQueryConnectionLimit > 0) ? PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=" + httpJsonQueryConnectionLimit + ", " : "")
+                            + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
+                            + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
         }
     }
@@ -3426,6 +3519,41 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getParquetExportCopyReportFrequencyLines() {
+            return parquetExportCopyReportFrequencyLines;
+        }
+
+        @Override
+        public int getParquetExportCompressionCodec() {
+            return parquetExportCompressionCodec;
+        }
+
+        @Override
+        public int getParquetExportCompressionLevel() {
+            return parquetExportCompressionLevel;
+        }
+
+        @Override
+        public int getParquetExportDataPageSize() {
+            return parquetExportDataPageSize;
+        }
+
+        @Override
+        public int getParquetExportRowGroupSize() {
+            return parquetExportRowGroupSize;
+        }
+
+        @Override
+        public int getParquetExportVersion() {
+            return parquetExportVersion;
+        }
+
+        @Override
+        public CharSequence getParquetExportTableNamePrefix() {
+            return parquetExportTableNamePrefix;
+        }
+
+        @Override
         public int getPartitionEncoderParquetCompressionCodec() {
             return partitionEncoderParquetCompressionCodec;
         }
@@ -3568,6 +3696,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlCopyBufferSize() {
             return sqlCopyBufferSize;
+        }
+
+        @Override
+        public int getSqlCopyExportQueueCapacity() {
+            return cairoSqlCopyExportQueueCapacity;
+        }
+
+        @Override
+        public CharSequence getSqlCopyExportRoot() {
+            return cairoSqlCopyExportRoot;
         }
 
         @Override
@@ -4091,6 +4229,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isParquetExportRawArrayEncoding() {
+            return parquetExportRawArrayEncoding;
+        }
+
+        @Override
+        public boolean isParquetExportStatisticsEnabled() {
+            return parquetExportStatisticsEnabled;
+        }
+
+        @Override
         public boolean isPartitionEncoderParquetRawArrayEncoding() {
             return partitionEncoderParquetRawArrayEncoding;
         }
@@ -4188,6 +4336,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useWithinLatestByOptimisation() {
             return queryWithinLatestByOptimisationEnabled;
+        }
+    }
+
+    private class PropExportPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return exportWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "export";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return exportWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return exportWorkerSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return exportWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return exportWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return exportWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return exportWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return exportWorkerCount > 0;
         }
     }
 
@@ -4697,6 +4897,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
+        }
+
+        @Override
+        public long getExportTimeout() {
+            return httpExportTimeout;
         }
 
         @Override

@@ -27,13 +27,13 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
@@ -70,6 +70,7 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
+    private final ActiveConnectionTracker activeConnectionTracker;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -95,7 +96,8 @@ public class HttpServer implements Closeable {
             this.selectCache = NO_OP_CACHE;
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache);
+        this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
+        this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
         networkSharedPool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
@@ -223,7 +225,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestHandler newInstance() {
-                return new TextQueryProcessor(
+                return new ExportQueryProcessor(
                         httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         sharedQueryWorkerCount
@@ -312,6 +314,10 @@ public class HttpServer implements Closeable {
         Misc.free(selectCache);
     }
 
+    public ActiveConnectionTracker getActiveConnectionTracker() {
+        return activeConnectionTracker;
+    }
+
     public int getPort() {
         return dispatcher.getPort();
     }
@@ -345,10 +351,11 @@ public class HttpServer implements Closeable {
         public HttpContextFactory(
                 HttpServerConfiguration configuration,
                 SocketFactory socketFactory,
-                AssociativeCache<RecordCursorFactory> selectCache
+                AssociativeCache<RecordCursorFactory> selectCache,
+                ActiveConnectionTracker activeConnectionTracker
         ) {
             super(
-                    () -> new HttpConnectionContext(configuration, socketFactory, selectCache),
+                    () -> new HttpConnectionContext(configuration, socketFactory, selectCache, activeConnectionTracker),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

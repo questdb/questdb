@@ -302,6 +302,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public long getExportTimeout() {
+            return Long.MAX_VALUE;
+        }
+
+        @Override
         public FactoryProvider getFactoryProvider() {
             return DefaultFactoryProvider.INSTANCE;
         }

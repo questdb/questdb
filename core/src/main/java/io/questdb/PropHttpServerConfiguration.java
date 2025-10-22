@@ -38,6 +38,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
 
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
+    private final int exportConnectionLimit;
     private final boolean httpAllowDeflateBeforeSend;
     private final int httpForceRecvFragmentationChunkSize;
     private final int httpForceSendFragmentationChunkSize;
@@ -91,6 +92,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
                 multipartIdleSpinCount,
                 requestHeaderBufferSize,
                 -1,
+                -1,
                 -1
         );
     }
@@ -113,7 +115,8 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             long multipartIdleSpinCount,
             int requestHeaderBufferSize,
             int httpJsonQueryConnectionLimit,
-            int httpIlpConnectionLimit
+            int httpIlpConnectionLimit,
+            int exportConnectionLimit
     ) {
         this.connectionPoolInitialCapacity = connectionPoolInitialCapacity;
         this.connectionStringPoolCapacity = connectionStringPoolCapacity;
@@ -133,6 +136,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.requestHeaderBufferSize = requestHeaderBufferSize;
         this.httpJsonQueryConnectionLimit = httpJsonQueryConnectionLimit;
         this.httpIlpConnectionLimit = httpIlpConnectionLimit;
+        this.exportConnectionLimit = exportConnectionLimit;
     }
 
     @Override
@@ -158,6 +162,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public boolean getDumpNetworkTraffic() {
         return false;
+    }
+
+    @Override
+    public int getExportConnectionLimit() {
+        return exportConnectionLimit;
     }
 
     @Override

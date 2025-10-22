@@ -33,10 +33,20 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_MULTIPART_FORM_DATA = "multipart/form-data";
     @SuppressWarnings("unused")
     public static final String CONTENT_TYPE_MULTIPART_MIXED = "multipart/mixed";
+    public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     public static final char COOKIE_SEPARATOR = ';';
     public static final char COOKIE_VALUE_SEPARATOR = '=';
     public static final String DELETED_COOKIE = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_CODEC = new Utf8String("compression_codec");
+    public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_LEVEL = new Utf8String("compression_level");
+    public static final Utf8String EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE = new Utf8String("data_page_size");
+    public static final Utf8String EXPORT_PARQUET_OPTION_PARQUET_VERSION = new Utf8String("parquet_version");
+    public static final Utf8String EXPORT_PARQUET_OPTION_PARTITION_BY = new Utf8String("partition_by");
+    public static final Utf8String EXPORT_PARQUET_OPTION_RAW_ARRAY_ENCODING = new Utf8String("raw_array_encoding");
+    public static final Utf8String EXPORT_PARQUET_OPTION_ROW_GROUP_SIZE = new Utf8String("row_group_size");
+    public static final Utf8String EXPORT_PARQUET_OPTION_RESPONSE_MODE = new Utf8String("rmode");
+    public static final Utf8String EXPORT_PARQUET_OPTION_STATISTICS_ENABLED = new Utf8String("statistics_enabled");
     public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
@@ -86,6 +96,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_SRC = new Utf8String("src");
     public static final Utf8String URL_PARAM_STATUS_FORMAT = new Utf8String("f");
     public static final Utf8String URL_PARAM_STATUS_TABLE_NAME = new Utf8String("j");
+    public static final Utf8String URL_PARAM_TIMEOUT = new Utf8String("timeout");
     public static final Utf8String URL_PARAM_TIMESTAMP = new Utf8String("timestamp");
     public static final Utf8String URL_PARAM_TIMINGS = new Utf8String("timings");
     public static final Utf8String URL_PARAM_VERSION = new Utf8String("version");
