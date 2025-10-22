@@ -4,44 +4,44 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        #        linux-griffin-root:
-        #          imageName: "ubuntu-latest"
-        #          poolName: "vmss-uksouth-spot"
-        #          os: Linux
-        #          jdk: "1.17"
-        #          testset: "coverage-griffin-root"
-        #          includeTests: "**/griffin/*"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        linux-griffin-sub:
-        #          imageName: "ubuntu-latest"
-        #          poolName: "vmss-uksouth-spot"
-        #          os: Linux
-        #          jdk: "1.17"
-        #          testset: "coverage-griffin-sub"
-        #          includeTests: "**/griffin/**/*"
-        #          excludeTests: "**/griffin/*"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        linux-fuzz1:
-        #          imageName: "ubuntu-latest"
-        #          poolName: "vmss-uksouth-spot"
-        #          os: Linux
-        #          jdk: "1.17"
-        #          testset: "coverage-fuzz1"
-        #          includeTests: "**/cairo/fuzz/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        linux-fuzz2:
-        #          imageName: "ubuntu-latest"
-        #          poolName: "vmss-uksouth-spot"
-        #          os: Linux
-        #          jdk: "1.17"
-        #          testset: "coverage-fuzz2"
-        #          includeTests: "**/O3*Test**,**/**Fuzz**"
-        #          excludeTests: "**/cairo/fuzz/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
+        linux-griffin-root:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-griffin-root"
+          includeTests: "**/griffin/*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-griffin-sub:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-griffin-sub"
+          includeTests: "**/griffin/**/*"
+          excludeTests: "**/griffin/*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz1:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz1"
+          includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz2:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz2"
+          includeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-cairo-root:
           imageName: "ubuntu-latest"
           poolName: "hetzner-docker"
