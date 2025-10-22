@@ -281,6 +281,11 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
             return scale;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         private void transform(int roundingScale) {
             if (roundingScale >= fromScale) {
                 // We don't need to do any rounding here (floor(123.456, 4) -> 123.456).
@@ -364,6 +369,11 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return scale;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         private void transform(int roundingScale) {
@@ -477,6 +487,11 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return scale;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         private void transform(int roundingScale) {

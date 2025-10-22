@@ -68,11 +68,6 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             super(value, targetType, position);
         }
 
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
         protected boolean cast(Record rec) {
             float f = this.arg.getFloat(rec);
             if (Numbers.isNull(f)) {
@@ -96,11 +91,6 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             super(value, targetType, position);
         }
 
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
         protected boolean cast(Record rec) {
             float f = this.arg.getFloat(rec);
             if (Numbers.isNull(f)) {
@@ -122,11 +112,6 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
 
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
 
         protected boolean cast(Record rec) {

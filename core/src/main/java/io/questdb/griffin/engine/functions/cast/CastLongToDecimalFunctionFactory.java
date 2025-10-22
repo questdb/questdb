@@ -34,10 +34,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
@@ -134,16 +134,39 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
     private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
         int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
-            case ColumnType.DECIMAL128:
-                return new CastDecimal128UnscaledFunc(targetType, value);
-            default:
-                return new CastDecimal256UnscaledFunc(targetType, value);
+        return switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
+            case ColumnType.DECIMAL128 -> new CastDecimal128UnscaledFunc(targetType, value);
+            default -> new CastDecimal256UnscaledFunc(targetType, value);
+        };
+    }
+
+    private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
+        private final long maxUnscaledValue;
+        private final long minUnscaledValue;
+
+        public AbstractCastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
+            super(value, targetType, position);
+            this.maxUnscaledValue = maxUnscaledValue;
+            this.minUnscaledValue = -maxUnscaledValue;
+        }
+
+        protected boolean cast(Record rec) {
+            long value = arg.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
+                return false;
+            }
+            if (value < minUnscaledValue || value > maxUnscaledValue) {
+                throw ImplicitCastException.inconvertibleValue(
+                        value,
+                        ColumnType.LONG,
+                        type
+                ).position(position);
+            }
+            decimal.ofLong(value, 0);
+            decimal.rescale(scale);
+            return true;
         }
     }
 
@@ -178,6 +201,11 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal128Lo(Record rec) {
             return lo;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -234,6 +262,11 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal256LL(Record rec) {
             return ll;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -314,34 +347,6 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
                         type
                 ).position(position);
             }
-        }
-    }
-
-    private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
-        private final long maxUnscaledValue;
-        private final long minUnscaledValue;
-
-        public AbstractCastDecimalScaledFunc(int position, int targetType, long maxUnscaledValue, Function value) {
-            super(value, targetType, position);
-            this.maxUnscaledValue = maxUnscaledValue;
-            this.minUnscaledValue = -maxUnscaledValue;
-        }
-
-        protected boolean cast(Record rec) {
-            long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
-                return false;
-            }
-            if (value < minUnscaledValue || value > maxUnscaledValue) {
-                throw ImplicitCastException.inconvertibleValue(
-                        value,
-                        ColumnType.LONG,
-                        type
-                ).position(position);
-            }
-            decimal.ofLong(value, 0);
-            decimal.rescale(scale);
-            return true;
         }
     }
 }

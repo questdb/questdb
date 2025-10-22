@@ -73,6 +73,11 @@ public class NullIfDecimalFunctionFactory implements FunctionFactory {
             return arg1;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         public boolean store(Record record) {
             DecimalUtil.load(decimal, arg1, record);
             long hh = decimal.getHh();

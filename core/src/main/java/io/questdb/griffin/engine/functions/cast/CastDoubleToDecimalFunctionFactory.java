@@ -71,11 +71,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             super(value, targetType, position);
         }
 
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
         protected boolean cast(Record rec) {
             double d = this.arg.getDouble(rec);
             if (!Numbers.isFinite(d)) {
@@ -99,11 +94,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             super(value, targetType, position);
         }
 
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
         protected boolean cast(Record rec) {
             double d = this.arg.getDouble(rec);
             if (!Numbers.isFinite(d)) {
@@ -125,11 +115,6 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
 
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
 
         protected boolean cast(Record rec) {

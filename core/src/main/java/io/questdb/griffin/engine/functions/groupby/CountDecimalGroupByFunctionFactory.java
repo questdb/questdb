@@ -61,20 +61,14 @@ public class CountDecimalGroupByFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         final Function arg = args.getQuick(0);
-        switch (ColumnType.tagOf(arg.getType())) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(arg);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(arg);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(arg);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(arg);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(arg);
-            default:
-                return new Decimal256Func(arg);
-        }
+        return switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(arg);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(arg);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(arg);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(arg);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(arg);
+            default -> new Decimal256Func(arg);
+        };
     }
 
     private static class Decimal128Func extends AbstractCountGroupByFunction {

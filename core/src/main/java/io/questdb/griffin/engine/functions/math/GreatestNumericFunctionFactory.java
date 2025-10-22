@@ -33,9 +33,6 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
-import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
-import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -47,6 +44,9 @@ import io.questdb.griffin.engine.functions.cast.CastLongToIntFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -139,14 +139,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         }
 
         final int type = ColumnType.getDecimalType(Math.min(precision, Decimals.MAX_PRECISION), scale);
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL128:
-                return new GreatestDecimal128RecordFunction(type, scale, args);
-            case ColumnType.DECIMAL256:
-                return new GreatestDecimal256RecordFunction(type, scale, args, argPositions);
-            default:
-                return new GreatestDecimal64RecordFunction(type, scale, args);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL128 -> new GreatestDecimal128RecordFunction(type, scale, args);
+            case ColumnType.DECIMAL256 -> new GreatestDecimal256RecordFunction(type, scale, args, argPositions);
+            default -> new GreatestDecimal64RecordFunction(type, scale, args);
+        };
     }
 
     private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) throws SqlException {
@@ -245,10 +242,14 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             return greatest.getLow();
         }
 
-
         @Override
         public String getName() {
             return "greatest[DECIMAL]";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
@@ -316,6 +317,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public String getName() {
             return "greatest[DECIMAL]";
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 
     private static class GreatestDecimal64RecordFunction extends Decimal64Function implements MultiArgFunction {
@@ -364,6 +370,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "greatest[DECIMAL]";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         /**
@@ -421,6 +432,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "greatest[DOUBLE]";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         private double load(Function arg, Record rec) {

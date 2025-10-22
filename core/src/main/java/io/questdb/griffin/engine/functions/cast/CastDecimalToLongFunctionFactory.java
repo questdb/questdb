@@ -38,8 +38,8 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
@@ -113,32 +113,35 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
     }
 
     private static Function newUnscaledInstance(int valuePosition, int fromType, Function value) {
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.DECIMAL8:
-                return new UnscaledDecimal8Func(value);
-            case ColumnType.DECIMAL16:
-                return new UnscaledDecimal16Func(value);
-            case ColumnType.DECIMAL32:
-                return new UnscaledDecimal32Func(value);
-            case ColumnType.DECIMAL64:
-                return new UnscaledDecimal64Func(value);
-            case ColumnType.DECIMAL128:
-                return new UnscaledDecimal128Func(value, valuePosition);
-            default:
-                return new UnscaledDecimal256Func(value, valuePosition);
-        }
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new UnscaledDecimal8Func(value);
+            case ColumnType.DECIMAL16 -> new UnscaledDecimal16Func(value);
+            case ColumnType.DECIMAL32 -> new UnscaledDecimal32Func(value);
+            case ColumnType.DECIMAL64 -> new UnscaledDecimal64Func(value);
+            case ColumnType.DECIMAL128 -> new UnscaledDecimal128Func(value, valuePosition);
+            default -> new UnscaledDecimal256Func(value, valuePosition);
+        };
     }
 
     private static boolean overflowsLong(Decimal256 decimal) {
-        return decimal.compareTo(0, 0, 0, Long.MAX_VALUE, 0) > 0 ||
-                decimal.compareTo(-1, -1, -1, Long.MIN_VALUE, 0) < 0;
+        return overflowsLong(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+    }
+
+    private static boolean overflowsLong(long hh, long hl, long lh, long ll) {
+        return hh >= 0 ? Decimal256.compareTo(hh, hl, lh, ll, 0, 0, 0, 0, Long.MAX_VALUE, 0) > 0 :
+                Decimal256.compareTo(hh, hl, lh, ll, 0, -1, -1, -1, Long.MIN_VALUE, 0) < 0;
+    }
+
+    private static boolean overflowsLong(long high, long low) {
+        return high >= 0 ? Decimal128.compareTo(high, low, 0, 0, Long.MAX_VALUE, 0) > 0 :
+                Decimal128.compareTo(high, low, 0, -1, Long.MIN_VALUE, 0) < 0;
     }
 
     private static class ScaledDecimalFunction extends AbstractCastToLongFunction {
         private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
         private final int fromType;
         private final int position;
-        private final int fromScale;
 
         public ScaledDecimalFunction(Function arg, int position) {
             super(arg);
@@ -163,11 +166,15 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             }
             return decimal256.getLl();
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 
     private static class UnscaledDecimal128Func extends AbstractCastToLongFunction {
         private final int position;
-        private final Decimal256 decimal256 = new Decimal256();
 
         public UnscaledDecimal128Func(Function value, int position) {
             super(value);
@@ -180,10 +187,10 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             if (Decimal128.isNull(hi, lo)) {
                 return Numbers.LONG_NULL;
             }
-            long s = hi < 0 ? -1 : 0;
-            decimal256.of(s, s, hi, lo, 0);
-            if (overflowsLong(decimal256)) {
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
+            if (overflowsLong(hi, lo)) {
+                var decimal128 = Misc.getThreadLocalDecimal128();
+                decimal128.of(hi, lo, 0);
+                throw ImplicitCastException.inconvertibleValue(decimal128, arg.getType(), ColumnType.LONG).position(position);
             }
             return lo;
         }
@@ -204,7 +211,6 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledDecimal256Func extends AbstractCastToLongFunction {
-        private final Decimal256 decimal256 = new Decimal256();
         private final int position;
 
         public UnscaledDecimal256Func(Function value, int position) {
@@ -217,11 +223,12 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             long hl = this.arg.getDecimal256HL(rec);
             long lh = this.arg.getDecimal256LH(rec);
             long ll = this.arg.getDecimal256LL(rec);
-            decimal256.of(hh, hl, lh, ll, 0);
-            if (decimal256.isNull()) {
+            if (Decimal256.isNull(hh, hl, lh, ll)) {
                 return Numbers.LONG_NULL;
             }
-            if (overflowsLong(decimal256)) {
+            if (overflowsLong(hh, hl, lh, ll)) {
+                Decimal256 decimal256 = Misc.getThreadLocalDecimal256();
+                decimal256.of(hh, hl, lh, ll, 0);
                 throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return ll;

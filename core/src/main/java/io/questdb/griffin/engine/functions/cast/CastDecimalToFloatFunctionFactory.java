@@ -56,7 +56,7 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         return switch (ColumnType.tagOf(arg.getType())) {
-            case ColumnType.DECIMAL8 | ColumnType.DECIMAL16 | ColumnType.DECIMAL32 | ColumnType.DECIMAL64 ->
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
                     new Func64(arg);
             case ColumnType.DECIMAL128 -> new Func128(arg);
             default -> new Func(arg);

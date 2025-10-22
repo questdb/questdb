@@ -1005,11 +1005,6 @@ public final class DecimalTransformerFactory {
         }
 
         @Override
-        public String getName() {
-            return transformer.getName();
-        }
-
-        @Override
         public long getDecimal128Hi(Record rec) {
             throw new UnsupportedOperationException();
         }
@@ -1057,6 +1052,16 @@ public final class DecimalTransformerFactory {
         @Override
         public byte getDecimal8(Record rec) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String getName() {
+            return transformer.getName();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

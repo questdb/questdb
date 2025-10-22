@@ -228,8 +228,6 @@ public class Decimal128 implements Sinkable, Decimal {
             17L, // 10^37
             1L, // 10^38
     };
-    // holders for in-place mutations that doesn't have a mutable structure available
-    private static final ThreadLocal<Decimal128> tl = new ThreadLocal<>(Decimal128::new);
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
@@ -290,6 +288,56 @@ public class Decimal128 implements Sinkable, Decimal {
             return s;
         }
         return Long.compareUnsigned(aLo, bLo);
+    }
+
+    public static int compareTo(long aHigh, long aLow, int aScale, long bHigh, long bLow, int bScale) {
+        if (isNull(aHigh, aLow)) {
+            if (isNull(bHigh, bLow)) {
+                return 0;
+            }
+            return -1;
+        }
+        if (isNull(bHigh, bLow)) {
+            return 1;
+        }
+
+        boolean aNeg = aHigh < 0;
+        boolean bNeg = bHigh < 0;
+        if (aNeg != bNeg) {
+            return aNeg ? -1 : 1;
+        }
+
+        if (aScale == bScale) {
+            // Same scale - direct comparison
+            return compare(aHigh, aLow, bHigh, bLow);
+        }
+
+        // We need to make both operands positive to detect overflows when scaling them
+        if (aNeg) {
+            aLow = ~aLow + 1;
+            aHigh = ~aHigh + (aLow == 0 ? 1L : 0L);
+
+            // Negate b
+            bLow = ~bLow + 1;
+            bHigh = ~bHigh + (bLow == 0 ? 1L : 0L);
+        }
+
+        // Different scales - need to align for comparison
+        // We'll scale up the one with smaller scale
+        Decimal128 holder = Misc.getThreadLocalDecimal128();
+        if (aScale < bScale) {
+            holder.of(aHigh, aLow, aScale);
+            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+            aHigh = holder.high;
+            aLow = holder.low;
+        } else {
+            holder.of(bHigh, bLow, bScale);
+            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            bHigh = holder.high;
+            bLow = holder.low;
+        }
+
+        return compare(aHigh, aLow, bHigh, bLow) * (aNeg ? -1 : 1);
     }
 
     /**
@@ -599,57 +647,7 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     public int compareTo(long otherHigh, long otherLow, int otherScale) {
-        if (isNull()) {
-            if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
-                return 0;
-            }
-            return -1;
-        }
-        if (otherHigh == Decimals.DECIMAL128_HI_NULL && otherLow == Decimals.DECIMAL128_LO_NULL) {
-            return 1;
-        }
-
-        boolean aNeg = isNegative();
-        boolean bNeg = otherHigh < 0;
-        if (aNeg != bNeg) {
-            return aNeg ? -1 : 1;
-        }
-
-        if (this.scale == otherScale) {
-            // Same scale - direct comparison
-            return compare(high, low, otherHigh, otherLow);
-        }
-
-        // We need to make both operands positive to detect overflows when scaling them
-        long aH = this.high;
-        long aL = this.low;
-        long bH = otherHigh;
-        long bL = otherLow;
-        if (aNeg) {
-            aL = ~aL + 1;
-            aH = ~aH + (aL == 0 ? 1L : 0L);
-
-            // Negate b
-            bL = ~bL + 1;
-            bH = ~bH + (bL == 0 ? 1L : 0L);
-        }
-
-        // Different scales - need to align for comparison
-        // We'll scale up the one with smaller scale
-        Decimal128 holder = tl.get();
-        if (this.scale < otherScale) {
-            holder.of(aH, aL, this.scale);
-            holder.multiplyByPowerOf10InPlace(otherScale - this.scale);
-            aH = holder.high;
-            aL = holder.low;
-        } else {
-            holder.of(bH, bL, otherScale);
-            holder.multiplyByPowerOf10InPlace(this.scale - otherScale);
-            bH = holder.high;
-            bL = holder.low;
-        }
-
-        return compare(aH, aL, bH, bL) * (aNeg ? -1 : 1);
+        return compareTo(high, low, scale, otherHigh, otherLow, otherScale);
     }
 
     /**

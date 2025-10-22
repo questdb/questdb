@@ -102,17 +102,11 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         }
 
         final int maxPrecision = Math.max(leftPrecision, rightPrecision);
-        switch (Decimals.getStorageSizePow2(maxPrecision)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                return new Decimal64Func(left, right);
-            case 4:
-                return new Decimal128Func(left, right);
-            default:
-                return new Decimal256Func(left, right);
-        }
+        return switch (Decimals.getStorageSizePow2(maxPrecision)) {
+            case 0, 1, 2, 3 -> new Decimal64Func(left, right);
+            case 4 -> new Decimal128Func(left, right);
+            default -> new Decimal256Func(left, right);
+        };
     }
 
     private static class Decimal128Func extends CompareDecimal128Function {

@@ -202,8 +202,6 @@ public class Decimal256 implements Sinkable, Decimal {
     // precision.
     private static final long[] PRECISION_POSITIVE_THRESHOLD_LL = {0L, 9L, 99L, 999L, 9999L, 99999L, 999999L, 9999999L, 99999999L, 999999999L, 9999999999L, 99999999999L, 999999999999L, 9999999999999L, 99999999999999L, 999999999999999L, 9999999999999999L, 99999999999999999L, 999999999999999999L, -8446744073709551617L, 7766279631452241919L, 3875820019684212735L, 1864712049423024127L, 200376420520689663L, 2003764205206896639L, 1590897978359414783L, -2537764290115403777L, -6930898827444486145L, 4477988020393345023L, 7886392056514347007L, 5076944270305263615L, -4570789518076018689L, -8814407033341083649L, 4089650035136921599L, 4003012203950112767L, 3136633892082024447L, -5527149226598858753L, 68739955140067327L, 687399551400673279L, 6873995514006732799L, -5047021154770878465L, 4870020673419870207L, -6640025486929952769L, 7386721425538678783L, 80237960548581375L, 802379605485813759L, 8023796054858137599L, 6450984253743169535L, 9169610316303040511L, -537617205517352961L, -5376172055173529601L, 1578511669393358847L, -2661627379775963137L, -8169529724050079745L, -7908320945662590977L, -5296233161787703297L, 2377900603251621887L, 5332261958806667263L, -2017612633061982209L, -1729382256910270465L, 1152921504606846975L, -6917529027641081857L, 4611686018427387903L, 9223372036854775807L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L, -1L,};
     private static final BigDecimal[] ZERO_SCALED = new BigDecimal[32];
-    // holders for in-place mutations that doesn't have a mutable structure available
-    private static final ThreadLocal<Decimal256> tl = new ThreadLocal<>(Decimal256::new);
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long hh;    // Highest 64 bits (bits 192-255)
     private long hl;    // High 64 bits (bits 128-191)
@@ -272,6 +270,72 @@ public class Decimal256 implements Sinkable, Decimal {
             return s;
         }
         return Long.compareUnsigned(aLL, bLL);
+    }
+
+    /**
+     * Compare two Decimal256.
+     *
+     * @return -1, 0, or 1 if a is less than, equal to, or greater than b
+     */
+    public static int compareTo(long aHH, long aHL, long aLH, long aLL, int aScale, long bHH, long bHL, long bLH, long bLL, int bScale) {
+        if (isNull(aHH, aHL, aLH, aLL)) {
+            if (isNull(bHH, bHL, bLH, bLL)) {
+                return 0;
+            }
+            return -1;
+        }
+        if (isNull(bHH, bHL, bLH, bLL)) {
+            return 1;
+        }
+
+        boolean aNeg = aHH < 0;
+        boolean bNeg = bHH < 0;
+        if (aNeg != bNeg) {
+            return aNeg ? -1 : 1;
+        }
+
+        if (aScale == bScale) {
+            // Same scale - direct comparison
+            return compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL);
+        }
+
+        if (aNeg) {
+            aLL = ~aLL + 1;
+            long c = aLL == 0L ? 1L : 0L;
+            aLH = ~aLH + c;
+            c = (c == 1L && aLH == 0L) ? 1L : 0L;
+            aHL = ~aHL + c;
+            c = (c == 1L && aHL == 0L) ? 1L : 0L;
+            aHH = ~aHH + c;
+
+            // Negate b
+            bLL = ~bLL + 1;
+            c = bLL == 0L ? 1L : 0L;
+            bLH = ~bLH + c;
+            c = (c == 1L && bLH == 0L) ? 1L : 0L;
+            bHL = ~bHL + c;
+            c = (c == 1L && bHL == 0L) ? 1L : 0L;
+            bHH = ~bHH + c;
+        }
+
+        Decimal256 holder = Misc.getThreadLocalDecimal256();
+        if (aScale < bScale) {
+            holder.of(aHH, aHL, aLH, aLL, aScale);
+            holder.multiplyByPowerOf10InPlace(bScale - aScale);
+            aHH = holder.hh;
+            aHL = holder.hl;
+            aLH = holder.lh;
+            aLL = holder.ll;
+        } else {
+            holder.of(bHH, bHL, bLH, bLL, bScale);
+            holder.multiplyByPowerOf10InPlace(aScale - bScale);
+            bHH = holder.hh;
+            bHL = holder.hl;
+            bLH = holder.lh;
+            bLL = holder.ll;
+        }
+
+        return compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) * (aNeg ? -1 : 1);
     }
 
     /**
@@ -807,78 +871,10 @@ public class Decimal256 implements Sinkable, Decimal {
     /**
      * Compare this Decimal256 with another.
      *
-     * @return -1, 0, or 1 as this is less than, equal to, or greater than other
+     * @return -1, 0, or 1 if this is less than, equal to, or greater than other
      */
     public int compareTo(long otherHH, long otherHL, long otherLH, long otherLL, int otherScale) {
-        if (isNull()) {
-            if (isNull(otherHH, otherHL, otherLH, otherLL)) {
-                return 0;
-            }
-            return -1;
-        }
-        if (isNull(otherHH, otherHL, otherLH, otherLL)) {
-            return 1;
-        }
-
-        boolean aNeg = isNegative();
-        boolean bNeg = otherHH < 0;
-        if (aNeg != bNeg) {
-            return aNeg ? -1 : 1;
-        }
-
-        if (this.scale == otherScale) {
-            // Same scale - direct comparison
-            return compare(hh, hl, lh, ll, otherHH, otherHL, otherLH, otherLL);
-        }
-
-        // Stores the coefficient to apply to the response, if both numbers are negative, then
-        // we have to reverse the result
-        long aHH = this.hh;
-        long aHL = this.hl;
-        long aLH = this.lh;
-        long aLL = this.ll;
-        long bHH = otherHH;
-        long bHL = otherHL;
-        long bLH = otherLH;
-        long bLL = otherLL;
-
-        if (aNeg) {
-            aLL = ~aLL + 1;
-            long c = aLL == 0L ? 1L : 0L;
-            aLH = ~aLH + c;
-            c = (c == 1L && aLH == 0L) ? 1L : 0L;
-            aHL = ~aHL + c;
-            c = (c == 1L && aHL == 0L) ? 1L : 0L;
-            aHH = ~aHH + c;
-
-            // Negate b
-            bLL = ~bLL + 1;
-            c = bLL == 0L ? 1L : 0L;
-            bLH = ~bLH + c;
-            c = (c == 1L && bLH == 0L) ? 1L : 0L;
-            bHL = ~bHL + c;
-            c = (c == 1L && bHL == 0L) ? 1L : 0L;
-            bHH = ~bHH + c;
-        }
-
-        Decimal256 holder = tl.get();
-        if (this.scale < otherScale) {
-            holder.of(aHH, aHL, aLH, aLL, this.scale);
-            holder.multiplyByPowerOf10InPlace(otherScale - this.scale);
-            aHH = holder.hh;
-            aHL = holder.hl;
-            aLH = holder.lh;
-            aLL = holder.ll;
-        } else {
-            holder.of(bHH, bHL, bLH, bLL, otherScale);
-            holder.multiplyByPowerOf10InPlace(this.scale - otherScale);
-            bHH = holder.hh;
-            bHL = holder.hl;
-            bLH = holder.lh;
-            bLL = holder.ll;
-        }
-
-        return compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) * (aNeg ? -1 : 1);
+        return compareTo(hh, hl, lh, ll, scale, otherHH, otherHL, otherLH, otherLL, otherScale);
     }
 
     /**

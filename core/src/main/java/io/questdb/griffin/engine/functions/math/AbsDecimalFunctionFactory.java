@@ -30,13 +30,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal16Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal32Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
@@ -52,20 +52,14 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         var arg = args.getQuick(0);
         final int type = arg.getType();
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(type, arg);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(type, arg);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(type, arg);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(type, arg);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(type, arg);
-            default:
-                return new Decimal256Func(type, arg);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(type, arg);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(type, arg);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(type, arg);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(type, arg);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(type, arg);
+            default -> new Decimal256Func(type, arg);
+        };
     }
 
     private static class Decimal128Func extends Decimal128Function implements UnaryFunction {
@@ -101,6 +95,11 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "abs";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
@@ -171,10 +170,14 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
             return decimal256.getLl();
         }
 
-
         @Override
         public String getName() {
             return "abs";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
