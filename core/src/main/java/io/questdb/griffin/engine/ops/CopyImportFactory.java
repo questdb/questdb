@@ -32,15 +32,17 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cutlass.text.CopyContext;
-import io.questdb.cutlass.text.CopyRequestTask;
+import io.questdb.cutlass.text.CopyImportContext;
+import io.questdb.cutlass.text.CopyImportRequestTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
-import io.questdb.griffin.model.CopyModel;
-import io.questdb.mp.MPSequence;
+import io.questdb.griffin.model.ExportModel;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
@@ -49,11 +51,12 @@ import io.questdb.std.str.StringSink;
  * Executes COPY statement lazily, i.e. on record cursor initialization, to play
  * nicely with server-side statements in PG Wire and query caching in general.
  */
-public class CopyFactory extends AbstractRecordCursorFactory {
+public class CopyImportFactory extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(CopyImportFactory.class);
 
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final int atomicity;
-    private final CopyContext copyContext;
+    private final CopyImportContext copyImportContext;
     private final byte delimiter;
     private final String fileName;
     private final boolean headerFlag;
@@ -66,16 +69,16 @@ public class CopyFactory extends AbstractRecordCursorFactory {
     private final String timestampColumn;
     private final String timestampFormat;
 
-    public CopyFactory(
+    public CopyImportFactory(
             MessageBus messageBus,
-            CopyContext copyContext,
+            CopyImportContext copyImportContext,
             String tableName,
             String fileName,
-            CopyModel model
+            ExportModel model
     ) {
         super(METADATA);
         this.messageBus = messageBus;
-        this.copyContext = copyContext;
+        this.copyImportContext = copyImportContext;
         this.tableName = tableName;
         this.fileName = fileName;
         this.headerFlag = model.isHeader();
@@ -88,17 +91,20 @@ public class CopyFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RingQueue<CopyRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
-        final MPSequence copyRequestPubSeq = messageBus.getCopyRequestPubSeq();
-        final AtomicBooleanCircuitBreaker circuitBreaker = copyContext.getCircuitBreaker();
+        final AtomicBooleanCircuitBreaker circuitBreaker = copyImportContext.getCircuitBreaker();
+        long copyID = copyImportContext.assignActiveImportId(executionContext.getSecurityContext());
+        if (copyID != CopyImportContext.INACTIVE_COPY_ID) {
+            final RingQueue<CopyImportRequestTask> copyImportRequestQueue = messageBus.getCopyImportRequestQueue();
 
-        long activeCopyID = copyContext.getActiveCopyID();
-        if (activeCopyID == CopyContext.INACTIVE_COPY_ID) {
-            long processingCursor = copyRequestPubSeq.next();
-            if (processingCursor > -1) {
-                final CopyRequestTask task = textImportRequestQueue.get(processingCursor);
+            importIdSink.clear();
+            Numbers.appendHex(importIdSink, copyID, true);
 
-                long copyID = copyContext.assignActiveImportId(executionContext.getSecurityContext());
+            try {
+                circuitBreaker.reset();
+                final SPSequence copyRequestPubSeq = messageBus.getCopyImportRequestPubSeq();
+                long processingCursor = copyRequestPubSeq.next();
+                assert processingCursor > -1;
+                final CopyImportRequestTask task = copyImportRequestQueue.get(processingCursor);
                 task.of(
                         executionContext.getSecurityContext(),
                         copyID,
@@ -111,26 +117,24 @@ public class CopyFactory extends AbstractRecordCursorFactory {
                         partitionBy,
                         atomicity
                 );
-
-                circuitBreaker.reset();
                 copyRequestPubSeq.done(processingCursor);
-
-                importIdSink.clear();
-                Numbers.appendHex(importIdSink, copyID, true);
                 record.setValue(importIdSink);
                 cursor.toTop();
                 return cursor;
-            } else {
-                throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
+            } catch (Throwable ex) {
+                copyImportContext.clear();
+                LOG.errorW().$("copy import failed [id=").$(importIdSink).$(", message=").$(ex.getMessage()).I$();
+                throw ex;
             }
+        } else {
+            long activeCopyID = copyImportContext.getActiveImportID();
+            importIdSink.clear();
+            Numbers.appendHex(importIdSink, activeCopyID, true);
+            throw SqlException.$(0, "unable to process the import request - another import may be in progress")
+                    .put(" [activeImportId=")
+                    .put(importIdSink)
+                    .put(']');
         }
-
-        importIdSink.clear();
-        Numbers.appendHex(importIdSink, activeCopyID, true);
-        throw SqlException.$(0, "Another import request is in progress. ")
-                .put("[activeImportId=")
-                .put(importIdSink)
-                .put(']');
     }
 
     @Override
@@ -143,7 +147,7 @@ public class CopyFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
-    private static class CopyRecord implements Record {
+    public static class CopyRecord implements Record {
         private CharSequence value;
 
         @Override

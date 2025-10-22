@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -78,6 +79,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
+            CairoEngine engine,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
@@ -87,7 +89,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
         recordB = new VirtualRecord(recordFunctions);
-        mergeCircuitBreaker = new AtomicBooleanCircuitBreaker();
+        mergeCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         isOpen = true;
     }
 
