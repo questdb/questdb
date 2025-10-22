@@ -412,6 +412,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                             record.hasSlave(false);
                             break;
                         }
+                        // It may seem we don't need didJumpOverScannedRange since, after jumping over the scanned
+                        // range, we can't enter the enclosing if-block that ensures we're within the validity period.
+                        // However, we still need this for the edge case where we just jumped over the scanned range,
+                        // because the rowId we set is the lower bound of the range, not one less than that.
+                        // So, why don't we set rowId to one less? Because that rowId may be less than the
+                        // earliest legal rowId, and we don't want to repeat the entire logic related to that here.
                         didJumpOverScannedRange = true;
                         int frameIndex = Rows.toPartitionIndex(rowId);
                         slaveTimeFrameCursor.jumpTo(frameIndex);
