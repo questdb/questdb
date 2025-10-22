@@ -60,6 +60,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 // TODO(puzpuzpuz): add support for JIT-compiled filters
 // TODO(puzpuzpuz): consider implementing limit and negative limit
+// TODO(puzpuzpuz): consider applying time intrinsic intervals/table min/max ts from left-hand to right-hand
 public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncWindowJoinRecordCursorFactory::filterAndAggregate;
     private final SCSequence collectSubSeq = new SCSequence();
