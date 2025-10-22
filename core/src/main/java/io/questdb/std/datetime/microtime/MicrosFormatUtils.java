@@ -379,8 +379,11 @@ public class MicrosFormatUtils {
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
 
         final String[] httpPatterns = new String[]{ // priority sorted
-                "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
-                "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
+                "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard (RFC 1123)
+                "E, d-MMM-yyyy HH:mm:ss Z",     // Microsoft EntraID
+                "E, d-MMM-yy HH:mm:ss Z",       // HTTP 1.0 (2-digit year)
+                "E MMM dd HH:mm:ss yyyy",       // ANSI C asctime format (2-digit day)
+                "E MMM  d HH:mm:ss yyyy"        // ANSI C asctime format (1-digit day with space)
         };
         HTTP_FORMATS = new DateFormat[httpPatterns.length];
         for (int i = 0; i < httpPatterns.length; i++) {
