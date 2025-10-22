@@ -143,12 +143,13 @@ steps:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
-      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 -XX:+UseParallelGC -XX:ActiveProcessorCount=2 $(MAVEN_OPTS)"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
       options:
         "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DargLine=-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC -XX:ActiveProcessorCount=2
         -P qdbr-coverage,build-web-console
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
