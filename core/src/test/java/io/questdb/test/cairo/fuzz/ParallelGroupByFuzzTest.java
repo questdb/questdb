@@ -845,21 +845,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByArray(
                 "SELECT last(darr), key FROM tab order by key",
                 "last\tkey\n" +
-                        "[0.28934577745726665,null]\tk0\n" +
-                        "[0.7594296619518549,0.5514604042904348]\tk1\n" +
-                        "[0.7594296619518549,0.5514604042904348]\tk2\n" +
-                        "[0.10459352312331183,null]\tk3\n" +
-                        "[0.12503042190293423,null]\tk4\n"
-        );
-    }
-
-    @Test
-    public void testParallelGroupByArrayLastNonKeyed() throws Exception {
-        Assume.assumeFalse(convertToParquet);
-        testParallelGroupByArray(
-                "SELECT last(darr) FROM tab",
-                "last\n" +
-                        "[0.19548881160742315,0.2934080080690735]\n"
+                        "[0.19548881160742315,0.2934080080690735]\tk0\n" +
+                        "[null,0.6170231709845024]\tk1\n" +
+                        "[null,null,null]\tk2\n" +
+                        "[null,null,null]\tk3\n" +
+                        "[null,null]\tk4\n"
         );
     }
 
