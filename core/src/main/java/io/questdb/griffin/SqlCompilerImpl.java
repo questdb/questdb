@@ -287,10 +287,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long batchSize,
             long o3MaxLag
     ) {
-        return copyOrderedBatched(writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+        return copyOrderedBatched(context, writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, CopyDataProgressReporter.NOOP, -1);
     }
 
     public static long copyOrderedBatched(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordMetadata metadata,
             RecordCursor cursor,
@@ -298,7 +299,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
@@ -315,12 +315,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     public static long copyUnordered(
+            SqlExecutionContext context,
             RecordCursor cursor,
             TableWriterAPI writer,
-            RecordToRowCopier copier,
-            SqlExecutionCircuitBreaker circuitBreaker
+            RecordToRowCopier copier
     ) {
-        return copyUnordered(cursor, writer, copier, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+        return copyUnordered(context, cursor, writer, copier, CopyDataProgressReporter.NOOP, -1);
     }
 
     /**
