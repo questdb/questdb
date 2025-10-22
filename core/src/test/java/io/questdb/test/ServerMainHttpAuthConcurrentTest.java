@@ -93,7 +93,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
     @Test
     public void testConcurrentMultipleSessionsRotatedEvicted() throws Exception {
-        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, rotationsFinished) -> {
+        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
             final long rotationIncrement = sessionTimeout / 2 + 1_000_000L;
             final long rotateAt = currentMicros.get() + sessionTimeout / 2;
 
@@ -104,11 +104,11 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 sessionId = createSession(httpClient, sessionStore);
             } finally {
                 // wait for all sessions created
-                rotationsFinished.await();
+                barrier.await();
             }
 
             // reset barrier, we will use it again to sync the threads
-            rotationsFinished.reset();
+            barrier.reset();
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
                 for (int i = 0; i < numOfIterations; i++) {
@@ -127,7 +127,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 }
             } finally {
                 // wait for all rotations to happen
-                rotationsFinished.await();
+                barrier.await();
             }
 
             final String newSessionId;
@@ -179,6 +179,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             final long timeIncrement = sessionTimeout + 1_000_000L;
             final long expiresAt = currentMicros.get() + sessionTimeout;
 
+            // all threads have to initialize expiresAt before the clock is moved
+            barrier.await();
+
             final int numOfIterations = 20 + rnd.nextInt(30);
             for (int i = 0; i < numOfIterations; i++) {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
@@ -212,6 +215,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
             final long timeIncrement = sessionTimeout / 2 + 1_000_000L;
             final long rotateAt = currentMicros.get() + sessionTimeout / 2;
+
+            // all threads have to initialize rotateAt before the clock is moved
+            barrier.await();
 
             final int numOfIterations = 20 + rnd.nextInt(20);
             for (int i = 0; i < numOfIterations; i++) {
