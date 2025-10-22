@@ -51,7 +51,9 @@ import org.junit.Test;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Predicate;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.test.tools.TestUtils.await;
@@ -62,6 +64,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
     private static final String USER = "admin";
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private volatile int numOfThreads;
 
     @Before
     public void setUp() {
@@ -74,8 +77,8 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testConcurrentMultipleSessions() throws Exception {
-        runTest(false, (not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd) -> {
+    public void testConcurrentMultipleSessionsMultipleClients() throws Exception {
+        runTest(false, (not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
             final int numOfIterations = 10 + rnd.nextInt(20);
             for (int i = 0; i < numOfIterations; i++) {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
@@ -85,12 +88,86 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     closeSession(httpClient, sessionId);
                 }
             }
-        });
+        }, sessions -> sessions.size() == 0);
+    }
+
+    @Test
+    public void testConcurrentMultipleSessionsRotatedEvicted() throws Exception {
+        runTest(false, (not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, rotationsFinished) -> {
+            final long rotationIncrement = sessionTimeout / 2 + 1_000_000L;
+            final long rotateAt = currentMicros.get() + sessionTimeout / 2;
+
+            final ObjList<String> sessionIds = new ObjList<>();
+
+            final String sessionId;
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                sessionId = createSession(httpClient, sessionStore);
+            }
+
+            final int numOfIterations = 10 + rnd.nextInt(10);
+            for (int i = 0; i < numOfIterations; i++) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                    final String newSessionId = runSuccessfulQuery(httpClient, sessionId, rnd);
+                    if (newSessionId != null) {
+                        sessionIds.add(newSessionId);
+                    }
+
+                    // randomly select a thread to move the clock over rotateAt 
+                    synchronized (this) {
+                        if (rnd.nextBoolean() && currentMicros.get() < rotateAt) {
+                            currentMicros.addAndGet(rotationIncrement);
+                        }
+                    }
+                }
+            }
+
+            // wait for all rotations
+            rotationsFinished.await();
+
+            final String newSessionId;
+            final HttpSessionStore.SessionInfo session;
+            if (sessionIds.size() == 1) {
+                newSessionId = sessionIds.getQuick(0);
+
+                // assert that old session id still works
+                assertNotNull(session = sessionStore.getSession(sessionId));
+                // assert that old and new session ids belong to the same session
+                assertEquals(session, sessionStore.getSession(newSessionId));
+                assertEquals(newSessionId, session.getSessionId());
+            } else {
+                // session id was not rotated
+                // we can return after asserting that there is no new session id
+                assertEquals(0, sessionIds.size());
+                return;
+            }
+
+            final long evictionIncrement = sessionTimeout / 3;
+            final long evictAt = currentMicros.get() + evictionIncrement;
+
+            for (int i = 0; i < numOfIterations; i++) {
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                    assertNull(runSuccessfulQuery(httpClient, newSessionId, rnd));
+
+                    // randomly select a thread to move the clock over evictAt
+                    synchronized (this) {
+                        if (rnd.nextBoolean() && currentMicros.get() < evictAt) {
+                            currentMicros.addAndGet(evictionIncrement);
+                        }
+                    }
+                }
+            }
+
+            // assert that old session id is not registered anymore, has been evicted
+            assertNull(sessionStore.getSession(sessionId));
+            // assert that new session id is still registered
+            assertEquals(session, sessionStore.getSession(newSessionId));
+        }, sessions -> sessions.size() <= numOfThreads);
     }
 
     @Test
     public void testConcurrentSingleSessionExpired() throws Exception {
-        runTest(true, (sessionId, currentMicros, sessionStore, sessionTimeout, rnd) -> {
+        final AtomicInteger sessionCount = new AtomicInteger();
+        runTest(true, (sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
             final long timeIncrement = sessionTimeout + 1_000_000L;
             final long expiresAt = currentMicros.get() + sessionTimeout;
 
@@ -107,6 +184,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                         // at the end of the test we will assert that the original session has been closed
                         // and that the num of open sessions are less or equal to the num of threads
                         sessionId = createSession(httpClient, sessionStore);
+                        sessionCount.incrementAndGet();
                     }
 
                     // randomly select a thread to move the clock over expiresAt 
@@ -117,12 +195,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     }
                 }
             }
-        });
+        }, sessions -> sessions.size() == sessionCount.get() && sessions.size() <= numOfThreads);
     }
 
     @Test
     public void testConcurrentSingleSessionRotated() throws Exception {
-        runTest(true, (sessionId, currentMicros, sessionStore, sessionTimeout, rnd) -> {
+        runTest(true, (sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
             final long timeIncrement = sessionTimeout / 2 + 1_000_000L;
             final long rotateAt = currentMicros.get() + sessionTimeout / 2;
 
@@ -139,7 +217,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     }
                 }
             }
-        });
+        }, sessions -> sessions.size() == 1);
     }
 
     private static void assertResponse(HttpClient.ResponseHeaders responseHeaders, String expected) {
@@ -202,6 +280,11 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         return sessionId;
     }
 
+    private static String extractSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
+        final HttpCookie sessionCookie = responseHeaders.getCookie(SESSION_COOKIE_NAME_UTF8);
+        return sessionCookie != null ? sessionCookie.value.toString() : null;
+    }
+
     private static @NotNull Bootstrap getBootstrapWithMockClock(AtomicLong currentMicros) {
         final MicrosecondClock testClock = currentMicros::get;
         return new Bootstrap(
@@ -242,18 +325,17 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     }
 
     // randomized usage of the `main` httpClient
-    private static void runSuccessfulQuery(HttpClient httpClient, String sessionId, Rnd rnd) {
+    private static String runSuccessfulQuery(HttpClient httpClient, String sessionId, Rnd rnd) {
         if (rnd.nextBoolean()) {
-            runSuccessfulQuery(httpClient, sessionId);
-            return;
+            return runSuccessfulQuery(httpClient, sessionId);
         }
         try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
-            runSuccessfulQuery(client, sessionId);
+            return runSuccessfulQuery(client, sessionId);
         }
     }
 
     // use the session id without the auth header to run a query
-    private static void runSuccessfulQuery(HttpClient httpClient, String sessionId) {
+    private static String runSuccessfulQuery(HttpClient httpClient, String sessionId) {
         try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
                 .GET()
                 .url("/exec")
@@ -264,10 +346,11 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             responseHeaders.await();
             TestUtils.assertEquals("200", responseHeaders.getStatusCode());
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+            return extractSessionCookie(responseHeaders);
         }
     }
 
-    private void runTest(boolean openSession, TestCode test) throws Exception {
+    private void runTest(boolean openSession, TestCode test, Predicate<ObjList<HttpSessionStore.SessionInfo>> assertSessions) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
 
@@ -279,9 +362,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 final HttpSessionStore sessionStore = serverMain.getConfiguration().getFactoryProvider().getHttpSessionStore();
                 final long sessionTimeout = serverMain.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
 
-                //final int numOfThreads = 5 + rnd.nextInt(5);
-                final int numOfThreads = 10;
+                numOfThreads = 5 + rnd.nextInt(5);
                 final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                 final CyclicBarrier start = new CyclicBarrier(numOfThreads);
                 final SOCountDownLatch end = new SOCountDownLatch(numOfThreads);
 
@@ -299,7 +382,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     new Thread(() -> {
                         await(start);
                         try {
-                            test.run(sessionId, currentMicros, sessionStore, sessionTimeout, rnd);
+                            test.run(sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier);
                         } catch (Throwable th) {
                             th.printStackTrace(System.out);
                             errors.put(threadIndex, th);
@@ -311,6 +394,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                     final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
+                    if (!assertSessions.test(sessions)) {
+                        errors.put(-1, new AssertionError("Assert sessions failed"));
+                    }
                     if (sessions != null) {
                         // start iterating from the back, so index is not getting messed up
                         // closeSession() always removes the last element of the list
@@ -335,6 +421,6 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     }
 
     private interface TestCode {
-        void run(String sessionId, AtomicLong currentMicros, HttpSessionStore sessionStore, long sessionTimeout, Rnd rnd);
+        void run(String sessionId, AtomicLong currentMicros, HttpSessionStore sessionStore, long sessionTimeout, Rnd rnd, CyclicBarrier barrier) throws Exception;
     }
 }
