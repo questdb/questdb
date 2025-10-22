@@ -63,8 +63,9 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
 
         if (masterKey == SymbolTable.VALUE_IS_NULL) {
             if (slaveSymbolTable.containsNullValue()) {
+                slaveKey = SymbolTable.VALUE_IS_NULL;
                 // add to cache unconditionally even when at the max size, null is important to cache
-                masterKeysExistingInSlaveCache.put(masterKey, SymbolTable.VALUE_IS_NULL);
+                masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
                 return slaveKey;
             }
             return StaticSymbolTable.VALUE_NOT_FOUND;
