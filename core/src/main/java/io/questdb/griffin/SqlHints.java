@@ -37,6 +37,14 @@ public final class SqlHints {
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
 
+    public static boolean hasAsOfFastSearchHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_FAST_SEARCH_HINT, tableNameA, tableNameB);
+    }
+
     public static boolean hasAsOfIndexSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
@@ -51,14 +59,6 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
-    }
-
-    public static boolean hasAsofFastSearchHint(
-            @NotNull QueryModel queryModel,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
-    ) {
-        return hasHintWithParams(queryModel, ASOF_FAST_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters
