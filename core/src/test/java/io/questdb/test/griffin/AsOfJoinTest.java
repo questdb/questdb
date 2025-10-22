@@ -528,7 +528,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "MSFT\t200.0\t199.5\t200.5\n" +
                     "AAPL\t151.0\t150.5\t151.5\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -563,7 +568,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expected = "symbol\tprice\tbid\task\n" +
                     "AAPL\t155.0\t149.5\t150.5\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -597,7 +607,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t150.0\tnull\tnull\n" +
                     "GOOGL\t100.0\tnull\tnull\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -631,7 +646,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expected = "symbol\tprice\tbid\task\n" +
                     "AAPL\t150.0\tnull\tnull\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -672,7 +692,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t155.0\t154.5\t155.5\n" +
                     "AAPL\t160.0\t159.5\t160.5\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -719,7 +744,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t151.0\t150.5\t151.5\n" +
                     "GOOGL\t101.0\t100.5\t101.5\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -755,7 +785,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t150.0\t149.5\t150.5\n" +
                     "TSLA\t250.0\tnull\tnull\n";
 
-            assertSql(expected, "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -794,20 +829,25 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "AAPL\t150.0\tnull\tnull\n" +
                     "AAPL\t152.0\t151.5\t152.5\n";
 
-            assertSql(expected1,
-                    "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t " +
-                            "ASOF JOIN quotes q ON t.symbol = q.symbol " +
-                            "TOLERANCE 1m");
+            String queryBody1 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
+                    "ASOF JOIN quotes q ON t.symbol = q.symbol " +
+                    "TOLERANCE 1m";
+            assertSql(expected1, "SELECT " + queryBody1);
+            String hintedQuery1 = "SELECT /*+ asof_index_search(t q) */ " + queryBody1;
+            printSql("EXPLAIN " + hintedQuery1);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected1, hintedQuery1);
 
             // With 15-minute tolerance: both trades should match
             String expected2 = "symbol\tprice\tbid\task\n" +
                     "AAPL\t150.0\t149.5\t150.5\n" +
                     "AAPL\t152.0\t151.5\t152.5\n";
 
-            assertSql(expected2,
-                    "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t " +
-                            "ASOF JOIN quotes q ON t.symbol = q.symbol " +
-                            "TOLERANCE 15m");
+            String queryBody2 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
+                    "ASOF JOIN quotes q ON t.symbol = q.symbol " +
+                    "TOLERANCE 15m";
+            assertSql(expected2, "SELECT " + queryBody2);
+            assertSql(expected2, "SELECT /*+ asof_index_search(t q) */ " + queryBody2);
         });
     }
 
@@ -847,11 +887,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String expected = "symbol\tprice\tbid\task\n" +
                     "AAPL\t155.0\t154.5\t155.5\n";
 
-            assertSql(expected,
-                    "SELECT t.symbol, t.price, q.bid, q.ask FROM trades t " +
-                            "ASOF JOIN (SELECT * FROM quotes WHERE ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z') q " +
-                            "ON t.symbol = q.symbol " +
-                            "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'");
+            String queryBody = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
+                    "ASOF JOIN (SELECT * FROM quotes WHERE ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z') q " +
+                    "ON t.symbol = q.symbol " +
+                    "WHERE t.ts BETWEEN '2024-01-02T00:00:00.000000Z' AND '2024-01-02T23:59:59.999999Z'";
+            assertSql(expected, "SELECT " + queryBody);
+            String hintedQuery = "SELECT /*+ asof_index_search(t q) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
         });
     }
 
@@ -1382,6 +1426,169 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinWithIndexSearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create tables with symbol index
+            executeWithRewriteTimestamp(
+                    "create table orders as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B', 'C') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "create table trades as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B', 'C') as sym,\n" +
+                            "    cast(x + 10 as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(50)\n" +
+                            "), index(sym) timestamp(ts) partition by DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Query with asof_index_search hint
+            String query = "SELECT /*+ asof_index_search(orders trades) */ * FROM orders " +
+                    "ASOF JOIN trades ON (sym)";
+
+            // Verify the query plan shows indexed search
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+
+            // Execute and verify existence of results
+            printSql(query);
+            Assert.assertTrue(sink.length() > 0);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithLinearSearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table t1 as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B', 'C') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "create table t2 as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B', 'C') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            "), index(sym) timestamp(ts) partition by DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Query with asof_linear_search hint (forces linear search)
+            String query = "SELECT /*+ asof_linear_search(t1 t2) */ * FROM t1 " +
+                    "ASOF JOIN t2 ON (sym)";
+
+            // Verify the query plan does NOT show Fast Scan
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Fast");
+            TestUtils.assertNotContains(sink, "Indexed");
+
+            // Execute and verify results
+            printSql(query);
+            Assert.assertTrue(sink.length() > 0);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithMultipleHintsCombination() throws Exception {
+        assertMemoryLeak(() -> {
+            // Create test tables with symbols
+            executeWithRewriteTimestamp(
+                    "create table events as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('TYPE1', 'TYPE2', 'TYPE3') as event_type,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(200)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "create table responses as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('TYPE1', 'TYPE2', 'TYPE3') as event_type,\n" +
+                            "    cast(x + 10 as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            "), index(event_type) timestamp(ts) partition by DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Test that linear search hint takes precedence over index search
+            String query = "SELECT /*+ asof_linear_search(events responses) asof_index_search(events responses) */ * " +
+                    "FROM events ASOF JOIN responses ON (event_type)";
+
+            printSql("EXPLAIN " + query);
+            // Linear search should take precedence
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Indexed");
+            TestUtils.assertNotContains(sink, "Fast");
+        });
+    }
+
+    @Test
+    public void testBackwardCompatibilityWithDeprecatedHints() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table master as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "create table slave as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            "), index(sym) timestamp(ts) partition by DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Test deprecated avoid_asof_binary_search hint still works
+            String queryDeprecatedAsOf = "SELECT /*+ avoid_asof_binary_search(master slave) */ * FROM master " +
+                    "ASOF JOIN slave ON (sym)";
+
+            printSql("EXPLAIN " + queryDeprecatedAsOf);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Fast");
+            TestUtils.assertNotContains(sink, "Indexed");
+
+            // Test deprecated avoid_lt_binary_search hint still works
+            String queryDeprecatedLt = "SELECT /*+ avoid_lt_binary_search(master slave) */ * FROM master " +
+                    "LT JOIN slave ON (sym)";
+
+            printSql("EXPLAIN " + queryDeprecatedLt);
+            TestUtils.assertContains(sink, "Lt Join Light");
+
+            // Verify the new asof_linear_search hint has same effect
+            String queryNewLinear = "SELECT /*+ asof_linear_search(master slave) */ * FROM master " +
+                    "ASOF JOIN slave ON (sym)";
+
+            printSql("EXPLAIN " + queryNewLinear);
+            TestUtils.assertContains(sink, "AsOf Join");
+            TestUtils.assertNotContains(sink, "Fast");
+            TestUtils.assertNotContains(sink, "Indexed");
+        });
+    }
+
+    @Test
     public void testExplicitTimestampIsNotNecessaryWhenAsofJoiningExplicitlyOrderedTables() throws Exception {
         testExplicitTimestampIsNotNecessaryWhenJoining("asof join", "ts");
     }
@@ -1594,7 +1801,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testJoinStringOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     "INSERT INTO x VALUES " +
@@ -1618,9 +1825,22 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            // ASOF JOIN
-            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            // LT JOIN
+            String query = "SELECT * FROM x LT JOIN y ON(sym)";
             String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // ASOF JOIN
+            String queryBody = "* FROM x ASOF JOIN y ON(sym)";
+            query = "SELECT " + queryBody;
+            expected = "sym\tts\tsym1\tts1\n" +
                     "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
                     "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t1\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
@@ -1630,17 +1850,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
-            // LT JOIN
-            query = "SELECT * FROM x LT JOIN y ON(sym)";
-            expected = "sym\tts\tsym1\tts1\n" +
-                    "1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                    "1\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
+            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
 
@@ -1648,7 +1862,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testJoinVarcharOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE x (sym VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", leftTableTimestampType.getTypeName());
-            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE y (sym SYMBOL INDEX, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", rightTableTimestampType.getTypeName());
 
             execute(
                     "INSERT INTO x VALUES " +
@@ -1672,9 +1886,22 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            // ASOF JOIN
-            String query = "SELECT * FROM x ASOF JOIN y ON(sym)";
+            // LT JOIN
+            String query = "SELECT * FROM x LT JOIN y ON(sym)";
             String expected = "sym\tts\tsym1\tts1\n" +
+                    "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // ASOF JOIN
+            String queryBody = "* FROM x ASOF JOIN y ON(sym)";
+            query = "SELECT " + queryBody;
+            expected = "sym\tts\tsym1\tts1\n" +
                     "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
                     "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
                     "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t😊\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
@@ -1684,17 +1911,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
-            // LT JOIN
-            query = "SELECT * FROM x LT JOIN y ON(sym)";
-            expected = "sym\tts\tsym1\tts1\n" +
-                    "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                    "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t\t\n" +
-                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + rightSuffix + "\n" +
-                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
-            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+            String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
+            printSql("EXPLAIN " + hintedQuery);
+            TestUtils.assertContains(sink, "AsOf Join Indexed");
+            assertSql(expected, hintedQuery);
+            assertQueryNoLeakCheck(expected, hintedQuery, "ts", false, true);
         });
     }
 
@@ -2573,6 +2794,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinWithAsofLinearSearchHint() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table t1 as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "create table t2 as (\n" +
+                            "  select \n" +
+                            "    rnd_symbol('A', 'B') as sym,\n" +
+                            "    cast(x as #TIMESTAMP) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            "), index(sym) timestamp(ts) partition by DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Query with asof_linear_search hint (forces linear search)
+            String query = "SELECT /*+ asof_linear_search(t1 t2) */ * FROM t1 " +
+                    "LT JOIN t2 ON (sym)";
+
+            // Verify the query plan does NOT show Fast/Light scan
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join");
+            TestUtils.assertNotContains(sink, "Fast");
+
+            // Execute and verify results
+            printSql(query);
+            Assert.assertTrue(sink.length() > 0);
         });
     }
 

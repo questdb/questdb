@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -104,6 +105,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // kept public for testing
+    public static long estimateRowsPerBucket(long tableRows, long bucket, long partitionDuration, int partitionCount) {
+        if (partitionCount > 0) {
+            final double bucketToPartition = (double) bucket / partitionDuration;
+            return Math.max(1, (long) ((bucketToPartition * tableRows) / partitionCount));
+        }
+        return 1;
+    }
+
     @Override
     public void close() {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
@@ -118,19 +128,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
+    private static long approxStepDuration(long step, long approxBucketSize) {
+        try {
+            return Math.multiplyExact(step, approxBucketSize);
+        } catch (ArithmeticException ignore) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     /**
      * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
      * it doesn't use exact min/max timestamps for each partition, but it should do the job
      * of splitting large refresh table scans into multiple smaller scans.
      */
     private static long estimateRowsPerBucket(@NotNull TimestampDriver driver, @NotNull TableReader baseTableReader, long bucket) {
-        final long rows = baseTableReader.size();
+        final long tableRows = baseTableReader.size();
         final long partitionDuration = driver.approxPartitionDuration(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
-        if (partitionCount > 0) {
-            return Math.max(1, (rows * bucket) / (partitionDuration * partitionCount));
-        }
-        return 1;
+        return estimateRowsPerBucket(tableRows, bucket, partitionDuration, partitionCount);
     }
 
     private static void intersectIntervals(LongList intervals, long lo, long hi) {
@@ -414,9 +429,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (minTs <= maxTs) {
             final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
-            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, timestampSampler.getApproxBucketSize());
+            final long approxBucketSize = timestampSampler.getApproxBucketSize();
+            final long rowsPerBucket = estimateRowsPerBucket(driver, baseTableReader, approxBucketSize);
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
-            final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+
+            int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+            final long maxStepDuration = driver.fromMicros(configuration.getMatViewMaxRefreshStepUs());
+            while (step > 1 && approxStepDuration(step, approxBucketSize) > maxStepDuration) {
+                // the step is too large, check the duration of a 2x smaller step;
+                // that's to avoid overflows in the interval iterator
+                step = Math.max(1, step / 2);
+            }
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
@@ -439,6 +462,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", periodHi=").$ts(driver, refreshContext.periodHi)
                     .$(", iteratorMinTs>=").$ts(driver, iteratorMinTs)
                     .$(", iteratorMaxTs<").$ts(driver, iteratorMaxTs)
+                    .$(", iteratorStep=").$(step)
                     .I$();
 
             refreshContext.intervalIterator = intervalIterator;
@@ -558,8 +582,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable MatViewStateStore stateStore,
             @Nullable MatViewRefreshTask refreshTask
     ) {
-        if (th instanceof CairoException) {
-            CairoException ex = (CairoException) th;
+        if (th instanceof CairoException ex) {
             if (ex.isTableDoesNotExist()) {
                 // Can be that the mat view underlying table is in the middle of being renamed at this moment,
                 // do not invalidate the view in this case.
@@ -788,10 +811,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             Misc.free(factory);
-            LOG.error()
+            int errno = Integer.MIN_VALUE;
+            if (th instanceof CairoException e) {
+                if (e.isInterruption() && engine.isClosing()) {
+                    // The query was cancelled, because a questdb shutdown.
+                    LOG.info().$("materialized view refresh cancelled on shutdown [view=").$(viewTableToken)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    return false;
+                } else {
+                    errno = e.getErrno();
+                }
+            }
+
+            LogRecord log = LOG.error()
                     .$("could not refresh materialized view [view=").$(viewTableToken)
-                    .$(", ex=").$(th)
-                    .I$();
+                    .$(", ex=").$(th);
+
+            if (errno != Integer.MIN_VALUE) {
+                log.$(", errno=").$(errno);
+            }
+            log.I$();
+
             refreshFailState(viewDefinition, viewState, walWriter, th);
             return false;
         }

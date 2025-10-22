@@ -60,6 +60,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -210,6 +211,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
+        Assert.assertEquals(Micros.YEAR_MICROS_NONLEAP, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
         Assert.assertEquals(15_000, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -254,7 +256,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlHashJoinLightValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinLightValueMaxPages());
         Assert.assertEquals(100, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
-        Assert.assertTrue(configuration.getCairoConfiguration().useFastAsOfJoin());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
@@ -298,7 +299,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(-1, configuration.getLineUdpReceiverConfiguration().ownThreadAffinity());
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
-        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
@@ -425,7 +425,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(524288, configuration.getCairoConfiguration().getDataIndexKeyAppendPageSize());
         Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataIndexValueAppendPageSize());
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
-        Assert.assertEquals(262144, configuration.getCairoConfiguration().getSymbolTableAppendPageSize());
+        Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getSymbolTableMinAllocationPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
@@ -507,6 +507,16 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+        Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getExportPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertFalse(configuration.getExportPoolConfiguration().haltOnError());
+        Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+        Assert.assertEquals(10, configuration.getExportPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getExportPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getExportPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getExportPoolConfiguration().getYieldThreshold());
+
         Assert.assertFalse(configuration.getCairoConfiguration().useWithinLatestByOptimisation());
     }
 
@@ -807,6 +817,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testExportTimeoutDependsOnQueryTimeout() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "600s");
+        var propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(600_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+
+        properties = new Properties();
+        propConf = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+        Assert.assertEquals(300_000, propConf.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getExportTimeout());
+    }
+
+    @Test
     public void testHttpConnectionLimits() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
@@ -817,6 +839,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "Json query connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.json.query.connection.limit=11, http.net.connection.limit=10]");
@@ -831,6 +854,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "11");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "HTTP over ILP connection limit cannot be greater than the overall " +
                     "HTTP connection limit [http.ilp.connection.limit=11, http.net.connection.limit=10]");
@@ -840,27 +864,67 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "6");
-        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "1");
         newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
-                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
-                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit " +
+                    "[http.json.query.connection.limit=7, http.ilp.connection.limit=4, http.net.connection.limit=10]");
         }
 
         properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "6");
         try {
             newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
         } catch (ServerConfigurationException e) {
-            TestUtils.assertContains(e.getMessage(), "The sum of the json query and HTTP over ILP connection limits " +
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
                     "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=5, " +
                     "http.ilp.connection.limit=6, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "4");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits " +
+                    "cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=4, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "20");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "HTTP export connection limit cannot be greater than " +
+                    "the overall HTTP connection limit [http.export.connection.limit=20, http.net.connection.limit=10]");
+        }
+
+        properties = new Properties();
+        properties.setProperty(PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath(), "10");
+        properties.setProperty(PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath(), "7");
+        properties.setProperty(PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath(), "3");
+        properties.setProperty(PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath(), "1");
+        try {
+            newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "The sum of the json query, export and HTTP over ILP connection limits" +
+                    " cannot be greater than the overall HTTP connection limit [http.json.query.connection.limit=7, " +
+                    "http.ilp.connection.limit=3, http.export.connection.limit=1, http.net.connection.limit=10]");
         }
     }
 
@@ -1389,6 +1453,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
+            Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
 
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -1440,6 +1505,16 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
+
+            Assert.assertTrue(configuration.getExportPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getExportPoolConfiguration().haltOnError());
+            Assert.assertEquals("export", configuration.getExportPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getExportPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getExportPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getExportPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getExportPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getExportPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getExportPoolConfiguration().getYieldThreshold());
 
             Assert.assertEquals(32, configuration.getCairoConfiguration().getPreferencesStringPoolCapacity());
         }
@@ -1826,7 +1901,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
-        Assert.assertFalse(configuration.useFastAsOfJoin());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(1028, configuration.getSqlSortValueMaxPages());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
@@ -1871,7 +1945,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.4, configuration.getSqlDistinctTimestampLoadFactor(), 0.001);
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
-        Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
@@ -1915,7 +1988,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getDataIndexKeyAppendPageSize());
         Assert.assertEquals(262144, configuration.getDataIndexValueAppendPageSize());
         Assert.assertEquals(131072, configuration.getMiscAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(512, configuration.getColumnPurgeQueueCapacity());
         Assert.assertEquals(5.0, configuration.getColumnPurgeRetryDelayMultiplier(), 0.00001);
@@ -1942,7 +2015,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4242, configuration.getWalMaxLagTxnCount());
         Assert.assertEquals(262144, configuration.getWalDataAppendPageSize());
         Assert.assertEquals(524288, configuration.getSystemWalDataAppendPageSize());
-        Assert.assertEquals(65536, configuration.getSymbolTableAppendPageSize());
+        Assert.assertEquals(65536, configuration.getSymbolTableMinAllocationPageSize());
 
         Assert.assertEquals(1, configuration.getO3LastPartitionMaxSplits());
         final long TB = (long) Numbers.SIZE_1MB * Numbers.SIZE_1MB;
@@ -1970,15 +2043,7 @@ public class PropServerConfigurationTest {
         return new PropServerConfiguration(root, properties, null, PropServerConfigurationTest.LOG, new BuildInformationHolder());
     }
 
-    private static class FuzzItem {
-        private final Function<HttpFullFatServerConfiguration, ObjList<String>> getter;
-        private final String key;
-        private final String value;
-
-        FuzzItem(String key, String value, Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
-            this.key = key;
-            this.value = value;
-            this.getter = getter;
-        }
+    private record FuzzItem(String key, String value,
+                            Function<HttpFullFatServerConfiguration, ObjList<String>> getter) {
     }
 }

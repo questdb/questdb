@@ -148,7 +148,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let mut decoded = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
-            let mut column_type = self.columns[column_idx].column_type;
+            let mut column_type = self.columns[column_idx].column_type.ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown column type, column index: {}",
+                    column_idx
+                )
+            })?;
 
             // Special case for handling symbol columns in QuestDB-created Parquet files.
             // The `read_parquet` function does not support symbol columns,
@@ -304,7 +310,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let row_group_index = row_group_index as usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
-            let column_type = self.columns[column_idx].column_type;
+            let column_type = self.columns[column_idx].column_type.ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown column type, column index: {}",
+                    column_idx
+                )
+            })?;
             if column_type != to_column_type {
                 return Err(fmt_err!(
                     InvalidType,
@@ -359,7 +371,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let timestamp_column_index = timestamp_column_index as usize;
-        let column_type = self.columns[timestamp_column_index].column_type;
+        let column_type = self.columns[timestamp_column_index]
+            .column_type
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidType,
+                    "unknown timestamp column type, column index: {}",
+                    timestamp_column_index
+                )
+            })?;
         if column_type.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
                 InvalidType,
@@ -1487,7 +1507,7 @@ mod tests {
         let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
 
         for column_index in 0..column_count {
-            let column_type = decoder.columns[column_index].column_type;
+            let column_type = decoder.columns[column_index].column_type.unwrap();
             let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
             for row_group_index in 0..row_group_count {
                 decoder
@@ -1537,7 +1557,7 @@ mod tests {
         for row_lo in 0..row_group_size - 1 {
             for row_hi in row_lo + 1..row_group_size {
                 for column_index in 0..column_count {
-                    let column_type = decoder.columns[column_index].column_type;
+                    let column_type = decoder.columns[column_index].column_type.unwrap();
                     let col_info = QdbMetaCol { column_type, column_top: 0, format: None };
                     for row_group_index in 0..row_group_count {
                         decoder
@@ -1923,12 +1943,12 @@ mod tests {
     }
 
     fn generate_random_unicode_string(len: usize) -> String {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         // 0x00A0..0xD7FF generates a random Unicode scalar value in a range that includes non-ASCII characters
-        let range = if rng.gen_bool(0.5) {
+        let range = if rng.random_bool(0.5) {
             0x00A0..0xD7FF
         } else {
             33..126
@@ -1936,7 +1956,7 @@ mod tests {
 
         let random_string: String = (0..len)
             .map(|_| {
-                let c = rng.gen_range(range.clone());
+                let c = rng.random_range(range.start..range.end);
                 char::from_u32(c).unwrap_or('�') // Use a replacement character for invalid values
             })
             .collect();
@@ -1945,13 +1965,13 @@ mod tests {
     }
 
     fn generate_random_binary(len: usize) -> Vec<u8> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
-        let len = 1 + rng.gen_range(0..len - 1);
+        let len = 1 + rng.random_range(0..len - 1);
 
         let random_bin: Vec<u8> = (0..len)
             .map(|_| {
-                let u: u8 = rng.gen();
+                let u: u8 = rng.random();
                 u
             })
             .collect();

@@ -103,7 +103,8 @@ steps:
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        $(MAVEN_RUN_OPTS)"
+        -P build-web-console
+         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -123,8 +124,8 @@ steps:
       goals: "test"
       options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        -P qdbr-coverage
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -P qdbr-coverage,build-web-console
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"

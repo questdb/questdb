@@ -45,6 +45,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.ArgSwappingFunctionFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
@@ -616,6 +617,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
+                            "          filter: 0<i\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: b\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select /*+ ENABLE_PRE_TOUCH(a) */ * from a asof join b where a.i > 0",
+                    "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        Async JIT Filter workers: 1\n" +
                             "          filter: 0<i [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
@@ -993,8 +1007,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 limit 10",
-                "Sort light lo: 10\n" +
-                        "  keys: [ts]\n" +
+                "Long Top K lo: 10\n" +
+                        "  keys: [ts asc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      filter: null\n" +
@@ -1009,7 +1023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 desc limit 10",
-                "Sort light lo: 10\n" +
+                "Long Top K lo: 10\n" +
                         "  keys: [ts desc]\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [ts]\n" +
@@ -1554,7 +1568,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s string)",
                 "select * from a where s = '\b\f\n\r\t\\u0013'",
                 "Async Filter workers: 1\n" +
-                        "  filter: s='\\b\\f\\n\\r\\t\\u0013' [pre-touch]\n" +
+                        "  filter: s='\\b\\f\\n\\r\\t\\u0013'\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -1674,7 +1688,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    VirtualRecord\n" +
                         "      functions: [20,memoize(d+rnd_double())]\n" +
                         "        Async Filter workers: 1\n" +
-                        "          filter: d<100.0 [pre-touch]\n" +
+                        "          filter: d<100.0\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
@@ -2379,20 +2393,89 @@ public class ExplainPlanTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 execute("create table a (l long)");
+                String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+                String[] joinFactoryTypes = {"Hash Left Outer Join", "Hash Right Outer Join", "Hash Full Outer Join"};
+
+                for (int i = 0; i < joinTypes.length; i++) {
+                    String joinType = joinTypes[i];
+                    String factoryType = joinFactoryTypes[i];
+                    assertPlanNoLeakCheck(
+                            compiler,
+                            "select * from a " + joinType + " join a a1 on l",
+                            "SelectedRecord\n" +
+                                    "    " + factoryType + "\n" +
+                                    "      condition: a1.l=a.l\n" +
+                                    "        PageFrame\n" +
+                                    "            Row forward scan\n" +
+                                    "            Frame forward scan on: a\n" +
+                                    "        Hash\n" +
+                                    "            PageFrame\n" +
+                                    "                Row forward scan\n" +
+                                    "                Frame forward scan on: a\n",
+                            sqlExecutionContext
+                    );
+                }
+            }
+        });
+    }
+
+    @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
+    public void testFullJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
                 assertPlanNoLeakCheck(
-                        compiler,
-                        "select * from a left join a a1 on l",
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
+                                "where a1+10 < b1 - 10",
                         "SelectedRecord\n" +
-                                "    Hash Outer Join\n" +
-                                "      condition: a1.l=a.l\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: a\n" +
-                                "        Hash\n" +
+                                "    Filter filter: taba.a1+10<tabb.b1-10\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b2=a2 and b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
-                                "                Frame forward scan on: a\n",
-                        sqlExecutionContext
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFullJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
+                        "SelectedRecord\n" +
+                                "    Filter filter: taba.a2=tabb.b2\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
                 );
             }
         });
@@ -2750,6 +2833,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     assertFalse(
                                             "function " + factory.getSignature() + " should serialize to text properly",
                                             Chars.contains(tmpPlanSink.getSink(), "io.questdb")
+                                    );
+                                }
+
+                                if (function instanceof GroupByFunction) {
+                                    assertFalse(
+                                            "group by function " + factory.getSignature() + " should not be marked as constant",
+                                            function.isConstant()
                                     );
                                 }
                             } finally {
@@ -3496,7 +3586,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  values: [avg(l)]\n" +
                         "  filter: s in cursor \n" +
                         "    Async JIT Filter workers: 1\n" +
-                        "      filter: s='key' [pre-touch]\n" +
+                        "      filter: s='key'\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a [state-shared]\n" +
@@ -3575,6 +3665,96 @@ public class ExplainPlanTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelGroupByEnabled());
         }
+    }
+
+    @Test
+    public void testGroupByWithLimit13() throws Exception {
+        assertPlan(
+                "create table di (x int, y long)",
+                "select y, 42, count(*) c from di order by c limit 42",
+                "Long Top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [y,42,c]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit14() throws Exception {
+        assertPlan(
+                "create table di (x int, y long, z double)",
+                "select y, c from (select y, z, count(*) c from di) order by c limit 42",
+                "Long Top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y,z]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit15() throws Exception {
+        assertPlan(
+                "create table di (y long, ts timestamp)",
+                "select y, c from (select ts, y, count(*) c from di) order by ts limit 13",
+                "SelectedRecord\n" +
+                        "    Long Top K lo: 13\n" +
+                        "      keys: [ts asc]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [y,ts]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit16() throws Exception {
+        assertPlan(
+                "create table di (ts timestamp)",
+                "select ts, 42, count(*) c from di order by ts limit 2",
+                "Long Top K lo: 2\n" +
+                        "  keys: [ts asc]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [ts,42,c]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts]\n" +
+                        "          values: [count(*)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit17() throws Exception {
+        assertPlan(
+                "create table di (i int)",
+                "select i, count(*) c from di order by c limit 2",
+                "Long Top K lo: 2\n" +
+                        "  keys: [c asc]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [i]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
     }
 
     @Test
@@ -3708,7 +3888,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10",
-                "Sort light lo: 10\n" +
+                "Long Top K lo: 10\n" +
                         "  keys: [ts desc]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [ts]\n" +
@@ -3780,47 +3960,59 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHashLeftJoin() throws Exception {
+    public void testHashOuterJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int)");
             execute("create table b ( i int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
 
-            assertPlanNoLeakCheck(
-                    "select * from a left join b on i",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b.i=a.i\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: a\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: b\n"
-            );
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from a " + joinType + " join b on i",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b.i=a.i\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: a\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: b\n"
+                );
+            }
         });
     }
 
     @Test
-    public void testHashLeftJoin1() throws Exception {
+    public void testHashOuterJoin1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int)");
             execute("create table b ( i int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
 
-            assertPlanNoLeakCheck(
-                    "select * from a left join b on i where b.i is not null",
-                    "SelectedRecord\n" +
-                            "    Filter filter: b.i!=null\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b.i=a.i\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: a\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: b\n"
-            );
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from a " + joinType + " join b on i where b.i is not null",
+                        "SelectedRecord\n" +
+                                "    Filter filter: b.i!=null\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b.i=a.i\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: a\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: b\n"
+                );
+            }
         });
     }
 
@@ -3859,7 +4051,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333'] [pre-touch]\n" +
+                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -4543,50 +4735,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testLeftJoinWithEquality1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a int)");
-            execute("create table tabb (b int)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a=b",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b=a\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEquality2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
     @Test // FIXME: there should be no separate filter
     public void testLeftJoinWithEquality3() throws Exception {
         assertMemoryLeak(() -> {
@@ -4630,64 +4778,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test // FIXME: ORed predicates should be applied as filter in hash join
-    public void testLeftJoinWithEquality5() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    // left join conditions aren't transitive because left record + null right is produced if they fail
-    // that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
-    @Test
-    public void testLeftJoinWithEquality6() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-            execute("create table tabc (c1 int, c2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1 and a1=5 " +
-                            "join tabc on a1=c1",
-                    "SelectedRecord\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: c1=a1\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b1=a1\n" +
-                            "          filter: taba.a1=5\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabc\n"
-            );
-        });
-    }
-
     @Test
     public void testLeftJoinWithEquality7() throws Exception {
         assertMemoryLeak(() -> {
@@ -4704,218 +4794,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
                 testHashAndAsOfJoin(compiler, false, false);
             }
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: taba.a2+5=tabb.b2+10\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions3() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and a2+5 = b2+10 and 1=0",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join\n" +
-                            "      condition: b2=a2 and b1=a1\n" +
-                            "      filter: false\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            Empty table\n"
-            );
-        });
-    }
-
-    // FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
-    @Test
-    public void testLeftJoinWithEqualityAndExpressions4() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2!=a2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: taba.a2!=taba.a2\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // FIXME: a2=a2 run as past of left join or be optimized away !
-    public void testLeftJoinWithEqualityAndExpressions5() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=a2",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: taba.a2=taba.a2\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // left join filter must remain intact !
-    public void testLeftJoinWithEqualityAndExpressions6() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 string)");
-            execute("create table tabb (b1 int, b2 string)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
-                    "SelectedRecord\n" +
-                            "    Hash Outer Join Light\n" +
-                            "      condition: b1=a1\n" +
-                            "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: taba\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test // FIXME:  abs(a2+1) = abs(b2) should be applied as left join filter  !
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba " +
-                            "left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " +
-                            "where a1+10 < b1 - 10",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a1+10<tabb.b1-10\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b2=a2 and b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a1=tabb.b1\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b2=a2 and b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLeftJoinWithEqualityAndExpressionsAhdWhere3() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, a2 long)");
-            execute("create table tabb (b1 int, b2 long)");
-
-            assertPlanNoLeakCheck(
-                    "select * from taba left join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2",
-                    "SelectedRecord\n" +
-                            "    Filter filter: taba.a2=tabb.b2\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: b1=a1\n" +
-                            "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n"
-            );
         });
     }
 
@@ -4966,191 +4844,194 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
-            String[] joinTypes = {"LEFT", "LT", "ASOF"};
-            String[] joinFactoryTypes = {"Hash Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL", "LT", "ASOF"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light", "Lt Join Fast Scan", "AsOf Join Fast Scan"};
 
             for (int i = 0; i < joinTypes.length; i++) {
-                // do not push down predicate to the 'right' table of left join but apply it after join
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
 
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value<>T2.value",
                         "Count\n" +
                                 "    Filter filter: T2.value=T2.value\n" +
                                 "        " + factoryType + "\n" +
-                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            PageFrame\n" +
-                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                                (i < 3 ? "            Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "            PageFrame\n" +
+                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
 
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value=1",
                         "Count\n" +
                                 "    Filter filter: T2.value!=1\n" +
                                 "        " + factoryType + "\n" +
-                                (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "          condition: T2.created=T1.created\n" : "") +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            PageFrame\n" +
-                                (i == 0 ? "    " : "") + "                Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
+                                (i < 3 ? "            Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "            PageFrame\n" +
+                                (i < 3 ? "    " : "") + "                Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
 
                 // push down predicate to the 'left' table of left join
                 assertPlanNoLeakCheck(
                         "SELECT count(1) " +
                                 "FROM tab as T1 " +
-                                joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
+                                joinType + " JOIN tab as T2 " + (i < 3 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T1.value=1",
                         "Count\n" +
                                 "    " + factoryType + "\n" +
-                                (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
+                                (i < 3 ? "      condition: T2.created=T1.created\n" : "") +
                                 "        Async JIT Filter workers: 1\n" +
                                 "          filter: value!=1\n" +
                                 "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
-                                (i == 0 ? "        Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "        PageFrame\n" +
-                                (i == 0 ? "    " : "") + "            Row forward scan\n" +
-                                (i == 0 ? "    " : "") + "            Frame forward scan on: tab\n"
+                                (i < 3 ? "        Hash\n" : "") +
+                                (i < 3 ? "    " : "") + "        PageFrame\n" +
+                                (i < 3 ? "    " : "") + "            Row forward scan\n" +
+                                (i < 3 ? "    " : "") + "            Frame forward scan on: tab\n"
                 );
             }
 
-
             // two joins
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T1.value=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            Async JIT Filter workers: 1\n" +
-                            "              filter: value=1\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
-            );
+            for (int i = 0; i < 3; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T2.created=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Filter filter: T2.created=1\n" +
-                            "            Hash Outer Join Light\n" +
-                            "              condition: T2.created=T1.created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "                Hash\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T1.value=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            Async JIT Filter workers: 1\n" +
+                                "              filter: value=1\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n"
+                );
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created " +
-                            "JOIN tab as T3 ON T2.created=T3.created " +
-                            "WHERE T3.value=1",
-                    "Count\n" +
-                            "    Hash Join Light\n" +
-                            "      condition: T3.created=T2.created\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "        Hash\n" +
-                            "            Async JIT Filter workers: 1\n" +
-                            "              filter: value=1\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T2.created=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        Filter filter: T2.created=1\n" +
+                                "            " + factoryType + "\n" +
+                                "              condition: T2.created=T1.created\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "                Hash\n" +
+                                "                    PageFrame\n" +
+                                "                        Row forward scan\n" +
+                                "                        Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n"
+                );
 
-            // where clause in parent model
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM ( " +
-                            "SELECT * " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
-                            "WHERE not value1<>value1",
-                    "Count\n" +
-                            "    SelectedRecord\n" +
-                            "        Filter filter: T2.value=T2.value\n" +
-                            "            Hash Outer Join Light\n" +
-                            "              condition: T2.created=T1.created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n" +
-                            "                Hash\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n"
-            );
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created " +
+                                "JOIN tab as T3 ON T2.created=T3.created " +
+                                "WHERE T3.value=1",
+                        "Count\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: T3.created=T2.created\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "        Hash\n" +
+                                "            Async JIT Filter workers: 1\n" +
+                                "              filter: value=1\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n"
+                );
 
-            assertPlanNoLeakCheck(
-                    "SELECT count(1) " +
-                            "FROM ( " +
-                            "SELECT * " +
-                            "FROM tab as T1 " +
-                            "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
-                            "WHERE not value<>value",
-                    "Count\n" +
-                            "    SelectedRecord\n" +
-                            "        Hash Outer Join Light\n" +
-                            "          condition: T2.created=T1.created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n" +
-                            "            Hash\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
-            );
+                // where clause in parent model
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM ( " +
+                                "SELECT * " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
+                                "WHERE not value1<>value1",
+                        "Count\n" +
+                                "    SelectedRecord\n" +
+                                "        Filter filter: T2.value=T2.value\n" +
+                                "            " + factoryType + "\n" +
+                                "              condition: T2.created=T1.created\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n" +
+                                "                Hash\n" +
+                                "                    PageFrame\n" +
+                                "                        Row forward scan\n" +
+                                "                        Frame forward scan on: tab\n"
+                );
+
+                assertPlanNoLeakCheck(
+                        "SELECT count(1) " +
+                                "FROM ( " +
+                                "SELECT * " +
+                                "FROM tab as T1 " +
+                                joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " +
+                                "WHERE not value<>value",
+                        "Count\n" +
+                                "    SelectedRecord\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: T2.created=T1.created\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tab\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tab\n"
+                );
+            }
         });
     }
 
@@ -5165,7 +5046,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  and s3 like 'a%'  and s4 ilike 'a%' " +
                             "  and s5 like '%a%' and s6 ilike '%a%';",
                     "Async Filter workers: 1\n" +
-                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%) [pre-touch]\n" +
+                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5339,7 +5220,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: 0<i [pre-touch]\n" +
+                            "          filter: 0<i\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -5730,7 +5611,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
-                            "          filter: id='12345678' [pre-touch]\n" +
+                            "          filter: id='12345678'\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
@@ -5749,7 +5630,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
-                            "          filter: id='12345678' [pre-touch]\n" +
+                            "          filter: id='12345678'\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
@@ -5768,7 +5649,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 2\n" +
-                            "          filter: id='12345678' [pre-touch]\n" +
+                            "          filter: id='12345678'\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: device_data\n",
@@ -6050,6 +5931,357 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinWithEquality1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a int)");
+            execute("create table tabb (b int)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a=b",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b=a\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEquality2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // FIXME: ORed predicates should be applied as filter in hash join
+    public void testOuterJoinWithEquality5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    // left join conditions aren't transitive because left record + null right is produced if they fail
+    // that means select * from a left join b on a.i = b.i and a.i=10 doesn't mean resulting records will have a.i = 10 !
+    @Test
+    public void testOuterJoinWithEquality6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            execute("create table tabc (c1 int, c2 long)");
+
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1 and a1=5 " +
+                                "join tabc on a1=c1",
+                        "SelectedRecord\n" +
+                                "    Hash Join Light\n" +
+                                "      condition: c1=a1\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b1=a1\n" +
+                                "          filter: taba.a1=5\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabc\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b2=a2 and b1=a1\n" +
+                                "      filter: taba.a2+5=tabb.b2+10\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions3() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+
+            assertPlanNoLeakCheck(
+                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Left Outer Join\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            Empty table\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Right Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        Empty table\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    "SelectedRecord\n" +
+                            "    Hash Full Outer Join Light\n" +
+                            "      condition: b2=a2 and b1=a1\n" +
+                            "      filter: false\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: taba\n" +
+                            "        Hash\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tabb\n"
+            );
+        });
+    }
+
+    // FIXME provably false predicate like x!=x in left join means we can skip join and return left + nulls or join with empty right table
+    @Test
+    public void testOuterJoinWithEqualityAndExpressions4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: taba.a2!=taba.a2\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // FIXME: a2=a2 run as past of left join or be optimized away !
+    public void testOuterJoinWithEqualityAndExpressions5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=a2",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: taba.a2=taba.a2\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test // outer join filter must remain intact !
+    public void testOuterJoinWithEqualityAndExpressions6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 string)");
+            execute("create table tabb (b1 int, b2 string)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " +
+                                joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'",
+                        "SelectedRecord\n" +
+                                "    " + factoryType + "\n" +
+                                "      condition: b1=a1\n" +
+                                "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: taba\n" +
+                                "        Hash\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOuterJoinWithEqualityAndExpressionsAhdWhere2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (a1 int, a2 long)");
+            execute("create table tabb (b1 int, b2 long)");
+            String[] joinTypes = {"LEFT", "RIGHT", "FULL"};
+            String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light"};
+
+            for (int i = 0; i < joinTypes.length; i++) {
+                String joinType = joinTypes[i];
+                String factoryType = joinFactoryTypes[i];
+                assertPlanNoLeakCheck(
+                        "select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1",
+                        "SelectedRecord\n" +
+                                "    Filter filter: taba.a1=tabb.b1\n" +
+                                "        " + factoryType + "\n" +
+                                "          condition: b2=a2 and b1=a1\n" +
+                                "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: taba\n" +
+                                "            Hash\n" +
+                                "                PageFrame\n" +
+                                "                    Row forward scan\n" +
+                                "                    Frame forward scan on: tabb\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPostJoinConditionColumnsAreResolved() throws Exception {
         assertMemoryLeak(() -> {
             String query = "SELECT count(*)\n" +
@@ -6209,7 +6441,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 assertPlanNoLeakCheck(
                         "select * from read_parquet('x.parquet') where a_long = 42;",
                         "Async JIT Filter workers: 1\n" +
-                                "  filter: a_long=42 [pre-touch]\n" +
+                                "  filter: a_long=42\n" +
                                 "    parquet page frame scan\n"
                 );
 
@@ -8483,7 +8715,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where d in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: d in [-1.0,1.0,5.0,NaN] [pre-touch]\n" +
+                            "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -8492,7 +8724,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where d not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: not (d in [-1.0,1.0,5.0,NaN]) [pre-touch]\n" +
+                            "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -8506,7 +8738,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > sysdate()",
                 "Async Filter workers: 1\n" +
-                        "  filter: sysdate()<ts [pre-touch]\n" +
+                        "  filter: sysdate()<ts\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8519,7 +8751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > systimestamp()",
                 "Async Filter workers: 1\n" +
-                        "  filter: systimestamp()<ts [pre-touch]\n" +
+                        "  filter: systimestamp()<ts\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8750,7 +8982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: (s=$0::string or s=$1::string) [pre-touch]\n" +
+                        "  filter: (s=$0::string or s=$1::string)\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -8764,7 +8996,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: (s='S1' or s='S2') [pre-touch]\n" +
+                        "  filter: (s='S1' or s='S2')\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -9120,7 +9352,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sort light\n" +
                             "  keys: [s1, ts desc]\n" +
                             "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s1='S1' or s1='S2') [pre-touch]\n" +
+                            "      filter: (s1='S1' or s1='S2')\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: a\n" +
@@ -9190,7 +9422,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where l in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: l in [null,-1,1,5] [pre-touch]\n" +
+                            "  filter: l in [null,-1,1,5]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -9199,7 +9431,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where l not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: not (l in [null,-1,1,5]) [pre-touch]\n" +
+                            "  filter: not (l in [null,-1,1,5])\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -9505,7 +9737,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999]) [pre-touch]\n" +
+                        "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9539,7 +9771,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z)) [pre-touch]\n" +
+                        "  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9552,7 +9784,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
                 "Async Filter workers: 1\n" +
-                        "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000) [pre-touch]\n" +
+                        "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9589,7 +9821,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 2020-03-01T00:00:00.000000Z<ts [pre-touch]\n" +
+                        "  filter: 2020-03-01T00:00:00.000000Z<ts\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9653,7 +9885,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 100<l [pre-touch]\n" +
+                        "  filter: 100<l\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9666,7 +9898,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where s in ( 'A', 'B' )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: s in [A,B] [pre-touch]\n" +
+                        "  filter: s in [A,B]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9679,7 +9911,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ts in [1577836800000000,1577923200000000] [pre-touch]\n" +
+                        "  filter: ts in [1577836800000000,1577923200000000]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9692,7 +9924,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC') [pre-touch]\n" +
+                        "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9705,7 +9937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC') [pre-touch]\n" +
+                        "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9718,7 +9950,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12 or l = 15 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (l=12 or l=15) [pre-touch]\n" +
+                        "  filter: (l=12 or l=15)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9731,7 +9963,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12.345 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l=12.345 [pre-touch]\n" +
+                        "  filter: l=12.345\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9744,7 +9976,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = false ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: b=false [pre-touch]\n" +
+                        "  filter: b=false\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9757,7 +9989,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where not(b = false or ts = 123) ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (b!=false and ts!=123) [pre-touch]\n" +
+                        "  filter: (b!=false and ts!=123)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9770,7 +10002,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 < l2 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l1<l2 [pre-touch]\n" +
+                        "  filter: l1<l2\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9783,7 +10015,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 * l2 > 0  ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 0<l1*l2 [pre-touch]\n" +
+                        "  filter: 0<l1*l2\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9796,7 +10028,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9809,7 +10041,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long, l3 long);",
                 "select * from tab where l1 * l2 > l3  ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l3<l1*l2 [pre-touch]\n" +
+                        "  filter: l3<l1*l2\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9822,7 +10054,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l=$0::long [pre-touch]\n" +
+                        "  filter: l=$0::long\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9835,7 +10067,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1 + 1 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: d=1024.1+1 [pre-touch]\n" +
+                        "  filter: d=1024.1+1\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9848,7 +10080,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: d is null [pre-touch]\n" +
+                        "  filter: d is null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9862,7 +10094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9876,7 +10108,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9890,7 +10122,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9904,7 +10136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9918,7 +10150,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9934,7 +10166,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit :maxRows ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9948,7 +10180,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9962,7 +10194,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2 [pre-touch]\n" +
+                        "  filter: d=1.2\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9975,7 +10207,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab (s string, ts timestamp);",
                 "select * from tab where s = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: s is null [pre-touch]\n" +
+                        "  filter: s is null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9988,7 +10220,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab (v varchar, ts timestamp);",
                 "select * from tab where v = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: v is null [pre-touch]\n" +
+                        "  filter: v is null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9999,7 +10231,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectWithJittedFilter3() throws Exception {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
-                "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
+                "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000 and ts=2022-01-01T00:00:00.000000Z) [pre-touch]\n" +
                         "    PageFrame\n" +
@@ -10014,7 +10246,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and l=20) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000 and l=20)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10027,7 +10259,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or l=20) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or l=20)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10040,7 +10272,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or ts = 123",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or ts=123) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or ts=123)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10053,7 +10285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts) [pre-touch]\n" +
+                        "  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10066,7 +10298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000) [pre-touch]\n" +
+                        "  filter: (100<l and l<1000)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -10080,7 +10312,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l in ( 100, 200 )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l in [100,200] [pre-touch]\n" +
+                        "  filter: l in [100,200]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10141,7 +10373,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::short ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=12::short [pre-touch]\n" +
+                        "  filter: l=12::short\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10154,7 +10386,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s short, ts timestamp);",
                 "select * from tab where s = 1::short ",
                 "Async Filter workers: 1\n" +
-                        "  filter: s=1::short [pre-touch]\n" +
+                        "  filter: s=1::short\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10167,7 +10399,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = true::boolean ",
                 "Async Filter workers: 1\n" +
-                        "  filter: b=true [pre-touch]\n" +
+                        "  filter: b=true\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10180,7 +10412,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 1024::long ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=1024::long [pre-touch]\n" +
+                        "  filter: l=1024::long\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10193,7 +10425,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1::double ",
                 "Async Filter workers: 1\n" +
-                        "  filter: d=1024.1 [pre-touch]\n" +
+                        "  filter: d=1024.1\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10206,7 +10438,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null::double ",
                 "Async Filter workers: 1\n" +
-                        "  filter: d is null [pre-touch]\n" +
+                        "  filter: d is null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10219,7 +10451,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l | l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l|l [pre-touch]\n" +
+                        "  filter: 0<l|l\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10232,7 +10464,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l & l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l&l [pre-touch]\n" +
+                        "  filter: 0<l&l\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10245,7 +10477,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l^l [pre-touch]\n" +
+                        "  filter: 0<l^l\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10259,7 +10491,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l ^ l) > 0 limit -1",
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: 0<l^l [pre-touch]\n" +
+                        "  filter: 0<l^l\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -10276,7 +10508,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l ^ l) > 0 limit :maxRows",
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: 0<l^l [pre-touch]\n" +
+                        "  filter: 0<l^l\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -10289,7 +10521,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::byte ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=12::byte [pre-touch]\n" +
+                        "  filter: l=12::byte\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10302,7 +10534,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = '123' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l='123' [pre-touch]\n" +
+                        "  filter: l='123'\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10315,7 +10547,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: memoize(l=rnd_long()) [pre-touch]\n" +
+                        "  filter: memoize(l=rnd_long())\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10328,7 +10560,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=case([0<l,1,l=0,0,-1]) [pre-touch]\n" +
+                        "  filter: l=case([0<l,1,l=0,0,-1])\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10341,7 +10573,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=$0::string [pre-touch]\n" +
+                        "  filter: l=$0::string\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10354,7 +10586,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, ts timestamp);",
                 "select * from tab where s = 'test' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: s='test' [pre-touch]\n" +
+                        "  filter: s='test'\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10367,7 +10599,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b byte, ts timestamp);",
                 "select * from tab where b = 1::byte ",
                 "Async Filter workers: 1\n" +
-                        "  filter: b=1::byte [pre-touch]\n" +
+                        "  filter: b=1::byte\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -10380,7 +10612,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "CREATE TABLE tst ( timestamp TIMESTAMP );",
                 "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: not (timestamp between 1609459200000000 and 1610236800000000) [pre-touch]\n" +
+                        "  filter: not (timestamp between 1609459200000000 and 1610236800000000)\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tst\n"
@@ -10455,7 +10687,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l<i",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l<i [pre-touch]\n" +
+                        "  filter: l<i\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -10468,7 +10700,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l::short<i",
                 "Async Filter workers: 1\n" +
-                        "  filter: l::short<i [pre-touch]\n" +
+                        "  filter: l::short<i\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -10528,7 +10760,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  values: [max(ts)]\n" +
                         "    SelectedRecord\n" +
                         "        Async Filter workers: 1\n" +
-                        "          filter: (l::short<i and l<0) [pre-touch]\n" +
+                        "          filter: (l::short<i and l<0)\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
@@ -10965,7 +11197,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x [pre-touch]\n" +
+                        "            Frame forward scan on: x\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -10995,7 +11227,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x [pre-touch]\n" +
+                        "            Frame forward scan on: x\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -11025,7 +11257,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      values: [max(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x [pre-touch]\n" +
+                        "            Frame forward scan on: x\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -11084,7 +11316,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     query,
                     "Async JIT Filter workers: 1\n" +
                             "  limit: 5\n" +
-                            "  filter: x<100 [pre-touch]\n" +
+                            "  filter: x<100\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -11113,7 +11345,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333') [pre-touch]\n" +
+                        "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -11892,7 +12124,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 "select * from t where x = :v1 ",
                 "Async Filter workers: 1\n" +
-                        "  filter: x=:v1::" + type + " [pre-touch]\n" +
+                        "  filter: x=:v1::" + type + "\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"
@@ -12011,7 +12243,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-        execute("create table tabb (b1 int, b2 long)");
+        execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
         execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
@@ -12024,7 +12256,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    AsOf Join" + asofJoinType + "\n" +
                         "      condition: c1=b1\n" +
-                        "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" +
                         "          condition: b1=a1\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
@@ -12036,6 +12268,52 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "right join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Right Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "asof join tabb on a1=b1 " +
+                        "full join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    Hash Full Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        AsOf Join" + asofJoinType + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabb\n" +
+                        "        Hash\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tabc\n",
                 sqlExecutionContext
         );
     }

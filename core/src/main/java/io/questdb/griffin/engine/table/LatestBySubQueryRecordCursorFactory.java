@@ -193,8 +193,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             if (baseCursor != null) {
                 baseCursor = Misc.free(baseCursor);
             }
-            // Forcefully disable column pre-touch for nested filter queries.
-            executionContext.setColumnPreTouchEnabled(false);
             baseCursor = recordCursorFactory.getCursor(executionContext);
             symbolKeys.clear();
             delegate.of(cursor, executionContext);

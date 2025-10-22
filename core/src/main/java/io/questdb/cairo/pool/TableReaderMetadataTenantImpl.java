@@ -37,7 +37,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -137,6 +139,11 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
 
     public long size() {
         return rowCount;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put("TableReaderMetadataTenantImpl{index=").put(index).put(", tableToken=").put(getTableToken()).put('}');
     }
 
     private boolean acquireTxn() {

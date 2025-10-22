@@ -33,13 +33,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.StringSink;
 
 public final class NullArrayConstant extends ArrayFunction implements ConstantFunction {
+
     public NullArrayConstant(int columnType) {
-        try {
-            this.type = columnType;
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
+        this.type = columnType;
     }
 
     @Override

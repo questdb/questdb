@@ -134,7 +134,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (SqlException | CairoException e) {
                                     if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
                                             && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not remove table")) {
                                         throw e;
                                     }
                                 }
@@ -185,9 +186,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 } catch (TableReferenceOutOfDateException e) {
                                     // this is fine, query will have to recompile
                                 } catch (SqlException | CairoException e) {
-                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
-                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                    if (
+                                            !Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")
+                                                    && !Chars.contains(e.getFlyweightMessage(), "could not remove table")
+                                    ) {
                                         throw e;
                                     }
                                 }
@@ -273,7 +277,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             threads.getLast().start();
 
             threads.add(new Thread(() -> {
-                try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getMicrosecondClock())) {
+                try (WalPurgeJob job = new WalPurgeJob(
+                        engine,
+                        engine.getConfiguration().getFilesFacade(),
+                        engine.getConfiguration().getMicrosecondClock())
+                ) {
                     barrier.await();
                     engine.setWalPurgeJobRunLock(job.getRunLock());
                     //noinspection StatementWithEmptyBody
@@ -747,8 +755,13 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             // Write a line into the table
             execute("insert into tab1(a, b, timestamp) values(0, 1, '2022-02-24')");
 
-            assertSql("a\tb\ttimestamp\n" +
-                    "0\t1\t2022-02-24T00:00:00.000000Z\n", "tab1");
+            assertSql(
+                    """
+                            a\tb\ttimestamp
+                            0\t1\t2022-02-24T00:00:00.000000Z
+                            """,
+                    "tab1"
+            );
 
             Assert.assertFalse(engine.verifyTableName("tab1").isWal());
         });

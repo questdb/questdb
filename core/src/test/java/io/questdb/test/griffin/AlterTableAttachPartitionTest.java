@@ -950,7 +950,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     TableToken tableToken = engine.verifyTableName(src.getName());
                     path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
-                    Assert.assertTrue(Files.remove(path.$()));
+                    Assert.assertTrue(TestUtils.remove(path.$()));
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
                         Assert.fail();

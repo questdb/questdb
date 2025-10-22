@@ -478,7 +478,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             path.$();
             Assert.assertTrue(Files.exists(path.$()));
-            Assert.assertTrue(Files.remove(path.$()));
+            Assert.assertTrue(TestUtils.remove(path.$()));
             Assert.assertFalse(Files.exists(path.$()));
         }
     }
@@ -499,7 +499,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             true
                     );
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     failureCounter.incrementAndGet();
                 }
             } finally {

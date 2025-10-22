@@ -39,11 +39,11 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
+import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.Clock;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -181,6 +181,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
     }
 
     @Override
+    public boolean isAcceptingWrites() {
+        return true;
+    }
+
+    @Override
     public boolean isPessimisticHealthCheckEnabled() {
         return false;
     }
@@ -293,6 +298,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
+        }
+
+        @Override
+        public long getExportTimeout() {
+            return Long.MAX_VALUE;
         }
 
         @Override

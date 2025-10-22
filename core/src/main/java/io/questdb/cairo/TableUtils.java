@@ -26,16 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -120,7 +114,7 @@ public final class TableUtils {
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
-    public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
+    public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
@@ -130,6 +124,10 @@ public final class TableUtils {
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    // Regular data table kind
+    public static final int TABLE_KIND_REGULAR_TABLE = 0;
+    // Parquet export table kind - allows table creation in read-only mode for parquet exports
+    public static final int TABLE_KIND_TEMP_PARQUET_EXPORT = 2;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
     public static final int TABLE_TYPE_MAT = 2;
@@ -307,6 +305,23 @@ public final class TableUtils {
         return checksum;
     }
 
+    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
+        cleanupDirQuiet(ff, dir, LOG);
+    }
+
+    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
+        try {
+            Path dirPath = Path.getThreadLocal(dir);
+            if (ff.exists(dirPath.slash$())) {
+                if (!ff.rmdir(dirPath)) {
+                    log.error().$("error during temp directory cleanup [path=").$(dir).$(" errno=").$(ff.errno()).$(']').$();
+                }
+            }
+        } catch (Throwable e) {
+            log.error().$("error during temp directory cleanup [path=").$(dir).$(" error=").$(e).$(']').$();
+        }
+    }
+
     public static int compressColumnCount(RecordMetadata metadata) {
         int count = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -363,6 +378,12 @@ public final class TableUtils {
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
+    }
+
+    public static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
     }
 
     public static void createTable(
@@ -728,47 +749,27 @@ public final class TableUtils {
     public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-                return 0L;
-            case ColumnType.SYMBOL:
-                return Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
-            case ColumnType.FLOAT:
-                return Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
-            case ColumnType.DOUBLE:
-                return Double.doubleToLongBits(Double.NaN);
-            case ColumnType.INT:
-                return Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
-            case ColumnType.LONG256:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.LONG128:
-            case ColumnType.UUID:
-            case ColumnType.INTERVAL:
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.CHAR, ColumnType.SHORT -> 0L;
+            case ColumnType.SYMBOL -> Numbers.encodeLowHighInts(SymbolTable.VALUE_IS_NULL, SymbolTable.VALUE_IS_NULL);
+            case ColumnType.FLOAT ->
+                    Numbers.encodeLowHighInts(Float.floatToIntBits(Float.NaN), Float.floatToIntBits(Float.NaN));
+            case ColumnType.DOUBLE -> Double.doubleToLongBits(Double.NaN);
+            case ColumnType.INT -> Numbers.encodeLowHighInts(Numbers.INT_NULL, Numbers.INT_NULL);
+            case ColumnType.LONG256, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG128,
+                 ColumnType.UUID, ColumnType.INTERVAL ->
                 // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
-                return Numbers.LONG_NULL;
-            case ColumnType.GEOBYTE:
-            case ColumnType.GEOLONG:
-            case ColumnType.GEOSHORT:
-            case ColumnType.GEOINT:
-                return GeoHashes.NULL;
-            case ColumnType.IPv4:
-                return Numbers.IPv4_NULL;
-            case ColumnType.VARCHAR:
-            case ColumnType.BINARY:
-            case ColumnType.ARRAY:
-                return NULL_LEN;
-            case ColumnType.STRING:
-                return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
-            default:
+                    Numbers.LONG_NULL;
+            case ColumnType.GEOBYTE, ColumnType.GEOLONG, ColumnType.GEOSHORT, ColumnType.GEOINT -> GeoHashes.NULL;
+            case ColumnType.IPv4 -> Numbers.IPv4_NULL;
+            case ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> NULL_LEN;
+            case ColumnType.STRING -> Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            default -> {
                 assert false : "Invalid column type: " + columnType;
-                return 0;
-        }
+                yield 0;
+            }
+        };
     }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
@@ -1348,32 +1349,6 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
-    }
-
-    public static void populateRecordHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map map,
-            RecordSink recordSink,
-            RecordChain chain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                long offset = chain.put(record, -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, chain.put(record, value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
@@ -1994,12 +1969,6 @@ public final class TableUtils {
             if (isSymbol) {
                 denseSymbolIndex++;
             }
-        }
-    }
-
-    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
-        if (ff.mkdirs(path, mkDirMode) != 0) {
-            throw CairoException.critical(ff.errno()).put("could not create directories [file=").put(path).put(']');
         }
     }
 
