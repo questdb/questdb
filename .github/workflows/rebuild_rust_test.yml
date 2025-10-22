@@ -177,9 +177,9 @@ jobs:
           apk add nodejs
           sed -i "s:ID=alpine:ID=NotpineForGHA:" /etc/os-release
           cd /host/home/runner/runners/*/externals/
-          rm -rf node20/*
-          mkdir node20/bin
-          ln -s /usr/bin/node node20/bin/node
+          rm -rf node22/*
+          mkdir node22/bin
+          ln -s /usr/bin/node node22/bin/node
       - name: Install tools
         run: |
           apk add python3 gcc musl-dev tar
