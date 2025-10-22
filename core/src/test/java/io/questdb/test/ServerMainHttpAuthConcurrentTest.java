@@ -122,8 +122,15 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     // select a thread to move the clock over rotateAt
                     synchronized (this) {
                         if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < rotateAt) {
+                            LOG.info().$("clock moving from " + currentMicros.get())
+                                    .$(" [threadId=").$(threadId)
+                                    .$(", rotateAt=").$(rotateAt)
+                                    .$("]").$();
                             currentMicros.addAndGet(rotationIncrement);
-                            LOG.info().$("clock moved to " + currentMicros.get()).$();
+                            LOG.info().$("clock moved to " + currentMicros.get())
+                                    .$(" [threadId=").$(threadId)
+                                    .$(", rotateAt=").$(rotateAt)
+                                    .$("]").$();
                         }
                     }
                 }
@@ -159,8 +166,8 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 barriers[2].await();
             }
 
-            final long evictionIncrement = sessionTimeout / 3;
-            final long evictAt = currentMicros.get() + evictionIncrement;
+            final long evictionIncrement = sessionTimeout / 3 + 1_000_000L;
+            final long evictAt = currentMicros.get() + sessionTimeout / 3;
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
@@ -170,8 +177,15 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     // select a thread to move the clock over evictAt
                     synchronized (this) {
                         if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < evictAt) {
+                            LOG.info().$("clock moving from " + currentMicros.get())
+                                    .$(" [threadId=").$(threadId)
+                                    .$(", evictAt=").$(evictAt)
+                                    .$("]").$();
                             currentMicros.addAndGet(evictionIncrement);
-                            LOG.info().$("clock moved to " + currentMicros.get()).$();
+                            LOG.info().$("clock moved to " + currentMicros.get())
+                                    .$(" [threadId=").$(threadId)
+                                    .$(", evictAt=").$(evictAt)
+                                    .$("]").$();
                         }
                     }
                 }
