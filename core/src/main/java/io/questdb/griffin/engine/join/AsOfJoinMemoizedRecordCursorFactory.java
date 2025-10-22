@@ -403,7 +403,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     } else if (!didJumpOverScannedRange) {
                         // We're within the remembered scanned range. Since the symbol isn't remembered, we know
                         // it doesn't occur within this range because we memorize all the symbols we observe
-                        // while scanning for any symbol. Jump over the entire period and continue searching,
+                        // while scanning for any symbol. Jump back over the entire period and continue searching,
                         // unless the period to be skipped extends beyond the tolerance interval.
                         if (!isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(false);
