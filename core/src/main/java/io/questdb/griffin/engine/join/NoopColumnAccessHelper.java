@@ -38,11 +38,15 @@ public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
     }
 
     @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+    public int getSlaveKey(Record masterRecord) {
         throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
+    }
+
     public boolean isShortCircuit(Record masterRecord) {
         return false;
     }

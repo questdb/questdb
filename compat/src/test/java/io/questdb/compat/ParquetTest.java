@@ -79,6 +79,8 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
+import static io.questdb.griffin.engine.table.parquet.ParquetCompression.packCompressionCodecLevel;
+
 public class ParquetTest extends AbstractTest {
     private final static long DATA_PAGE_SIZE = 128; // bytes
     private final static Log LOG = LogFactory.getLog(ParquetTest.class);
@@ -279,6 +281,11 @@ public class ParquetTest extends AbstractTest {
 
     private static void assertSchemaNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
         assertSchema(descriptor, expectedName, expectedType, 1);
+    }
+
+    private static void assertSchemaNullable(ColumnDescriptor descriptor, String expectedName, String expectedLogicTypeAnnotation, PrimitiveType.PrimitiveTypeName expectedType) {
+        assertSchema(descriptor, expectedName, expectedType, 1);
+        Assert.assertEquals(expectedLogicTypeAnnotation, descriptor.getPrimitiveType().getLogicalTypeAnnotation().toString());
     }
 
     private static void assertUuid(StringSink sink, long expectedLo, long expectedHi, Object actual) {
@@ -524,7 +531,7 @@ public class ParquetTest extends AbstractTest {
                 " to_long128(rnd_long(), rnd_long()) a_long128," +
                 " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                 " timestamp_sequence(500000000000, 600) a_ts," +
-                " timestamp_sequence(500000000000::timestamp_ns, 600000) a_ns," +
+                " timestamp_sequence_ns(500000000000, 600000) a_ns," +
                 " timestamp_sequence(400000000000, 500)::" + designedTimestampType + " designated_ts" +
                 " from long_sequence(" + INITIAL_ROWS + ")) timestamp(designated_ts) partition by " + PartitionBy.toString(partitionBy) + ";";
 
@@ -592,7 +599,7 @@ public class ParquetTest extends AbstractTest {
                     "    to_timestamp('2022', 'yyyy')," +
                     "    to_timestamp('2027', 'yyyy')," +
                     "    2) a_ts_top," +
-                    " rnd_timestamp(" +
+                    " rnd_timestamp_ns(" +
                     "    to_timestamp_ns('2022', 'yyyy')," +
                     "    to_timestamp_ns('2027', 'yyyy')," +
                     "    2) a_ns_top," +
@@ -622,7 +629,7 @@ public class ParquetTest extends AbstractTest {
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
                         path,
-                        (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
+                        packCompressionCodecLevel(5, ParquetCompression.COMPRESSION_ZSTD),
                         true,
                         rawArrayEncoding,
                         ROW_GROUP_SIZE,
@@ -781,11 +788,10 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(20), "a_long256", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(21), "a_long128", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             assertSchemaNullable(columns.get(22), "a_date", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNullable(columns.get(23), "a_ts", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(23), "a_ts", "TIMESTAMP(MICROS,true)", PrimitiveType.PrimitiveTypeName.INT64);
+            assertSchemaNullable(columns.get(24), "a_ns", "TIMESTAMP(NANOS,true)", PrimitiveType.PrimitiveTypeName.INT64);
             // designated ts is non-nullable
-            assertSchemaNullable(columns.get(24), "a_ns", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNonNullable(columns.get(25), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
-
             assertSchemaNonNullable(columns.get(26), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
             assertSchemaNonNullable(columns.get(27), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNonNullable(columns.get(28), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);

@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -71,7 +72,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static TimestampConstant evaluateConstant(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
+    protected static ConstantFunction evaluateConstant(Function arg, CharSequence pattern, DateLocale locale, int timestampType) {
         CharSequence value = arg.getStrA(null);
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         try {

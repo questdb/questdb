@@ -57,22 +57,25 @@ public final class SingleVarcharColumnAccessHelper implements AsofJoinColumnAcce
     }
 
     @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
+    public int getSlaveKey(Record masterRecord) {
         Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
         if (masterVarchar == null) {
-            return slaveSymbolTable.containsNullValue();
+            return slaveSymbolTable.containsNullValue()
+                    ? StaticSymbolTable.VALUE_IS_NULL
+                    : StaticSymbolTable.VALUE_NOT_FOUND;
+
         }
         if (masterVarchar.isAscii()) {
-            return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence()) == StaticSymbolTable.VALUE_NOT_FOUND;
+            return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence());
         }
         utf16Sink.clear();
         utf16Sink.put(masterVarchar);
-        return slaveSymbolTable.keyOf(utf16Sink) == StaticSymbolTable.VALUE_NOT_FOUND;
+        return slaveSymbolTable.keyOf(utf16Sink);
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override

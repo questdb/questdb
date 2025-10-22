@@ -1,5 +1,6 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::qdb_metadata::QdbMeta;
+use nonmax::NonMaxU32;
 use parquet2::metadata::FileMetaData;
 use qdb_core::col_type::ColumnType;
 use std::io::{Read, Seek};
@@ -20,8 +21,10 @@ where
     pub col_count: u32,
     pub row_count: usize,
     pub row_group_count: u32,
-    pub row_group_sizes_ptr: *const i32,
-    pub row_group_sizes: AcVec<i32>,
+    pub row_group_sizes_ptr: *const u32,
+    pub row_group_sizes: AcVec<u32>,
+    // None (stored as zero, which is equal to ~u32::MAX) means no designated timestamp
+    pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
     reader: R,
@@ -34,7 +37,8 @@ where
 #[repr(C)]
 #[derive(Debug)]
 pub struct ColumnMeta {
-    pub column_type: ColumnType,
+    // None (zero) means unsupported column type
+    pub column_type: Option<ColumnType>,
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
@@ -103,7 +107,7 @@ mod tests {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
 
-        let mut qdb_meta = QdbMeta::new();
+        let mut qdb_meta = QdbMeta::new(1);
         qdb_meta.schema.insert(
             0,
             QdbMetaCol {

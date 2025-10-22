@@ -39,15 +39,24 @@ public interface AsofJoinColumnAccessHelper {
     @Transient
     CharSequence getMasterValue(Record masterRecord);
 
+    /**
+     * Used when joining on a single symbol column, returns the symbol key in the slave
+     * column corresponding to the symbol key in the master column. If it returns
+     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the symbol.
+     */
+    int getSlaveKey(Record masterRecord);
+
     @NotNull
     StaticSymbolTable getSlaveSymbolTable();
 
     /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
+     * Used when joining on a single symbol column, detects when the slave column doesn't
+     * have the symbol at all (by inspecting its int-to-symbol mapping). This allows the
+     * record cursor to skip any searching for the matching slave row.
      */
-    boolean isShortCircuit(Record masterRecord);
+    default boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
+    }
 
     void of(TimeFrameRecordCursor slaveCursor);
 }

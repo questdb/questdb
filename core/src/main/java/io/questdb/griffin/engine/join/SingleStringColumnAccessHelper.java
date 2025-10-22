@@ -45,18 +45,19 @@ public final class SingleStringColumnAccessHelper implements AsofJoinColumnAcces
     }
 
     @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
+    public int getSlaveKey(Record masterRecord) {
+        CharSequence strA = masterRecord.getStrA(masterStringIndex);
+        if (strA == null) {
+            return slaveSymbolTable.containsNullValue()
+                    ? StaticSymbolTable.VALUE_IS_NULL
+                    : StaticSymbolTable.VALUE_NOT_FOUND;
+        }
+        return slaveSymbolTable.keyOf(strA);
     }
 
     @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        CharSequence strA = masterRecord.getStrA(masterStringIndex);
-        if (strA == null) {
-            return slaveSymbolTable.containsNullValue();
-        }
-        int key = slaveSymbolTable.keyOf(strA);
-        return key == StaticSymbolTable.VALUE_NOT_FOUND;
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override

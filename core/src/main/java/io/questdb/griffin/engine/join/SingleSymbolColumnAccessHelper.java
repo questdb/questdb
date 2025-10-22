@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.CompactIntHashSet;
+import io.questdb.std.IntIntHashMap;
 import org.jetbrains.annotations.NotNull;
 
 public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAccessHelper {
     private final CairoConfiguration config;
-    private final CompactIntHashSet masterKeysExistingInSlaveCache = new CompactIntHashSet(16, 0.4);
+    private final IntIntHashMap masterKeysExistingInSlaveCache = new IntIntHashMap(16, 0.4);
     private final int masterSymbolIndex;
     private final int slaveSymbolIndex;
     private int maxCacheSize = 0;
@@ -52,40 +52,43 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
     }
 
     @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        return slaveSymbolTable;
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
+    public int getSlaveKey(Record masterRecord) {
         assert slaveSymbolTable != null : "slaveSymbolTable must be set before calling isShortCircuit";
 
         int masterKey = masterRecord.getInt(masterSymbolIndex);
-        if (!masterKeysExistingInSlaveCache.excludes(masterKey)) {
-            return false;
+        int slaveKey = masterKeysExistingInSlaveCache.get(masterKey);
+        if (slaveKey != -1) {
+            return slaveKey;
         }
 
         if (masterKey == SymbolTable.VALUE_IS_NULL) {
             if (slaveSymbolTable.containsNullValue()) {
+                slaveKey = SymbolTable.VALUE_IS_NULL;
                 // add to cache unconditionally even when at the max size, null is important to cache
-                masterKeysExistingInSlaveCache.add(masterKey);
-                return false;
+                masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
+                return slaveKey;
             }
-            return true;
+            return StaticSymbolTable.VALUE_NOT_FOUND;
         }
 
         CharSequence strSym = masterRecord.getSymA(masterSymbolIndex);
-        if (slaveSymbolTable.keyOf(strSym) == StaticSymbolTable.VALUE_NOT_FOUND) {
-            // we could consider adding a cache also for keys known to be not found
-            // not implemented for now
-            return true;
+        slaveKey = slaveSymbolTable.keyOf(strSym);
+        if (slaveKey == StaticSymbolTable.VALUE_NOT_FOUND) {
+            // We could consider adding a cache also for keys known to be not found.
+            // Not implemented for now.
+            return slaveKey;
         }
 
         // we reserve space in the cache for null, so < instead of <=
         if (masterKeysExistingInSlaveCache.size() < maxCacheSize) {
-            masterKeysExistingInSlaveCache.add(masterKey);
+            masterKeysExistingInSlaveCache.put(masterKey, slaveKey);
         }
-        return false;
+        return slaveKey;
+    }
+
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        return slaveSymbolTable;
     }
 
     @Override

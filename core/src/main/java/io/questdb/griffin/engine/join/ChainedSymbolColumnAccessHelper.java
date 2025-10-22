@@ -43,6 +43,11 @@ public final class ChainedSymbolColumnAccessHelper implements AsofJoinColumnAcce
     }
 
     @Override
+    public int getSlaveKey(Record masterRecord) {
+        throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
+    }
+
+    @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
         throw new UnsupportedOperationException("ChainedSymbolColumnAccessHelper doesn't have a symbol table");
     }

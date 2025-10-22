@@ -31,16 +31,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
+    public static final String ASOF_FAST_SEARCH_HINT = "asof_fast_search";
     public static final String ASOF_INDEX_SEARCH_HINT = "asof_index_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
-    public static final String ASOF_MEMOIZED_SEARCH_HINT = "asof_memoized_search";
+    public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    public static final String LT_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_lt_binary_search";
 
-    public static boolean hasAsofIndexSearchHint(
+    public static boolean hasAsOfIndexSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
@@ -48,7 +45,7 @@ public final class SqlHints {
         return hasHintWithParams(queryModel, ASOF_INDEX_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    public static boolean hasAsofLinearSearchHint(
+    public static boolean hasAsOfLinearSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
@@ -56,24 +53,22 @@ public final class SqlHints {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    public static boolean hasAsofMemoizedSearchHint(
+    public static boolean hasAsofFastSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
-        return hasHintWithParams(queryModel, ASOF_MEMOIZED_SEARCH_HINT, tableNameA, tableNameB);
+        return hasHintWithParams(queryModel, ASOF_FAST_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static boolean hasAvoidLtJoinBinarySearchHint(
+    // checks enable column pre-touch hint for parallel filters
+    public static boolean hasEnablePreTouchHint(
             @NotNull QueryModel queryModel,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
+            @Nullable CharSequence tableName
     ) {
-        return hasHintWithParams(queryModel, LT_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
+        LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
+        CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
+        return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
     }
 
     private static boolean hasHintWithParams(

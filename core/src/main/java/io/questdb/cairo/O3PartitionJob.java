@@ -116,7 +116,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
                 );
 
-                final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
+                final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
+                assert rowGroupCount > 0;
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);
@@ -406,7 +407,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn - 1
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
                             .$(", e=").$(e)
@@ -1094,7 +1095,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             partitionTimestamp,
                             txn
                     );
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {
@@ -1566,7 +1567,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             parquetColumns.add(columnType);
         }
 
-        final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
+        final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
         decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
 
         assert timestampColumnChunkIndex > -1;
@@ -2557,8 +2558,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
-                        for (int idx = 0, cnt = parquetMetadata.columnCount(); idx < cnt; idx++) {
-                            if (parquetMetadata.columnId(idx) == columnIndex) {
+                        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+                            if (parquetMetadata.getColumnId(idx) == columnIndex) {
                                 parquetColumnIndex = idx;
                                 break;
                             }
@@ -2580,9 +2581,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             parquetColumns.add(ColumnType.SYMBOL);
 
                             long rowCount = 0;
-                            final int rowGroupCount = parquetMetadata.rowGroupCount();
+                            final int rowGroupCount = parquetMetadata.getRowGroupCount();
                             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                                final int rowGroupSize = parquetMetadata.rowGroupSize(rowGroupIndex);
+                                final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
                                 if (rowCount + rowGroupSize <= columnTop) {
                                     rowCount += rowGroupSize;
                                     continue;
