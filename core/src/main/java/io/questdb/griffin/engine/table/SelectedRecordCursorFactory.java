@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -151,8 +151,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        TimeFrameRecordCursor baseCursor = base.getTimeFrameCursor(executionContext);
+    public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (baseCursor == null || !crossedIndex) {
             return baseCursor;
         }
@@ -381,11 +381,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    public static final class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
+    public static final class SelectedTimeFrameCursor implements TimeFrameCursor {
         private final IntList columnCrossIndex;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
-        private TimeFrameRecordCursor baseCursor;
+        private TimeFrameCursor baseCursor;
 
         public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
             this.columnCrossIndex = columnCrossIndex;
@@ -445,7 +445,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseCursor.next();
         }
 
-        public SelectedTimeFrameCursor of(TimeFrameRecordCursor baseCursor) {
+        public SelectedTimeFrameCursor of(TimeFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             recordA.of(baseCursor.getRecord());
             if (recordB != null) {

@@ -102,9 +102,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.slaveFactory = slaveFactory;
         this.groupByFunctions = groupByFunctions;
         this.cursor = new AsyncWindowJoinRecordCursor(groupByFunctions);
+        final ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors = new ObjList<>(workerCount);
+        for (int i = 0; i < workerCount; i++) {
+            perWorkerTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
+        }
         final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
                 asm,
                 configuration,
+                slaveFactory.newTimeFrameCursor(),
+                perWorkerTimeFrameCursors,
                 joinFilter,
                 perWorkerJoinFilters,
                 joinWindowLo,

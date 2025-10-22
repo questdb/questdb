@@ -260,5 +260,6 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource());
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+        frameSequence.getAtom().initTimeFrameCursors((TablePageFrameCursor) frameSequence.getFrameCursor());
     }
 }

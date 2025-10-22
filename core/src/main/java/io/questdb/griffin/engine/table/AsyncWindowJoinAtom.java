@@ -67,6 +67,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Function ownerJoinFilter;
     private final DirectMapValue ownerMapValue;
+    private final ConcurrentTimeFrameCursor ownerTimeFrameCursor;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
@@ -74,10 +75,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<Function> perWorkerJoinFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<DirectMapValue> perWorkerMapValues;
+    private final ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
+            @NotNull ConcurrentTimeFrameCursor ownerTimeFrameCursor,
+            @NotNull ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors,
             @Nullable Function ownerJoinFilter,
             @Nullable ObjList<Function> perWorkerJoinFilters,
             long joinWindowLo,
@@ -92,11 +96,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert perWorkerTimeFrameCursors.size() == workerCount;
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
+        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
+            this.ownerTimeFrameCursor = ownerTimeFrameCursor;
+            this.perWorkerTimeFrameCursors = perWorkerTimeFrameCursors;
             this.ownerJoinFilter = ownerJoinFilter;
             this.perWorkerJoinFilters = perWorkerJoinFilters;
             this.joinWindowLo = joinWindowLo;
@@ -152,6 +159,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void close() {
+        Misc.free(ownerTimeFrameCursor);
+        Misc.freeObjList(perWorkerTimeFrameCursors);
         Misc.free(ownerJoinFilter);
         Misc.freeObjList(perWorkerJoinFilters);
         Misc.free(compiledFilter);
@@ -224,6 +233,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return ownerMapValue;
     }
 
+    public ConcurrentTimeFrameCursor getTimeFrameCursor(int slotId) {
+        if (slotId == -1) {
+            return ownerTimeFrameCursor;
+        }
+        return perWorkerTimeFrameCursors.getQuick(slotId);
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         if (ownerJoinFilter != null) {
@@ -272,6 +288,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
+    public void initTimeFrameCursors(TablePageFrameCursor pageFrameCursor) {
+        ownerTimeFrameCursor.of(pageFrameCursor);
+        for (int i = 0, n = perWorkerTimeFrameCursors.size(); i < n; i++) {
+            perWorkerTimeFrameCursors.getQuick(i).of(pageFrameCursor);
+        }
+    }
+
     /**
      * Attempts to acquire a slot for the given worker thread.
      * On success, a {@link #release(int)} call must follow.
@@ -314,6 +337,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     public void toTop() {
+        ownerTimeFrameCursor.toTop();
+        for (int i = 0, n = perWorkerTimeFrameCursors.size(); i < n; i++) {
+            perWorkerTimeFrameCursors.getQuick(i).toTop();
+        }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));

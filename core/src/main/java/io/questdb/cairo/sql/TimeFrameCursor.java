@@ -32,33 +32,44 @@ import io.questdb.std.QuietCloseable;
  * Cursor for time-based navigation. Supports lazy navigation in both directions
  * and random row access.
  */
-public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource {
+public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
 
     /**
      * Gets the bitmap index reader for the specified column in the current frame (partition).
      * This method enables efficient symbol-based lookups in ASOF JOIN operations.
+     * <p>
+     * Not available on concurrent implementation.
      *
      * @param columnIndex the column index to get the bitmap index for
      * @param direction   the direction for index traversal (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
      * @return BitmapIndexReader for the specified column, or null if the column is not indexed
      * or if this cursor doesn't support indexed access
      */
-    BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction);
+    default BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
-     * @return record at current position
+     * @return record to be used for random access on open time frames
      */
     Record getRecord();
 
     /**
-     * May be used to compare references with getRecord
+     * May be used to compare references with getRecord. Not available on concurrent implementation.
      *
-     * @return record at current position
+     * @return record to be used for random access on open time frames
      */
-    Record getRecordB();
+    default Record getRecordB() {
+        throw new UnsupportedOperationException();
+    }
 
+    /**
+     * Returns symbol table for the given symbol column. Not available on concurrent implementation.
+     */
     @Override
-    StaticSymbolTable getSymbolTable(int columnIndex);
+    default StaticSymbolTable getSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Time frame should be used only if a previously called {@link #next()} or {@link #prev()}

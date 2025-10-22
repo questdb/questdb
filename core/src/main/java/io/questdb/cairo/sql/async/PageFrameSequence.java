@@ -256,6 +256,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return frameCount;
     }
 
+    public PageFrameCursor getFrameCursor() {
+        return frameCursor;
+    }
+
     public long getFrameRowCount(int frameIndex) {
         return frameRowCounts.getQuick(frameIndex);
     }
