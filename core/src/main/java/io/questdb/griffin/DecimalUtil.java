@@ -329,8 +329,13 @@ public final class DecimalUtil {
      * Load a decimal value from a Function into a Decimal64
      */
     public static void load(Decimal64 decimal, Function value, @Nullable Record rec) {
-        final int fromType = value.getType();
+        load(decimal, value, rec, value.getType());
+    }
 
+    /**
+     * Load a decimal value from a Function into a Decimal64
+     */
+    public static void load(Decimal64 decimal, Function value, @Nullable Record rec, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
@@ -437,8 +442,13 @@ public final class DecimalUtil {
      * Load a decimal value from a Function into a Decimal128
      */
     public static void load(Decimal128 decimal, Function value, @Nullable Record rec) {
-        final int fromType = value.getType();
+        load(decimal, value, rec, value.getType());
+    }
 
+    /**
+     * Load a decimal value from a Function into a Decimal128
+     */
+    public static void load(Decimal128 decimal, Function value, @Nullable Record rec, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
