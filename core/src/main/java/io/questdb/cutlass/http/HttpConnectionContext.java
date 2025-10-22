@@ -511,7 +511,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             final CharSequence sessionId = cookieHandler.processSessionCookie(this);
             HttpSessionStore.SessionInfo sessionInfo = null;
             if (sessionId != null) {
-                sessionInfo = sessionStore.verifySession(sessionId, this);
+                sessionInfo = sessionStore.verifySessionId(sessionId, this);
             }
 
             final PrincipalContext principalContext;

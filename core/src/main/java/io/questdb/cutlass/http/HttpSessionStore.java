@@ -22,7 +22,7 @@ public interface HttpSessionStore {
     void createSession(@NotNull PrincipalContext principalContext, @NotNull HttpConnectionContext httpContext);
 
     /**
-     * Closes a session
+     * Close the session associated with the session id
      *
      * @param sessionId   id of the session to be closed
      * @param httpContext HTTP context associated with the user's connection
@@ -58,13 +58,15 @@ public interface HttpSessionStore {
     }
 
     /**
-     * Verify session id and return the associated session if the session is valid.
+     * Lookup the session associated with the session id.
+     * If the session is valid, it will be returned.
+     * If no valid session exists for the session id, or the session already expired, there is no session returned.
      *
      * @param sessionId   session id to verify
      * @param httpContext HTTP context associated with the user's connection
-     * @return session associated with the session id, or null if the session does not exist
+     * @return session associated with the session id, or null if the session does not exist or expired
      */
-    SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
+    SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     class SessionInfo implements PrincipalContext {
         private final byte authType;

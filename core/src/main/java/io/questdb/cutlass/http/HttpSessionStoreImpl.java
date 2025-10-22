@@ -86,7 +86,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+    public SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         final SessionInfo sessionInfo = sessionsById.get(sessionId);
         if (sessionInfo == null) {
             // no session

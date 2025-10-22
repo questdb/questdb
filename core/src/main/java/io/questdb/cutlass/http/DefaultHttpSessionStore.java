@@ -29,7 +29,7 @@ public class DefaultHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+    public SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         return null;
     }
 }
