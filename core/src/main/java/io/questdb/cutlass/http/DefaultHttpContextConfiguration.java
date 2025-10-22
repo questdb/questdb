@@ -62,6 +62,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getExportConnectionLimit() {
+        return -1;
+    }
+
+    @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }

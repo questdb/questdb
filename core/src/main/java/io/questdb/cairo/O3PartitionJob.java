@@ -397,7 +397,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 try {
                     LOG.debug().$("would create [path=").$(path.slash$()).I$();
                     TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
                             .$(", e=").$(e)
@@ -1072,7 +1072,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
                     TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
-                    createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
+                    createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
                     } else {

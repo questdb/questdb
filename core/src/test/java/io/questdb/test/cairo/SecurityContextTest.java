@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
@@ -68,6 +69,9 @@ public class SecurityContextTest {
                             method.invoke(sc, sc);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
+                        } else if (name.equals("authorizeTableCreate")) {
+                            method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                            method.invoke(sc, TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
                         }
@@ -106,6 +110,9 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                method.invoke(sc, TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
@@ -155,6 +162,9 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                                method.invoke(sc, TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }

@@ -38,7 +38,6 @@ import io.questdb.cutlass.http.ex.TooFewBytesReceivedException;
 import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
 import io.questdb.network.IOOperation;
@@ -68,8 +67,10 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cutlass.http.HttpConstants.HEADER_CONTENT_ACCEPT_ENCODING;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_TRANSFER_ENCODING;
+import static io.questdb.cutlass.http.HttpResponseSink.HTTP_TOO_MANY_REQUESTS;
 import static io.questdb.network.IODispatcher.*;
-import static java.net.HttpURLConnection.*;
+import static java.net.HttpURLConnection.HTTP_FORBIDDEN;
+import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
@@ -90,6 +91,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final NetworkFacade nf;
     private final boolean preAllocateBuffers;
     private final RejectProcessor rejectProcessor;
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final HttpRequestValidator requestValidator = new HttpRequestValidator();
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
@@ -99,10 +101,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private long authenticationNanos = 0L;
-    private AtomicLongGauge connectionCountGauge;
     private boolean connectionCounted;
+    private boolean forceDisconnectOnComplete;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
+    private String processorName;
     private int receivedBytes;
     private long recvBuffer;
     private int recvBufferReadSize;
@@ -124,7 +127,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 socketFactory,
                 DefaultHttpCookieHandler.INSTANCE,
                 DefaultHttpHeaderParserFactory.INSTANCE,
-                HttpServer.NO_OP_CACHE
+                HttpServer.NO_OP_CACHE,
+                ActiveConnectionTracker.NO_TRACKING
         );
     }
 
@@ -133,7 +137,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
             HttpHeaderParserFactory headerParserFactory,
-            AssociativeCache<RecordCursorFactory> selectCache
+            AssociativeCache<RecordCursorFactory> selectCache,
+            ActiveConnectionTracker activeConnectionTracker
     ) {
         super(
                 socketFactory,
@@ -142,6 +147,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         );
         this.configuration = configuration;
         this.cookieHandler = cookieHandler;
+        this.activeConnectionTracker = activeConnectionTracker;
         final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
         this.nf = contextConfiguration.getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectUtf8String.FACTORY, contextConfiguration.getConnectionStringPoolCapacity());
@@ -170,6 +176,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public void clear() {
         LOG.debug().$("clear [fd=").$(getFd()).I$();
+        decrementActiveConnections(getFd());
         super.clear();
         reset();
         if (this.pendingRetry) {
@@ -182,13 +189,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.headerParser.close();
             this.multipartContentHeaderParser.close();
         }
+        this.forceDisconnectOnComplete = false;
         this.localValueMap.disconnect();
-
-        if (connectionCountGauge != null) {
-            connectionCountGauge.dec();
-            connectionCounted = false;
-            connectionCountGauge = null;
-        }
     }
 
     @Override
@@ -200,6 +202,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void close() {
         final long fd = getFd();
         LOG.debug().$("close [fd=").$(fd).I$();
+        decrementActiveConnections(fd);
         super.close();
         if (this.pendingRetry) {
             this.pendingRetry = false;
@@ -317,7 +320,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
         boolean useful = keepGoing;
         if (keepGoing) {
-            if (configuration.getHttpContextConfiguration().getServerKeepAlive()) {
+            if (keepConnectionAlive()) {
                 do {
                     keepGoing = handleClientRecv(selector, rescheduleContext);
                 } while (keepGoing);
@@ -431,7 +434,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         reset();
-        if (configuration.getHttpContextConfiguration().getServerKeepAlive()) {
+        if (keepConnectionAlive()) {
             while (handleClientRecv(selector, rescheduleContext)) ;
         } else {
             throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
@@ -439,26 +442,40 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
-        final int connectionLimit = processor.getConnectionLimit(configuration.getHttpContextConfiguration());
-        if (connectionLimit > -1) {
-            connectionCountGauge = processor.connectionCountGauge(metrics);
-            final long numOfConnections = connectionCountGauge.incrementAndGet();
+        processorName = processor.getName();
+        final int connectionLimit = activeConnectionTracker.getLimit(processorName);
+        if (connectionLimit != ActiveConnectionTracker.UNLIMITED) {
+            assert processorName != null;
+            final long numOfConnections = activeConnectionTracker.incrementActiveConnection(processorName);
             if (numOfConnections > connectionLimit) {
                 rejectProcessor.getMessageSink()
-                        .put("exceeded connection limit [name=").put(connectionCountGauge.getName())
+                        .put("exceeded connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
+                        .put(", fd=").put(getFd())
                         .put(']');
-                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
+                activeConnectionTracker.decrementActiveConnection(processorName);
+                processorName = null;
+                forceDisconnectOnComplete = true;
+                return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
-            if (numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
+            if (processor.reservedOneAdminConnection() && numOfConnections == connectionLimit && !securityContext.isSystemAdmin()) {
                 rejectProcessor.getMessageSink()
-                        .put("non-admin user reached connection limit [name=").put(connectionCountGauge.getName())
+                        .put("non-admin user reached connection limit [name=").put(processorName)
                         .put(", numOfConnections=").put(numOfConnections)
                         .put(", connectionLimit=").put(connectionLimit)
+                        .put(", fd=").put(getFd())
                         .put(']');
-                return rejectProcessor.withShutdownWrite().reject(HTTP_BAD_REQUEST);
+                activeConnectionTracker.decrementActiveConnection(processorName);
+                processorName = null;
+                forceDisconnectOnComplete = true;
+                return rejectProcessor.withShutdownWrite().reject(HTTP_TOO_MANY_REQUESTS);
             }
+            LOG.debug().$("counted connection [name=").$(processorName)
+                    .$(", numOfConnections=").$(numOfConnections)
+                    .$(", connectionLimit=").$(connectionLimit)
+                    .$(", fd=").$(getFd())
+                    .I$();
         }
         return processor;
     }
@@ -522,7 +539,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // done
                     processor.onRequestComplete(this);
                     reset();
-                    if (configuration.getHttpContextConfiguration().getServerKeepAlive()) {
+                    if (keepConnectionAlive()) {
                         return true;
                     } else {
                         return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
@@ -605,7 +622,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
                     processor.onRequestComplete(this);
                     reset();
-                    if (configuration.getHttpContextConfiguration().getServerKeepAlive()) {
+                    if (keepConnectionAlive()) {
                         return true;
                     } else {
                         return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
@@ -764,6 +781,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         }
         return keepGoing;
+    }
+
+    private void decrementActiveConnections(long fd) {
+        if (processorName != null) {
+            long activeConnections = activeConnectionTracker.decrementActiveConnection(processorName);
+            LOG.debug().$("decrementing active connections [name=").$(processorName)
+                    .$(", activeConnections=").$(activeConnections)
+                    .$(", fd=").$(fd)
+                    .I$();
+            processorName = null;
+        }
+        connectionCounted = false;
     }
 
     private boolean disconnectHttp(HttpRequestProcessor processor, int reason) throws ServerDisconnectException {
@@ -968,6 +997,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("spurious write request [fd=").$(getFd()).I$();
         }
         return false;
+    }
+
+    private boolean keepConnectionAlive() {
+        return !forceDisconnectOnComplete && configuration.getHttpContextConfiguration().getServerKeepAlive();
     }
 
     private boolean parseMultipartResult(

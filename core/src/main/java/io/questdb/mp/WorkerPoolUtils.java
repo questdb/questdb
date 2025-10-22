@@ -58,9 +58,9 @@ public class WorkerPoolUtils {
             for (int i = 0; i < workerCount; i++) {
                 // create job per worker to allow each worker to have own shard walk sequence
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
+                        cairoEngine,
                         messageBus,
-                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                        configuration.getCircuitBreakerConfiguration()
+                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
                 );
                 sharedPoolQuery.assign(i, pageFrameReduceJob);
                 sharedPoolQuery.freeOnExit(pageFrameReduceJob);

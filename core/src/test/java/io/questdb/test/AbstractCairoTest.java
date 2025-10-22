@@ -143,6 +143,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
+    public static String exportRoot = null;
     public static StaticOverrides staticOverrides = new StaticOverrides();
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
