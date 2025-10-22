@@ -71,13 +71,22 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
+        linux-cutlass:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-cutlass"
+          includeTests: "**/cutlass/**/*.java"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"
-          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
