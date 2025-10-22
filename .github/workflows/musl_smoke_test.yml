@@ -17,7 +17,7 @@ jobs:
       image: alpine:3.22
     steps:
       - name: Install dependencies
-        run: apk add --no-cache curl git tar gzip xz nodejs openjdk11-jdk maven bash
+        run: apk add --no-cache curl git tar gzip xz nodejs openjdk17-jdk maven bash
       - uses: actions/checkout@v4
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
@@ -40,13 +40,13 @@ jobs:
           name: logs
           retention-days: 5
   test-aarch64-musl:
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    # if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
     runs-on: ubuntu-22.04-arm
     container:
       image: alpine:3.22
     steps:
       - name: Install dependencies
-        run: apk add --no-cache curl git tar gzip xz nodejs openjdk11-jdk maven bash
+        run: apk add --no-cache curl git tar gzip xz nodejs openjdk17-jdk maven bash
       - name: Clone repo manually
         run: |
           git config --global --add safe.directory /__w/questdb/questdb
