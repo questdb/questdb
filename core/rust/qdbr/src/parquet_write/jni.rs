@@ -1,9 +1,10 @@
 use std::fs::File;
 use std::path::Path;
 use std::slice;
+use std::io::Write;
 
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet_write::file::ParquetWriter;
+use crate::parquet_write::file::{ChunkedWriter, ParquetWriter};
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 
@@ -399,4 +400,332 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> 
             "unsupported compression codec id: {codec_id}"
         )),
     }
+}
+
+struct BufferWriter {
+    buffer: *mut Vec<u8>,
+    offset: usize,
+}
+
+impl BufferWriter {
+    unsafe fn new_with_offset(buffer: *mut Vec<u8>, offset: usize) -> Self {
+        Self { buffer, offset }
+    }
+}
+
+impl Write for BufferWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        unsafe {
+            let buffer_ref = &mut *self.buffer;
+            let total_size = self.offset + buf.len();
+            if buffer_ref.capacity() < total_size {
+                let growth = (total_size - buffer_ref.capacity()).max(8192);
+                buffer_ref.reserve(growth);
+            }
+            std::ptr::copy_nonoverlapping(
+                buf.as_ptr(),
+                buffer_ref.as_mut_ptr().add(self.offset),
+                buf.len()
+            );
+            self.offset += buf.len();
+            buffer_ref.set_len(self.offset);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+pub struct StreamingParquetWriter {
+    partition_template: Partition,
+    current_buffer: Vec<u8>,
+    compression_options: CompressionOptions,
+    statistics_enabled: bool,
+    raw_array_encoding: bool,
+    row_group_size: Option<usize>,
+    data_page_size: Option<usize>,
+    version: Version,
+    sorting_columns: Option<Vec<SortingColumn>>,
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_StreamingPartitionEncoder_create(
+    mut env: JNIEnv,
+    _class: JClass,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_types_ptr: *const i32,
+    timestamp_index: jint,
+    compression_codec: jlong,
+    statistics_enabled: jboolean,
+    raw_array_encoding: jboolean,
+    row_group_size: jlong,
+    data_page_size: jlong,
+    version: jint,
+) -> *mut StreamingParquetWriter {
+    let create = || -> ParquetResult<StreamingParquetWriter> {
+        let partition_template = create_partition_template(
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_types_ptr,
+            timestamp_index,
+        )?;
+
+        let current_buffer = Vec::new();
+        let compression_options = compression_from_i64(compression_codec)
+            .context("CompressionCodec")?;
+        let statistics_enabled_flag = statistics_enabled != 0;
+        let raw_array_encoding_flag = raw_array_encoding != 0;
+        let row_group_size_opt = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
+        let data_page_size_opt = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
+        let version_parsed = version_from_i32(version)?;
+        let local_timestamp_index = partition_template.columns.iter()
+            .enumerate()
+            .find_map(|(i, c)| if c.designated_timestamp { Some(i as i32) } else { None });
+        let sorting_columns = local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+
+        Ok(StreamingParquetWriter {
+            partition_template,
+            current_buffer,
+            compression_options,
+            statistics_enabled: statistics_enabled_flag,
+            raw_array_encoding: raw_array_encoding_flag,
+            row_group_size: row_group_size_opt,
+            data_page_size: data_page_size_opt,
+            version: version_parsed,
+            sorting_columns,
+        })
+    };
+
+    match create() {
+        Ok(encoder) => Box::into_raw(Box::new(encoder)),
+        Err(mut err) => {
+            err.add_context("could not create streaming encoder");
+            err.add_context("error in StreamingPartitionEncoder.create");
+            err.into_cairo_exception().throw::<*mut StreamingParquetWriter>(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_StreamingPartitionEncoder_writeChunk(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    col_data_ptr: *const i64,
+    row_count: jlong,
+) -> *const u8 {
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.writeChunk");
+        err.into_cairo_exception().throw::<*const u8>(&mut env);
+        return std::ptr::null();
+    }
+    let encoder = unsafe { &mut *encoder };
+    let mut write_chunk = || -> ParquetResult<*const u8> {
+        encoder.current_buffer.clear();
+        let partition = create_partition_with_data(
+            &encoder.partition_template,
+            col_data_ptr,
+            row_count as usize
+        )?;
+        let buffer_writer = unsafe { BufferWriter::new_with_offset(&mut encoder.current_buffer as *mut Vec<u8>, 16) };
+        let parquet_writer = ParquetWriter::new(buffer_writer)
+            .with_version(encoder.version)
+            .with_compression(encoder.compression_options)
+            .with_statistics(encoder.statistics_enabled)
+            .with_raw_array_encoding(encoder.raw_array_encoding)
+            .with_row_group_size(encoder.row_group_size)
+            .with_data_page_size(encoder.data_page_size)
+            .with_sorting_columns(encoder.sorting_columns.clone());
+
+        let (parquet_schema, _) = crate::parquet_write::schema::to_parquet_schema(&partition, encoder.raw_array_encoding)?;
+        let encodings = crate::parquet_write::schema::to_encodings(&partition);
+        let mut chunked_writer: ChunkedWriter<BufferWriter> = parquet_writer.chunked(parquet_schema, encodings)?;
+        chunked_writer.write_chunk(partition)?;
+        chunked_writer.finish(Vec::new())?;
+        let data_len = (encoder.current_buffer.len() - 16) as u64;
+        let data_addr = (encoder.current_buffer.as_ptr() as u64) + 16;
+        encoder.current_buffer[0..8].copy_from_slice(&data_addr.to_le_bytes());
+        encoder.current_buffer[8..16].copy_from_slice(&data_len.to_le_bytes());
+        Ok(encoder.current_buffer.as_ptr())
+    };
+
+    match write_chunk() {
+        Ok(ptr) => ptr,
+        Err(mut err) => {
+            err.add_context("could not write chunk to streaming encoder");
+            err.add_context("error in StreamingPartitionEncoder.writeChunk");
+            err.into_cairo_exception().throw::<*const u8>(&mut env);
+            std::ptr::null()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_StreamingPartitionEncoder_finish(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+    dest_ptr: *mut u8,
+    dest_buffer_size: jlong,
+) -> jlong {
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.finish");
+        err.into_cairo_exception().throw::<jlong>(&mut env);
+        return 0;
+    }
+
+    let encoder = unsafe { &mut *encoder };
+
+    let finish = || -> ParquetResult<u64> {
+        // Copy current_buffer content to destination address
+        if !dest_ptr.is_null() {
+            let buffer_len = encoder.current_buffer.len();
+            if buffer_len > dest_buffer_size as usize {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "destination buffer too small: need {}, got {}",
+                    buffer_len,
+                    dest_buffer_size
+                ));
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    encoder.current_buffer.as_ptr(),
+                    dest_ptr,
+                    buffer_len,
+                );
+            }
+        }
+        
+        Ok(encoder.current_buffer.len() as u64)
+    };
+
+    match finish() {
+        Ok(size) => size as jlong,
+        Err(mut err) => {
+            err.add_context("could not finish streaming encoder");
+            err.add_context("error in StreamingPartitionEncoder.finish");
+            err.into_cairo_exception().throw::<jlong>(&mut env);
+            0
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_StreamingPartitionEncoder_destroy(
+    mut env: JNIEnv,
+    _class: JClass,
+    encoder: *mut StreamingParquetWriter,
+) {
+    if encoder.is_null() {
+        let mut err = fmt_err!(InvalidType, "StreamingParquetEncoder pointer is null");
+        err.add_context("error in StreamingPartitionEncoder.destroy");
+        return err.into_cairo_exception().throw::<()>(&mut env);
+    }
+
+    let _ = unsafe { Box::from_raw(encoder) };
+}
+
+fn create_partition_template(
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_types_ptr: *const i32,
+    timestamp_index: jint,
+) -> ParquetResult<Partition> {
+    let col_count = col_count as usize;
+    let col_names_len = col_names_len as usize;
+
+    let mut col_names = unsafe {
+        std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
+    };
+    let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
+    
+    let mut columns = vec![];
+    for (col_idx, &col_type) in col_types.iter().enumerate() {
+        let col_name_end = col_names.find('\0').unwrap_or(col_names.len());
+        let (col_name, tail) = col_names.split_at(col_name_end);
+        col_names = tail.strip_prefix('\0').unwrap_or(tail);
+        let designated_timestamp = col_idx as i32 == timestamp_index;
+        let column = Column::from_raw_data(
+            col_idx as i32,
+            col_name,
+            col_type,
+            0,
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            designated_timestamp,
+        )?;
+
+        columns.push(column);
+    }
+
+    Ok(Partition {
+        table: String::new(),
+        columns,
+    })
+}
+
+fn create_partition_with_data(
+    template: &Partition,
+    col_data_ptr: *const i64,
+    row_count: usize,
+) -> ParquetResult<Partition> {
+    const COL_DATA_ENTRY_SIZE: usize = 8;
+    let col_data = unsafe { slice::from_raw_parts(col_data_ptr, template.columns.len() * COL_DATA_ENTRY_SIZE) };
+
+    let mut updated_columns = Vec::with_capacity(template.columns.len());
+
+    for (col_idx, template_column) in template.columns.iter().enumerate() {
+        let raw_idx = col_idx * COL_DATA_ENTRY_SIZE;
+        let col_top = col_data[raw_idx];
+        let primary_col_addr = col_data[raw_idx + 1];
+        let primary_col_size = col_data[raw_idx + 2];
+        let secondary_col_addr = col_data[raw_idx + 3];
+        let secondary_col_size = col_data[raw_idx + 4];
+        let symbol_offsets_addr = col_data[raw_idx + 5];
+        let symbol_offsets_size = col_data[raw_idx + 6];
+
+        let updated_column = Column::from_raw_data(
+            template_column.id,
+            template_column.name,
+            template_column.data_type.code(),
+            col_top,
+            row_count,
+            primary_col_addr as *const u8,
+            primary_col_size as usize,
+            secondary_col_addr as *const u8,
+            secondary_col_size as usize,
+            symbol_offsets_addr as *const u64,
+            symbol_offsets_size as usize,
+            template_column.designated_timestamp,
+        )?;
+
+        updated_columns.push(updated_column);
+    }
+
+    Ok(Partition {
+        table: template.table.clone(),
+        columns: updated_columns,
+    })
 }
