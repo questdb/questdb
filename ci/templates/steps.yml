@@ -138,7 +138,7 @@ steps:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "core/pom.xml"
-      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 -XX:ActiveProcessorCount=2 $(MAVEN_OPTS)"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 -XX:+UseParallelGC -XX:ActiveProcessorCount=2 $(MAVEN_OPTS)"
       goals: "test"
       options:
         "--batch-mode -Dtest.include=$(includeTests)
