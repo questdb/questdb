@@ -93,6 +93,11 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }
