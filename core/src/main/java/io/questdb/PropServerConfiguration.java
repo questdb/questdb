@@ -313,6 +313,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
     private final int matViewMaxRefreshRetries;
+    private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
     private final long matViewRefreshOomRetryTimeout;
@@ -802,6 +803,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
         this.walPurgeInterval = getMillis(properties, env, PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 30_000);
         this.matViewRefreshIntervalsUpdatePeriod = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, walPurgeInterval / 2);
+        this.matViewMaxRefreshStepUs = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_STEP, Timestamps.YEAR_MICROS_NONLEAP);
         this.walPurgeWaitBeforeDelete = getInt(properties, env, PropertyKey.DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE, 0);
         this.walTxnNotificationQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4096);
         this.walRecreateDistressedSequencerAttempts = getInt(properties, env, PropertyKey.CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS, 3);
@@ -3295,6 +3297,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMatViewMaxRefreshStepUs() {
+            return matViewMaxRefreshStepUs;
+        }
+
+        @Override
         public long getMatViewRefreshIntervalsUpdatePeriod() {
             return matViewRefreshIntervalsUpdatePeriod;
         }
@@ -3445,11 +3452,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportCopyReportFrequencyLines() {
-            return parquetExportCopyReportFrequencyLines;
-        }
-
-        @Override
         public int getParquetExportCompressionCodec() {
             return parquetExportCompressionCodec;
         }
@@ -3457,6 +3459,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportCompressionLevel() {
             return parquetExportCompressionLevel;
+        }
+
+        @Override
+        public int getParquetExportCopyReportFrequencyLines() {
+            return parquetExportCopyReportFrequencyLines;
         }
 
         @Override
@@ -3470,13 +3477,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportVersion() {
-            return parquetExportVersion;
+        public CharSequence getParquetExportTableNamePrefix() {
+            return parquetExportTableNamePrefix;
         }
 
         @Override
-        public CharSequence getParquetExportTableNamePrefix() {
-            return parquetExportTableNamePrefix;
+        public int getParquetExportVersion() {
+            return parquetExportVersion;
         }
 
         @Override
