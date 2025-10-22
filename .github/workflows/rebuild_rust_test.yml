@@ -169,7 +169,7 @@ jobs:
       image: alpine:3.22
       volumes:
         - /opt:/opt:rw,rshared
-        - /opt:/__e/node22:ro,rshared
+        - /opt:/__e/node20:ro,rshared
     steps:
       # Took from https://github.com/actions/runner/issues/801#issuecomment-2394425757 until Alpine is supported by GitHub Actions runners.
       - name: Patch native Alpine NodeJS into Runner environment
