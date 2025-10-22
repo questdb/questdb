@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -45,6 +46,8 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -288,10 +291,31 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public void initTimeFrameCursors(TablePageFrameCursor pageFrameCursor) {
-        ownerTimeFrameCursor.of(pageFrameCursor);
+    public void initTimeFrameCursors(
+            TablePageFrameCursor pageFrameCursor,
+            PageFrameAddressCache frameAddressCache,
+            IntList framePartitionIndexes,
+            LongList frameRowCounts,
+            LongList partitionTimestamps,
+            int frameCount
+    ) {
+        ownerTimeFrameCursor.of(
+                pageFrameCursor,
+                frameAddressCache,
+                framePartitionIndexes,
+                frameRowCounts,
+                partitionTimestamps,
+                frameCount
+        );
         for (int i = 0, n = perWorkerTimeFrameCursors.size(); i < n; i++) {
-            perWorkerTimeFrameCursors.getQuick(i).of(pageFrameCursor);
+            perWorkerTimeFrameCursors.getQuick(i).of(
+                    pageFrameCursor,
+                    frameAddressCache,
+                    framePartitionIndexes,
+                    frameRowCounts,
+                    partitionTimestamps,
+                    frameCount
+            );
         }
     }
 

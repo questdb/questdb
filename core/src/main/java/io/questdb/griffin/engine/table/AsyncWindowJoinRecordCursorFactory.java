@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -72,6 +73,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private final int workerCount;
 
     public AsyncWindowJoinRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -101,7 +103,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.groupByFunctions = groupByFunctions;
-        this.cursor = new AsyncWindowJoinRecordCursor(groupByFunctions);
+        this.cursor = new AsyncWindowJoinRecordCursor(configuration, groupByFunctions, slaveFactory.getMetadata());
         final ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors = new ObjList<>(workerCount);
         for (int i = 0; i < workerCount; i++) {
             perWorkerTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
@@ -126,6 +128,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
+                engine,
                 configuration,
                 messageBus,
                 atom,
@@ -152,8 +155,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final int order = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        cursor.of(execute(executionContext, collectSubSeq, order), executionContext);
+        final int masterOrder = masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        final int slaveOrder = slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        final TablePageFrameCursor slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, slaveOrder);
+        cursor.of(execute(executionContext, collectSubSeq, masterOrder), slaveFrameCursor, executionContext);
         return cursor;
     }
 

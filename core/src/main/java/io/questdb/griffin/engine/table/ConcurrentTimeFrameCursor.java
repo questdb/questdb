@@ -30,7 +30,6 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -59,35 +58,30 @@ import static io.questdb.griffin.engine.table.TimeFrameCursorImpl.estimatePartit
  * should start with a {@link #next()} call.
  */
 public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
-    private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
-    private final IntList framePartitionIndexes = new IntList();
-    private final LongList frameRowCounts = new LongList();
     private final RecordMetadata metadata;
-    private final LongList partitionTimestamps = new LongList();
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
     private int frameCount = 0;
-    // closed externally;
-    // accesses are synchronized on the cursor itself
+    // cursor's lifecycle is managed externally
     private PageFrameCursor frameCursor;
-    private boolean isFrameCacheBuilt;
+    private IntList framePartitionIndexes;
+    private LongList frameRowCounts;
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private int partitionHi;
+    private LongList partitionTimestamps;
 
     public ConcurrentTimeFrameCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        frameAddressCache = new PageFrameAddressCache(configuration);
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
     public void close() {
         Misc.free(frameMemoryPool);
-        frameAddressCache.clear();
     }
 
     @Override
@@ -102,8 +96,6 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
 
     @Override
     public void jumpTo(int frameIndex) {
-        buildFrameCache();
-
         if (frameIndex >= frameCount || frameIndex < 0) {
             throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex).put(", frameCount=").put(frameCount).put(']');
         }
@@ -121,8 +113,6 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
 
     @Override
     public boolean next() {
-        buildFrameCache();
-
         int frameIndex = timeFrame.getFrameIndex();
         if (++frameIndex < frameCount) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
@@ -136,9 +126,19 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         return false;
     }
 
-    public TimeFrameCursor of(TablePageFrameCursor frameCursor) {
+    public TimeFrameCursor of(
+            TablePageFrameCursor frameCursor,
+            PageFrameAddressCache frameAddressCache,
+            IntList framePartitionIndexes,
+            LongList frameRowCounts,
+            LongList partitionTimestamps,
+            int frameCount
+    ) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        this.framePartitionIndexes = framePartitionIndexes;
+        this.frameRowCounts = frameRowCounts;
+        this.partitionTimestamps = partitionTimestamps;
+        this.frameCount = frameCount;
         frameMemoryPool.of(frameAddressCache);
         final TableReader reader = frameCursor.getTableReader();
         record.of(frameCursor);
@@ -147,11 +147,6 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
                 reader.getMetadata().getTimestampType(),
                 reader.getPartitionedBy()
         );
-        partitionTimestamps.clear();
-        for (int i = 0; i < partitionHi; i++) {
-            partitionTimestamps.add(reader.getPartitionTimestampByIndex(i));
-        }
-        isFrameCacheBuilt = false;
         toTop();
         return this;
     }
@@ -185,8 +180,6 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
 
     @Override
     public boolean prev() {
-        buildFrameCache();
-
         int frameIndex = timeFrame.getFrameIndex();
         if (--frameIndex >= 0) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
@@ -216,28 +209,5 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     @Override
     public void toTop() {
         timeFrame.clear();
-    }
-
-    private void buildFrameCache() {
-        // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
-        //                  we should open partitions lazily
-        if (!isFrameCacheBuilt) {
-            // always start building the cache from scratch
-            frameCount = 0;
-            framePartitionIndexes.clear();
-            frameRowCounts.clear();
-            frameAddressCache.clear();
-
-            synchronized (frameCursor) {
-                frameCursor.toTop();
-                PageFrame frame;
-                while ((frame = frameCursor.next()) != null) {
-                    framePartitionIndexes.add(frame.getPartitionIndex());
-                    frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-                    frameAddressCache.add(frameCount++, frame);
-                }
-            }
-            isFrameCacheBuilt = true;
-        }
     }
 }

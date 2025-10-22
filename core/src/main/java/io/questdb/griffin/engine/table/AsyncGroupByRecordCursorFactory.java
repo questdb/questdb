@@ -81,7 +81,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
-            CairoEngine engine,
+            @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
