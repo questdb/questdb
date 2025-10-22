@@ -46,13 +46,13 @@ public final class SingleStringColumnAccessHelper implements AsofJoinColumnAcces
 
     @Override
     public int getSlaveKey(Record masterRecord) {
-        CharSequence strA = masterRecord.getStrA(masterStringIndex);
-        if (strA == null) {
+        CharSequence masterStr = masterRecord.getStrA(masterStringIndex);
+        if (masterStr == null) {
             return slaveSymbolTable.containsNullValue()
                     ? StaticSymbolTable.VALUE_IS_NULL
                     : StaticSymbolTable.VALUE_NOT_FOUND;
         }
-        return slaveSymbolTable.keyOf(strA);
+        return slaveSymbolTable.keyOf(masterStr);
     }
 
     @Override

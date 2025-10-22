@@ -63,7 +63,6 @@ public final class SingleVarcharColumnAccessHelper implements AsofJoinColumnAcce
             return slaveSymbolTable.containsNullValue()
                     ? StaticSymbolTable.VALUE_IS_NULL
                     : StaticSymbolTable.VALUE_NOT_FOUND;
-
         }
         if (masterVarchar.isAscii()) {
             return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence());
