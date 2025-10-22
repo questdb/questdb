@@ -31,9 +31,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
+    public static final String ASOF_FAST_SEARCH_HINT = "asof_fast_search";
     public static final String ASOF_INDEX_SEARCH_HINT = "asof_index_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
-    public static final String ASOF_MEMOIZED_SEARCH_HINT = "asof_memoized_search";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
 
@@ -53,12 +53,12 @@ public final class SqlHints {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
     }
 
-    public static boolean hasAsofMemoizedSearchHint(
+    public static boolean hasAsofFastSearchHint(
             @NotNull QueryModel queryModel,
             @Nullable CharSequence tableNameA,
             @Nullable CharSequence tableNameB
     ) {
-        return hasHintWithParams(queryModel, ASOF_MEMOIZED_SEARCH_HINT, tableNameA, tableNameB);
+        return hasHintWithParams(queryModel, ASOF_FAST_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters
