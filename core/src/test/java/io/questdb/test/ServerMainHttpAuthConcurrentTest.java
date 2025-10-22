@@ -42,9 +42,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -56,8 +54,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static io.questdb.test.tools.TestUtils.await;
-import static io.questdb.test.tools.TestUtils.generateRandom;
+import static io.questdb.test.tools.TestUtils.assertEquals;
+import static io.questdb.test.tools.TestUtils.*;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
 public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
@@ -69,7 +68,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration(
+        unchecked(() -> createDummyConfiguration(
                 PropertyKey.HTTP_USER.getPropertyPath() + "=" + USER,
                 PropertyKey.HTTP_PASSWORD.getPropertyPath() + "=" + PASSWORD)
         );
@@ -177,7 +176,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     try {
                         runSuccessfulQuery(httpClient, sessionId);
                     } catch (AssertionError e) {
-                        Assert.assertEquals("expected:<200> but was:<401>", e.getMessage());
+                        assertEquals("expected:<200> but was:<401>", e.getMessage());
 
                         // this is expected to happen maximum once
                         // let's recover by starting a new session
@@ -229,7 +228,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         while ((fragment = chunkedResponse.recv()) != null) {
             Utf8s.utf8ToUtf16(fragment.lo(), fragment.hi(), sink);
         }
-        TestUtils.assertEquals(expected, sink);
+        assertEquals(expected, sink);
     }
 
     private static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
@@ -253,7 +252,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 .send()
         ) {
             responseHeaders.await();
-            TestUtils.assertEquals("200", responseHeaders.getStatusCode());
+            assertEquals("200", responseHeaders.getStatusCode());
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
     }
@@ -270,13 +269,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 .send()
         ) {
             responseHeaders.await();
-            TestUtils.assertEquals("200", responseHeaders.getStatusCode());
+            assertEquals("200", responseHeaders.getStatusCode());
             sessionId = assertSessionCookie(responseHeaders);
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
 
-        final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
-        Assert.assertNotNull(sessions);
+        assertNotNull(sessionStore.getSessions(USER));
         return sessionId;
     }
 
@@ -319,7 +317,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 .send()
         ) {
             responseHeaders.await();
-            TestUtils.assertEquals("401", responseHeaders.getStatusCode());
+            assertEquals("401", responseHeaders.getStatusCode());
             assertResponse(responseHeaders, "Unauthorized\r\n");
         }
     }
@@ -344,14 +342,14 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 .send()
         ) {
             responseHeaders.await();
-            TestUtils.assertEquals("200", responseHeaders.getStatusCode());
+            assertEquals("200", responseHeaders.getStatusCode());
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
             return extractSessionCookie(responseHeaders);
         }
     }
 
     private void runTest(boolean openSession, TestCode test, Predicate<ObjList<HttpSessionStore.SessionInfo>> assertSessions) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
 
             final AtomicLong currentMicros = new AtomicLong(1761055200000000L);
@@ -414,8 +412,8 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 }
 
                 final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
-                Assert.assertNotNull(sessions);
-                Assert.assertEquals(0, sessions.size());
+                assertNotNull(sessions);
+                assertEquals(0, sessions.size());
             }
         });
     }
