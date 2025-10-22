@@ -149,7 +149,6 @@ steps:
         "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
-        '-DargLine=-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC -XX:ActiveProcessorCount=2'
         -P qdbr-coverage,build-web-console
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)

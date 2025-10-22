@@ -33,7 +33,7 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>17</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8</argLine>
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>1.1.3</web.console.version>
