@@ -78,7 +78,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
     @Test
     public void testConcurrentMultipleSessionsMultipleClients() throws Exception {
-        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
+        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
             final int numOfIterations = 10 + rnd.nextInt(10);
             for (int i = 0; i < numOfIterations; i++) {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
@@ -93,7 +93,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
     @Test
     public void testConcurrentMultipleSessionsRotatedEvicted() throws Exception {
-        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
+        runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
             final long rotationIncrement = sessionTimeout / 2 + 1_000_000L;
             final long rotateAt = currentMicros.get() + sessionTimeout / 2;
 
@@ -104,11 +104,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 sessionId = createSession(httpClient, sessionStore);
             } finally {
                 // wait for all sessions created
-                barrier.await();
+                barriers[0].await();
             }
 
-            // reset barrier, we will use it again to sync the threads
-            barrier.reset();
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
                 for (int i = 0; i < numOfIterations; i++) {
@@ -127,7 +125,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 }
             } finally {
                 // wait for all rotations to happen
-                barrier.await();
+                barriers[1].await();
             }
 
             final String newSessionId;
@@ -175,12 +173,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentSingleSessionExpired() throws Exception {
         final AtomicInteger sessionCount = new AtomicInteger();
-        runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
+        runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
             final long timeIncrement = sessionTimeout + 1_000_000L;
             final long expiresAt = currentMicros.get() + sessionTimeout;
 
             // all threads have to initialize expiresAt before the clock is moved
-            barrier.await();
+            barriers[0].await();
 
             final int numOfIterations = 20 + rnd.nextInt(30);
             for (int i = 0; i < numOfIterations; i++) {
@@ -212,12 +210,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
     @Test
     public void testConcurrentSingleSessionRotated() throws Exception {
-        runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier) -> {
+        runTest(true, (threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
             final long timeIncrement = sessionTimeout / 2 + 1_000_000L;
             final long rotateAt = currentMicros.get() + sessionTimeout / 2;
 
             // all threads have to initialize rotateAt before the clock is moved
-            barrier.await();
+            barriers[0].await();
 
             final int numOfIterations = 20 + rnd.nextInt(20);
             for (int i = 0; i < numOfIterations; i++) {
@@ -379,7 +377,10 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
                 numOfThreads = 5 + rnd.nextInt(5);
                 final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
-                final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
+                final CyclicBarrier[] barriers = new CyclicBarrier[]{
+                        new CyclicBarrier(numOfThreads),
+                        new CyclicBarrier(numOfThreads)
+                };
                 final CyclicBarrier start = new CyclicBarrier(numOfThreads);
                 final SOCountDownLatch end = new SOCountDownLatch(numOfThreads);
 
@@ -397,7 +398,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     new Thread(() -> {
                         await(start);
                         try {
-                            test.run(threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barrier);
+                            test.run(threadId, sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers);
                         } catch (Throwable th) {
                             th.printStackTrace(System.out);
                             errors.put(threadId, th);
@@ -443,7 +444,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 HttpSessionStore sessionStore,
                 long sessionTimeout,
                 Rnd rnd,
-                CyclicBarrier barrier
+                CyclicBarrier[] barriers
         ) throws Exception;
     }
 }
