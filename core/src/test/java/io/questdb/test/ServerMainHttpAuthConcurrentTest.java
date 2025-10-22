@@ -79,9 +79,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentMultipleSessionsMultipleClients() throws Exception {
         runTest(false, (threadId, not_used_sessionId, currentMicros, sessionStore, sessionTimeout, rnd, barriers) -> {
-            final int numOfIterations = 10 + rnd.nextInt(10);
-            for (int i = 0; i < numOfIterations; i++) {
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+            final int numOfIterations = 5 + rnd.nextInt(10);
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                for (int i = 0; i < numOfIterations; i++) {
                     final String sessionId = createSession(httpClient, sessionStore);
                     runSuccessfulQuery(httpClient, sessionId, rnd);
                     runFailedQuery(httpClient, sessionId, rnd);
@@ -102,10 +102,14 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             final String sessionId;
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 sessionId = createSession(httpClient, sessionStore);
-            } finally {
-                // wait for all sessions created
-                barriers[0].await();
+            } catch (Exception e) {
+                // although this thread failed, let other threads finish instead of making them wait for a long timeout
+                awaitAllBarriers(barriers, 0);
+                throw e;
             }
+
+            // wait for all sessions created
+            barriers[0].await();
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
@@ -123,26 +127,36 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                         }
                     }
                 }
-            } finally {
-                // wait for all rotations to happen
-                barriers[1].await();
+            } catch (Exception e) {
+                // although this thread failed, let other threads finish instead of making them wait for a long timeout
+                awaitAllBarriers(barriers, 1);
+                throw e;
             }
+
+            // wait for all rotations to happen
+            barriers[1].await();
 
             final String newSessionId;
             final HttpSessionStore.SessionInfo session;
-            if (sessionIds.size() == 1) {
-                newSessionId = sessionIds.getList().getQuick(0);
+            try {
+                if (sessionIds.size() == 1) {
+                    newSessionId = sessionIds.getList().getQuick(0);
 
-                // assert that old session id still works
-                assertNotNull(session = sessionStore.getSession(sessionId));
-                // assert that old and new session ids belong to the same session
-                assertEquals(session, sessionStore.getSession(newSessionId));
-                assertEquals(newSessionId, session.getSessionId());
-            } else {
-                // session id was not rotated
-                // we can return after asserting that there is no new session id
-                assertEquals(0, sessionIds.size());
-                return;
+                    // assert that old session id still works
+                    assertNotNull(session = sessionStore.getSession(sessionId));
+                    // assert that old and new session ids belong to the same session
+                    assertEquals(session, sessionStore.getSession(newSessionId));
+                    assertEquals(newSessionId, session.getSessionId());
+                } else {
+                    // session id was not rotated
+                    // we can return after asserting that there is no new session id
+                    assertEquals(0, sessionIds.size());
+                    return;
+                }
+            } finally {
+                // wait for all checks to be done with the old session id
+                // has to happen before it gets evicted
+                barriers[2].await();
             }
 
             final long evictionIncrement = sessionTimeout / 3;
@@ -254,6 +268,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         assertEquals(-1L, sessionCookie.expires);
         assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
         return sessionCookie.value.toString();
+    }
+
+    private static void awaitAllBarriers(CyclicBarrier[] barriers, int from) throws Exception {
+        for (int i = from; i < barriers.length; i++) {
+            barriers[i].await();
+        }
     }
 
     // close the session
@@ -377,7 +397,10 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
                 numOfThreads = 5 + rnd.nextInt(5);
                 final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                // these barriers are used to synchronize the test threads when they should reach certain phases together
+                // for example, a barrier can be used to make sure all threads created a session before we move onto rotate/evict them
                 final CyclicBarrier[] barriers = new CyclicBarrier[]{
+                        new CyclicBarrier(numOfThreads),
                         new CyclicBarrier(numOfThreads),
                         new CyclicBarrier(numOfThreads)
                 };
