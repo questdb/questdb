@@ -6272,7 +6272,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             try {
                 for (int i = 0; i < 20_000; i++) {
-                    Misc.freeIfCloseable(select("select * from x"));
+                    try {
+                        Misc.freeIfCloseable(select("select * from x"));
+                    } catch (SqlException e) {
+                        // This loop is a stress test intended to provoke a race condition
+                        // in the query compiler. We are specifically looking for the
+                        // "too many cached query" exception, as this error confirms
+                        // the compiler *did* attempt to retry (as required) before
+                        // exhausting those retries due to the race.
+                        //
+                        // We only tolerate this specific error. the assertion ensures
+                        // any other SqlException (e.g., a failure without retrying)
+                        // still fails the test.
+                        TestUtils.assertContains("too many cached query", e.getFlyweightMessage());
+                    }
                 }
             } finally {
                 barrier.await();
