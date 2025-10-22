@@ -7,7 +7,6 @@ import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class SqlLoggingTest extends AbstractCairoTest {
@@ -28,7 +27,6 @@ public class SqlLoggingTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("JUST AN EXPERIMENT, REVERT ME!")
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
