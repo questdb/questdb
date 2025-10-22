@@ -43,10 +43,10 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Specialized cursor factory to optimize the "timestamp ladder" crosss-join used
- * in markout analysis. A table with a timestamp column is cross-joined with an
- * arithmetic sequence of time offsets, and the result must be ordered by the sum
- * of the LSH timestamp and RHS time offset.
+ * Specialized cursor factory to optimize the "timestamp ladder" cross-join used
+ * in markout analysis. This is a cross-join between a table with a designated
+ * timestamp, and an arithmetic sequence of time offsets, where the result is
+ * ordered by the sum of the LHS timestamp and RHS time offset.
  * <p>
  * Example query:
  * <pre>
@@ -70,14 +70,14 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
     /**
      * Creates a new timestamp ladder cursor factory.
      *
-     * @param configuration        the Cairo configuration
-     * @param metadata             the joined record metadata
-     * @param masterFactory        the factory for the LHS table (e.g., orders table)
-     * @param slaveFactory         the factory for the RHS arithmetic sequence
-     * @param columnSplit          the number of columns from the master (where slave columns start)
-     * @param timestampColumnIndex the index of the timestamp column being modified (in master metadata)
-     * @param slaveColumnIndex     the index of the arithmetic sequence column in slave metadata
-     * @param slaveRecordSink      the RecordSink for materializing slave records
+     * @param configuration     Cairo configuration
+     * @param metadata          joined record metadata
+     * @param masterFactory     factory for the LHS table (e.g., orders table)
+     * @param slaveFactory      factory for the RHS arithmetic sequence
+     * @param columnSplit       number of columns from the master (where slave columns start)
+     * @param masterColumnIndex index of master's designated timestamp column
+     * @param slaveColumnIndex  index of slave's time offset column
+     * @param slaveRecordSink   RecordSink for materializing slave records
      */
     public TimestampLadderRecordCursorFactory(
             CairoConfiguration configuration,
@@ -172,11 +172,11 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
     /**
      * Record cursor that emits cross-join results in timestamp order.
      * <p>
-     * The slave cursor (arithmetic sequence) is fully materialized into a RecordArray
-     * for efficient random access during iteration.
+     * We materialize the slave cursor (arithmetic sequence) into a RecordArray
+     * because we need random access to its rows.
      * <p>
      * The algorithm maintains a circular linked list of SlaveRowIterator
-     * objects (one per master row) that emit rows in sorted timestamp order.
+     * objects (one per master row).
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
         private final CairoConfiguration configuration;
@@ -472,11 +472,10 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
 
             SlaveRowIterator removeNextIterator() {
                 SlaveRowIterator toRemove = nextIter;
-                // Free the next iterator's resources
                 nextIter = toRemove.nextIter;
                 toRemove.close();
                 if (toRemove == this) {
-                    return null;  // This is the only iterator in the list, and we just closed it
+                    return null;  // this is the only iterator in the list, and we just closed it
                 }
                 return nextIter;
             }

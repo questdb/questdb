@@ -1605,11 +1605,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Attempts to detect the "timestamp ladder" pattern in a cross join with ORDER BY.
+     * Attempts to detect the "timestamp ladder" pattern in a cross-join with ORDER BY.
      * <p>
      * The pattern consists of:
-     * 1. A cross join between a table with a timestamp column and an arithmetic sequence
-     * 2. An ORDER BY clause on the sum of the timestamp and the sequence offset
+     * 1. A cross-join between a table with a designated timestamp and an arithmetic sequence
+     * 2. An ORDER BY clause on the sum of the timestamp and the sequence element
+     * <p>
+     * Detection isn't foolproof and can result in false positives. This is why we must
+     * guard it with the query hint.
      *
      * @param masterMetadata     Metadata for the LHS of the join
      * @param slaveMetadata      Metadata for the RHS of the join (should be an arithmetic sequence)
