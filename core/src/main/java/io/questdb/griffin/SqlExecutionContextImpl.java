@@ -107,7 +107,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
-        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
     }
 
     @Override
@@ -224,13 +224,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public long getNow(int timestampType) {
         assert ColumnType.isTimestamp(timestampType);
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return nowMicros;
-            case ColumnType.TIMESTAMP_NANO:
-                return nowNanos;
-        }
-        return 0L;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> nowMicros;
+            case ColumnType.TIMESTAMP_NANO -> nowNanos;
+            default -> 0L;
+        };
     }
 
     @Override
@@ -439,6 +437,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
         return with(securityContext, bindVariableService, null, -1, null);
     }
+
 
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,

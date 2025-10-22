@@ -25,16 +25,22 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     protected final DirectLongList prefixes;
 
     public LatestByAllIndexedRecordCursorFactory(
+            CairoEngine engine,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
@@ -52,7 +58,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
                 this.prefixes.add(prefixes.get(i));
             }
 
-            this.cursor = new LatestByAllIndexedRecordCursor(configuration, metadata, columnIndex, rows, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(engine, configuration, metadata, columnIndex, rows, this.prefixes);
         } catch (Throwable th) {
             close();
             throw th;

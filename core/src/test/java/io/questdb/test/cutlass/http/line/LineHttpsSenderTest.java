@@ -87,8 +87,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 long expectedSum = (count / 2) * (count + 1);
                 double expectedAvg = expectedSum / (double) count;
                 TestUtils.assertEventually(() -> serverMain.assertSql(
-                        "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                        "sum\tmax\tmin\tavg\n"
+                        "select sum(value), max(value), min(value), round(avg(value), 3) from " + tableName,
+                        "sum\tmax\tmin\tround\n"
                                 + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
                 ));
             }

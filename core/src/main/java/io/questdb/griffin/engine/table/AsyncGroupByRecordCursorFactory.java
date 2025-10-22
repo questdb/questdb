@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -80,6 +81,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final int workerCount;
 
     public AsyncGroupByRecordCursorFactory(
+            CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
@@ -125,6 +127,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(
+                    engine,
                     configuration,
                     messageBus,
                     atom,
@@ -133,7 +136,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(engine, groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
