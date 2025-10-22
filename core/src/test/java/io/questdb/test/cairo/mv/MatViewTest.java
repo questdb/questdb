@@ -5707,8 +5707,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertQueryNoLeakCheck(
-                    "view_name\tview_status\n" +
-                            "price_1h\tinvalid\n",
+                    """
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """,
                     "select view_name, view_status from materialized_views",
                     null,
                     false
@@ -6430,7 +6432,9 @@ public class MatViewTest extends AbstractCairoTest {
         return "select" +
                 " x + " + init + " as n," +
                 columns +
-                " timestamp_sequence(" + startTs + "::" + timestampType.getTypeName() + ", " + step + ") k" +
+                (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ?
+                        " timestamp_sequence(" + startTs + ", " + step + ") k" :
+                        " timestamp_sequence_ns(" + startTs + ", " + step + ") k") +
                 " from" +
                 " long_sequence(" + count + ")";
     }

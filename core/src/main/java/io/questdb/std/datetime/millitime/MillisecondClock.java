@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.millitime;
 
-public interface MillisecondClock {
-    long getTicks();
+import io.questdb.std.datetime.Clock;
+
+public interface MillisecondClock extends Clock {
 }

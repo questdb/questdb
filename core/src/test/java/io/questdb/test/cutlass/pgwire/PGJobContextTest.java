@@ -137,10 +137,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3835,20 +3835,21 @@ if __name__ == "__main__":
                     query = "explain select * from xx where x > ? and x < ?::double limit 10";
                 }
                 try (PreparedStatement statement = connection.prepareStatement(query)) {
+                    final StringSink expectedResult = new StringSink();
                     for (int i = 0; i < 3; i++) {
                         System.out.println(i);
                         statement.setLong(1, i);
                         statement.setDouble(2, (i + 1) * 10);
                         statement.execute();
                         sink.clear();
+                        expectedResult.clear();
                         try (ResultSet rs = statement.getResultSet()) {
-                            StringSink expectedResult = new StringSink();
                             if (mode == Mode.SIMPLE) {
                                 // simple mode inlines variables in the sql text
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
+                                        "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -3857,7 +3858,7 @@ if __name__ == "__main__":
                                 expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
                                         "  limit: 10\n" +
-                                        "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
+                                        "  filter: ($0::long<x and x<$1::double)\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: xx\n");
@@ -6980,7 +6981,7 @@ nodejs code:
                 }
 
                 // Pretend that the copy was cancelled and try to cancel it one more time.
-                engine.getCopyContext().clear();
+                engine.getCopyImportContext().clear();
 
                 try (
                         PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel");
@@ -6991,7 +6992,7 @@ nodejs code:
                     Assert.assertNotEquals("cancelled", rs.getString(2));
                 }
             } finally {
-                copyRequestJob.drain(0);
+                copyImportRequestJob.drain(0);
             }
         });
     }
@@ -9643,7 +9644,7 @@ create table tab as (
                         assertResultSet(
                                 "QUERY PLAN[VARCHAR]\n" +
                                         "Async Filter workers: 2\n" +
-                                        "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
+                                        "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
                                         "    PageFrame\n" +
                                         "        Row forward scan\n" +
                                         "        Frame forward scan on: tab\n",

@@ -76,16 +76,26 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class JsonQueryProcessorState implements Mutable, Closeable {
     public static final String HIDDEN = "hidden";
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_METADATA_SUFFIX = 3;
-    static final int QUERY_PREFIX = 1;
-    static final int QUERY_RECORD = 5;
-    static final int QUERY_RECORD_PREFIX = 9;
-    static final int QUERY_RECORD_START = 4;
-    static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_SEND_RECORDS_LOOP = 8;
-    static final int QUERY_SETUP_FIRST_RECORD = 0;
-    static final int QUERY_SUFFIX = 7;
+    static final int QUERY_SETUP_FIRST_RECORD = 0; // 0
+    static final int QUERY_PREFIX = QUERY_SETUP_FIRST_RECORD + 1; // 1
+    static final int QUERY_METADATA = QUERY_PREFIX + 1; //2
+    static final int QUERY_METADATA_SUFFIX = QUERY_METADATA + 1; // 3
+    static final int QUERY_RECORD_START = QUERY_METADATA_SUFFIX + 1; // 4
+    static final int QUERY_RECORD = QUERY_RECORD_START + 1; // 5
+    static final int QUERY_RECORD_SUFFIX = QUERY_RECORD + 1; // 6
+    static final int QUERY_SUFFIX = QUERY_RECORD_SUFFIX + 1; // 7
+    static final int QUERY_SEND_RECORDS_LOOP = QUERY_SUFFIX + 1; // 8
+    static final int QUERY_RECORD_PREFIX = QUERY_SEND_RECORDS_LOOP + 1; // 9
+
+    // only used in Parquet export
+    static final int QUERY_PARQUET_EXPORT_INIT = QUERY_RECORD_PREFIX + 1; // 10
+    static final int QUERY_PARQUET_EXPORT_WAIT = QUERY_PARQUET_EXPORT_INIT + 1; // 11
+    static final int QUERY_PARQUET_SEND_HEADER = QUERY_PARQUET_EXPORT_WAIT + 1; // 12
+    static final int QUERY_PARQUET_TO_PARQUET_FILE = QUERY_PARQUET_SEND_HEADER + 1; // 14
+    static final int QUERY_PARQUET_FILE_SEND_INIT = QUERY_PARQUET_TO_PARQUET_FILE + 1; // 13
+    static final int QUERY_PARQUET_FILE_SEND_CHUNK = QUERY_PARQUET_FILE_SEND_INIT + 1; // 15
+    static final int QUERY_PARQUET_FILE_SEND_COMPLETE = QUERY_PARQUET_FILE_SEND_CHUNK + 1; // 15
+
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
@@ -994,10 +1004,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
-        // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
-        // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
-        // Make sure to use the override flag to avoid affecting the explain plan.
-        sqlExecutionContext.setColumnPreTouchEnabledOverride(stop == Long.MAX_VALUE);
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
@@ -1026,7 +1032,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     return false;
                 }
 
-                if (sink.length() == 0) {
+                if (sink.isEmpty()) {
                     info().$("empty column in query parameter '").$(URL_PARAM_COLS).$(": ").$safe(columnNames).$('\'').$();
                     HttpChunkedResponse response = getHttpConnectionContext().getChunkedResponse();
                     JsonQueryProcessor.header(response, getHttpConnectionContext(), "", 400);

@@ -69,7 +69,6 @@ import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -885,13 +884,13 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01f9\r\n" +
+                        "01ed\r\n" +
                         "\"QUERY PLAN\"\r\n" +
                         "\"VirtualRecord\"\r\n" +
                         "\"&nbsp;&nbsp;functions: [1]\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0) [pre-touch]\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
@@ -1001,14 +1000,14 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0294\r\n" +
+                        "0288\r\n" +
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
                         "\"timestamp\":-1,\"dataset\":" +
                         "[[\"VirtualRecord\"]," +
                         "[\"&nbsp;&nbsp;functions: [1]\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0) [pre-touch]\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]]," +
@@ -4602,10 +4601,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryPreTouchDisabledForFilteredQueryWithLimit() throws Exception {
-        HttpQueryTestBuilder builder = testJsonQuery(
+    public void testJsonQueryPreTouchEnabledForFilteredQueryWithHint() throws Exception {
+        testJsonQuery(
                 10,
-                "GET /query?query=x%20where%20i%20%3D%20%27A%27&limit=1 HTTP/1.1\r\n" +
+                "GET /query?query=" + urlEncodeQuery("select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'") + " HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -4622,55 +4621,11 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01db\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "0204\r\n" +
+                        "{\"query\":\"select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
-        ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            if (!contexts.getQuick(i).isColumnPreTouchEnabledOverride()) {
-                return;
-            }
-        }
-
-        Assert.fail("Only contexts with preTouch enabled found");
-    }
-
-    @Test
-    public void testJsonQueryPreTouchEnabledForFilteredQueryWithoutLimit() throws Exception {
-        HttpQueryTestBuilder builder = testJsonQuery(
-                10,
-                "GET /query?query=x%20where%20i%20%3D%20%27A%27 HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "01db\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-        ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
-        for (int i = 0, n = contexts.size(); i < n; i++) {
-            if (contexts.getQuick(i).isColumnPreTouchEnabled()) {
-                return;
-            }
-        }
-
-        Assert.fail("No context with preTouch enabled found");
     }
 
     @Test
@@ -6505,7 +6460,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -6622,7 +6577,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -6756,7 +6711,7 @@ public class IODispatcherTest extends AbstractTest {
                             workerPool.halt();
                         }
                     } finally {
-                        Files.remove(path.$());
+                        TestUtils.remove(path.$());
                     }
                 }
             }
@@ -9884,7 +9839,7 @@ public class IODispatcherTest extends AbstractTest {
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
         if (Files.exists(path.$())) {
-            assertTrue(Files.remove(path.$()));
+            assertTrue(TestUtils.remove(path.$()));
         }
         long fd = Files.openAppend(path.$());
 
