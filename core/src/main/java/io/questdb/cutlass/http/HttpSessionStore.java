@@ -62,7 +62,7 @@ public interface HttpSessionStore {
      *
      * @param sessionId   session id to verify
      * @param httpContext HTTP context associated with the user's connection
-     * @return session associated with the session id, or NO_SESSION if the session does not exist
+     * @return session associated with the session id, or null if the session does not exist
      */
     SessionInfo verifySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
