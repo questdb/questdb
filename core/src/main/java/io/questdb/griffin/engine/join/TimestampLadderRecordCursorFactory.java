@@ -64,8 +64,8 @@ import org.jetbrains.annotations.NotNull;
  */
 public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final TimestampLadderRecordCursor cursor;
+    private final int masterColumnIndex;
     private final int slaveColumnIndex;
-    private final int timestampColumnIndex;
 
     /**
      * Creates a new timestamp ladder cursor factory.
@@ -85,13 +85,13 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit,
-            int timestampColumnIndex,
+            int masterColumnIndex,
             int slaveColumnIndex,
             RecordSink slaveRecordSink,
             RecordSink masterRecordSink
     ) {
         super(metadata, null, masterFactory, slaveFactory);
-        this.timestampColumnIndex = timestampColumnIndex;
+        this.masterColumnIndex = masterColumnIndex;
         this.slaveColumnIndex = slaveColumnIndex;
 
         RecordArray slaveRecordArray = null;
@@ -106,7 +106,7 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
                     configuration,
                     columnSplit,
                     masterFactory.getMetadata(),
-                    timestampColumnIndex,
+                    masterColumnIndex,
                     slaveColumnIndex,
                     slaveRecordArray,
                     masterRecordSink
@@ -156,8 +156,8 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Timestamp Ladder Join");
-        sink.meta("timestampColumn").val(timestampColumnIndex);
-        sink.meta("slaveColumn").val(slaveColumnIndex);
+        sink.meta("timestampColumn").val(masterColumnIndex);
+        sink.meta("offsetColumn").val(slaveColumnIndex);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
