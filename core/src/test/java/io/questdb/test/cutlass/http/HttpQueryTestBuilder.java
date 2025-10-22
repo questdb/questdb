@@ -205,11 +205,11 @@ public class HttpQueryTestBuilder {
                     return new ObjList<>("/upload");
                 }
 
-                    @Override
-                    public HttpRequestHandler newInstance() {
-                        return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
-                    }
-                });
+                @Override
+                public HttpRequestHandler newInstance() {
+                    return new TextImportProcessor(engine, httpConfiguration.getJsonQueryProcessorConfiguration());
+                }
+            });
 
             this.sqlExecutionContexts = new ObjList<>();
 
