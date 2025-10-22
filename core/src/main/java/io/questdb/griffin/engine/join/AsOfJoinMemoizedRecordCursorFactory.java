@@ -319,15 +319,17 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We must remember all the new data, same as when the symbol is new.
                 assert slaveTimestamp > value.getLong(SLOT_VALIDITY_PERIOD_END)
                         : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + value.getLong(SLOT_VALIDITY_PERIOD_END);
+            } else {
+                // creating new entry
+                MapKey newKey = rememberedSymbols.withKey();
+                newKey.putInt(slaveSymbolKey);
+                value = newKey.createValue();
             }
 
             // Store all three values in the map (creating new entry or updating existing)
-            MapKey storeKey = rememberedSymbols.withKey();
-            storeKey.putInt(slaveSymbolKey);
-            MapValue storeValue = storeKey.createValue();
-            storeValue.putLong(SLOT_REMEMBERED_ROWID, slaveRowId);
-            storeValue.putLong(SLOT_VALIDITY_PERIOD_START, slaveTimestamp);
-            storeValue.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
+            value.putLong(SLOT_REMEMBERED_ROWID, slaveRowId);
+            value.putLong(SLOT_VALIDITY_PERIOD_START, slaveTimestamp);
+            value.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
         }
 
         @Override
