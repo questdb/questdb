@@ -266,7 +266,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = switch (hintType) {
-            case MEMOIZED_SEARCH -> " /*+ ASOF_MEMOIZED_SEARCH(t1 t2) */ ";
+            case FAST_SEARCH -> " /*+ ASOF_FAST_SEARCH(t1 t2) */ ";
             case INDEX_SEARCH -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
             case LINEAR_SEARCH -> " /*+ ASOF_LINEAR_SEARCH(t1 t2) */ ";
             default -> "";
@@ -296,14 +296,15 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         if (hintType == HintType.LINEAR_SEARCH) {
             TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
             String algo = switch (hintType) {
                 case INDEX_SEARCH -> "Indexed";
-                case MEMOIZED_SEARCH -> "Memoized";
-                default -> "Fast";
+                case FAST_SEARCH -> "Fast";
+                default -> "Memoized";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");
         }
@@ -418,7 +419,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         NONE,
         INDEX_SEARCH,
         LINEAR_SEARCH,
-        MEMOIZED_SEARCH,
+        FAST_SEARCH,
     }
 
     private enum JoinType {
