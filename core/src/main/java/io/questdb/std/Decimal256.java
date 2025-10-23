@@ -779,10 +779,6 @@ public class Decimal256 implements Sinkable, Decimal {
         result.hh = result.hh + carry + sign;
     }
 
-    public static void uncheckedAdd(Decimal256 result, Decimal256 b) {
-        uncheckedAdd(result, b.hh, b.hl, b.lh, b.ll);
-    }
-
     /**
      * In-place addition.
      *

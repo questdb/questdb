@@ -789,6 +789,11 @@ public class Decimal128 implements Sinkable, Decimal {
         return scale;
     }
 
+    public boolean hasOverflowed() {
+        return compare(high, low, MAX_VALUE.high, MAX_VALUE.low) > 0
+                || compareTo0(MIN_VALUE.high, MIN_VALUE.low) < 0;
+    }
+
     /**
      * Returns a hash code for this decimal value.
      *
@@ -1230,9 +1235,9 @@ public class Decimal128 implements Sinkable, Decimal {
         // Check for carry
         long carry = hasCarry(aL, sumLow) ? 1 : 0;
 
-        result.low = sumLow;
         try {
             result.high = Math.addExact(aH, Math.addExact(bH, carry));
+            result.low = sumLow;
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");
         }
@@ -1265,11 +1270,6 @@ public class Decimal128 implements Sinkable, Decimal {
 
     private int compareTo0(long otherHi, long otherLo) {
         return compare(high, low, otherHi, otherLo);
-    }
-
-    private boolean hasOverflowed() {
-        return compare(high, low, MAX_VALUE.high, MAX_VALUE.low) > 0
-                || compareTo0(MIN_VALUE.high, MIN_VALUE.low) < 0;
     }
 
     private boolean hasUnsignOverflowed() {
