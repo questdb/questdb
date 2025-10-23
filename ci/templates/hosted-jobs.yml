@@ -19,14 +19,14 @@ jobs:
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-cairo-o3:  # Excludes O3/Fuzz to delegate those to mac-fuzz
+        mac-cairo-o3:  # Excludes Fuzz only, runs O3 tests in this directory
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/o3/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-etc:  # Excludes O3/Fuzz to delegate those to mac-fuzz
@@ -58,14 +58,14 @@ jobs:
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-fuzz:  # Runs ALL O3/Fuzz tests, excludes cairo/fuzz to avoid overlap with cairo-fuzz
+        mac-fuzz:  # Runs ALL O3/Fuzz tests, excludes cairo/fuzz and cairo/o3 to avoid overlap
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
           includeTests: "**/O3*Test**,**/**Fuzz**"
-          excludeTests: "**/cairo/fuzz/**"
+          excludeTests: "**/cairo/fuzz/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-pgwire:  # No excludes - pgwire tests don't overlap with O3/Fuzz patterns
@@ -128,24 +128,24 @@ jobs:
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-fuzz:  # Runs ALL O3/Fuzz tests, excludes cairo/fuzz to avoid overlap with cairo-fuzz
+        windows-fuzz:  # Runs ALL O3/Fuzz tests, excludes cairo/fuzz and cairo/o3 to avoid overlap
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/O3*Test**,**/**Fuzz**"
-          excludeTests: "**/cairo/fuzz/**"
+          excludeTests: "**/cairo/fuzz/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo-o3:  # Excludes O3/Fuzz to delegate those to windows-fuzz
+        windows-cairo-o3:  # Excludes Fuzz only, runs O3 tests in this directory
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/o3/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-etc:  # Excludes O3/Fuzz to delegate those to windows-fuzz
