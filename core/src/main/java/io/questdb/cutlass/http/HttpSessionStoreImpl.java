@@ -11,7 +11,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
@@ -23,7 +22,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     private static final Log LOG = LogFactory.getLog(HttpSessionStoreImpl.class);
     private static final int MAX_GENERATION_ATTEMPTS = 5;
     private static final int SESSION_ID_SIZE_BYTES = 32;
-    protected final ConcurrentHashMap<ObjList<SessionInfo>> sessionsByEntity = new ConcurrentHashMap<>();
+    protected final ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity = new ConcurrentHashMap<>();
     private final long evictionCheckInterval;
     private final MicrosecondClock microsClock;
     private final long rotatedSessionEvictionTime;
@@ -49,7 +48,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
         // however, the inactive ones will time out eventually, and will be closed
         final String sessionId = generateSessionId();
         final SessionInfo session = newSession(principalContext, sessionId);
-        registerSession(session);
+        sessionsById.put(session.getSessionId(), session);
         LOG.info().$("session registered [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
 
         final StringSink sessionIdSink = httpContext.getSessionIdSink();
@@ -58,11 +57,9 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public synchronized void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
+    public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         final SessionInfo session = sessionsById.remove(sessionId);
         if (session != null) {
-            // leaving the session list in the map to avoid creating garbage when user logs in again
-            sessionsByEntity.get(session.getPrincipal()).remove(session);
             LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
         }
     }
@@ -75,14 +72,34 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
 
     @TestOnly
     @Override
-    public @Nullable ObjList<SessionInfo> getSessions(@NotNull CharSequence principal) {
-        return sessionsByEntity.get(principal);
+    public void setTokenGenerator(TokenGenerator tokenGenerator) {
+        this.tokenGenerator = tokenGenerator;
     }
 
     @TestOnly
     @Override
-    public void setTokenGenerator(TokenGenerator tokenGenerator) {
-        this.tokenGenerator = tokenGenerator;
+    public synchronized int size(@NotNull CharSequence principal) {
+        int count = 0;
+        final Iterator<Map.Entry<CharSequence, SessionInfo>> iterator = sessionsById.entrySet().iterator();
+        while (iterator.hasNext()) {
+            final Map.Entry<CharSequence, SessionInfo> entry = iterator.next();
+            final SessionInfo sessionInfo = entry.getValue();
+            if (Chars.equals(principal, sessionInfo.getPrincipal())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public synchronized void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
+        // ideally these would be compared as sets, but it is ok
+        // unlikely that the order of groups changing constantly
+        if (groups.equals(groupsByEntity.get(principal))) {
+            return;
+        }
+
+        groupsByEntity.put(principal, new ObjList<>(groups));
     }
 
     @Override
@@ -143,7 +160,6 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
             final SessionInfo sessionInfo = entry.getValue();
             if (sessionInfo.getExpiresAt() < currentMicros) {
                 // expired session
-                sessionsByEntity.get(sessionInfo.getPrincipal()).remove(sessionInfo);
                 iterator.remove();
                 LOG.info().$("expired session evicted [principal=").$(sessionInfo.getPrincipal()).$(']').$();
             } else if (!Chars.equals(sessionId, sessionInfo.getSessionId())) {
@@ -171,27 +187,15 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
         throw CairoException.nonCritical().put("session id collision occurred, try one more time");
     }
 
-    private SessionInfo newSession(PrincipalContext principalContext, @NotNull String sessionId) {
+    private SessionInfo newSession(@NotNull PrincipalContext principalContext, @NotNull String sessionId) {
         final long currentMicros = microsClock.getTicks();
         return new SessionInfo(
                 sessionId,
                 Chars.toString(principalContext.getPrincipal()),
-                principalContext.getGroups(),
+                groupsByEntity,
                 principalContext.getAuthType(),
                 currentMicros + sessionTimeout,
                 currentMicros + rotationPeriod
         );
-    }
-
-    private synchronized void registerSession(SessionInfo session) {
-        sessionsById.put(session.getSessionId(), session);
-
-        final String entityName = session.getPrincipal();
-        ObjList<SessionInfo> sessions = sessionsByEntity.get(entityName);
-        if (sessions == null) {
-            sessions = new ObjList<>();
-            sessionsByEntity.put(entityName, sessions);
-        }
-        sessions.add(session);
     }
 }

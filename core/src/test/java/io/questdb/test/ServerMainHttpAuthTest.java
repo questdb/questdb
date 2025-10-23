@@ -34,7 +34,6 @@ import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -112,10 +111,9 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 }
 
                 final HttpSessionStore sessionStore = serverMain.getConfiguration().getFactoryProvider().getHttpSessionStore();
-                final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
-                Assert.assertNotNull(sessions);
-                Assert.assertEquals(1, sessions.size());
-                Assert.assertEquals(sessionId, sessions.get(0).getSessionId());
+                final HttpSessionStore.SessionInfo session = sessionStore.getSession(sessionId);
+                Assert.assertNotNull(session);
+                Assert.assertEquals(sessionId, session.getSessionId());
 
                 // use the session id without the auth header
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
@@ -160,7 +158,7 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                     TestUtils.assertEquals("200", statusCode);
                 }
 
-                Assert.assertEquals(0, sessions.size());
+                Assert.assertNull(sessionStore.getSession(sessionId));
             }
         });
     }

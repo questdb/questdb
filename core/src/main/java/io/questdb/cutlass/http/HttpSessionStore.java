@@ -1,7 +1,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.security.PrincipalContext;
-import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -37,17 +37,9 @@ public interface HttpSessionStore {
      */
     @TestOnly
     @Nullable
-    SessionInfo getSession(@NotNull CharSequence sessionId);
-
-    /**
-     * Session lookup by principal
-     *
-     * @param principal entity name
-     * @return List of sessions associated with the principal, or null if no active sessions exist
-     */
-    @TestOnly
-    @Nullable
-    ObjList<SessionInfo> getSessions(@NotNull CharSequence principal);
+    default SessionInfo getSession(@NotNull CharSequence sessionId) {
+        return null;
+    }
 
     /**
      * Overrides the token generator used to generate session ids.
@@ -56,6 +48,25 @@ public interface HttpSessionStore {
     @TestOnly
     default void setTokenGenerator(TokenGenerator tokenGenerator) {
     }
+
+    /**
+     * Returns the number of active sessions for a user
+     *
+     * @param principal entity name
+     * @return Number of active sessions associated with the principal
+     */
+    @TestOnly
+    default int size(@NotNull CharSequence principal) {
+        return 0;
+    }
+
+    /**
+     * Update the external groups of the user
+     *
+     * @param principal entity name
+     * @param groups    external groups of entity
+     */
+    void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups);
 
     /**
      * Lookup the session associated with the session id.
@@ -69,24 +80,22 @@ public interface HttpSessionStore {
     SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     class SessionInfo implements PrincipalContext {
+        private static final ObjList<CharSequence> EMPTY_LIST = new ObjList<>();
         private final byte authType;
-        private final ObjList<CharSequence> groupsA = new ObjList<>();
-        private final ObjList<CharSequence> groupsB = new ObjList<>();
+        private final ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity;
         private final AtomicBoolean lock = new AtomicBoolean();
         private final String principal;
         private volatile long expiresAt;
-        private volatile ObjList<CharSequence> groups = groupsB;
         private volatile long rotateAt;
         private volatile String sessionId;
 
-        public SessionInfo(@NotNull String sessionId, String principal, @Nullable ObjList<CharSequence> groups, byte authType, long expiresAt, long rotateAt) {
+        public SessionInfo(@NotNull String sessionId, String principal, @NotNull ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity, byte authType, long expiresAt, long rotateAt) {
             this.sessionId = sessionId;
             this.principal = principal;
+            this.groupsByEntity = groupsByEntity;
             this.authType = authType;
             this.expiresAt = expiresAt;
             this.rotateAt = rotateAt;
-
-            setGroups(groups);
         }
 
         @Override
@@ -100,7 +109,8 @@ public interface HttpSessionStore {
 
         @Override
         public ObjList<CharSequence> getGroups() {
-            return groups;
+            final ObjList<CharSequence> groups = groupsByEntity.get(principal);
+            return groups != null ? groups : EMPTY_LIST;
         }
 
         @Override
@@ -120,33 +130,11 @@ public interface HttpSessionStore {
             this.expiresAt = expiresAt;
         }
 
-        public synchronized void setGroups(@Nullable ObjList<CharSequence> source) {
-            // ideally these would be compared as sets, but it is ok
-            // unlikely that the order of groups changing constantly
-            if (groups.equals(source)) {
-                return;
-            }
-
-            // select non-active list as target
-            final ObjList<CharSequence> target = groups == groupsA ? groupsB : groupsA;
-
-            // populate target
-            target.clear();
-            if (source != null) {
-                for (int i = 0, n = source.size(); i < n; i++) {
-                    target.add(Chars.toString(source.getQuick(i)));
-                }
-            }
-
-            // publish new groups
-            groups = target;
-        }
-
         @Override
         public String toString() {
             final StringSink sink = Misc.getThreadLocalSink();
             sink.put("SessionInfo [principal=").put(principal)
-                    .put(", groups=").put(groups)
+                    .put(", groups=").put(getGroups())
                     .put(", authType=").put(authType)
                     .put(", expiresAt=").put(expiresAt)
                     .put(", rotateAt=").put(rotateAt)

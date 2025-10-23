@@ -37,7 +37,6 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -88,7 +87,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     closeSession(httpClient, sessionId);
                 }
             }
-        }, sessions -> sessions.size() == 0);
+        }, numOfSessions -> numOfSessions == 0);
     }
 
     @Test
@@ -195,7 +194,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             assertNull(sessionStore.getSession(sessionId));
             // assert that new session id is still registered
             assertEquals(session, sessionStore.getSession(newSessionId));
-        }, sessions -> sessions.size() <= numOfThreads);
+        }, numOfSessions -> numOfSessions <= numOfThreads);
     }
 
     @Test
@@ -233,7 +232,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     }
                 }
             }
-        }, sessions -> sessions.size() == sessionCount.get() && sessions.size() <= numOfThreads);
+        }, numOfSessions -> numOfSessions == sessionCount.get() && numOfSessions <= numOfThreads);
     }
 
     @Test
@@ -259,7 +258,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     }
                 }
             }
-        }, sessions -> sessions.size() == 1);
+        }, numOfSessions -> numOfSessions == 2);
     }
 
     private static void assertResponse(HttpClient.ResponseHeaders responseHeaders, String expected) {
@@ -323,7 +322,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
 
-        assertNotNull(sessionStore.getSessions(USER));
+        assertNotNull(sessionStore.getSession(sessionId));
         return sessionId;
     }
 
@@ -397,7 +396,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         }
     }
 
-    private void runTest(boolean openSession, TestCode test, Predicate<ObjList<HttpSessionStore.SessionInfo>> assertSessions) throws Exception {
+    private void runTest(boolean openSession, TestCode test, Predicate<Integer> assertSessions) throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
 
@@ -445,18 +444,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 }
                 end.await();
 
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
-                    if (!assertSessions.test(sessions)) {
-                        errors.put(-1, new AssertionError("Assert sessions failed"));
-                    }
-                    if (sessions != null) {
-                        // start iterating from the back, so index is not getting messed up
-                        // closeSession() always removes the last element of the list
-                        for (int i = sessions.size() - 1; i > -1; i--) {
-                            closeSession(httpClient, sessions.getQuick(i).getSessionId());
-                        }
-                    }
+                final int numOfSessions = sessionStore.size(USER);
+                if (!assertSessions.test(numOfSessions)) {
+                    errors.put(-1, new AssertionError("Assert sessions failed"));
                 }
 
                 if (!errors.isEmpty()) {
@@ -465,10 +455,6 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     }
                     fail("Error in threads");
                 }
-
-                final ObjList<HttpSessionStore.SessionInfo> sessions = sessionStore.getSessions(USER);
-                assertNotNull(sessions);
-                assertEquals(0, sessions.size());
             }
         });
     }

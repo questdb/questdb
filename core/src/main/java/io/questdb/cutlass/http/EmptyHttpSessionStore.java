@@ -7,7 +7,7 @@ import org.jetbrains.annotations.NotNull;
 public class EmptyHttpSessionStore implements HttpSessionStore {
     public static final EmptyHttpSessionStore INSTANCE = new EmptyHttpSessionStore();
 
-    protected EmptyHttpSessionStore() {
+    private EmptyHttpSessionStore() {
     }
 
     @Override
@@ -19,13 +19,7 @@ public class EmptyHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public SessionInfo getSession(@NotNull CharSequence sessionId) {
-        return null;
-    }
-
-    @Override
-    public ObjList<SessionInfo> getSessions(@NotNull CharSequence principal) {
-        return null;
+    public void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
     }
 
     @Override
