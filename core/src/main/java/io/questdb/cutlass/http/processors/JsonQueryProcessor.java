@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConstants;
@@ -157,7 +158,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
             this.metrics = engine.getMetrics();
             this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
             this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();
@@ -263,6 +264,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
+    public String getName() {
+        return ActiveConnectionTracker.PROCESSOR_JSON;
+    }
+
+    @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         return this;
     }
@@ -316,6 +322,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     @Override
     public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
         return context.getCookieHandler().processCookies(context, securityContext);
+    }
+
+    @Override
+    public boolean reservedOneAdminConnection() {
+        return true;
     }
 
     @Override

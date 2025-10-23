@@ -58,7 +58,7 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.Response;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -133,12 +133,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
@@ -680,6 +682,33 @@ public final class TestUtils {
 
     public static void assertEventually(EventualCode assertion) throws Exception {
         assertEventually(assertion, 60);
+    }
+
+    public static void assertEventually(EventualCode assertion, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        exceptionTypesToCatch.add(AssertionError.class);
+        assertEventually(assertion, 30, exceptionTypesToCatch);
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds, Set<Class<?>> exceptionTypesToCatch) throws Exception {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (Exception error) {
+                if (!exceptionTypesToCatch.contains(error.getClass())) {
+                    throw error;
+                }
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
     }
 
     public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
@@ -1375,6 +1404,12 @@ public final class TestUtils {
         return ts;
     }
 
+    public static void drainCopyImportJobQueue(CairoEngine engine) throws Exception {
+        try (CopyImportRequestJob copyRequestJob = new CopyImportRequestJob(engine, 1)) {
+            copyRequestJob.drain(0);
+        }
+    }
+
     @SuppressWarnings("StatementWithEmptyBody")
     public static void drainCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
@@ -1393,12 +1428,6 @@ public final class TestUtils {
         )) {
             engine.setWalPurgeJobRunLock(job.getRunLock());
             job.drain(0);
-        }
-    }
-
-    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, 1)) {
-            copyRequestJob.drain(0);
         }
     }
 
@@ -2445,6 +2474,7 @@ public final class TestUtils {
 
         public LeakCheck() {
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
@@ -2470,6 +2500,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +

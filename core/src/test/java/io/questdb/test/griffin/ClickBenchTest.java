@@ -367,7 +367,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q18",
                         "SELECT UserID, extract(minute FROM EventTime) AS m, SearchPhrase, COUNT(*) AS c FROM hits GROUP BY UserID, m, SearchPhrase ORDER BY c DESC LIMIT 10;",
-                        "Sort light lo: 10\n" +
+                        "Long Top K lo: 10\n" +
                                 "  keys: [c desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [UserID,m,SearchPhrase,c]\n" +
@@ -567,7 +567,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 new TestCase(
                         "Q34",
                         "SELECT 1, URL, COUNT(*) AS c FROM hits ORDER BY c DESC LIMIT 10;",
-                        "Sort light lo: 10\n" +
+                        "Long Top K lo: 10\n" +
                                 "  keys: [c desc]\n" +
                                 "    VirtualRecord\n" +
                                 "      functions: [1,URL,c]\n" +

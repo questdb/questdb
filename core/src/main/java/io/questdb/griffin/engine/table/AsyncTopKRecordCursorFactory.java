@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -79,6 +80,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
 
     public AsyncTopKRecordCursorFactory(
+            @NotNull CairoEngine engine,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
@@ -113,6 +115,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                     workerCount
             );
             this.frameSequence = new PageFrameSequence<>(
+                    engine,
                     configuration,
                     messageBus,
                     atom,
