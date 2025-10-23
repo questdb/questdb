@@ -1365,6 +1365,15 @@ public class Decimal256 implements Sinkable, Decimal {
         this.ll = ll;
     }
 
+    public void ofRawAddress(long addr) {
+        ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L),
+                Unsafe.getUnsafe().getLong(addr + 16L),
+                Unsafe.getUnsafe().getLong(addr + 24L)
+        );
+    }
+
     /**
      * Set this Decimal256 to the null value.
      */

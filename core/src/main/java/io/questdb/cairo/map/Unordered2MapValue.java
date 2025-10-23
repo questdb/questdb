@@ -143,13 +143,7 @@ final class Unordered2MapValue implements MapValue {
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
-        final long addr = address0(col);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L),
-                Unsafe.getUnsafe().getLong(addr + 16L),
-                Unsafe.getUnsafe().getLong(addr + 24L)
-        );
+        sink.ofRawAddress(address0(col));
     }
 
     @Override

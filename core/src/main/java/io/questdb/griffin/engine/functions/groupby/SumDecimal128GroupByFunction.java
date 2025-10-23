@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -36,7 +35,6 @@ import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
-import io.questdb.std.NumericException;
 import org.jetbrains.annotations.NotNull;
 
 class SumDecimal128GroupByFunction extends Decimal256Function implements GroupByFunction, UnaryFunction {

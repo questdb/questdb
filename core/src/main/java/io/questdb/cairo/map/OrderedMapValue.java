@@ -149,13 +149,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
-        long address = address0(col);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + 8L),
-                Unsafe.getUnsafe().getLong(address + 16L),
-                Unsafe.getUnsafe().getLong(address + 24L)
-        );
+        sink.ofRawAddress(address0(col));
     }
 
     @Override

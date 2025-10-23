@@ -269,12 +269,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             address += (rowIndex << 5);
-            sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(address),
-                    Unsafe.getUnsafe().getLong(address + 8L),
-                    Unsafe.getUnsafe().getLong(address + 16L),
-                    Unsafe.getUnsafe().getLong(address + 24L)
-            );
+            sink.ofRawAddress(address);
         } else {
             sink.ofRawNull();
         }
