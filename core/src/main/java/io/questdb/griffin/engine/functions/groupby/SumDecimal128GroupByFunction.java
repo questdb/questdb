@@ -177,12 +177,10 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        System.out.println("--------------- MERGE -----------------");
         boolean srcOverflow = srcValue.getBool(valueIndex + 2);
         boolean destOverflow = destValue.getBool(valueIndex + 2);
 
         if (!srcOverflow && !destOverflow) {
-
             srcValue.getDecimal128(valueIndex + 1, decimal128B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
 
@@ -242,7 +240,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
             if (decimal256B.isNull()) {
                 destValue.putDecimal256(valueIndex, decimal256A);
             } else {
-                Decimal256.uncheckedAdd(decimal256B, decimal128A);
+                decimal256B.add(decimal256A);
                 destValue.putDecimal256(valueIndex, decimal256B);
             }
         }
