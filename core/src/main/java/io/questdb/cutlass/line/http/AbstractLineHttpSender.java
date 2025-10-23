@@ -536,7 +536,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         if (state != RequestState.EMPTY) {
             throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
         }
-        if (table.length() == 0) {
+        if (table.isEmpty()) {
             throw new LineSenderException("table name cannot be empty");
         }
         // set bookmark at start of the line.
@@ -777,7 +777,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             sink.clear();
             chunkedResponseToSink(response, sink);
             LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error", retryable);
-            if (sink.length() > 0) {
+            if (!sink.isEmpty()) {
                 ex = ex.put(": ").put(sink);
             }
             ex.put(" [http-status=").put(statusAscii).put(']');
@@ -969,14 +969,14 @@ public abstract class AbstractLineHttpSender implements Sender {
             assert state == State.INIT;
 
             sink.put(messageSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence());
-            if (codeSink.length() > 0 || errorIdSink.length() > 0 || lineSink.length() > 0) {
-                if (errorIdSink.length() > 0) {
+            if (!codeSink.isEmpty() || !errorIdSink.isEmpty() || !lineSink.isEmpty()) {
+                if (!errorIdSink.isEmpty()) {
                     sink.put(", id: ").put(errorIdSink);
                 }
-                if (codeSink.length() > 0) {
+                if (!codeSink.isEmpty()) {
                     sink.put(", code: ").put(codeSink);
                 }
-                if (lineSink.length() > 0) {
+                if (!lineSink.isEmpty()) {
                     sink.put(", line: ").put(lineSink);
                 }
             }

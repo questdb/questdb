@@ -96,7 +96,7 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
-            int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
+            int columnType = defaultColumnTypes.defaultColumnTypes[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
             if (columnType == TIMESTAMP && timestampUnit == TIMESTAMP_UNIT_NANOS) {
                 columnType = TIMESTAMP_NANO;
             }
@@ -104,7 +104,7 @@ public class TableStructureAdapter implements TableStructure {
         }
 
         LineTcpParser.ProtoEntity entity = entities.get(columnIndex);
-        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+        int columnType = defaultColumnTypes.defaultColumnTypes[entity.getType()];
         if (columnType == ARRAY) {
             columnType = entity.getArray().getType();
         }

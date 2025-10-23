@@ -225,10 +225,14 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             send("plug,room=6A watts=125i " + day1 + "\n");
 
             String expected = ColumnType.isTimestampMicro(timestampType.getTimestampType())
-                    ? "room\twatts\ttimestamp\n" +
-                    "6A\t125\t2023-02-27T00:00:00.000000Z\n"
-                    : "room\twatts\ttimestamp\n" +
-                    "6A\t125\t2023-02-27T00:00:00.000000000Z\n";
+                    ? """
+                    room\twatts\ttimestamp
+                    6A\t125\t2023-02-27T00:00:00.000000Z
+                    """
+                    : """
+                    room\twatts\ttimestamp
+                    6A\t125\t2023-02-27T00:00:00.000000000Z
+                    """;
             assertTable(expected);
         }, true, 50L);
     }
@@ -541,23 +545,25 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }
 
-            String expected = "iteration\ttimestamp\tcolumn_24\tcolumn_25\tcolumn_26\n" +
-                    "1\t1970-01-01T00:20:00.000000Z\t\t\t\n" +
-                    "2\t1970-01-01T00:40:00.000000Z\t\t\t\n" +
-                    "3\t1970-01-01T01:00:00.000000Z\t\t\t\n" +
-                    "4\t1970-01-01T01:20:00.000000Z\t\t\t\n" +
-                    "2\t1970-01-01T02:20:00.000000Z\t\t\t\n" +
-                    "4\t1970-01-01T03:00:00.000000Z\t\t\t\n" +
-                    "2\t1970-01-01T04:00:00.000000Z\t\t\t\n" +
-                    "3\t1970-01-01T04:20:00.000000Z\t\t\t\n" +
-                    "1\t1970-01-01T05:20:00.000000Z\t\t\t\n" +
-                    "3\t1970-01-01T06:00:00.000000Z\t\t\t\n" +
-                    "0\t1970-01-01T06:40:00.000000Z\t\t\t\n" +
-                    "2\t1970-01-01T07:20:00.000000Z\t\t\t\n" +
-                    "4\t1970-01-01T08:00:00.000000Z\t24\t\t\n" +
-                    "0\t1970-01-01T08:20:00.000000Z\t24\t25\t\n" +
-                    "1\t1970-01-01T08:40:00.000000Z\t24\t25\t26\n" +
-                    "2\t1970-01-01T09:00:00.000000Z\t24\t25\t26\n";
+            String expected = """
+                    iteration\ttimestamp\tcolumn_24\tcolumn_25\tcolumn_26
+                    1\t1970-01-01T00:20:00.000000Z\t\t\t
+                    2\t1970-01-01T00:40:00.000000Z\t\t\t
+                    3\t1970-01-01T01:00:00.000000Z\t\t\t
+                    4\t1970-01-01T01:20:00.000000Z\t\t\t
+                    2\t1970-01-01T02:20:00.000000Z\t\t\t
+                    4\t1970-01-01T03:00:00.000000Z\t\t\t
+                    2\t1970-01-01T04:00:00.000000Z\t\t\t
+                    3\t1970-01-01T04:20:00.000000Z\t\t\t
+                    1\t1970-01-01T05:20:00.000000Z\t\t\t
+                    3\t1970-01-01T06:00:00.000000Z\t\t\t
+                    0\t1970-01-01T06:40:00.000000Z\t\t\t
+                    2\t1970-01-01T07:20:00.000000Z\t\t\t
+                    4\t1970-01-01T08:00:00.000000Z\t24\t\t
+                    0\t1970-01-01T08:20:00.000000Z\t24\t25\t
+                    1\t1970-01-01T08:40:00.000000Z\t24\t25\t26
+                    2\t1970-01-01T09:00:00.000000Z\t24\t25\t26
+                    """;
             assertTable(expected);
         });
     }

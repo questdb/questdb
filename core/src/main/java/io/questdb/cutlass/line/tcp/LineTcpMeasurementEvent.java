@@ -106,13 +106,11 @@ public class LineTcpMeasurementEvent implements Closeable {
     }
 
     private byte getOverloadTimestampUnit(byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-                return unit;
-        }
-        return timestampUnit;
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS, CommonUtils.TIMESTAMP_UNIT_MICROS,
+                 CommonUtils.TIMESTAMP_UNIT_MILLIS -> unit;
+            default -> timestampUnit;
+        };
     }
 
     void append() throws CommitFailedException {
@@ -176,7 +174,7 @@ public class LineTcpMeasurementEvent implements Closeable {
                         // column is added
                         row.cancel();
                         row = null;
-                        final int colType = defaultColumnTypes.MAPPED_COLUMN_TYPES[entityType];
+                        final int colType = defaultColumnTypes.mappedColumnTypes[entityType];
                         try {
                             writer.addColumn(columnName, colType, principalOnlySecurityContext.of(principal));
                         } catch (CairoException e) {
@@ -512,20 +510,15 @@ public class LineTcpMeasurementEvent implements Closeable {
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_LONG256: {
-                    switch (ColumnType.tagOf(colType)) {
-                        case ColumnType.LONG256:
-                            offset = buffer.addLong256(offset, entity.getValue());
-                            break;
-                        case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
-                            break;
-                        default:
-                            throw castError(tud.getTableNameUtf16(), "long256", colType, entity.getName());
-                    }
+                    offset = switch (ColumnType.tagOf(colType)) {
+                        case ColumnType.LONG256 -> buffer.addLong256(offset, entity.getValue());
+                        case ColumnType.SYMBOL -> buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
+                        default -> throw castError(tud.getTableNameUtf16(), "long256", colType, entity.getName());
+                    };
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
@@ -607,23 +600,16 @@ public class LineTcpMeasurementEvent implements Closeable {
                 }
                 case LineTcpParser.ENTITY_TYPE_TAG:
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                    switch (colType) {
-                        case ColumnType.SYMBOL:
-                            offset = buffer.addSymbol(
-                                    offset,
-                                    entity.getValue(),
-                                    localDetails.getSymbolLookup(columnWriterIndex)
-                            );
-                            break;
-                        case ColumnType.VARCHAR:
-                            offset = buffer.addVarchar(offset, entity.getValue());
-                            break;
-                        case ColumnType.STRING:
-                            offset = buffer.addString(offset, entity.getValue());
-                            break;
-                        default:
-                            throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
-                    }
+                    offset = switch (colType) {
+                        case ColumnType.SYMBOL -> buffer.addSymbol(
+                                offset,
+                                entity.getValue(),
+                                localDetails.getSymbolLookup(columnWriterIndex)
+                        );
+                        case ColumnType.VARCHAR -> buffer.addVarchar(offset, entity.getValue());
+                        case ColumnType.STRING -> buffer.addString(offset, entity.getValue());
+                        default -> throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
+                    };
                     break;
                 }
                 case LineTcpParser.ENTITY_TYPE_ARRAY:

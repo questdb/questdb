@@ -232,8 +232,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     // Verify clear() worked - should contain [10,20,30,40] not [1,2,30,40]
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[[10.0,20.0],[30.0,40.0]]\n");
+                            """
+                                    arr
+                                    [[10.0,20.0],[30.0,40.0]]
+                                    """);
                 }
             }
         });
@@ -307,8 +309,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTxn(tableName, 1);
 
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]]\n");
+                            """
+                                    arr
+                                    [[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]]
+                                    """);
                 }
             }
         });
@@ -371,8 +375,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTxn(tableName, 1);
 
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]],[[13.0,14.0,15.0,16.0],[17.0,18.0,19.0,20.0],[21.0,22.0,23.0,24.0]]]\n");
+                            """
+                                    arr
+                                    [[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0]],[[13.0,14.0,15.0,16.0],[17.0,18.0,19.0,20.0],[21.0,22.0,23.0,24.0]]]
+                                    """);
                 }
             }
         });
@@ -517,8 +523,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     // Verify 1D array data (27 elements)
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0,17.0,18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0,26.0,27.0]\n");
+                            """
+                                    arr
+                                    [1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0,17.0,18.0,19.0,20.0,21.0,22.0,23.0,24.0,25.0,26.0,27.0]
+                                    """);
                 }
             }
         });
@@ -551,8 +559,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTxn(tableName, 1);
 
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[1.0,2.0,3.0,4.0,5.0,6.0]\n");
+                            """
+                                    arr
+                                    [1.0,2.0,3.0,4.0,5.0,6.0]
+                                    """);
 
                     // Reshape to 3D and refill
                     array.reshape(1, 2, 3);
@@ -576,8 +586,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     // Verify 3D array data
                     serverMain.assertSql("SELECT arr FROM " + tableName2,
-                            "arr\n" +
-                                    "[[[7.0,8.0,9.0],[10.0,11.0,12.0]]]\n");
+                            """
+                                    arr
+                                    [[[7.0,8.0,9.0],[10.0,11.0,12.0]]]
+                                    """);
                 }
             }
         });
@@ -613,8 +625,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     // Verify 2D array data (2x8 shape)
                     serverMain.assertSql("SELECT arr FROM " + tableName,
-                            "arr\n" +
-                                    "[[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]]\n");
+                            """
+                                    arr
+                                    [[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0],[9.0,10.0,11.0,12.0,13.0,14.0,15.0,16.0]]
+                                    """);
                 }
             }
         });
@@ -642,12 +656,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTxn(tableName, 1);
                     serverMain.assertSql(
                             "show create table " + tableName,
-                            "ddl\n" +
-                                    "CREATE TABLE 'arr_auto_creation_test' ( \n" +
-                                    "\tarr DOUBLE[],\n" +
-                                    "\ttimestamp TIMESTAMP\n" +
-                                    ") timestamp(timestamp) PARTITION BY DAY WAL\n" +
-                                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;\n");
+                            """
+                                    ddl
+                                    CREATE TABLE 'arr_auto_creation_test' (\s
+                                    \tarr DOUBLE[],
+                                    \ttimestamp TIMESTAMP
+                                    ) timestamp(timestamp) PARTITION BY DAY WAL
+                                    WITH maxUncommittedRows=500000, o3MaxLag=600000000us;
+                                    """);
                 }
             }
         });
@@ -671,8 +687,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
                 serverMain.awaitTable("table_with_long________________________________name");
                 serverMain.assertSql("select * from 'table_with_long________________________________name'",
-                        "column_with_long________________________________name\ttimestamp\n" +
-                                "1\t1970-01-01T00:00:00.100000Z\n");
+                        """
+                                column_with_long________________________________name\ttimestamp
+                                1\t1970-01-01T00:00:00.100000Z
+                                """);
             }
         });
     }
@@ -731,8 +749,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                     serverMain.awaitTxn("foo", 1);
                     serverMain.assertSql("foo;",
-                            "ts\td\n" +
-                                    "1970-01-01T00:00:00.001233Z\t0xab\n");
+                            """
+                                    ts\td
+                                    1970-01-01T00:00:00.001233Z\t0xab
+                                    """);
 
                     sender.table("foo")
                             .stringColumn("d", "0xABC")
@@ -789,9 +809,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("SELECT * FROM h2o_feet",
-                        "async\twater_level\ttimestamp\n" +
-                                "true\t2.0\t2024-09-09T14:28:26.361110Z\n" +
-                                "true\t3.0\t2024-09-09T14:38:26.361110Z\n");
+                        """
+                                async\twater_level\ttimestamp
+                                true\t2.0\t2024-09-09T14:28:26.361110Z
+                                true\t3.0\t2024-09-09T14:38:26.361110Z
+                                """);
             }
         });
     }
@@ -909,11 +931,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
                 serverMain.awaitTxn(tableName, 3);
                 serverMain.assertSql("select * from " + tableName,
-                        "a1\ta2\ta3\tts\n" +
-                                "[]\t[]\t[]\t1970-01-02T03:46:40.000000Z\n" +
-                                "[]\t[]\t[]\t1970-01-03T07:33:20.000000Z\n" +
-                                "[]\t[]\t[]\t1970-01-04T11:20:00.000000Z\n" +
-                                "[]\t[]\t[]\t1970-01-05T15:06:40.000000Z\n");
+                        """
+                                a1\ta2\ta3\tts
+                                []\t[]\t[]\t1970-01-02T03:46:40.000000Z
+                                []\t[]\t[]\t1970-01-03T07:33:20.000000Z
+                                []\t[]\t[]\t1970-01-04T11:20:00.000000Z
+                                []\t[]\t[]\t1970-01-05T15:06:40.000000Z
+                                """);
             }
         });
     }
@@ -944,8 +968,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
                 serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("select * from " + tableName,
-                        "a1\tts\n" +
-                                "[]\t1970-01-02T03:46:40.000000Z\n");
+                        """
+                                a1\tts
+                                []\t1970-01-02T03:46:40.000000Z
+                                """);
             }
         });
     }
@@ -991,9 +1017,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
                 serverMain.awaitTxn(tableName, 2);
                 serverMain.assertSql("select * from " + tableName,
-                        "a1\ta2\tts\n" +
-                                "[]\t[]\t1970-01-02T03:46:40.000000Z\n" +
-                                "[]\t[]\t1970-01-03T07:33:20.000000Z\n");
+                        """
+                                a1\ta2\tts
+                                []\t[]\t1970-01-02T03:46:40.000000Z
+                                []\t[]\t1970-01-03T07:33:20.000000Z
+                                """);
             }
         });
     }
@@ -1037,8 +1065,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     }
 
                     serverMain.awaitTable("table");
-                    serverMain.assertSql("select count() from 'table'", "count\n" +
-                            10 + "\n");
+                    serverMain.assertSql("select count() from 'table'", """
+                            count
+                            10
+                            """);
                 }
             }
         });
@@ -1074,7 +1104,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "timestamp timestamp)" +
                             " timestamp(timestamp) partition by DAY WAL " +
                             " dedup upsert keys (balance1, balance10, timestamp)");
-                    assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", "count\n" + 1 + "\n");
+                    assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", """
+                            count
+                            1
+                            """);
                     Os.sleep(10);
                 }
             }
@@ -1128,8 +1161,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                     serverMain.awaitTxn(tableName, 1);
                     serverMain.assertSql("select * from " + tableName,
-                            "x\ty\ta1\tts\n" +
-                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n");
+                            """
+                                    x\ty\ta1\tts
+                                    9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
+                                    """);
 
                     // insert binary double to string column
                     try {
@@ -1218,19 +1253,21 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.awaitTxn(tableName, 2);
 
                     serverMain.assertSql("select * from " + tableName,
-                            "x\ty\ta1\tts\n" +
-                                    "9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n" +
-                                    "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n" +
-                                    "10000.0\tystr\t2.0\t1970-01-02T03:46:40.000002Z\n" +
-                                    "10001.0\tystr\t3.0\t1970-01-02T03:46:40.000003Z\n" +
-                                    "10002.0\tystr\t4.0\t1970-01-02T03:46:40.000004Z\n" +
-                                    "10003.0\tystr\t5.0\t1970-01-02T03:46:40.000005Z\n" +
-                                    "10004.0\tystr\t6.0\t1970-01-02T03:46:40.000006Z\n" +
-                                    "10005.0\tystr\t7.0\t1970-01-02T03:46:40.000007Z\n" +
-                                    "10006.0\tystr\t8.0\t1970-01-02T03:46:40.000008Z\n" +
-                                    "10007.0\tystr\t9.0\t1970-01-02T03:46:40.000009Z\n" +
-                                    "10008.0\tystr\t10.0\t1970-01-02T03:46:40.000010Z\n" +
-                                    "10009.0\tystr\t11.0\t1970-01-02T03:46:40.000011Z\n");
+                            """
+                                    x\ty\ta1\tts
+                                    9991.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
+                                    9999.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z
+                                    10000.0\tystr\t2.0\t1970-01-02T03:46:40.000002Z
+                                    10001.0\tystr\t3.0\t1970-01-02T03:46:40.000003Z
+                                    10002.0\tystr\t4.0\t1970-01-02T03:46:40.000004Z
+                                    10003.0\tystr\t5.0\t1970-01-02T03:46:40.000005Z
+                                    10004.0\tystr\t6.0\t1970-01-02T03:46:40.000006Z
+                                    10005.0\tystr\t7.0\t1970-01-02T03:46:40.000007Z
+                                    10006.0\tystr\t8.0\t1970-01-02T03:46:40.000008Z
+                                    10007.0\tystr\t9.0\t1970-01-02T03:46:40.000009Z
+                                    10008.0\tystr\t10.0\t1970-01-02T03:46:40.000010Z
+                                    10009.0\tystr\t11.0\t1970-01-02T03:46:40.000011Z
+                                    """);
                 }
             }
         });
@@ -1286,16 +1323,18 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts\n" +
-                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[8.0,9.0],[2.0,3.0]],[[4.0,5.0],[6.0,7.0]]]\t" +
-                        "[[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
-                        "[[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t" +
-                        "[]\t" +
-                        "[1.0,2.0,3.0,4.0,5.0]\t" +
-                        "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
-                        "[[[1.0,2.0,3.0],[2.0,4.0,6.0]]]\t" +
-                        "1970-01-02T03:46:40.000000Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts
+                        42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t\
+                        [[[8.0,9.0],[2.0,3.0]],[[4.0,5.0],[6.0,7.0]]]\t\
+                        [[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t\
+                        [[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t\
+                        []\t\
+                        [1.0,2.0,3.0,4.0,5.0]\t\
+                        [[1.0,2.0,3.0],[2.0,4.0,6.0]]\t\
+                        [[[1.0,2.0,3.0],[2.0,4.0,6.0]]]\t\
+                        1970-01-02T03:46:40.000000Z
+                        """);
             }
         });
     }
@@ -1361,8 +1400,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.assertSql(
                         "SELECT ts, arr[1] arr0, arr[10_000] arr4, arr[1_000_000] arr6, arr[10_000_000] arr7" +
                                 " FROM " + tableName,
-                        "ts\tarr0\tarr4\tarr6\tarr7\n" +
-                                "1970-01-02T03:46:40.000000Z\t1.0\t10000.0\t1000000.0\t1.0E7\n");
+                        """
+                                ts\tarr0\tarr4\tarr6\tarr7
+                                1970-01-02T03:46:40.000000Z\t1.0\t10000.0\t1000000.0\t1.0E7
+                                """);
             }
         });
     }
@@ -1420,16 +1461,18 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts\n" +
-                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[8,9],[2,3]],[[4,5],[6,7]]]\t" +
-                        "[[[0,0],[99,0]],[[0,0],[0,100]]]\t" +
-                        "[[[101,101],[101,101]],[[101,101],[101,101]]]\t" +
-                        "[]\t" +
-                        "[1,2,3,4,5]\t" +
-                        "[[1,2,3],[2,4,6]]\t" +
-                        "[[[1,2,3],[2,4,6]]]\t" +
-                        "1970-01-02T03:46:40.000000Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts
+                        42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t\
+                        [[[8,9],[2,3]],[[4,5],[6,7]]]\t\
+                        [[[0,0],[99,0]],[[0,0],[0,100]]]\t\
+                        [[[101,101],[101,101]],[[101,101],[101,101]]]\t\
+                        []\t\
+                        [1,2,3,4,5]\t\
+                        [[1,2,3],[2,4,6]]\t\
+                        [[[1,2,3],[2,4,6]]]\t\
+                        1970-01-02T03:46:40.000000Z
+                        """);
             }
         });
     }
@@ -1465,8 +1508,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTxn(tableName, 1);
 
                 serverMain.assertSql("select * from " + tableName,
-                        "x\tl1\ta1\ta2\tts\n" +
-                                "42i\t123098948\tnull\tnull\t1970-01-02T03:46:40.000000Z\n");
+                        """
+                                x\tl1\ta1\ta2\tts
+                                42i\t123098948\tnull\tnull\t1970-01-02T03:46:40.000000Z
+                                """);
             }
         });
     }
@@ -1498,8 +1543,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta\tts\n" +
-                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t1.0\t1970-01-02T03:46:40.000000Z\n");
+                serverMain.assertSql("select * from " + tableName, """
+                        x\ty\tl1\ta\tts
+                        42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t1.0\t1970-01-02T03:46:40.000000Z
+                        """);
             }
         });
     }
@@ -1970,8 +2017,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(max, ChronoUnit.NANOS);
                     sender.flush();
                     serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
+                    serverMain.assertSql("SELECT * FROM tab", """
+                            ts\tts2
+                            2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z
+                            """);
 
                     Instant nonDsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
                     Instant dsInstant = Instant.ofEpochSecond(max / 1_000_000_000, max % 1_000_000_000);
@@ -1981,9 +2030,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
 
                     serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n" +
-                            "2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z\n");
+                    serverMain.assertSql("SELECT * FROM tab", """
+                            ts\tts2
+                            2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z
+                            2261-12-31T23:59:59.999999999Z\t2261-12-31T23:59:59.999999999Z
+                            """);
                 }
             }
         });
@@ -2018,8 +2069,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .at(dsTs, ChronoUnit.MICROS);
                     sender.flush();
                     serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+                    serverMain.assertSql("SELECT * FROM tab", """
+                            ts\tts2
+                            9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z
+                            """);
 
 
                     // now try with the Instant overloads of `at()` and `timestampColumn()`
@@ -2031,9 +2084,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
 
                     serverMain.awaitTable("tab");
-                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n" +
-                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+                    serverMain.assertSql("SELECT * FROM tab", """
+                            ts\tts2
+                            9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z
+                            9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z
+                            """);
                 }
             }
         });

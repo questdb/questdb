@@ -702,7 +702,7 @@ public class TableUpdateDetails implements Closeable {
         int getColumnType(Utf8String colName, LineTcpParser.ProtoEntity entity) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+                colType = defaultColumnTypes.defaultColumnTypes[entity.getType()];
                 if (colType == ColumnType.ARRAY) {
                     colType = entity.getArray().getType();
                 }
