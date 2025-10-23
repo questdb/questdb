@@ -77,6 +77,8 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
      */
     TimeFrame getTimeFrame();
 
+    int getTimestampIndex();
+
     /**
      * Rewinds cursor to the beginning of the given frame. The frame must have been previously iterated.
      * An {@link #open()} call is expected after this one.

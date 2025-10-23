@@ -120,6 +120,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public int getTimestampIndex() {
+        return metadata.getTimestampIndex();
+    }
+
+    @Override
     public void jumpTo(int frameIndex) {
         buildFrameCache();
 

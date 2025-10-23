@@ -22,15 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -44,12 +48,16 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -62,6 +70,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final CompiledFilter compiledFilter;
     private final long joinWindowHi;
     private final long joinWindowLo;
+    private final int masterTimestampIndex;
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
     // Note: all function updaters should be used through a getFunctionUpdater() call
@@ -69,29 +78,33 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final Function ownerJoinFilter;
+    private final JoinRecord ownerJoinRecord;
     private final DirectMapValue ownerMapValue;
-    private final ConcurrentTimeFrameCursor ownerTimeFrameCursor;
+    private final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<Function> perWorkerJoinFilters;
+    private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<DirectMapValue> perWorkerMapValues;
-    private final ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors;
+    private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final long valueSizeInBytes;
 
     public AsyncWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @NotNull ConcurrentTimeFrameCursor ownerTimeFrameCursor,
-            @NotNull ObjList<ConcurrentTimeFrameCursor> perWorkerTimeFrameCursors,
+            @NotNull RecordCursorFactory slaveFactory,
             @Nullable Function ownerJoinFilter,
             @Nullable ObjList<Function> perWorkerJoinFilters,
             long joinWindowLo,
             long joinWindowHi,
+            int split,
+            int masterTimestampIndex,
+            @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            int valueCount,
             @Nullable CompiledFilter compiledFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
@@ -99,18 +112,16 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> perWorkerFilters,
             int workerCount
     ) {
-        assert perWorkerTimeFrameCursors.size() == workerCount;
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
-            this.ownerTimeFrameCursor = ownerTimeFrameCursor;
-            this.perWorkerTimeFrameCursors = perWorkerTimeFrameCursors;
             this.ownerJoinFilter = ownerJoinFilter;
             this.perWorkerJoinFilters = perWorkerJoinFilters;
             this.joinWindowLo = joinWindowLo;
             this.joinWindowHi = joinWindowHi;
+            this.masterTimestampIndex = masterTimestampIndex;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
             this.compiledFilter = compiledFilter;
@@ -118,6 +129,18 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
             this.perWorkerFilters = perWorkerFilters;
+
+            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(slaveFactory.newTimeFrameCursor());
+            this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(slaveFactory.newTimeFrameCursor()));
+            }
+
+            this.ownerJoinRecord = new JoinRecord(split);
+            this.perWorkerJoinRecords = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerJoinRecords.extendAndSet(i, new JoinRecord(split));
+            }
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
             ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
@@ -138,7 +161,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
             }
 
+            final int valueCount = valueTypes.getColumnCount();
             ownerMapValue = new DirectMapValue(valueCount);
+            valueSizeInBytes = ownerMapValue.getSizeInBytes();
             perWorkerMapValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerMapValues.extendAndSet(i, new DirectMapValue(valueCount));
@@ -162,8 +187,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void close() {
-        Misc.free(ownerTimeFrameCursor);
-        Misc.freeObjList(perWorkerTimeFrameCursors);
+        Misc.free(ownerSlaveTimeFrameHelper);
+        Misc.freeObjList(perWorkerSlaveTimeFrameHelpers);
         Misc.free(ownerJoinFilter);
         Misc.freeObjList(perWorkerJoinFilters);
         Misc.free(compiledFilter);
@@ -216,6 +241,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerJoinFilters.getQuick(slotId);
     }
 
+    public JoinRecord getJoinRecord(int slotId) {
+        if (slotId == -1) {
+            return ownerJoinRecord;
+        }
+        return perWorkerJoinRecords.getQuick(slotId);
+    }
+
     public long getJoinWindowHi() {
         return joinWindowHi;
     }
@@ -231,16 +263,24 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerMapValues.getQuick(slotId);
     }
 
+    public int getMasterTimestampIndex() {
+        return masterTimestampIndex;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public DirectMapValue getOwnerMapValue() {
         return ownerMapValue;
     }
 
-    public ConcurrentTimeFrameCursor getTimeFrameCursor(int slotId) {
+    public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
-            return ownerTimeFrameCursor;
+            return ownerSlaveTimeFrameHelper;
         }
-        return perWorkerTimeFrameCursors.getQuick(slotId);
+        return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
+    }
+
+    public long getValueSizeInBytes() {
+        return valueSizeInBytes;
     }
 
     @Override
@@ -299,7 +339,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             LongList partitionTimestamps,
             int frameCount
     ) {
-        ownerTimeFrameCursor.of(
+        ownerSlaveTimeFrameHelper.of(
                 pageFrameCursor,
                 frameAddressCache,
                 framePartitionIndexes,
@@ -307,8 +347,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 partitionTimestamps,
                 frameCount
         );
-        for (int i = 0, n = perWorkerTimeFrameCursors.size(); i < n; i++) {
-            perWorkerTimeFrameCursors.getQuick(i).of(
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(
                     pageFrameCursor,
                     frameAddressCache,
                     framePartitionIndexes,
@@ -361,14 +401,103 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     public void toTop() {
-        ownerTimeFrameCursor.toTop();
-        for (int i = 0, n = perWorkerTimeFrameCursors.size(); i < n; i++) {
-            perWorkerTimeFrameCursors.getQuick(i).toTop();
+        ownerSlaveTimeFrameHelper.clear();
+        for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).clear();
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
+        }
+    }
+
+    public static class TimeFrameHelper implements QuietCloseable, Mutable {
+        private final Record record;
+        private final TimeFrame timeFrame;
+        private final ConcurrentTimeFrameCursor timeFrameCursor;
+
+        public TimeFrameHelper(ConcurrentTimeFrameCursor timeFrameCursor) {
+            this.timeFrameCursor = timeFrameCursor;
+            this.record = timeFrameCursor.getRecord();
+            this.timeFrame = timeFrameCursor.getTimeFrame();
+        }
+
+        @Override
+        public void clear() {
+            timeFrameCursor.toTop();
+        }
+
+        @Override
+        public void close() {
+            Misc.free(timeFrameCursor);
+        }
+
+        // finds the first row id within the given interval
+        public long findRowLo(long timestampLo, long timestampHi) {
+            // TODO(puzpuzpuz): !!! this implementation is awful, it only exists to be able to test the whole thing !!!
+            timeFrameCursor.toTop();
+            while (timeFrameCursor.next()) {
+                if (timeFrameCursor.open() == 0) {
+                    return Long.MIN_VALUE;
+                }
+                for (long r = timeFrame.getRowLo(); r < timeFrame.getRowHi(); r++) {
+                    recordAt(r);
+                    final long timestamp = record.getTimestamp(getTimestampIndex());
+                    if (timestamp >= timestampLo && timestamp < timestampHi) {
+                        return r;
+                    }
+                }
+            }
+            return Long.MIN_VALUE;
+        }
+
+        public Record getRecord() {
+            return record;
+        }
+
+        public long getTimeFrameRowHi() {
+            return timeFrameCursor.getTimeFrame().getRowHi();
+        }
+
+        public long getTimeFrameRowLo() {
+            return timeFrameCursor.getTimeFrame().getRowLo();
+        }
+
+        public int getTimestampIndex() {
+            return timeFrameCursor.getTimestampIndex();
+        }
+
+        public boolean nextFrame(long timestampHi) {
+            if (!timeFrameCursor.next()) {
+                return false;
+            }
+            if (timestampHi >= timeFrame.getTimestampEstimateLo()) {
+                return timeFrameCursor.open() > 0;
+            }
+            return false;
+        }
+
+        public void of(
+                TablePageFrameCursor frameCursor,
+                PageFrameAddressCache frameAddressCache,
+                IntList framePartitionIndexes,
+                LongList frameRowCounts,
+                LongList partitionTimestamps,
+                int frameCount
+        ) {
+            timeFrameCursor.of(
+                    frameCursor,
+                    frameAddressCache,
+                    framePartitionIndexes,
+                    frameRowCounts,
+                    partitionTimestamps,
+                    frameCount
+            );
+        }
+
+        public void recordAt(long rowId) {
+            timeFrameCursor.recordAt(record, rowId);
         }
     }
 }

@@ -431,6 +431,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public int getTimestampIndex() {
+            return 0;
+        }
+
+        @Override
         public void jumpTo(int frameIndex) {
             baseCursor.jumpTo(frameIndex);
         }
