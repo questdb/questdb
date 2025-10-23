@@ -69,20 +69,20 @@ public class LowerCaseCharSequenceIntHashMapTest {
     }
 
     @Test
-    public void testIncrement() {
+    public void testInc() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
         lowerCaseMap.put("a", 0);
-        lowerCaseMap.increment("A");
-        lowerCaseMap.increment("A");
-        lowerCaseMap.increment("A");
+        lowerCaseMap.inc("A");
+        lowerCaseMap.inc("A");
+        lowerCaseMap.inc("A");
         lowerCaseMap.put("B", 42);
-        lowerCaseMap.increment("b");
-        lowerCaseMap.increment("C");
+        lowerCaseMap.inc("b");
+        lowerCaseMap.inc("C");
 
         Assert.assertEquals(3, lowerCaseMap.get("a"));
         Assert.assertEquals(43, lowerCaseMap.get("b"));
-        Assert.assertEquals(0, lowerCaseMap.get("c"));
+        Assert.assertEquals(1, lowerCaseMap.get("c"));
         Assert.assertEquals(3, lowerCaseMap.size());
     }
 

@@ -39,7 +39,7 @@ public class IntIntHashMap extends AbstractIntHashSet {
         this(initialCapacity, 0.5f);
     }
 
-    private IntIntHashMap(int initialCapacity, double loadFactor) {
+    public IntIntHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         values = new int[keys.length];
         clear();

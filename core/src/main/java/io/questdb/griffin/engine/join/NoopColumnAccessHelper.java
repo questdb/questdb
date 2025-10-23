@@ -29,38 +29,30 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
-
-    private final SymbolShortCircuit[] shortCircuits;
-
-    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
-    }
+public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    public static final NoopColumnAccessHelper INSTANCE = new NoopColumnAccessHelper();
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit can't be used to return the master value");
+        throw new UnsupportedOperationException("NoopColumnAccessHelper can't return the master value");
+    }
+
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit doesn't have a symbol table");
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
-    @Override
     public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
-                return true;
-            }
-        }
         return false;
     }
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
-        }
+
     }
 }

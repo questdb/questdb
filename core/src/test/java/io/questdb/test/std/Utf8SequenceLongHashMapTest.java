@@ -89,10 +89,8 @@ public class Utf8SequenceLongHashMapTest {
                 Assert.assertTrue(map.excludes(utf8));
             } else {
                 Assert.assertFalse(map.excludes(utf8));
-
                 int index = map.keyIndex(utf8);
                 Assert.assertEquals(value, map.valueAt(index));
-
                 // update value
                 map.putAt(index, utf8, rnd3.nextLong());
             }
@@ -195,6 +193,32 @@ public class Utf8SequenceLongHashMapTest {
     }
 
     @Test
+    public void testClear() {
+        Utf8SequenceLongHashMap map = new Utf8SequenceLongHashMap();
+        Rnd rnd = new Rnd();
+        final int N = 100;
+
+        // populate map
+        for (int i = 0; i < N; i++) {
+            Utf8String utf8 = new Utf8String(rnd.nextString(10));
+            map.put(utf8, rnd.nextLong());
+        }
+
+        Assert.assertEquals(N, map.size());
+
+        // clear and verify
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(0, map.keys().size());
+
+        // verify we can add again after clear
+        Utf8String testKey = new Utf8String("test");
+        map.put(testKey, 123L);
+        Assert.assertEquals(1, map.size());
+        Assert.assertEquals(123L, map.get(testKey));
+    }
+
+    @Test
     public void testContains() {
         Utf8SequenceLongHashMap map = new Utf8SequenceLongHashMap();
         Rnd rnd = new Rnd();
@@ -229,32 +253,6 @@ public class Utf8SequenceLongHashMapTest {
         map.inc(key2);
         Assert.assertEquals(1, map.get(key2));
         Assert.assertEquals(2, map.get(key1)); // first key should be unchanged
-    }
-
-    @Test
-    public void testClear() {
-        Utf8SequenceLongHashMap map = new Utf8SequenceLongHashMap();
-        Rnd rnd = new Rnd();
-        final int N = 100;
-
-        // populate map
-        for (int i = 0; i < N; i++) {
-            Utf8String utf8 = new Utf8String(rnd.nextString(10));
-            map.put(utf8, rnd.nextLong());
-        }
-
-        Assert.assertEquals(N, map.size());
-
-        // clear and verify
-        map.clear();
-        Assert.assertEquals(0, map.size());
-        Assert.assertEquals(0, map.keys().size());
-
-        // verify we can add again after clear
-        Utf8String testKey = new Utf8String("test");
-        map.put(testKey, 123L);
-        Assert.assertEquals(1, map.size());
-        Assert.assertEquals(123L, map.get(testKey));
     }
 
     @Test

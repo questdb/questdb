@@ -62,12 +62,12 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
-    public void increment(@NotNull CharSequence key) {
+    public void inc(@NotNull CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
-            values[-index - 1] = values[-index - 1] + 1;
+            values[-index - 1]++;
         } else {
-            putAt0(index, Chars.toString(key), 0);
+            putAt0(index, Chars.toString(key), 1);
         }
     }
 
