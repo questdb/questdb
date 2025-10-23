@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
@@ -32,6 +34,10 @@ import io.questdb.std.LongList;
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
 public interface PageFrameMemory {
+
+    @Nullable IntList getProjectionIndexes();
+
+    int getProjectionIndex(int columnIndex);
 
     long getAuxPageAddress(int columnIndex);
 
