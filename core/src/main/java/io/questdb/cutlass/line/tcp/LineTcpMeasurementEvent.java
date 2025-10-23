@@ -50,6 +50,7 @@ import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 
+import static io.questdb.cutlass.line.LineUtils.from;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
@@ -63,9 +64,9 @@ public class LineTcpMeasurementEvent implements Closeable {
     private final PrincipalOnlySecurityContext principalOnlySecurityContext = new PrincipalOnlySecurityContext();
     private final DirectUtf8Sink sink = new DirectUtf8Sink(16);
     private final boolean stringToCharCastAllowed;
+    private final byte timestampUnit;
     private boolean commitOnWriterClose;
     private TableUpdateDetails tableUpdateDetails;
-    private final byte timestampUnit;
     private int writerWorkerId;
 
     LineTcpMeasurementEvent(
@@ -311,7 +312,7 @@ public class LineTcpMeasurementEvent implements Closeable {
         securityContext.authorizeInsert(tud.getTableToken());
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
-            timestamp = tud.getTimestampDriver().from(timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
+            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
         }
         buffer.addStructureVersion(buffer.getAddress(), localDetails.getMetadataVersion());
         // timestamp, entitiesWritten are written to the buffer after saving all fields
@@ -326,7 +327,7 @@ public class LineTcpMeasurementEvent implements Closeable {
             if (columnWriterIndex > -1) {
                 // column index found, processing column by index
                 if (columnWriterIndex == tud.getTimestampIndex()) {
-                    timestamp = tud.getTimestampDriver().from(entity.getLongValue(), entity.getUnit());
+                    timestamp = from(tud.getTimestampDriver(), entity.getLongValue(), entity.getUnit());
                     continue;
                 }
 
@@ -568,12 +569,12 @@ public class LineTcpMeasurementEvent implements Closeable {
                 case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                     switch (ColumnType.tagOf(colType)) {
                         case ColumnType.TIMESTAMP:
-                            long timestampValue = ColumnType.getTimestampDriver(colType).from(entity.getLongValue(), entity.getUnit());
+                            long timestampValue = from(ColumnType.getTimestampDriver(colType), entity.getLongValue(), entity.getUnit());
                             offset = buffer.addTimestamp(offset, timestampValue);
                             break;
                         case ColumnType.DATE:
                             TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
-                            long dateValue = driver.toDate(driver.from(entity.getLongValue(), entity.getUnit()));
+                            long dateValue = driver.toDate(from(driver, entity.getLongValue(), entity.getUnit()));
                             offset = buffer.addDate(offset, dateValue);
                             break;
                         case ColumnType.SYMBOL:

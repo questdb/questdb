@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cutlass.line.tcp.LineProtocolException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
@@ -305,19 +304,15 @@ public class MicrosTimestampDriver implements TimestampDriver {
             return Numbers.LONG_NULL;
         }
 
-        try {
-            return switch (unit) {
-                case CommonUtils.TIMESTAMP_UNIT_MICROS -> ts;
-                case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts / Micros.MICRO_NANOS;
-                case CommonUtils.TIMESTAMP_UNIT_MILLIS -> Math.multiplyExact(ts, Micros.MILLI_MICROS);
-                case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Micros.SECOND_MICROS);
-                case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Micros.MINUTE_MICROS);
-                case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Micros.HOUR_MICROS);
-                default -> throw new UnsupportedOperationException();
-            };
-        } catch (ArithmeticException e) {
-            throw LineProtocolException.timestampValueOverflow(ts);
-        }
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> ts;
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts / Micros.MICRO_NANOS;
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> Math.multiplyExact(ts, Micros.MILLI_MICROS);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Micros.SECOND_MICROS);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Micros.MINUTE_MICROS);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Micros.HOUR_MICROS);
+            default -> throw new UnsupportedOperationException();
+        };
     }
 
     @Override

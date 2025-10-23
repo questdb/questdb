@@ -27,7 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cutlass.line.tcp.LineProtocolException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
@@ -85,9 +84,9 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
         }
         try {
             driver.from(123456789000L, CommonUtils.TIMESTAMP_UNIT_MINUTES);
-            Assert.fail("Expected LineProtocolException");
-        } catch (LineProtocolException e) {
-            TestUtils.assertContains(e.getMessage(), "long overflow, timestamp: 123456789000");
+            Assert.fail("Expected ArithmeticException");
+        } catch (ArithmeticException e) {
+            TestUtils.assertContains(e.getMessage(), "long overflow");
         }
     }
 
