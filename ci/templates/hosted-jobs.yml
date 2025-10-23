@@ -23,23 +23,13 @@ jobs:
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-cairo-mv:
+        mac-cairo-etc:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/cairo/mv/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        mac-cairo-wal-etc:
-          imageName: "macos-latest"
-          poolName: "Azure Pipelines"
-          os: macOS
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+          includeTests: "**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -148,23 +138,13 @@ jobs:
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo-mv:
+        windows-cairo-etc:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/cairo/mv/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cairo-wal-etc:
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
+          includeTests: "**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
