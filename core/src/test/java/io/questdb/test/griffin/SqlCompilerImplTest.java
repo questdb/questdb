@@ -6284,7 +6284,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         // We only tolerate this specific error. the assertion ensures
                         // any other SqlException (e.g., a failure without retrying)
                         // still fails the test.
-                        TestUtils.assertContains("too many cached query", e.getFlyweightMessage());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "too many cached query");
                     }
                 }
             } finally {
