@@ -253,6 +253,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                // TODO(puzpuzpuz): rescale master timestamp to slave unit
                 final long slaveTimestampLo = masterTimestamp - joinWindowLo;
                 final long slaveTimestampHi = masterTimestamp + joinWindowHi;
 
@@ -355,6 +356,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                // TODO(puzpuzpuz): rescale master timestamp to slave unit
                 final long slaveTimestampLo = masterTimestamp - joinWindowLo;
                 final long slaveTimestampHi = masterTimestamp + joinWindowHi;
 
