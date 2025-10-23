@@ -111,7 +111,7 @@ public class Decimal64 implements Sinkable, Decimal {
         sink.add(b);
     }
 
-    public static long addSameScaleNoMaxValueCheck(long value1, long value2) {
+    public static long uncheckedAdd(long value1, long value2) {
         try {
             return Math.addExact(value1, value2);
         } catch (Exception e) {

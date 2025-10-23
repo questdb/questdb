@@ -166,6 +166,35 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDecimal64AllOverflown() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 2);
+            engine.execute(
+                    "create table x as (" +
+                            "select " +
+                            "cast('99999999999999' as decimal(14,0)) v " +
+                            "from long_sequence(10_000_000)" +
+                            ")"
+            );
+            TestUtils.execute(
+                    pool,
+                    (CustomisableRunnable) (engine, compiler, sqlExecutionContext) -> TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select sum(v) sum from x",
+                            sink,
+                            """
+                                    sum
+                                    999999999999990000000
+                                    """
+                    ),
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testSumDecimal256AllNull() throws Exception {
         assertQuery(
                 "sum\n\n",
@@ -185,6 +214,37 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testSumDecimal64SomeOverflown() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            engine.execute(
+                    "create table x as (" +
+                            "select case " +
+                            " when x%500_001 = 0 then cast('999999999999999999' as decimal(18,0))" +
+                            " when x%2 = 0 then cast('99' as decimal(18,0))" +
+                            " else null end v " +
+                            "from long_sequence(10_000_000)" +
+                            ")"
+            );
+            TestUtils.execute(
+                    pool,
+                    (CustomisableRunnable) (engine, compiler, sqlExecutionContext) -> TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select sum(v) sum from (x)",
+                            sink,
+                            """
+                                    sum
+                                    20000000000494999485
+                                    """
+                    ),
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

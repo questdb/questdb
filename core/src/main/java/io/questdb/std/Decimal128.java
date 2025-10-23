@@ -609,6 +609,10 @@ public class Decimal128 implements Sinkable, Decimal {
         result.high += carry + (b < 0 ? -1L : 0L);
     }
 
+    public static void uncheckedAdd(Decimal128 result, Decimal128 other) {
+        uncheckedAdd(result, other.high, other.low);
+    }
+
     /**
      * Add another Decimal128 to this one (in-place)
      *
@@ -1237,6 +1241,8 @@ public class Decimal128 implements Sinkable, Decimal {
 
         try {
             result.high = Math.addExact(aH, Math.addExact(bH, carry));
+            // low is modified after high on purpose in order not to leave the result dirty
+            // should addExact overflow
             result.low = sumLow;
         } catch (ArithmeticException e) {
             throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");

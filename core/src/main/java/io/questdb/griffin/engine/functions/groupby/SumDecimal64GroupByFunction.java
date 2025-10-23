@@ -41,7 +41,8 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal128 decimal128A = new Decimal128();
+    private final Decimal128 decimal128B = new Decimal128();
     private final int position;
     private boolean overflow;
     private long value = 0;
@@ -52,7 +53,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
         this.arg = arg;
         this.position = position;
         final int scale = ColumnType.getDecimalScale(type);
-        this.decimal128.setScale(scale);
+        this.decimal128A.setScale(scale);
+        this.decimal128B.setScale(scale);
     }
 
     @Override
@@ -74,15 +76,15 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
                 if (!mapValue.getBool(valueIndex + 2)) {
                     final long decimal64B = mapValue.getDecimal64(valueIndex + 1);
                     if (decimal64B == Decimals.DECIMAL64_NULL) {
-                        mapValue.putLong(valueIndex + 1, Decimal64.addSameScaleNoMaxValueCheck(decimal64A, decimal64A));
+                        mapValue.putLong(valueIndex + 1, Decimal64.uncheckedAdd(decimal64A, decimal64A));
                     } else {
                         add(mapValue, decimal64A, decimal64B);
                     }
                 } else {
                     // decimal128 cannot be null, because it catches overflow, NULL would not overflow
-                    mapValue.getDecimal128(valueIndex, decimal128);
-                    Decimal128.uncheckedAdd(decimal128, decimal64A);
-                    mapValue.putDecimal128(valueIndex, decimal128);
+                    mapValue.getDecimal128(valueIndex, decimal128A);
+                    Decimal128.uncheckedAdd(decimal128A, decimal64A);
+                    mapValue.putDecimal128(valueIndex, decimal128A);
                 }
             } catch (NumericException e) {
                 throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
@@ -156,7 +158,6 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
         boolean destOverflow = destValue.getBool(valueIndex + 2);
 
         if (!srcOverflow && !destOverflow) {
-
             long decimal64B = srcValue.getDecimal64(valueIndex + 1);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
 
@@ -171,31 +172,44 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
                 destValue.putLong(valueIndex + 1, decimal64B);
             }
         } else if (srcOverflow && !destOverflow) {
-            srcValue.getDecimal128(valueIndex, decimal128);
+            srcValue.getDecimal128(valueIndex, decimal128A);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
-            boolean srcNull = decimal128.isNull();
+            boolean srcNull = decimal128A.isNull();
             boolean destNull = decimal64A == Decimals.DECIMAL64_NULL;
 
             if (!destNull && !srcNull) {
-                Decimal128.uncheckedAdd(decimal128, decimal64A);
+                Decimal128.uncheckedAdd(decimal128A, decimal64A);
             }
-            destValue.putDecimal128(valueIndex, decimal128);
+            destValue.putDecimal128(valueIndex, decimal128A);
             destValue.putBool(valueIndex + 2, false);
         } else if (!srcOverflow) {
             // dest overflown
             long decimal64A = srcValue.getDecimal64(valueIndex + 1);
-            destValue.getDecimal128(valueIndex, decimal128);
+            destValue.getDecimal128(valueIndex, decimal128A);
 
             boolean srcNull = decimal64A == Decimals.DECIMAL64_NULL;
-            boolean destNull = decimal128.isNull();
+            boolean destNull = decimal128A.isNull();
 
             if (!destNull && !srcNull) {
                 // both not null
-                Decimal128.uncheckedAdd(decimal128, decimal64A);
-                destValue.putDecimal128(valueIndex, decimal128);
+                Decimal128.uncheckedAdd(decimal128A, decimal64A);
+                destValue.putDecimal128(valueIndex, decimal128A);
             } else if (destNull) {
                 // put src value in, dest was null, so we get it back into 128bit range
                 destValue.putLong(valueIndex + 1, decimal64A);
+            }
+        } else {
+            // all overflown
+            srcValue.getDecimal128(valueIndex, decimal128A);
+            if (decimal128A.isNull()) {
+                return;
+            }
+            destValue.getDecimal128(valueIndex, decimal128B);
+            if (decimal128B.isNull()) {
+                destValue.putDecimal128(valueIndex, decimal128A);
+            } else {
+                Decimal128.uncheckedAdd(decimal128B, decimal128A);
+                destValue.putDecimal128(valueIndex, decimal128B);
             }
         }
     }
@@ -217,12 +231,12 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
 
     private void add(MapValue mapValue, long decimal64A, long decimal64B) {
         try {
-            mapValue.putLong(valueIndex + 1, Decimal64.addSameScaleNoMaxValueCheck(decimal64A, decimal64B));
+            mapValue.putLong(valueIndex + 1, Decimal64.uncheckedAdd(decimal64A, decimal64B));
         } catch (NumericException e) {
-            decimal128.ofRaw(0, 0);
-            Decimal128.uncheckedAdd(decimal128, decimal64B);
-            Decimal128.uncheckedAdd(decimal128, decimal64A);
-            mapValue.putDecimal128(valueIndex, decimal128);
+            decimal128A.ofRaw(0, 0);
+            Decimal128.uncheckedAdd(decimal128A, decimal64B);
+            Decimal128.uncheckedAdd(decimal128A, decimal64A);
+            mapValue.putDecimal128(valueIndex, decimal128A);
             mapValue.putBool(valueIndex + 2, true);
         }
     }
