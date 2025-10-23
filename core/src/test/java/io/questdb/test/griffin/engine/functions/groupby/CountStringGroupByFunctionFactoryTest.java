@@ -32,10 +32,12 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testConstant() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t1\n" +
-                "b\t1\n" +
-                "c\t1\n";
+        String expected = """
+                a\tcount_distinct
+                a\t1
+                b\t1
+                c\t1
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct('42') from x order by a",
@@ -50,10 +52,12 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExpression() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "a\tcount_distinct\n" +
-                    "a\t3\n" +
-                    "b\t3\n" +
-                    "c\t3\n";
+            final String expected = """
+                    a\tcount_distinct
+                    a\t3
+                    b\t3
+                    c\t3
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select a, count_distinct(concat(s, s)) from x order by a",
@@ -72,13 +76,15 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupKeyed() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t4\n" +
-                "b\t4\n" +
-                "c\t3\n" +
-                "d\t1\n" +
-                "e\t2\n" +
-                "f\t3\n";
+        String expected = """
+                a\tcount_distinct
+                a\t4
+                b\t4
+                c\t3
+                d\t1
+                e\t2
+                f\t3
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(s) from x order by a",
@@ -92,8 +98,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupNotKeyed() throws Exception {
-        String expected = "count_distinct\n" +
-                "6\n";
+        String expected = """
+                count_distinct
+                6
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
@@ -107,8 +115,10 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "count_distinct\n" +
-                "4\n";
+        String expected = """
+                count_distinct
+                4
+                """;
         assertQuery(
                 expected,
                 "select count_distinct(s) from x",
@@ -122,10 +132,12 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullConstant() throws Exception {
-        String expected = "a\tcount_distinct\n" +
-                "a\t0\n" +
-                "b\t0\n" +
-                "c\t0\n";
+        String expected = """
+                a\tcount_distinct
+                a\t0
+                b\t0
+                c\t0
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(cast(null as STRING)) from x order by a",
@@ -139,17 +151,19 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        String expected = "ts\tcount_distinct\n" +
-                "1970-01-01T00:00:00.000000Z\t5\n" +
-                "1970-01-01T00:00:01.000000Z\t5\n" +
-                "1970-01-01T00:00:02.000000Z\t6\n" +
-                "1970-01-01T00:00:03.000000Z\t5\n" +
-                "1970-01-01T00:00:04.000000Z\t6\n" +
-                "1970-01-01T00:00:05.000000Z\t4\n" +
-                "1970-01-01T00:00:06.000000Z\t4\n" +
-                "1970-01-01T00:00:07.000000Z\t5\n" +
-                "1970-01-01T00:00:08.000000Z\t6\n" +
-                "1970-01-01T00:00:09.000000Z\t5\n";
+        String expected = """
+                ts\tcount_distinct
+                1970-01-01T00:00:00.000000Z\t5
+                1970-01-01T00:00:01.000000Z\t5
+                1970-01-01T00:00:02.000000Z\t6
+                1970-01-01T00:00:03.000000Z\t5
+                1970-01-01T00:00:04.000000Z\t6
+                1970-01-01T00:00:05.000000Z\t4
+                1970-01-01T00:00:06.000000Z\t4
+                1970-01-01T00:00:07.000000Z\t5
+                1970-01-01T00:00:08.000000Z\t6
+                1970-01-01T00:00:09.000000Z\t5
+                """;
         assertQuery(
                 expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(linear)",
@@ -164,22 +178,24 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "ts\tcount_distinct\n" +
-                    "1970-01-01T00:06:40.000000Z\t4\n" +
-                    "1970-01-01T00:06:42.000000Z\t4\n" +
-                    "1970-01-01T00:06:44.000000Z\t4\n" +
-                    "1970-01-01T00:06:46.000000Z\t6\n" +
-                    "1970-01-01T00:06:48.000000Z\t5\n" +
-                    "1970-01-01T00:06:50.000000Z\t4\n" +
-                    "1970-01-01T00:06:52.000000Z\t4\n" +
-                    "1970-01-01T00:06:54.000000Z\t4\n" +
-                    "1970-01-01T00:06:56.000000Z\t4\n" +
-                    "1970-01-01T00:06:58.000000Z\t4\n" +
-                    "1970-01-01T00:07:00.000000Z\t5\n" +
-                    "1970-01-01T00:07:02.000000Z\t3\n" +
-                    "1970-01-01T00:07:04.000000Z\t6\n" +
-                    "1970-01-01T00:07:06.000000Z\t5\n" +
-                    "1970-01-01T00:07:08.000000Z\t4\n";
+            String expected = """
+                    ts\tcount_distinct
+                    1970-01-01T00:06:40.000000Z\t4
+                    1970-01-01T00:06:42.000000Z\t4
+                    1970-01-01T00:06:44.000000Z\t4
+                    1970-01-01T00:06:46.000000Z\t6
+                    1970-01-01T00:06:48.000000Z\t5
+                    1970-01-01T00:06:50.000000Z\t4
+                    1970-01-01T00:06:52.000000Z\t4
+                    1970-01-01T00:06:54.000000Z\t4
+                    1970-01-01T00:06:56.000000Z\t4
+                    1970-01-01T00:06:58.000000Z\t4
+                    1970-01-01T00:07:00.000000Z\t5
+                    1970-01-01T00:07:02.000000Z\t3
+                    1970-01-01T00:07:04.000000Z\t6
+                    1970-01-01T00:07:06.000000Z\t5
+                    1970-01-01T00:07:08.000000Z\t4
+                    """;
 
             final String sqlA = "with x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(400000000, 300000) ts from long_sequence(100)) timestamp(ts))\n" +
                     "select ts, count_distinct(s) from x sample by 2s";
@@ -197,17 +213,19 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillValue() throws Exception {
-        String expected = "ts\tcount_distinct\n" +
-                "1970-01-01T00:00:00.000000Z\t5\n" +
-                "1970-01-01T00:00:01.000000Z\t5\n" +
-                "1970-01-01T00:00:02.000000Z\t6\n" +
-                "1970-01-01T00:00:03.000000Z\t5\n" +
-                "1970-01-01T00:00:04.000000Z\t6\n" +
-                "1970-01-01T00:00:05.000000Z\t4\n" +
-                "1970-01-01T00:00:06.000000Z\t4\n" +
-                "1970-01-01T00:00:07.000000Z\t5\n" +
-                "1970-01-01T00:00:08.000000Z\t6\n" +
-                "1970-01-01T00:00:09.000000Z\t5\n";
+        String expected = """
+                ts\tcount_distinct
+                1970-01-01T00:00:00.000000Z\t5
+                1970-01-01T00:00:01.000000Z\t5
+                1970-01-01T00:00:02.000000Z\t6
+                1970-01-01T00:00:03.000000Z\t5
+                1970-01-01T00:00:04.000000Z\t6
+                1970-01-01T00:00:05.000000Z\t4
+                1970-01-01T00:00:06.000000Z\t4
+                1970-01-01T00:00:07.000000Z\t5
+                1970-01-01T00:00:08.000000Z\t6
+                1970-01-01T00:00:09.000000Z\t5
+                """;
         assertQuery(
                 expected,
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
@@ -220,59 +238,61 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleKeyed() throws Exception {
-        String expected = "a\tcount_distinct\tts\n" +
-                "a\t3\t1970-01-01T00:00:00.000000Z\n" +
-                "b\t2\t1970-01-01T00:00:00.000000Z\n" +
-                "f\t1\t1970-01-01T00:00:00.000000Z\n" +
-                "c\t1\t1970-01-01T00:00:00.000000Z\n" +
-                "e\t2\t1970-01-01T00:00:00.000000Z\n" +
-                "d\t1\t1970-01-01T00:00:00.000000Z\n" +
-                "b\t3\t1970-01-01T00:00:01.000000Z\n" +
-                "a\t2\t1970-01-01T00:00:01.000000Z\n" +
-                "d\t1\t1970-01-01T00:00:01.000000Z\n" +
-                "c\t2\t1970-01-01T00:00:01.000000Z\n" +
-                "f\t2\t1970-01-01T00:00:01.000000Z\n" +
-                "c\t2\t1970-01-01T00:00:02.000000Z\n" +
-                "b\t3\t1970-01-01T00:00:02.000000Z\n" +
-                "f\t3\t1970-01-01T00:00:02.000000Z\n" +
-                "e\t2\t1970-01-01T00:00:02.000000Z\n" +
-                "f\t3\t1970-01-01T00:00:03.000000Z\n" +
-                "a\t1\t1970-01-01T00:00:03.000000Z\n" +
-                "c\t2\t1970-01-01T00:00:03.000000Z\n" +
-                "e\t1\t1970-01-01T00:00:03.000000Z\n" +
-                "d\t1\t1970-01-01T00:00:03.000000Z\n" +
-                "b\t1\t1970-01-01T00:00:03.000000Z\n" +
-                "b\t3\t1970-01-01T00:00:04.000000Z\n" +
-                "a\t1\t1970-01-01T00:00:04.000000Z\n" +
-                "c\t3\t1970-01-01T00:00:04.000000Z\n" +
-                "f\t3\t1970-01-01T00:00:04.000000Z\n" +
-                "d\t3\t1970-01-01T00:00:05.000000Z\n" +
-                "b\t1\t1970-01-01T00:00:05.000000Z\n" +
-                "a\t2\t1970-01-01T00:00:05.000000Z\n" +
-                "c\t1\t1970-01-01T00:00:05.000000Z\n" +
-                "f\t2\t1970-01-01T00:00:05.000000Z\n" +
-                "c\t2\t1970-01-01T00:00:06.000000Z\n" +
-                "f\t4\t1970-01-01T00:00:06.000000Z\n" +
-                "b\t2\t1970-01-01T00:00:06.000000Z\n" +
-                "d\t1\t1970-01-01T00:00:06.000000Z\n" +
-                "a\t1\t1970-01-01T00:00:06.000000Z\n" +
-                "e\t1\t1970-01-01T00:00:07.000000Z\n" +
-                "c\t3\t1970-01-01T00:00:07.000000Z\n" +
-                "f\t1\t1970-01-01T00:00:07.000000Z\n" +
-                "d\t2\t1970-01-01T00:00:07.000000Z\n" +
-                "b\t2\t1970-01-01T00:00:07.000000Z\n" +
-                "d\t2\t1970-01-01T00:00:08.000000Z\n" +
-                "e\t2\t1970-01-01T00:00:08.000000Z\n" +
-                "a\t2\t1970-01-01T00:00:08.000000Z\n" +
-                "b\t1\t1970-01-01T00:00:08.000000Z\n" +
-                "c\t1\t1970-01-01T00:00:08.000000Z\n" +
-                "f\t1\t1970-01-01T00:00:08.000000Z\n" +
-                "c\t2\t1970-01-01T00:00:09.000000Z\n" +
-                "b\t2\t1970-01-01T00:00:09.000000Z\n" +
-                "d\t2\t1970-01-01T00:00:09.000000Z\n" +
-                "e\t1\t1970-01-01T00:00:09.000000Z\n" +
-                "a\t1\t1970-01-01T00:00:09.000000Z\n" +
-                "f\t1\t1970-01-01T00:00:09.000000Z\n";
+        String expected = """
+                a\tcount_distinct\tts
+                a\t3\t1970-01-01T00:00:00.000000Z
+                b\t2\t1970-01-01T00:00:00.000000Z
+                f\t1\t1970-01-01T00:00:00.000000Z
+                c\t1\t1970-01-01T00:00:00.000000Z
+                e\t2\t1970-01-01T00:00:00.000000Z
+                d\t1\t1970-01-01T00:00:00.000000Z
+                b\t3\t1970-01-01T00:00:01.000000Z
+                a\t2\t1970-01-01T00:00:01.000000Z
+                d\t1\t1970-01-01T00:00:01.000000Z
+                c\t2\t1970-01-01T00:00:01.000000Z
+                f\t2\t1970-01-01T00:00:01.000000Z
+                c\t2\t1970-01-01T00:00:02.000000Z
+                b\t3\t1970-01-01T00:00:02.000000Z
+                f\t3\t1970-01-01T00:00:02.000000Z
+                e\t2\t1970-01-01T00:00:02.000000Z
+                f\t3\t1970-01-01T00:00:03.000000Z
+                a\t1\t1970-01-01T00:00:03.000000Z
+                c\t2\t1970-01-01T00:00:03.000000Z
+                e\t1\t1970-01-01T00:00:03.000000Z
+                d\t1\t1970-01-01T00:00:03.000000Z
+                b\t1\t1970-01-01T00:00:03.000000Z
+                b\t3\t1970-01-01T00:00:04.000000Z
+                a\t1\t1970-01-01T00:00:04.000000Z
+                c\t3\t1970-01-01T00:00:04.000000Z
+                f\t3\t1970-01-01T00:00:04.000000Z
+                d\t3\t1970-01-01T00:00:05.000000Z
+                b\t1\t1970-01-01T00:00:05.000000Z
+                a\t2\t1970-01-01T00:00:05.000000Z
+                c\t1\t1970-01-01T00:00:05.000000Z
+                f\t2\t1970-01-01T00:00:05.000000Z
+                c\t2\t1970-01-01T00:00:06.000000Z
+                f\t4\t1970-01-01T00:00:06.000000Z
+                b\t2\t1970-01-01T00:00:06.000000Z
+                d\t1\t1970-01-01T00:00:06.000000Z
+                a\t1\t1970-01-01T00:00:06.000000Z
+                e\t1\t1970-01-01T00:00:07.000000Z
+                c\t3\t1970-01-01T00:00:07.000000Z
+                f\t1\t1970-01-01T00:00:07.000000Z
+                d\t2\t1970-01-01T00:00:07.000000Z
+                b\t2\t1970-01-01T00:00:07.000000Z
+                d\t2\t1970-01-01T00:00:08.000000Z
+                e\t2\t1970-01-01T00:00:08.000000Z
+                a\t2\t1970-01-01T00:00:08.000000Z
+                b\t1\t1970-01-01T00:00:08.000000Z
+                c\t1\t1970-01-01T00:00:08.000000Z
+                f\t1\t1970-01-01T00:00:08.000000Z
+                c\t2\t1970-01-01T00:00:09.000000Z
+                b\t2\t1970-01-01T00:00:09.000000Z
+                d\t2\t1970-01-01T00:00:09.000000Z
+                e\t1\t1970-01-01T00:00:09.000000Z
+                a\t1\t1970-01-01T00:00:09.000000Z
+                f\t1\t1970-01-01T00:00:09.000000Z
+                """;
         assertQuery(
                 expected,
                 "select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION",
