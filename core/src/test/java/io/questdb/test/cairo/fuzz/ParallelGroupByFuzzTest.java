@@ -826,30 +826,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelGroupByArrayFirst() throws Exception {
+    public void testParallelGroupByArray() throws Exception {
         Assume.assumeFalse(convertToParquet);
         testParallelGroupByArray(
-                "SELECT first(darr), key FROM tab order by key",
-                "first\tkey\n" +
-                        "[0.21583224269349388,0.15786635599554755,null]\tk0\n" +
-                        "[0.2845577791213847,0.20447441837877756]\tk1\n" +
-                        "[0.19202208853547864,0.5093827001617407,0.11427984775756228]\tk2\n" +
-                        "[null,0.7261136209823622]\tk3\n" +
-                        "[0.3100545983862456,0.1985581797355932,0.33608255572515877]\tk4\n"
-        );
-    }
-
-    @Test
-    public void testParallelGroupByArrayLastKeyed() throws Exception {
-        Assume.assumeFalse(convertToParquet);
-        testParallelGroupByArray(
-                "SELECT last(darr), key FROM tab order by key",
-                "last\tkey\n" +
-                        "[0.19548881160742315,0.2934080080690735]\tk0\n" +
-                        "[null,0.6170231709845024]\tk1\n" +
-                        "[null,null,null]\tk2\n" +
-                        "[null,null,null]\tk3\n" +
-                        "[null,null]\tk4\n"
+                "SELECT first(darr), last(darr), key FROM tab order by key",
+                "first\tlast\tkey\n" +
+                        "[0.21583224269349388,0.15786635599554755,null]\t[0.19548881160742315,0.2934080080690735]\tk0\n" +
+                        "[0.2845577791213847,0.20447441837877756]\t[null,0.6170231709845024]\tk1\n" +
+                        "[0.19202208853547864,0.5093827001617407,0.11427984775756228]\t[null,null,null]\tk2\n" +
+                        "[null,0.7261136209823622]\t[null,null,null]\tk3\n" +
+                        "[0.3100545983862456,0.1985581797355932,0.33608255572515877]\t[null,null]\tk4\n"
         );
     }
 

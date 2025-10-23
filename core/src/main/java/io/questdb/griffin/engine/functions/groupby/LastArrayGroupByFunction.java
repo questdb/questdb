@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByArraySink;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
@@ -57,23 +56,18 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     }
 
     @Override
-    public void close() {
-        Misc.free(arg);
-    }
-
-    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        updateLast(mapValue, record, rowId);
+        mapValue.putLong(valueIndex, rowId);
+        sink.of(0);
+        sink.put(arg.getArray(record));
+        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        updateLast(mapValue, record, rowId);
-    }
-
-    private void updateLast(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        sink.of(0);
+        long ptr = mapValue.getLong(valueIndex + 1);
+        sink.of(ptr);
         sink.put(arg.getArray(record));
         mapValue.putLong(valueIndex + 1, sink.ptr());
     }
