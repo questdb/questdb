@@ -35,7 +35,7 @@ import io.questdb.cutlass.auth.LineAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
 import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
-import io.questdb.cutlass.http.DefaultHttpSessionStore;
+import io.questdb.cutlass.http.EmptyHttpSessionStore;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpContextConfiguration;
 import io.questdb.cutlass.http.HttpCookieHandler;
@@ -169,7 +169,7 @@ public class FactoryProviderImpl implements FactoryProvider {
 
     private static HttpSessionStore getHttpSessionStore(ServerConfiguration configuration) {
         if (Chars.empty(configuration.getHttpServerConfiguration().getUsername())) {
-            return DefaultHttpSessionStore.INSTANCE;
+            return EmptyHttpSessionStore.INSTANCE;
         }
         return new HttpSessionStoreImpl(configuration);
     }

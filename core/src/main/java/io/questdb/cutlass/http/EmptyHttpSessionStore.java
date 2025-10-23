@@ -4,10 +4,10 @@ import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class DefaultHttpSessionStore implements HttpSessionStore {
-    public static final DefaultHttpSessionStore INSTANCE = new DefaultHttpSessionStore();
+public class EmptyHttpSessionStore implements HttpSessionStore {
+    public static final EmptyHttpSessionStore INSTANCE = new EmptyHttpSessionStore();
 
-    protected DefaultHttpSessionStore() {
+    protected EmptyHttpSessionStore() {
     }
 
     @Override
