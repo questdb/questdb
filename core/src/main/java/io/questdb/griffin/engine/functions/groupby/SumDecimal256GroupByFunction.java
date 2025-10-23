@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
@@ -41,44 +40,38 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal256GroupByFunction extends Decimal256Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private final Decimal256 decimal = new Decimal256();
+    private final Decimal256 decimal256A = new Decimal256();
+    private final Decimal256 decimal256B = new Decimal256();
     private final int position;
-    private final int scale;
     private int valueIndex;
 
     public SumDecimal256GroupByFunction(@NotNull Function arg, int position) {
         super(ColumnType.getDecimalType(Decimals.MAX_PRECISION, ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
         this.position = position;
-        this.scale = ColumnType.getDecimalScale(type);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        DecimalUtil.load(decimal, arg, record);
-        if (!decimal.isNull()) {
-            mapValue.putDecimal256(valueIndex, decimal);
-        } else {
-            mapValue.putDecimal256Null(valueIndex);
-        }
+        arg.getDecimal256(record, decimal256A);
+        mapValue.putDecimal256(valueIndex, decimal256A);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        DecimalUtil.load(decimal, arg, record);
-        if (!decimal.isNull()) {
-            final long hh = mapValue.getDecimal256HH(valueIndex);
-            final long hl = mapValue.getDecimal256HL(valueIndex);
-            final long lh = mapValue.getDecimal256LH(valueIndex);
-            final long ll = mapValue.getDecimal256LL(valueIndex);
-            if (!Decimal256.isNull(hh, hl, lh, ll)) {
+        arg.getDecimal256(record, decimal256A);
+        if (!decimal256A.isNull()) {
+            mapValue.getDecimal256(valueIndex, decimal256B);
+            if (decimal256B.isNull()) {
+                mapValue.putDecimal256(valueIndex, decimal256A);
+            } else {
                 try {
-                    decimal.add(hh, hl, lh, ll, scale);
+                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                mapValue.putDecimal256(valueIndex, decimal256A);
             }
-            mapValue.putDecimal256(valueIndex, decimal);
         }
     }
 
@@ -89,22 +82,26 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
 
     @Override
     public long getDecimal256HH(Record rec) {
-        return rec.getDecimal256HH(valueIndex);
+        rec.getDecimal256(valueIndex, decimal256A);
+        if (!decimal256A.isNull() && decimal256A.hasOverflowed()) {
+            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+        }
+        return decimal256A.getHh();
     }
 
     @Override
     public long getDecimal256HL(Record rec) {
-        return rec.getDecimal256HL(valueIndex);
+        return decimal256A.getHl();
     }
 
     @Override
     public long getDecimal256LH(Record rec) {
-        return rec.getDecimal256LH(valueIndex);
+        return decimal256A.getLh();
     }
 
     @Override
     public long getDecimal256LL(Record rec) {
-        return rec.getDecimal256LL(valueIndex);
+        return decimal256A.getLl();
     }
 
     @Override
@@ -140,26 +137,18 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final long srcHH = srcValue.getDecimal256HH(valueIndex);
-        final long srcHL = srcValue.getDecimal256HL(valueIndex);
-        final long srcLH = srcValue.getDecimal256LH(valueIndex);
-        final long srcLL = srcValue.getDecimal256LL(valueIndex);
-        if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)) {
-            final long destHH = destValue.getDecimal256HH(valueIndex);
-            final long destHL = destValue.getDecimal256HL(valueIndex);
-            final long destLH = destValue.getDecimal256LH(valueIndex);
-            final long destLL = destValue.getDecimal256LL(valueIndex);
-            if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)) {
-                decimal.of(destHH, destHL, destLH, destLL, scale);
-                try {
-                    decimal.add(srcHH, srcHL, srcLH, srcLL, scale);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position)
-                            .put('\'').put(getName()).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                }
-                destValue.putDecimal256(valueIndex, decimal);
+        srcValue.getDecimal256(valueIndex, decimal256A);
+        if (!decimal256A.isNull()) {
+            destValue.getDecimal256(valueIndex, decimal256B);
+            if (decimal256B.isNull()) {
+                destValue.putDecimal256(valueIndex, decimal256A);
             } else {
-                destValue.putDecimal256(valueIndex, srcHH, srcHL, srcLH, srcLL);
+                try {
+                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                destValue.putDecimal256(valueIndex, decimal256A);
             }
         }
     }

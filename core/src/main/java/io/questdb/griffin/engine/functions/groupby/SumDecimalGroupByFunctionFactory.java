@@ -55,16 +55,13 @@ public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
     ) {
         Function arg = args.getQuick(0);
         int k = ColumnType.tagOf(arg.getType());
-        switch (k) {
-            case ColumnType.DECIMAL64 -> {
-                return new SumDecimal64GroupByFunction(args.getQuick(0), position);
-            }
-            case ColumnType.DECIMAL128 -> {
-                return new SumDecimal128GroupByFunction(args.getQuick(0), position);
-            }
-            default -> {
-                return new SumDecimal256GroupByFunction(args.getQuick(0), position);
-            }
-        }
+        return switch (k) {
+            case ColumnType.DECIMAL8 -> new SumDecimal8GroupByFunction(arg);
+            case ColumnType.DECIMAL16 -> new SumDecimal16GroupByFunction(arg);
+            case ColumnType.DECIMAL32 -> new SumDecimal32GroupByFunction(arg);
+            case ColumnType.DECIMAL64 -> new SumDecimal64GroupByFunction(arg);
+            case ColumnType.DECIMAL128 -> new SumDecimal128GroupByFunction(arg);
+            default -> new SumDecimal256GroupByFunction(arg, position);
+        };
     }
 }

@@ -56,10 +56,46 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDecimal128AccumulatesAfterPromotion() throws Exception {
+        assertQuery(
+                "sum\n200000000000000000000000000000000000000\n",
+                "select sum(v) sum from x",
+                "create table x as (" +
+                        "select case x " +
+                        " when 1 then cast('99999999999999999999999999999999999999' as decimal(38,0))" +
+                        " when 2 then cast('99999999999999999999999999999999999999' as decimal(38,0))" +
+                        " else cast(2 as decimal(38,0)) end v " +
+                        "from long_sequence(3)" +
+                        ")",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testSumDecimal128AllNull() throws Exception {
         assertQuery(
                 "sum\n\n",
                 "select sum(x) from (select cast(null as decimal(28,6)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSumDecimal128PromotionHandlesNegativeValues() throws Exception {
+        assertQuery(
+                "sum\n99999999999999999999999999999999999999\n",
+                "select sum(v) sum from x",
+                "create table x as (" +
+                        "select case x " +
+                        " when 1 then cast('99999999999999999999999999999999999999' as decimal(38,0))" +
+                        " when 2 then cast('99999999999999999999999999999999999999' as decimal(38,0))" +
+                        " else cast('-99999999999999999999999999999999999999' as decimal(38,0)) end v " +
+                        "from long_sequence(3)" +
+                        ")",
                 null,
                 false,
                 true
@@ -132,7 +168,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(10)" +
                         ")",
                 7,
-                "sum aggregation failed: Overflow in addition: result exceeds maximum precision"
+                "sum aggregation failed: Overflow in addition: result exceeds 256-bit capacity"
         );
     }
 

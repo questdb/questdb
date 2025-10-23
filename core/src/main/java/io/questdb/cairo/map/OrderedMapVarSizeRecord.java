@@ -35,6 +35,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
@@ -378,6 +379,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
     public long getDecimal128Hi(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }
@@ -388,17 +398,19 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public void getDecimal128(int col, Decimal128 sink) {
-        final long addr = addressOfColumn(col);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L)
-        );
+    public short getDecimal16(int columnIndex) {
+        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
     }
 
     @Override
-    public short getDecimal16(int columnIndex) {
-        return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
+    public void getDecimal256(int col, Decimal256 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L),
+                Unsafe.getUnsafe().getLong(addr + 16L),
+                Unsafe.getUnsafe().getLong(addr + 24L)
+        );
     }
 
     @Override

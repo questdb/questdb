@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
@@ -117,6 +118,15 @@ final class Unordered2MapValue implements MapValue {
     }
 
     @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = address0(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
+    }
+
+    @Override
     public long getDecimal128Hi(int col) {
         return Unsafe.getUnsafe().getLong(address0(col));
     }
@@ -129,6 +139,17 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public short getDecimal16(int col) {
         return Unsafe.getUnsafe().getShort(address0(col));
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        final long addr = address0(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L),
+                Unsafe.getUnsafe().getLong(addr + 16L),
+                Unsafe.getUnsafe().getLong(addr + 24L)
+        );
     }
 
     @Override
@@ -169,15 +190,6 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public double getDouble(int index) {
         return Unsafe.getUnsafe().getDouble(address0(index));
-    }
-
-    @Override
-    public void getDecimal128(int col, Decimal128 sink) {
-        final long addr = address0(col);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr),
-                Unsafe.getUnsafe().getLong(addr + 8L)
-        );
     }
 
     @Override

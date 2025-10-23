@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -226,13 +227,14 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void getDecimal128(int columnIndex, Decimal128 sink) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
+            address += (rowIndex << 4);
             sink.ofRaw(
-                    Unsafe.getUnsafe().getLong(address + (rowIndex << 4)),
-                    Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES)
+                    Unsafe.getUnsafe().getLong(address),
+                    Unsafe.getUnsafe().getLong(address + 8L)
             );
-            return;
+        } else {
+            sink.ofRawNull();
         }
-        sink.ofNullRaw();
     }
 
     @Override
@@ -260,6 +262,22 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
         return NullMemoryCMR.INSTANCE.getDecimal16(0);
+    }
+
+    @Override
+    public void getDecimal256(int columnIndex, Decimal256 sink) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            address += (rowIndex << 5);
+            sink.ofRaw(
+                    Unsafe.getUnsafe().getLong(address),
+                    Unsafe.getUnsafe().getLong(address + 8L),
+                    Unsafe.getUnsafe().getLong(address + 16L),
+                    Unsafe.getUnsafe().getLong(address + 24L)
+            );
+        } else {
+            sink.ofRawNull();
+        }
     }
 
     @Override

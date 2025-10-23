@@ -36,13 +36,13 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimals;
 import org.jetbrains.annotations.NotNull;
 
-class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
+class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal128 decimal128B = new Decimal128();
     private int valueIndex;
 
-    public SumDecimal64GroupByFunction(@NotNull Function arg) {
+    public SumDecimal32GroupByFunction(@NotNull Function arg) {
         super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
         this.decimal128A.setScale(0);
@@ -51,8 +51,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        long value = arg.getDecimal64(record);
-        if (value == Decimals.DECIMAL64_NULL) {
+        int value = arg.getDecimal32(record);
+        if (value == Decimals.DECIMAL32_NULL) {
             decimal128A.ofNullRaw();
         } else {
             decimal128A.ofRaw(value < 0 ? -1L : 0L, value);
@@ -62,8 +62,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        long value = arg.getDecimal64(record);
-        if (value != Decimals.DECIMAL64_NULL) {
+        int value = arg.getDecimal32(record);
+        if (value != Decimals.DECIMAL32_NULL) {
             mapValue.getDecimal128(valueIndex, decimal128A);
             if (decimal128A.isNull()) {
                 decimal128A.ofRaw(0, 0);

@@ -779,6 +779,10 @@ public class Decimal256 implements Sinkable, Decimal {
         result.hh = result.hh + carry + sign;
     }
 
+    public static void uncheckedAdd(Decimal256 result, Decimal256 b) {
+        uncheckedAdd(result, b.hh, b.hl, b.lh, b.ll);
+    }
+
     /**
      * In-place addition.
      *
@@ -832,8 +836,8 @@ public class Decimal256 implements Sinkable, Decimal {
      *
      * @throws NumericException if overflow occurs
      */
-    public void addSameScaleNoMaxValueCheck(long otherHH, long otherHL, long otherLH, long otherLL) {
-        addSameScaleNoMaxValueCheck(this, hh, hl, lh, ll, otherHH, otherHL, otherLH, otherLL);
+    public void addSameScaleNoMaxValueCheck(Decimal256 other) {
+        addSameScaleNoMaxValueCheck(this, hh, hl, lh, ll, other.hh, other.hl, other.lh, other.ll);
     }
 
     /**
@@ -1068,7 +1072,6 @@ public class Decimal256 implements Sinkable, Decimal {
      * that we actually use the minimum value for each possible size as a sentinel value for NULL.
      */
     public int getStorageSize() {
-        // 256-bit
         if (hh >= 0) {
             if (hh == 0 && hl == 0 && lh >= 0) {
                 if (lh == 0 && ll >= 0) {
@@ -1104,6 +1107,11 @@ public class Decimal256 implements Sinkable, Decimal {
             }
         }
         return 5; // 256-bit
+    }
+
+    public boolean hasOverflowed() {
+        return hh >= 0 ? compareTo0(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0
+                : compareTo0(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
     }
 
     /**
@@ -1355,6 +1363,16 @@ public class Decimal256 implements Sinkable, Decimal {
         this.hl = hl;
         this.lh = lh;
         this.ll = ll;
+    }
+
+    /**
+     * Set this Decimal256 to the null value.
+     */
+    public void ofRawNull() {
+        hh = Decimals.DECIMAL256_HH_NULL;
+        hl = Decimals.DECIMAL256_HL_NULL;
+        lh = Decimals.DECIMAL256_LH_NULL;
+        ll = Decimals.DECIMAL256_LL_NULL;
     }
 
     /**
@@ -1748,11 +1766,6 @@ public class Decimal256 implements Sinkable, Decimal {
 
     private int compareTo0(long bHH, long bHL, long bLH, long bLL) {
         return compare(hh, hl, lh, ll, bHH, bHL, bLH, bLL);
-    }
-
-    private boolean hasOverflowed() {
-        return compareTo0(MAX_VALUE.hh, MAX_VALUE.hl, MAX_VALUE.lh, MAX_VALUE.ll) > 0
-                || compareTo0(MIN_VALUE.hh, MIN_VALUE.hl, MIN_VALUE.lh, MIN_VALUE.ll) < 0;
     }
 
     private boolean hasUnsignOverflowed() {

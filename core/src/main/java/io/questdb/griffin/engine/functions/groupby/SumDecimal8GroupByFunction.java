@@ -31,45 +31,38 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
-import io.questdb.std.Decimal128;
+import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.std.Decimals;
 import org.jetbrains.annotations.NotNull;
 
-class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
+class SumDecimal8GroupByFunction extends Decimal64Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    private final Decimal128 decimal128A = new Decimal128();
-    private final Decimal128 decimal128B = new Decimal128();
     private int valueIndex;
 
-    public SumDecimal64GroupByFunction(@NotNull Function arg) {
-        super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(arg.getType())));
+    public SumDecimal8GroupByFunction(@NotNull Function arg) {
+        super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
-        this.decimal128A.setScale(0);
-        this.decimal128B.setScale(0);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        long value = arg.getDecimal64(record);
-        if (value == Decimals.DECIMAL64_NULL) {
-            decimal128A.ofNullRaw();
+        byte value = arg.getDecimal8(record);
+        if (value == Decimals.DECIMAL8_NULL) {
+            mapValue.putLong(valueIndex, Decimals.DECIMAL64_NULL);
         } else {
-            decimal128A.ofRaw(value < 0 ? -1L : 0L, value);
+            mapValue.putLong(valueIndex, value);
         }
-        mapValue.putDecimal128(valueIndex, decimal128A);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        long value = arg.getDecimal64(record);
-        if (value != Decimals.DECIMAL64_NULL) {
-            mapValue.getDecimal128(valueIndex, decimal128A);
-            if (decimal128A.isNull()) {
-                decimal128A.ofRaw(0, 0);
+        byte value = arg.getDecimal8(record);
+        if (value != Decimals.DECIMAL8_NULL) {
+            long curr = mapValue.getLong(valueIndex);
+            if (curr == Decimals.DECIMAL64_NULL) {
+                curr = 0;
             }
-            Decimal128.uncheckedAdd(decimal128A, value);
-            mapValue.putDecimal128(valueIndex, decimal128A);
+            mapValue.putLong(valueIndex, curr + value);
         }
     }
 
@@ -79,13 +72,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return rec.getDecimal128Hi(valueIndex);
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return rec.getDecimal128Lo(valueIndex);
+    public long getDecimal64(Record rec) {
+        return rec.getDecimal64(valueIndex);
     }
 
     @Override
@@ -106,7 +94,7 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DECIMAL128);
+        columnTypes.add(ColumnType.DECIMAL64);
     }
 
     @Override
@@ -121,21 +109,20 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        srcValue.getDecimal128(valueIndex, decimal128A);
-        if (!decimal128A.isNull()) {
-            destValue.getDecimal128(valueIndex, decimal128B);
-            if (decimal128B.isNull()) {
-                destValue.putDecimal128(valueIndex, decimal128A);
+        long src = srcValue.getLong(valueIndex);
+        if (src != Decimals.DECIMAL64_NULL) {
+            long dest = destValue.getLong(valueIndex);
+            if (dest == Decimals.DECIMAL64_NULL) {
+                destValue.putLong(valueIndex, src);
             } else {
-                decimal128B.uncheckedAdd(decimal128A);
-                destValue.putDecimal128(valueIndex, decimal128B);
+                destValue.putLong(valueIndex, src + dest);
             }
         }
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDecimal128Null(valueIndex);
+        mapValue.putLong(valueIndex, Decimals.DECIMAL64_NULL);
     }
 
     @Override
