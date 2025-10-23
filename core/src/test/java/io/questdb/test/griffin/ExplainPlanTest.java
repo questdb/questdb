@@ -7346,6 +7346,42 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDuplicateKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(
+                    "create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);",
+                    "select b, sum(a), k k1, k from x sample by 3h",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [b,k1,ts]\n" +
+                            "              values: [sum(a)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select b, sum(a), k, k k1 from x sample by 3h",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [b,k,ts]\n" +
+                            "              values: [sum(a)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
@@ -10743,6 +10779,69 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts, l1]\n" +
+                        "            SelectedRecord\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithReorder2c() throws Exception {
+        assertPlan(
+                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
+                "select i2, i1, ts, ts1 from " +
+                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
+                        "from a " +
+                        "order by ts, l1 " +
+                        "limit 100 ) " +
+                        "where i1*i2 != 0",
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
+                        "          keys: [ts, l1]\n" +
+                        "            SelectedRecord\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithReorder2d() throws Exception {
+        assertPlan(
+                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
+                "select i2, i1, ts, ts1 from " +
+                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
+                        "from a " +
+                        "order by 1, 3 " +
+                        "limit 100 ) " +
+                        "where i1*i2 != 0",
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
+                        "          keys: [ts, l1]\n" +
+                        "            SelectedRecord\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testSelectWithReorder2e() throws Exception {
+        assertPlan(
+                "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
+                "select i2, i1, ts, ts1 from " +
+                        "(select ts, ts as ts1, l as l1, i as i1, i as i2 " +
+                        "from a " +
+                        "order by 2, 3 " +
+                        "limit 100 ) " +
+                        "where i1*i2 != 0",
+                "SelectedRecord\n" +
+                        "    Filter filter: i1*i2!=0\n" +
+                        "        Sort light lo: 100 partiallySorted: true\n" +
+                        "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +

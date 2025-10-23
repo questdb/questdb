@@ -65,7 +65,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -6204,10 +6203,14 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x VALUES (1, '2010-01-01T01', '2010-01-01T01')," +
+                            "(2, '2020-01-01T01', '2020-01-01T02')," +
+                            "(3, '2030-01-01T01', '2030-01-01T03');"
+            );
 
-            final String query = """
+            String query = """
                     SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
                     FROM 'x'
                     SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
@@ -6220,20 +6223,232 @@ public class SampleByTest extends AbstractCairoTest {
                             2029-12-31T23:00:00.000000Z\t0.041666666666666664
                             """,
                     query,
-                    "ts"
+                    "ts",
+                    true,
+                    true
             );
-
             assertPlanNoLeakCheck(
                     query,
                     """
                             VirtualRecord
-                              functions: [ts,count::double/datediff('h',ts1,dateadd('d',1,ts1,'Europe/Copenhagen'))]
-                                Sample By
-                                  fill: none
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                              functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
+                                Radix sort light
+                                  keys: [ts]
+                                    VirtualRecord
+                                      functions: [to_utc(ts),count]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, count(), max(ts)::long / count() AS ts_divided
+                    FROM 'x'
+                    SAMPLE BY 1d;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcount\tts_divided
+                            2010-01-01T00:00:00.000000Z\t1\t1262307600000000
+                            2020-01-01T00:00:00.000000Z\t1\t1577840400000000
+                            2030-01-01T00:00:00.000000Z\t1\t1893459600000000
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,count,max::long/count]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [count(*),max(ts)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t1\t0
+                            2020-01-01T01:00:00.000000Z\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t58440\t2435
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, max(i) + datediff('m', ts, '2010-01-01')  diff1, MaX(i) + datediff('m', ts, '2010-01-01') diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t61\t61
+                            2020-01-01T01:00:00.000000Z\t5258942\t5258942
+                            2030-01-01T01:00:00.000000Z\t10519263\t10519263
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, max(i), datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tmax\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t1\t1\t0
+                            2020-01-01T01:00:00.000000Z\t2\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t3\t58440\t2435
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff
+                            2010-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:00.000000Z\t2
+                            2030-01-01T00:00:00.000000Z\t3
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count]
+                                    Async Group By workers: 1
+                                      keys: [ts,ts2]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff1, datediff('M', ts2, '2010-01-01T01') / count() diff2
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T00:00:00.000000Z\t1\t0
+                            2020-01-01T00:00:00.000000Z\t2\t120
+                            2030-01-01T00:00:00.000000Z\t3\t240
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count,diff2]
+                                    VirtualRecord
+                                      functions: [ts,count,ts2,datediff('M',ts2,1262307600000000)/count]
+                                        Async Group By workers: 1
+                                          keys: [ts,ts2]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
         });
@@ -6822,11 +7037,7 @@ public class SampleByTest extends AbstractCairoTest {
         });
     }
 
-    // TODO: fix it, it's a bug
     @Test
-    @Ignore
-    // the sample-by to group-by rewrite does not extract aggregate expressions from timestamp
-    // arithmetic
     public void testSampleByWithProjection2() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE 'trades' (\n" +
@@ -6843,16 +7054,22 @@ public class SampleByTest extends AbstractCairoTest {
                     "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
                     "from long_sequence(10)\n");
 
-            assertSql(
-                    "",
-                    "select " +
-                            "symbol || 'abcd' as symbol" +
-                            ", sum(amount)" +
-                            ", vwap(price, amount)" +
-                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
-                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
-                            "from trades\n" +
-                            "sample by 5m"
+            final String query = "select " +
+                    "symbol || 'abcd' as symbol" +
+                    ", sum(amount)" +
+                    ", vwap(price, amount)" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime " +
+                    "from trades\n" +
+                    "sample by 5m";
+            assertQueryNoLeakCheck(
+                    "symbol\tsum\tvwap\tts\tNYTime\n" +
+                            "aabcd\t0.6390492980774742\t0.3421677972133922\t1.64565E15\t1.6456500000000008E15\n" +
+                            "cabcd\t0.20447441837877756\t0.299199045961845\t1.64565E15\t1.6456500000000002E15\n" +
+                            "babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15\n" +
+                            "babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15\n" +
+                            "cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15\n",
+                    query
             );
 
             assertSampleByFlavours(
@@ -6862,11 +7079,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15\n" +
                             "babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15\n" +
                             "cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15\n",
-                    "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), " +
-                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts, " +
-                            "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
-                            "from trades\n" +
-                            "sample by 5m"
+                    query
             );
         });
     }
