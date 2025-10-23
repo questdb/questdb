@@ -104,10 +104,10 @@ public class IOURingFacadeImpl implements IOURingFacade {
             String kernelVersion = IOUringAccessor.kernelVersion();
             boolean usable = isAvailableOn(kernelVersion);
 
-            // a recent kernel is required, but not sufficient, for io_uring
-            // e.g. kernel can be compiled wihout io_uring support or
-            // the current user might not have permissions to use io_uring
-            // the only reliable way to check is to try to create an io_uring
+            // Kernel version check might indicate io_uring *should* be available, but it's not a guarantee.
+            // The kernel could be compiled without io_uring support (CONFIG_IO_URING=n),
+            // or the user may lack necessary permissions, which is common in containerized or restricted environments.
+            // The only reliable way to confirm availability is to try to initialize a ring.
             if (usable) {
                 long ioUring = IOUringAccessor.create(8);
                 if (ioUring < 0) {
