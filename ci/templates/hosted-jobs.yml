@@ -50,13 +50,23 @@ jobs:
           excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        mac-cairo-fuzz:
+        mac-fuzz1:
           imageName: "macos-latest"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-fuzz2:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-pgwire:
