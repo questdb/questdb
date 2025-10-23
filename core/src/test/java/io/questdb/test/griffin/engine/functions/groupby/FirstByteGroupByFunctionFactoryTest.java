@@ -32,8 +32,10 @@ public class FirstByteGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFirstByte() throws Exception {
         assertQuery(
-                "a\n" +
-                        "1\n",
+                """
+                        a
+                        1
+                        """,
                 "select first(a) a from tab",
                 "create table tab as (select 1::byte a union select 2::byte a union select 3::byte a)",
                 null,
