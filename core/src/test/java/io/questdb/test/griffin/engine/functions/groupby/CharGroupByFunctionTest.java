@@ -39,20 +39,28 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
             sqlExecutionContext.setRandom(new Rnd());
             execute("create table tab as ( select rnd_char() ch from long_sequence(100) )");
 
-            assertSql("min\n" +
-                    "B\n", "select min(ch) from tab"
+            assertSql("""
+                    min
+                    B
+                    """, "select min(ch) from tab"
             );
 
-            assertSql("max\n" +
-                    "Z\n", "select max(ch) from tab"
+            assertSql("""
+                    max
+                    Z
+                    """, "select max(ch) from tab"
             );
 
-            assertSql("first\n" +
-                    "V\n", "select first(ch) from tab"
+            assertSql("""
+                    first
+                    V
+                    """, "select first(ch) from tab"
             );
 
-            assertSql("last\n" +
-                    "J\n", "select last(ch) from tab"
+            assertSql("""
+                    last
+                    J
+                    """, "select last(ch) from tab"
             );
         });
     }
@@ -64,16 +72,22 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
             tm.timestamp("ts").col("ch", ColumnType.CHAR);
             createPopulateTable(tm, 100, "2020-01-01", 2);
 
-            String expected = "ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                    "2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51\n" +
-                    "2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49\n";
+            String expected = """
+                    ts\tmin\tmax\tfirst\tlast\tcount
+                    2020-01-01T00:28:47.990000Z\t\u0001\t3\t\u0001\t3\t51
+                    2020-01-02T00:28:47.990000Z\t4\td\t4\td\t49
+                    """;
             assertSql(expected, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to first observation");
-            assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                    "2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50\n" +
-                    "2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d");
-            assertSql("ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                    "2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50\n" +
-                    "2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
+            assertSql("""
+                    ts\tmin\tmax\tfirst\tlast\tcount
+                    2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
+                    2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
+                    """, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d");
+            assertSql("""
+                    ts\tmin\tmax\tfirst\tlast\tcount
+                    2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
+                    2020-01-02T00:00:00.000000Z\t3\td\t3\td\t50
+                    """, "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar"
             );
         });
     }

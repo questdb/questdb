@@ -34,23 +34,22 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.std.Numbers;
-import io.questdb.std.Uuid;
 
-public class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
-    private final Function arg;
-    private final GroupByLongList list;
-    private final GroupByLong128HashSet setA;
-    private final GroupByLong128HashSet setB;
-    private int valueIndex;
+public abstract class AbstractCountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+    protected final Function arg;
+    protected final GroupByLongList list;
+    protected final GroupByIntHashSet setA;
+    protected final GroupByIntHashSet setB;
+    protected int valueIndex;
 
-    public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor, int workerCount) {
+    public AbstractCountDistinctIntGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB, GroupByLongList list) {
         this.arg = arg;
-        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        list = new GroupByLongList(Math.max(workerCount, 4));
+        this.setA = setA;
+        this.setB = setB;
+        this.list = list;
     }
 
     @Override
@@ -58,35 +57,6 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
         setA.resetPtr();
         setB.resetPtr();
         list.resetPtr();
-    }
-
-    @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final long lo = arg.getLong128Lo(record);
-        final long hi = arg.getLong128Hi(record);
-        if (!Uuid.isNull(lo, hi)) {
-            mapValue.putLong(valueIndex, 1);
-            setA.of(0).add(lo, hi);
-            mapValue.putLong(valueIndex + 1, setA.ptr());
-        } else {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
-    }
-
-    @Override
-    public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final long lo = arg.getLong128Lo(record);
-        final long hi = arg.getLong128Hi(record);
-        if (!Uuid.isNull(lo, hi)) {
-            final long ptr = mapValue.getLong(valueIndex + 1);
-            final long index = setA.of(ptr).keyIndex(lo, hi);
-            if (index >= 0) {
-                setA.addAt(index, lo, hi);
-                mapValue.addLong(valueIndex, 1);
-                mapValue.putLong(valueIndex + 1, setA.ptr());
-            }
-        }
     }
 
     @Override
@@ -135,7 +105,7 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
         valueIndex = columnTypes.getColumnCount();
         // count
         columnTypes.add(ColumnType.LONG);
-        // GroupByLong128HashSet (count>1) or GroupByLongList pointer (count=-1)
+        // inlined single value (count=1) or GroupByIntHashSet (count>1) or GroupByLongList pointer (count=-1)
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -163,13 +133,44 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
             return;
         }
 
+        if (srcCount == 1) { // inlined src value
+            final int srcVal = (int) srcValue.getLong(valueIndex + 1);
+            if (destCount == -1) { // dest holds accumulated sets
+                // pick up the first set and add the value there
+                final long destPtr = destValue.getLong(valueIndex + 1);
+                list.of(destPtr);
+                setA.of(list.get(0)).add(srcVal);
+                list.set(0, setA.ptr());
+            } else if (destCount == 1) { // dest holds inlined value
+                final int destVal = (int) destValue.getLong(valueIndex + 1);
+                if (destVal != srcVal) {
+                    setA.of(0).add(srcVal);
+                    setA.add(destVal);
+                    destValue.putLong(valueIndex, 2);
+                    destValue.putLong(valueIndex + 1, setA.ptr());
+                }
+            } else { // dest holds a set
+                final long destPtr = destValue.getLong(valueIndex + 1);
+                setA.of(destPtr).add(srcVal);
+                destValue.putLong(valueIndex, setA.size());
+                destValue.putLong(valueIndex + 1, setA.ptr());
+            }
+            return;
+        }
+
         // src holds a set
         final long srcPtr = srcValue.getLong(valueIndex + 1);
-        final long destPtr = destValue.getLong(valueIndex + 1);
         if (destCount == -1) { // dest holds accumulated sets
+            final long destPtr = destValue.getLong(valueIndex + 1);
             list.of(destPtr).add(srcPtr);
             destValue.putLong(valueIndex + 1, list.ptr());
+        } else if (destCount == 1) { // dest holds inlined value
+            final int destVal = (int) destValue.getLong(valueIndex + 1);
+            setA.of(srcPtr).add(destVal);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
         } else { // dest holds a set
+            final long destPtr = destValue.getLong(valueIndex + 1);
             list.of(0).add(destPtr);
             list.add(srcPtr);
             destValue.putLong(valueIndex, -1);
@@ -220,7 +221,7 @@ public class CountDistinctUuidGroupByFunction extends LongFunction implements Un
             setA.of(list.get(i));
             final int size = setA.size();
             if (size > maxSize) {
-                maxSize = size;
+                maxSize = setA.size();
                 maxIndex = i;
             }
         }
