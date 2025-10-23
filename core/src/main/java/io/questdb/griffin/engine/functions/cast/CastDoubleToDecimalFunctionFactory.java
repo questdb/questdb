@@ -39,11 +39,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Dξ)";
-    }
-
     public static Function newInstance(Function arg, int targetType, int position) {
         return switch (ColumnType.tagOf(targetType)) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
@@ -51,6 +46,11 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new Func128(arg, targetType, position);
             default -> new Func(arg, targetType, position);
         };
+    }
+
+    @Override
+    public String getSignature() {
+        return "cast(Dξ)";
     }
 
     @Override
@@ -87,10 +87,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func64 extends AbstractCastToDecimal64Function {
+    private static class Func128 extends AbstractCastToDecimal128Function {
         private final StringSink sink = new StringSink();
 
-        public Func64(Function value, int targetType, int position) {
+        public Func128(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
 
@@ -110,10 +110,10 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class Func128 extends AbstractCastToDecimal128Function {
+    private static class Func64 extends AbstractCastToDecimal64Function {
         private final StringSink sink = new StringSink();
 
-        public Func128(Function value, int targetType, int position) {
+        public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
         }
 

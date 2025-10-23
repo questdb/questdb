@@ -50,6 +50,11 @@ public abstract class AbstractCastToDecimal128Function extends ToDecimal128Funct
         return arg;
     }
 
+    @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
     public boolean store(Record rec) {
         return cast(rec);
     }

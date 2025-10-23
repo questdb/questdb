@@ -62,17 +62,12 @@ public class RemDecimalFunctionFactory implements FunctionFactory {
         );
         final int type = ColumnType.getDecimalType(precision, scale);
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(left, right, type, position);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(left, right, type, position);
-            default:
-                return new Decimal256Func(left, right, type, position);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Decimal64Func(left, right, type, position);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(left, right, type, position);
+            default -> new Decimal256Func(left, right, type, position);
+        };
     }
 
     private static class Decimal128Func extends ArithmeticDecimal128Function {

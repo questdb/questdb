@@ -46,11 +46,12 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
-import io.questdb.cutlass.text.CopyJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -75,6 +76,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.PropertyKey.EXPORT_WORKER_COUNT;
 import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
 
 public class ServerMain implements Closeable {
@@ -231,6 +233,8 @@ public class ServerMain implements Closeable {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            // Signal long-running task to exit ASAP
+            engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
                 fileWatcher = Misc.free(fileWatcher);
@@ -255,6 +259,13 @@ public class ServerMain implements Closeable {
             return httpServer.getPort();
         }
         throw CairoException.nonCritical().put("http server is not running");
+    }
+
+    public long getActiveConnectionCount(String processorName) {
+        if (httpServer == null) {
+            return 0;
+        }
+        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
     }
 
     public int getPgWireServerPort() {
@@ -342,9 +353,11 @@ public class ServerMain implements Closeable {
                     }
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
-                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
-                    sharedPoolQuery.assign(queryTracingJob);
-                    freeOnExit(queryTracingJob);
+                    if (!config.getCairoConfiguration().isReadOnlyInstance()) {
+                        QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                        sharedPoolQuery.assign(queryTracingJob);
+                        freeOnExit(queryTracingJob);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
@@ -364,15 +377,40 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
+                            CopyImportJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
+                            final CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPoolWrite.assign(copyRequestJob);
-                            sharedPoolWrite.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyImportRequestJob);
+                            sharedPoolWrite.freeOnExit(copyImportRequestJob);
+                        }
+                    }
+
+                    // export - current export implementation requires creating temporary table, can only enable on the primary instance
+                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot()) && !isReadOnly) {
+                        int workerCount = config.getExportPoolConfiguration().getWorkerCount();
+                        if (workerCount > 0) {
+                            WorkerPool exportWorkerPool = getWorkerPool(
+                                    config.getExportPoolConfiguration(),
+                                    Requester.EXPORT,
+                                    sharedPoolQuery
+                            );
+
+                            for (int i = 0; i < workerCount; i++) {
+                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
+                                exportWorkerPool.assign(i, copyExportRequestJob);
+                                exportWorkerPool.freeOnExit(copyExportRequestJob);
+                            }
+
+                            log.info().$("export workers count: ").$(workerCount).$();
+                        } else {
+                            log.advisory().$("export is disabled; set ")
+                                    .$(EXPORT_WORKER_COUNT.getPropertyPath())
+                                    .$(" to a positive value or keep default to enable export.")
+                                    .$();
                         }
                     }
 

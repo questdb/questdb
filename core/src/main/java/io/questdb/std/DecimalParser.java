@@ -194,14 +194,9 @@ public final class DecimalParser {
             }
         }
 
-        // If lossy is enabled, we can strip digits after the provided scale (as long as it is provided)
-        if (lossy && scale >= 0 && digitHi > dot + scale) {
-            digitHi = dot + scale + 1;
-        }
-
         // Compute the scale of the given literal (e.g. '1.234' -> 3) and the total number of digits
-        final int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
-        final int literalDigits = digitHi - digitLo - (dot == -1 ? 0 : 1);
+        int literalScale = dot == -1 ? 0 : (digitHi - dot - 1);
+        int literalDigits = digitHi - digitLo - (dot == -1 ? 0 : 1);
 
         int virtualScale = literalScale;
 
@@ -225,6 +220,21 @@ public final class DecimalParser {
                         .put("' contains invalid character '")
                         .put(cs.charAt(digitHi)).put('\'');
             }
+        }
+
+        // If lossy is enabled, we can strip digits after the provided scale (as long as it is provided)
+        if (lossy && scale >= 0 && virtualScale > scale) {
+            int drop = virtualScale - scale;
+            while (drop > 0 && digitHi > digitLo) {
+                digitHi--;
+                if (digitHi == dot) {
+                    continue;
+                }
+                drop--;
+            }
+            virtualScale = scale;
+            int hasDot = (dot >= digitLo && dot < digitHi) ? 1 : 0;
+            literalDigits = digitHi - digitLo - hasDot;
         }
 
         // We still need to adjust the exponent if the user specifies a target scale.

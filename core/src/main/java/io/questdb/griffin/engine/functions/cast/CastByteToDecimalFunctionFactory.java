@@ -34,10 +34,10 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -129,17 +129,12 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
 
     private static Function newUnscaledInstance(int valuePosition, int targetType, Function value) {
         int targetPrecision = ColumnType.getDecimalPrecision(targetType);
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.DECIMAL8:
-            case ColumnType.DECIMAL16:
-            case ColumnType.DECIMAL32:
-            case ColumnType.DECIMAL64:
-                return new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
-            case ColumnType.DECIMAL128:
-                return new CastDecimal128UnscaledFunc(targetType, value);
-            default:
-                return new CastDecimal256UnscaledFunc(targetType, value);
-        }
+        return switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new CastDecimal64UnscaledFunc(valuePosition, targetType, Numbers.getMaxValue(targetPrecision), value);
+            case ColumnType.DECIMAL128 -> new CastDecimal128UnscaledFunc(targetType, value);
+            default -> new CastDecimal256UnscaledFunc(targetType, value);
+        };
     }
 
     private static class AbstractCastDecimalScaledFunc extends AbstractCastToDecimalFunction {
@@ -197,6 +192,11 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value).val("::").val(ColumnType.nameOf(type));
         }
@@ -244,6 +244,11 @@ public class CastByteToDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal256LL(Record rec) {
             return ll;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

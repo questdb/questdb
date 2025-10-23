@@ -25,13 +25,16 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -51,7 +54,13 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new Func(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        return switch (ColumnType.tagOf(arg.getType())) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new Func64(arg);
+            case ColumnType.DECIMAL128 -> new Func128(arg);
+            default -> new Func(arg);
+        };
     }
 
     private static class Func extends AbstractCastToFloatFunction {
@@ -72,6 +81,63 @@ public class CastDecimalToFloatFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(decimal256);
             return Numbers.parseFloat(sink);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class Func128 extends AbstractCastToFloatFunction {
+        private final Decimal128 decimal128 = new Decimal128();
+        private final int fromType;
+        private final StringSink sink = new StringSink();
+
+        public Func128(Function value) {
+            super(value);
+            fromType = value.getType();
+        }
+
+        public float getFloat(Record rec) {
+            DecimalUtil.load(decimal128, arg, rec, fromType);
+            if (decimal128.isNull()) {
+                return Float.NaN;
+            }
+            sink.clear();
+            sink.put(decimal128);
+            return Numbers.parseFloat(sink);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class Func64 extends AbstractCastToFloatFunction {
+        private final Decimal64 decimal64 = new Decimal64();
+        private final int fromType;
+        private final StringSink sink = new StringSink();
+
+        public Func64(Function value) {
+            super(value);
+            fromType = value.getType();
+        }
+
+        public float getFloat(Record rec) {
+            DecimalUtil.load(decimal64, arg, rec, fromType);
+            if (decimal64.isNull()) {
+                return Float.NaN;
+            }
+            sink.clear();
+            sink.put(decimal64);
+            return Numbers.parseFloat(sink);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

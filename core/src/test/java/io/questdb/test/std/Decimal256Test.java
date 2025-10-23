@@ -26,6 +26,7 @@ package io.questdb.test.std;
 
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.DecimalParser;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -950,6 +951,48 @@ public class Decimal256Test {
         // The result should be 2 * (2^64 - 1)
         Assert.assertEquals(0x1L, a.getLh());
         Assert.assertEquals(0xFFFFFFFFFFFFFFFEL, a.getLl());
+    }
+
+    @Test
+    public void testLossyScientificNotation() throws NumericException {
+        final String value = "9.8765432e4";
+        Decimal256 decimal = new Decimal256();
+        DecimalParser.parse(decimal, value, 0, value.length(), -1, 1, false, true);
+
+        Assert.assertEquals("98765.4", decimal.toString());
+    }
+
+    @Test
+    public void testLossyScientificNotationDropsFractionalDigitsBeforeExponent() throws NumericException {
+        final String value = "1.234e2";
+        Decimal256 decimal = new Decimal256();
+        long metadata = DecimalParser.parse(decimal, value, 0, value.length(), -1, 0, false, true);
+
+        Assert.assertEquals("lossy parsing should only remove fractional digits that exceed the target scale", "123", decimal.toString());
+        Assert.assertEquals("expected scale of 0", 0, Numbers.decodeHighInt(metadata));
+        Assert.assertEquals("expected precision to reflect 3 digits", 3, Numbers.decodeLowInt(metadata));
+    }
+
+    @Test
+    public void testLossyScientificNotationKeepsAllSignificantDigits() throws NumericException {
+        final String value = "9.876e4";
+        Decimal256 decimal = new Decimal256();
+        long metadata = DecimalParser.parse(decimal, value, 0, value.length(), -1, 0, false, true);
+
+        Assert.assertEquals("expected lossy parsing to retain all significant digits when moving the decimal point", "98760", decimal.toString());
+        Assert.assertEquals("expected scale of 0", 0, Numbers.decodeHighInt(metadata));
+        Assert.assertEquals("expected precision to reflect 5 digits", 5, Numbers.decodeLowInt(metadata));
+    }
+
+    @Test
+    public void testLossyScientificNotationLosesMantissaForIntegerExponent() throws NumericException {
+        final String value = "1e2";
+        Decimal256 decimal = new Decimal256();
+        long metadata = DecimalParser.parse(decimal, value, 0, value.length(), -1, 0, false, true);
+
+        Assert.assertEquals("expected lossy parsing to preserve exponent shift", "100", decimal.toString());
+        Assert.assertEquals("expected scale of 0", 0, Numbers.decodeHighInt(metadata));
+        Assert.assertEquals("expected precision to reflect 3 digits", 3, Numbers.decodeLowInt(metadata));
     }
 
     @Test(expected = NumericException.class)

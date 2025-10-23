@@ -77,17 +77,11 @@ public class SubDecimalFunctionFactory implements FunctionFactory {
                 Decimals.MAX_PRECISION
         );
 
-        switch (Decimals.getStorageSizePow2(precision)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                return new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale), position);
-            case 4:
-                return new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale), position);
-            default:
-                return new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale), position);
-        }
+        return switch (Decimals.getStorageSizePow2(precision)) {
+            case 0, 1, 2, 3 -> new Decimal64Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+            case 4 -> new Decimal128Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+            default -> new Decimal256Func(left, right, ColumnType.getDecimalType(precision, scale), position);
+        };
     }
 
     private static class Decimal128Func extends ArithmeticDecimal128Function {

@@ -316,6 +316,11 @@ impl ColumnType {
         let tag = ColumnTypeTag::try_from(tag as u8)?;
         Ok(tag)
     }
+
+    pub fn has_flag(&self, flag: i32) -> bool {
+        let flag_shifted:i32 = flag << 8;
+        self.code.get() & flag_shifted == flag_shifted
+    }
 }
 
 impl Display for ColumnType {

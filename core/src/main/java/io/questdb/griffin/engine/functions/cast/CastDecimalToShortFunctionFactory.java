@@ -38,7 +38,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
@@ -112,25 +112,28 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
     }
 
     private static Function newUnscaledInstance(int valuePosition, int fromType, Function value) {
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.DECIMAL8:
-                return new UnscaledDecimal8Func(value);
-            case ColumnType.DECIMAL16:
-                return new UnscaledDecimal16Func(value);
-            case ColumnType.DECIMAL32:
-                return new UnscaledDecimal32Func(value, valuePosition);
-            case ColumnType.DECIMAL64:
-                return new UnscaledDecimal64Func(value, valuePosition);
-            case ColumnType.DECIMAL128:
-                return new UnscaledDecimal128Func(value, valuePosition);
-            default:
-                return new UnscaledDecimal256Func(value, valuePosition);
-        }
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new UnscaledDecimal8Func(value);
+            case ColumnType.DECIMAL16 -> new UnscaledDecimal16Func(value);
+            case ColumnType.DECIMAL32 -> new UnscaledDecimal32Func(value, valuePosition);
+            case ColumnType.DECIMAL64 -> new UnscaledDecimal64Func(value, valuePosition);
+            case ColumnType.DECIMAL128 -> new UnscaledDecimal128Func(value, valuePosition);
+            default -> new UnscaledDecimal256Func(value, valuePosition);
+        };
     }
 
     private static boolean overflowsShort(Decimal256 decimal) {
-        return decimal.compareTo(0, 0, 0, Short.MAX_VALUE, 0) > 0 ||
-                decimal.compareTo(-1, -1, -1, Short.MIN_VALUE, 0) < 0;
+        return overflowsShort(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+    }
+
+    private static boolean overflowsShort(long hh, long hl, long lh, long ll) {
+        return hh >= 0 ? Decimal256.compareTo(hh, hl, lh, ll, 0, 0, 0, 0, Short.MAX_VALUE, 0) > 0 :
+                Decimal256.compareTo(hh, hl, lh, ll, 0, -1, -1, -1, Short.MIN_VALUE, 0) < 0;
+    }
+
+    private static boolean overflowsShort(long high, long low) {
+        return high >= 0 ? Decimal128.compareTo(high, low, 0, 0, Short.MAX_VALUE, 0) > 0 :
+                Decimal128.compareTo(high, low, 0, -1, Short.MIN_VALUE, 0) < 0;
     }
 
     private static class ScaledDecimalFunction extends AbstractCastToShortFunction {
@@ -162,10 +165,14 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             }
             return (short) decimal256.getLl();
         }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
     }
 
     private static class UnscaledDecimal128Func extends AbstractCastToShortFunction {
-        private final Decimal256 decimal256 = new Decimal256();
         private final int position;
 
         public UnscaledDecimal128Func(Function value, int position) {
@@ -179,10 +186,10 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             if (Decimal128.isNull(hi, lo)) {
                 return 0;
             }
-            long s = hi < 0 ? -1 : 0;
-            decimal256.of(s, s, hi, lo, 0);
-            if (overflowsShort(decimal256)) {
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.SHORT).position(position);
+            if (overflowsShort(hi, lo)) {
+                var decimal128 = Misc.getThreadLocalDecimal128();
+                decimal128.of(hi, lo, 0);
+                throw ImplicitCastException.inconvertibleValue(decimal128, arg.getType(), ColumnType.SHORT).position(position);
             }
             return (short) lo;
         }
@@ -203,7 +210,6 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledDecimal256Func extends AbstractCastToShortFunction {
-        private final Decimal256 decimal256 = new Decimal256();
         private final int position;
 
         public UnscaledDecimal256Func(Function value, int position) {
@@ -216,11 +222,12 @@ public class CastDecimalToShortFunctionFactory implements FunctionFactory {
             long hl = this.arg.getDecimal256HL(rec);
             long lh = this.arg.getDecimal256LH(rec);
             long ll = this.arg.getDecimal256LL(rec);
-            decimal256.of(hh, hl, lh, ll, 0);
-            if (decimal256.isNull()) {
+            if (Decimal256.isNull(hh, hl, lh, ll)) {
                 return 0;
             }
-            if (overflowsShort(decimal256)) {
+            if (overflowsShort(hh, hl, lh, ll)) {
+                Decimal256 decimal256 = Misc.getThreadLocalDecimal256();
+                decimal256.of(hh, hl, lh, ll, 0);
                 throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.SHORT).position(position);
             }
             return (short) ll;

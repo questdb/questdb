@@ -60,20 +60,14 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
             return newUnscaledInstance(position, fromType, targetType, arg);
         }
 
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.DECIMAL8:
-                return new ScaledDecimal8FuncAbstract(position, targetType, arg, fromScale);
-            case ColumnType.DECIMAL16:
-                return new ScaledDecimal16FuncAbstract(position, targetType, arg, fromScale);
-            case ColumnType.DECIMAL32:
-                return new ScaledDecimal32FuncAbstract(position, targetType, arg, fromScale);
-            case ColumnType.DECIMAL64:
-                return new ScaledDecimal64FuncAbstract(position, targetType, arg, fromScale);
-            case ColumnType.DECIMAL128:
-                return new ScaledDecimal128FuncAbstract(position, targetType, arg, fromScale);
-            default:
-                return new ScaledDecimal256FuncAbstract(position, targetType, arg, fromScale);
-        }
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new ScaledDecimal8FuncAbstract(position, targetType, arg, fromScale);
+            case ColumnType.DECIMAL16 -> new ScaledDecimal16FuncAbstract(position, targetType, arg, fromScale);
+            case ColumnType.DECIMAL32 -> new ScaledDecimal32FuncAbstract(position, targetType, arg, fromScale);
+            case ColumnType.DECIMAL64 -> new ScaledDecimal64FuncAbstract(position, targetType, arg, fromScale);
+            case ColumnType.DECIMAL128 -> new ScaledDecimal128FuncAbstract(position, targetType, arg, fromScale);
+            default -> new ScaledDecimal256FuncAbstract(position, targetType, arg, fromScale);
+        };
     }
 
     @Override
@@ -139,36 +133,29 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         int fromPrecision = ColumnType.getDecimalPrecision(fromType);
         int targetPrecision = ColumnType.getDecimalPrecision(targetType);
         if (targetPrecision >= fromPrecision) {
-            switch (ColumnType.tagOf(fromType)) {
-                case ColumnType.DECIMAL8:
-                    return new UnscaledWidenDecimal8UncheckedFuncAbstract(valuePosition, targetType, value);
-                case ColumnType.DECIMAL16:
-                    return new UnscaledWidenDecimal16UncheckedFuncAbstract(valuePosition, targetType, value);
-                case ColumnType.DECIMAL32:
-                    return new UnscaledWidenDecimal32UncheckedFuncAbstract(valuePosition, targetType, value);
-                case ColumnType.DECIMAL64:
-                    return new UnscaledWidenDecimal64UncheckedFuncAbstract(valuePosition, targetType, value);
-                case ColumnType.DECIMAL128:
-                    return new UnscaledWidenDecimal128UncheckedFuncAbstract(valuePosition, targetType, value);
-                default:
-                    return new UnscaledWidenDecimal256UncheckedFuncAbstract(valuePosition, targetType, value);
-            }
+            return switch (ColumnType.tagOf(fromType)) {
+                case ColumnType.DECIMAL8 ->
+                        new UnscaledWidenDecimal8UncheckedFuncAbstract(valuePosition, targetType, value);
+                case ColumnType.DECIMAL16 ->
+                        new UnscaledWidenDecimal16UncheckedFuncAbstract(valuePosition, targetType, value);
+                case ColumnType.DECIMAL32 ->
+                        new UnscaledWidenDecimal32UncheckedFuncAbstract(valuePosition, targetType, value);
+                case ColumnType.DECIMAL64 ->
+                        new UnscaledWidenDecimal64UncheckedFuncAbstract(valuePosition, targetType, value);
+                case ColumnType.DECIMAL128 ->
+                        new UnscaledWidenDecimal128UncheckedFuncAbstract(valuePosition, targetType, value);
+                default -> new UnscaledWidenDecimal256UncheckedFuncAbstract(valuePosition, targetType, value);
+            };
         }
 
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.DECIMAL8:
-                return new UnscaledNarrowDecimal8FuncAbstract(valuePosition, targetType, value);
-            case ColumnType.DECIMAL16:
-                return new UnscaledNarrowDecimal16FuncAbstract(valuePosition, targetType, value);
-            case ColumnType.DECIMAL32:
-                return new UnscaledNarrowDecimal32FuncAbstract(valuePosition, targetType, value);
-            case ColumnType.DECIMAL64:
-                return new UnscaledNarrowDecimal64FuncAbstract(valuePosition, targetType, value);
-            case ColumnType.DECIMAL128:
-                return new UnscaledNarrowDecimal128FuncAbstract(valuePosition, targetType, value);
-            default:
-                return new UnscaledNarrowDecimal256FuncAbstract(valuePosition, targetType, value);
-        }
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new UnscaledNarrowDecimal8FuncAbstract(valuePosition, targetType, value);
+            case ColumnType.DECIMAL16 -> new UnscaledNarrowDecimal16FuncAbstract(valuePosition, targetType, value);
+            case ColumnType.DECIMAL32 -> new UnscaledNarrowDecimal32FuncAbstract(valuePosition, targetType, value);
+            case ColumnType.DECIMAL64 -> new UnscaledNarrowDecimal64FuncAbstract(valuePosition, targetType, value);
+            case ColumnType.DECIMAL128 -> new UnscaledNarrowDecimal128FuncAbstract(valuePosition, targetType, value);
+            default -> new UnscaledNarrowDecimal256FuncAbstract(valuePosition, targetType, value);
+        };
     }
 
     private static class ScaledDecimal128FuncAbstract extends ScaledDecimalFunctionAbstract {

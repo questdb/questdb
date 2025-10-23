@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.ToDecimal64Function;
-import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
 
 public abstract class AbstractCastToDecimal64Function extends ToDecimal64Function implements UnaryFunction {
     protected final Function arg;
@@ -49,6 +48,11 @@ public abstract class AbstractCastToDecimal64Function extends ToDecimal64Functio
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return false;
     }
 
     public boolean store(Record rec) {

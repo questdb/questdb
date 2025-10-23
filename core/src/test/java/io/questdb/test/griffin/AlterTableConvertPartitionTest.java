@@ -488,7 +488,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                                     "3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
                             timestampType.getTypeName()
                     ),
-                    "select index, name, readOnly, isParquet, parquetFileSize > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
+                    "select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                     null,
                     false,
                     true

@@ -65,20 +65,14 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         if (scale >= 0 && precision > 0 && precision >= scale && precision <= Decimals.MAX_PRECISION) {
             final int decimalType = ColumnType.getDecimalType(precision, scale);
-            switch (ColumnType.tagOf(decimalType)) {
-                case ColumnType.DECIMAL8:
-                    return new Decimal8Func(decimalType, nullRate);
-                case ColumnType.DECIMAL16:
-                    return new Decimal16Func(decimalType, nullRate);
-                case ColumnType.DECIMAL32:
-                    return new Decimal32Func(decimalType, nullRate);
-                case ColumnType.DECIMAL64:
-                    return new Decimal64Func(decimalType, nullRate);
-                case ColumnType.DECIMAL128:
-                    return new Decimal128Func(decimalType, nullRate);
-                default:
-                    return new Decimal256Func(decimalType, nullRate);
-            }
+            return switch (ColumnType.tagOf(decimalType)) {
+                case ColumnType.DECIMAL8 -> new Decimal8Func(decimalType, nullRate);
+                case ColumnType.DECIMAL16 -> new Decimal16Func(decimalType, nullRate);
+                case ColumnType.DECIMAL32 -> new Decimal32Func(decimalType, nullRate);
+                case ColumnType.DECIMAL64 -> new Decimal64Func(decimalType, nullRate);
+                case ColumnType.DECIMAL128 -> new Decimal128Func(decimalType, nullRate);
+                default -> new Decimal256Func(decimalType, nullRate);
+            };
         }
 
         throw SqlException.$(position, "invalid precision and scale: ").put(precision).put(", ").put(scale);

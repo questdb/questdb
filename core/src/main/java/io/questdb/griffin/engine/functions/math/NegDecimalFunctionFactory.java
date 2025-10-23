@@ -31,13 +31,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal16Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal32Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -64,20 +64,14 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         final int type = arg.getType();
 
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL8:
-                return new Decimal8Func(arg);
-            case ColumnType.DECIMAL16:
-                return new Decimal16Func(arg);
-            case ColumnType.DECIMAL32:
-                return new Decimal32Func(arg);
-            case ColumnType.DECIMAL64:
-                return new Decimal64Func(arg);
-            case ColumnType.DECIMAL128:
-                return new Decimal128Func(arg);
-            default:
-                return new Decimal256Func(arg);
-        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> new Decimal8Func(arg);
+            case ColumnType.DECIMAL16 -> new Decimal16Func(arg);
+            case ColumnType.DECIMAL32 -> new Decimal32Func(arg);
+            case ColumnType.DECIMAL64 -> new Decimal64Func(arg);
+            case ColumnType.DECIMAL128 -> new Decimal128Func(arg);
+            default -> new Decimal256Func(arg);
+        };
     }
 
     private static class Decimal128Func extends Decimal128Function implements UnaryFunction {
@@ -112,6 +106,11 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal128Lo(Record rec) {
             return low;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -201,6 +200,11 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         @Override
         public long getDecimal256LL(Record rec) {
             return ll;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override

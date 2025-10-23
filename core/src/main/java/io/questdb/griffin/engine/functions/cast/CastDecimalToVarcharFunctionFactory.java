@@ -107,16 +107,18 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
     public static class Func128 extends AbstractCastToVarcharFunction {
         private final Decimal128 decimal128 = new Decimal128();
+        private final int fromType;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func128(Function arg) {
             super(arg);
+            this.fromType = arg.getType();
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            DecimalUtil.load(decimal128, arg, rec);
+            DecimalUtil.load(decimal128, arg, rec, fromType);
             if (!decimal128.isNull()) {
                 sinkA.clear();
                 sinkA.put(decimal128);
@@ -127,7 +129,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            DecimalUtil.load(decimal128, arg, rec);
+            DecimalUtil.load(decimal128, arg, rec, fromType);
             if (!decimal128.isNull()) {
                 sinkB.clear();
                 sinkB.put(decimal128);
@@ -139,16 +141,18 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
     public static class Func64 extends AbstractCastToVarcharFunction {
         private final Decimal64 decimal64 = new Decimal64();
+        private final int fromType;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func64(Function arg) {
             super(arg);
+            this.fromType = arg.getType();
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            DecimalUtil.load(decimal64, arg, rec);
+            DecimalUtil.load(decimal64, arg, rec, fromType);
             if (!decimal64.isNull()) {
                 sinkA.clear();
                 sinkA.put(decimal64);
@@ -159,7 +163,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            DecimalUtil.load(decimal64, arg, rec);
+            DecimalUtil.load(decimal64, arg, rec, fromType);
             if (!decimal64.isNull()) {
                 sinkB.clear();
                 sinkB.put(decimal64);

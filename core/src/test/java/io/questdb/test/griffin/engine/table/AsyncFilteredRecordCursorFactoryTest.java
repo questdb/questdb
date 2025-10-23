@@ -166,7 +166,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -512,7 +512,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -546,7 +546,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -590,8 +590,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimit() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new AtomicBooleanCircuitBreaker());
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new AtomicBooleanCircuitBreaker(engine));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -626,8 +626,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         execute(
@@ -672,7 +672,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                     "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
                                     "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
                     );
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -729,7 +729,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -889,7 +889,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 sqlExecutionContext,
                                 false
                         );
-                    }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                    }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
             );
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
