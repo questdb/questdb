@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -247,6 +248,15 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     @Override
     public long getDecimal256HH(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
     }
 
     @Override

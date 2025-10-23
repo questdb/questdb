@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -87,6 +89,24 @@ public class JoinRecord implements Record {
             return master.getChar(col);
         }
         return slave.getChar(col - split);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (col < split) {
+            master.getDecimal128(col, sink);
+        } else {
+            slave.getDecimal128(col - split, sink);
+        }
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (col < split) {
+            master.getDecimal256(col, sink);
+        } else {
+            slave.getDecimal256(col - split, sink);
+        }
     }
 
     @Override

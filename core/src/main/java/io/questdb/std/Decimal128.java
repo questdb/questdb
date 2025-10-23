@@ -588,6 +588,23 @@ public class Decimal128 implements Sinkable, Decimal {
         uncheckedAdd(this, bHi, bLo);
     }
 
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof Decimal128 other)) return false;
+        return this.high == other.high &&
+                this.low == other.low &&
+                this.scale == other.scale;
+    }
+
+    /**
+     * Set this Decimal128 to the null value. Zeroes out the scale.
+     */
+    public void ofNull() {
+        high = Decimals.DECIMAL128_HI_NULL;
+        low = Decimals.DECIMAL128_LO_NULL;
+        scale = 0;
+    }
+
     /**
      * Compare this to another Decimal128 (handles different scales).
      *
@@ -729,13 +746,13 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
-    @Override
-    public boolean equals(Object obj) {
-        if (!(obj instanceof Decimal128)) return false;
-        Decimal128 other = (Decimal128) obj;
-        return this.high == other.high &&
-                this.low == other.low &&
-                this.scale == other.scale;
+    /**
+     * Set this Decimal128 to the null value. Leaves the scale unchanged, could be
+     * useful for reusable containers.
+     */
+    public void ofNullRaw() {
+        high = Decimals.DECIMAL128_HI_NULL;
+        low = Decimals.DECIMAL128_LO_NULL;
     }
 
     /**
@@ -922,13 +939,23 @@ public class Decimal128 implements Sinkable, Decimal {
         this.high = value < 0 ? -1L : 0L;
     }
 
-/**
-     * Set this Decimal128 to the null value.
+    /**
+     * Sets this Decimal128 to the specified 128-bit value. Keeps the existing scale.
+     *
+     * @param high  the high 64 bits (bits 64-127)
+     * @param low   the low 64 bits (bits 0-63)
      */
-    public void ofNull() {
-        high = Decimals.DECIMAL128_HI_NULL;
-        low = Decimals.DECIMAL128_LO_NULL;
-        scale = 0;
+    public void ofRaw(long high, long low) {
+        this.high = high;
+        this.low = low;
+    }
+
+    public void uncheckedAdd(Decimal128 other) {
+        uncheckedAdd(other.high, other.low);
+    }
+
+    public void uncheckedAdd(long otherHigh, long otherLow) {
+        uncheckedAdd(this, this.high, this.low, otherHigh, otherLow);
     }
 
     /**
@@ -1171,6 +1198,30 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
+    /**
+     * Generic function to make a 128-bit addition assuming both values have the same scale.
+     *
+     * @param result Decimal128 that will store the result of the operation
+     * @param aH     High 64-bit part of the first operand.
+     * @param aL     Low 64-bit part of the first operand.
+     * @param bH     High 64-bit part of the second operand.
+     * @param bL     Low 64-bit part of the second operand.
+     */
+    private static void uncheckedAdd(Decimal128 result, long aH, long aL, long bH, long bL) {
+        // Perform 128-bit addition
+        long sumLow = aL + bL;
+
+        // Check for carry
+        long carry = hasCarry(aL, sumLow) ? 1 : 0;
+
+        result.low = sumLow;
+        try {
+            result.high = Math.addExact(aH, Math.addExact(bH, carry));
+        } catch (ArithmeticException e) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds 128-bit capacity");
+        }
+    }
+
     private static int compareToPowerOfTen(long aHi, long aLo, int pow, int multiplier) {
         final int offset = (multiplier - 1) * 2;
         long bHi = POWERS_TEN_TABLE[pow][offset];
@@ -1211,7 +1262,7 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     private boolean hasOverflowed() {
-        return compareTo0(MAX_VALUE.high, MAX_VALUE.low) > 0
+        return compare(high, low, MAX_VALUE.high, MAX_VALUE.low) > 0
                 || compareTo0(MIN_VALUE.high, MIN_VALUE.low) < 0;
     }
 

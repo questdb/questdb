@@ -27,6 +27,8 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -126,6 +128,10 @@ public interface Record {
         return getLong(col);
     }
 
+    default void getDecimal128(int col, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Gets the high 64-bit part of a 128-bit decimal value by index.
      *
@@ -153,6 +159,10 @@ public interface Record {
      * @return 16-bit signed integer
      */
     default short getDecimal16(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getDecimal256(int col, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

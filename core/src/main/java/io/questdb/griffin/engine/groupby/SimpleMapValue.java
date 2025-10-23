@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
@@ -137,6 +139,25 @@ public class SimpleMapValue implements MapValue {
     @Override
     public long getDecimal256HH(int col) {
         return values[4 * col];
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        sink.ofRaw(
+                getDecimal128Hi(col),
+                getDecimal128Lo(col)
+        );
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        sink.of(
+                getDecimal256HH(col),
+                getDecimal256HL(col),
+                getDecimal256LH(col),
+                getDecimal256LL(col),
+                0
+        );
     }
 
     @Override

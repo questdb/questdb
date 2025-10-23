@@ -203,6 +203,8 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
+//                value.getDecimal128(rec, decimal);
+//                decimal.setScale(ColumnType.getDecimalScale(fromType));
                 long hi = value.getDecimal128Hi(rec);
                 long lo = value.getDecimal128Lo(rec);
                 if (Decimal128.isNull(hi, lo)) {
@@ -473,6 +475,8 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
+//                value.getDecimal128(rec, decimal);
+//                decimal.setScale(ColumnType.getDecimalScale(fromType));
                 long hi = value.getDecimal128Hi(rec);
                 long lo = value.getDecimal128Lo(rec);
                 if (Decimal128.isNull(hi, lo)) {

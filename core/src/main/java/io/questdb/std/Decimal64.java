@@ -111,6 +111,14 @@ public class Decimal64 implements Sinkable, Decimal {
         sink.add(b);
     }
 
+    public static long addSameScaleNoMaxValueCheck(long value1, long value2) {
+        try {
+            return Math.addExact(value1, value2);
+        } catch (Exception e) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
+        }
+    }
+
     /**
      * Divide two Decimal64 numbers and store the result in sink (a / b -> sink)
      */
@@ -879,14 +887,11 @@ public class Decimal64 implements Sinkable, Decimal {
                 if (cmp > 0) {
                     return true;
                 } else if (cmp == 0) {
-                    switch (roundingMode) {
-                        case HALF_UP:
-                            return true;
-                        case HALF_EVEN:
-                            return oddQuotient;
-                        default:
-                            return false;
-                    }
+                    return switch (roundingMode) {
+                        case HALF_UP -> true;
+                        case HALF_EVEN -> oddQuotient;
+                        default -> false;
+                    };
                 } else {
                     return false;
                 }

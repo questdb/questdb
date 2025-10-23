@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import org.jetbrains.annotations.TestOnly;
 
 public class DecimalColumn extends DecimalFunction {
@@ -47,6 +49,11 @@ public class DecimalColumn extends DecimalFunction {
     }
 
     @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        rec.getDecimal128(columnIndex, sink);
+    }
+
+    @Override
     public long getDecimal128Hi(Record rec) {
         return rec.getDecimal128Hi(columnIndex);
     }
@@ -59,6 +66,11 @@ public class DecimalColumn extends DecimalFunction {
     @Override
     public short getDecimal16(Record rec) {
         return rec.getDecimal16(columnIndex);
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        rec.getDecimal256(columnIndex, sink);
     }
 
     @Override

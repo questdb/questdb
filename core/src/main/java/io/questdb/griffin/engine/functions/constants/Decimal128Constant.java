@@ -41,6 +41,11 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     }
 
     @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRaw(hi, lo);
+    }
+
+    @Override
     public long getDecimal128Hi(Record rec) {
         return hi;
     }

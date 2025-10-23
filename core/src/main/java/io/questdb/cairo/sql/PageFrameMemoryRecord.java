@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -219,6 +220,19 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
         }
         return NullMemoryCMR.INSTANCE.getChar(0);
+    }
+
+    @Override
+    public void getDecimal128(int columnIndex, Decimal128 sink) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            sink.ofRaw(
+                    Unsafe.getUnsafe().getLong(address + (rowIndex << 4)),
+                    Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES)
+            );
+            return;
+        }
+        sink.ofNullRaw();
     }
 
     @Override

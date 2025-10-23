@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
@@ -36,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -58,9 +55,9 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractCastToDoubleFunction {
-        private final StringSink sink = new StringSink();
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromType;
+        private final StringSink sink = new StringSink();
 
         public Func(Function value) {
             super(value);
@@ -75,6 +72,11 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(decimal256);
             return Numbers.parseDouble(sink);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 }

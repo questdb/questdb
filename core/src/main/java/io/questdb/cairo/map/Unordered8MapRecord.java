@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -55,7 +56,6 @@ final class Unordered8MapRecord implements MapRecord {
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
-
 
     Unordered8MapRecord(
             long valueSize,
@@ -192,6 +192,15 @@ final class Unordered8MapRecord implements MapRecord {
     @Override
     public char getChar(int columnIndex) {
         return Unsafe.getUnsafe().getChar(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
     }
 
     @Override

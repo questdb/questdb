@@ -32,6 +32,8 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -123,12 +125,20 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
+    default void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
     // must be called before getDecimal128Lo method!!!
     long getDecimal128Hi(Record rec);
 
     long getDecimal128Lo(Record rec);
 
     short getDecimal16(Record rec);
+
+    default void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
+    }
 
     // must be called before any other getDecimal256XY method!!!
     long getDecimal256HH(Record rec);

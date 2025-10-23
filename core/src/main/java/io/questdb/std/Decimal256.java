@@ -764,6 +764,15 @@ public class Decimal256 implements Sinkable, Decimal {
     }
 
     /**
+     * In-place addition.
+     *
+     * @throws NumericException if overflow occurs
+     */
+    public void addSameScaleNoMaxValueCheck(long otherHH, long otherHL, long otherLH, long otherLL) {
+        addSameScaleNoMaxValueCheck(this, hh, hl, lh, ll, otherHH, otherHL, otherLH, otherLL);
+    }
+
+    /**
      * Compare the decimal precision with the other.
      *
      * @return true if the decimal precision is smaller or equal to the given precision, false otherwise.
@@ -950,42 +959,38 @@ public class Decimal256 implements Sinkable, Decimal {
      * @return true if the value fits within the storage size, false otherwise
      */
     public boolean fitsInStorageSizePow2(int size) {
-        switch (size) {
-            case 0: // 1 byte - max magnitude 127
-                return (hh == 0 || hh == -1) &&
-                        (hl == 0 || hl == -1) &&
-                        (lh == 0 || lh == -1) &&
-                        Math.abs(ll) <= 0x7FL;
-
-            case 1: // 2 bytes - max magnitude 32,767
-                return (hh == 0 || hh == -1) &&
-                        (hl == 0 || hl == -1) &&
-                        (lh == 0 || lh == -1) &&
-                        Math.abs(ll) <= 0x7FFFL;
-
-            case 2: // 4 bytes - max magnitude 2,147,483,647
-                return (hh == 0 || hh == -1) &&
-                        (hl == 0 || hl == -1) &&
-                        (lh == 0 || lh == -1) &&
-                        Math.abs(ll) <= 0x7FFFFFFFL;
-
-            case 3: // 8 bytes - max magnitude 9,223,372,036,854,775,807
-                return (hh == 0 || hh == -1) &&
-                        (hl == 0 || hl == -1) &&
-                        (lh == 0 || lh == -1);
+        return switch (size) {
+            case 0 -> // 1 byte - max magnitude 127
+                    (hh == 0 || hh == -1) &&
+                            (hl == 0 || hl == -1) &&
+                            (lh == 0 || lh == -1) &&
+                            Math.abs(ll) <= 0x7FL;
+            case 1 -> // 2 bytes - max magnitude 32,767
+                    (hh == 0 || hh == -1) &&
+                            (hl == 0 || hl == -1) &&
+                            (lh == 0 || lh == -1) &&
+                            Math.abs(ll) <= 0x7FFFL;
+            case 2 -> // 4 bytes - max magnitude 2,147,483,647
+                    (hh == 0 || hh == -1) &&
+                            (hl == 0 || hl == -1) &&
+                            (lh == 0 || lh == -1) &&
+                            Math.abs(ll) <= 0x7FFFFFFFL;
+            case 3 -> // 8 bytes - max magnitude 9,223,372,036,854,775,807
+                    (hh == 0 || hh == -1) &&
+                            (hl == 0 || hl == -1) &&
+                            (lh == 0 || lh == -1);
             // ll can use full long range
 
-            case 4: // 128-bit storage
-                return (hh == 0 || hh == -1) &&
-                        (hl == 0 || hl == -1);
+            case 4 -> // 128-bit storage
+                    (hh == 0 || hh == -1) &&
+                            (hl == 0 || hl == -1);
             // lh and ll can use full range
 
-            case 5: // 256-bit storage
-                return true; // Always fits in 256-bit
+            case 5 -> // 256-bit storage
+                    true; // Always fits in 256-bit
 
-            default:
-                return false;
-        }
+            default -> false;
+        };
     }
 
     /**
@@ -1067,6 +1072,7 @@ public class Decimal256 implements Sinkable, Decimal {
      * that we actually use the minimum value for each possible size as a sentinel value for NULL.
      */
     public int getStorageSize() {
+        // 256-bit
         if (hh >= 0) {
             if (hh == 0 && hl == 0 && lh >= 0) {
                 if (lh == 0 && ll >= 0) {
@@ -1083,7 +1089,6 @@ public class Decimal256 implements Sinkable, Decimal {
                 }
                 return 4; // 128-bit
             }
-            return 5; // 256-bit
         } else {
             if (hh == -1 && hl == -1 && lh < 0 && (lh != Long.MIN_VALUE || ll != 0)) {
                 if (lh == -1 && ll < 0 && ll != Long.MIN_VALUE) {
@@ -1101,8 +1106,8 @@ public class Decimal256 implements Sinkable, Decimal {
                 }
                 return 4; // 128-bit
             }
-            return 5; // 256-bit
         }
+        return 5; // 256-bit
     }
 
     /**
@@ -1339,6 +1344,21 @@ public class Decimal256 implements Sinkable, Decimal {
         lh = Decimals.DECIMAL256_LH_NULL;
         ll = Decimals.DECIMAL256_LL_NULL;
         scale = 0;
+    }
+
+    /**
+     * Sets this Decimal256 to the specified 256-bit value, but does not change the scale.
+     *
+     * @param hh the highest 64 bits (bits 192-255)
+     * @param hl the high 64 bits (bits 128-191)
+     * @param lh the mid 64 bits (bits 64-127)
+     * @param ll the low 64 bits (bits 0-63)
+     */
+    public void ofRaw(long hh, long hl, long lh, long ll) {
+        this.hh = hh;
+        this.hl = hl;
+        this.lh = lh;
+        this.ll = ll;
     }
 
     /**
@@ -1644,6 +1664,35 @@ public class Decimal256 implements Sinkable, Decimal {
         if (result.hasOverflowed()) {
             throw NumericException.instance().put("Overflow in addition: result exceeds maximum precision");
         }
+    }
+
+    private static void addSameScaleNoMaxValueCheck(Decimal256 result,
+                                                    long aHH, long aHL, long aLH, long aLL,
+                                                    long bHH, long bHL, long bLH, long bLL) {
+
+        // Perform 256-bit addition
+        long r = aLL + bLL;
+        long carry = hasCarry(aLL, r) ? 1L : 0L;
+        result.ll = r;
+
+        long t = aLH + carry;
+        carry = hasCarry(aLH, t) ? 1L : 0L;
+        r = t + bLH;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.lh = r;
+
+        t = aHL + carry;
+        carry = hasCarry(aHL, t) ? 1L : 0L;
+        r = t + bHL;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.hl = r;
+
+        t = aHH + carry;
+        r = t + bHH;
+        if (((bHH ^ r) & (t ^ r)) < 0L || ((aHH ^ t) & (carry ^ t)) < 0L) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
+        }
+        result.hh = r;
     }
 
     private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {

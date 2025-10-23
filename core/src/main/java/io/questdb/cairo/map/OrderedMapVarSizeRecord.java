@@ -34,6 +34,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
@@ -384,6 +385,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     @Override
     public long getDecimal128Lo(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + 8L);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        final long addr = addressOfColumn(col);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
+        );
     }
 
     @Override

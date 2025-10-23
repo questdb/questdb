@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.str.CharSink;
 
 public final class Decimals {
@@ -41,6 +42,14 @@ public final class Decimals {
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
             5, 5, // precision 39-76 -> 32 bytes
+    };
+    private static final int[] TYPE_PRECISION = {
+            2, // DECIMAL 8
+            4, // DECIMAL 16
+            9, // DECIMAL 32
+            18, // DECIMAL 64
+            38, // DECIMAL 128
+            MAX_PRECISION // DECIMAL 256
     };
     public static long DECIMAL128_HI_NULL = Long.MIN_VALUE;
     public static long DECIMAL128_LO_NULL = 0L;
@@ -94,6 +103,10 @@ public final class Decimals {
         } else {
             Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
         }
+    }
+
+    public static int getDecimalTagPrecision(int tag) {
+        return TYPE_PRECISION[tag - ColumnType.DECIMAL8];
     }
 
     /**

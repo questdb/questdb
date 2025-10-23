@@ -38,7 +38,6 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
@@ -112,20 +111,14 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
     }
 
     private static Function newUnscaledInstance(int valuePosition, int fromType, Function value) {
-        switch (ColumnType.tagOf(fromType)) {
-            case ColumnType.DECIMAL8:
-                return new UnscaledDecimal8Func(value);
-            case ColumnType.DECIMAL16:
-                return new UnscaledDecimal16Func(value, valuePosition);
-            case ColumnType.DECIMAL32:
-                return new UnscaledDecimal32Func(value, valuePosition);
-            case ColumnType.DECIMAL64:
-                return new UnscaledDecimal64Func(value, valuePosition);
-            case ColumnType.DECIMAL128:
-                return new UnscaledDecimal128Func(value, valuePosition);
-            default:
-                return new UnscaledDecimal256Func(value, valuePosition);
-        }
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new UnscaledDecimal8Func(value);
+            case ColumnType.DECIMAL16 -> new UnscaledDecimal16Func(value, valuePosition);
+            case ColumnType.DECIMAL32 -> new UnscaledDecimal32Func(value, valuePosition);
+            case ColumnType.DECIMAL64 -> new UnscaledDecimal64Func(value, valuePosition);
+            case ColumnType.DECIMAL128 -> new UnscaledDecimal128Func(value, valuePosition);
+            default -> new UnscaledDecimal256Func(value, valuePosition);
+        };
     }
 
     private static boolean overflowsByte(Decimal256 decimal) {

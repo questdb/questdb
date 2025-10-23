@@ -25,6 +25,7 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
@@ -124,6 +125,14 @@ public interface MapValue extends Record {
                 Decimals.DECIMAL256_HL_NULL,
                 Decimals.DECIMAL256_LH_NULL,
                 Decimals.DECIMAL256_LL_NULL
+        );
+    }
+
+    default void putDecimal128(int index, Decimal128 decimal) {
+        putDecimal128(
+                index,
+                decimal.getHigh(),
+                decimal.getLow()
         );
     }
 
