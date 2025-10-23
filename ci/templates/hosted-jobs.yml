@@ -93,7 +93,7 @@ jobs:
           os: macOS
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-griffin:
@@ -196,7 +196,7 @@ jobs:
           os: Windows
           jdk: "1.17"
           testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
 
