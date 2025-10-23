@@ -1215,7 +1215,7 @@ public class SqlOptimiser implements Mutable {
             CharSequence token = orderByAdvice.getQuick(i).token;
             int loc = Chars.indexOfLastUnquoted(token, '.');
             if (loc > -1) {
-                if (prefix.length() == 0) {
+                if (prefix.isEmpty()) {
                     prefix = token.subSequence(0, loc);
                 } else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
                     return false;

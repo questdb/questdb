@@ -42,7 +42,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ASOF_INDEX_SEARCH_HINT, "tableA tableB");
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tablea", "tableb"));
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEA", "TABLEB"));
 
@@ -64,7 +64,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ASOF_LINEAR_SEARCH_HINT, "tableA tableB");
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tablea", "tableb"));
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEA", "TABLEB"));
 
@@ -86,7 +86,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ENABLE_PRE_TOUCH_HINT, "myTable");
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "myTable"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "mytable"));
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "MYTABLE"));
 
