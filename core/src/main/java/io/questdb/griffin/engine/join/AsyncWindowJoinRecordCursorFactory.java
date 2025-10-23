@@ -110,7 +110,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.groupByFunctions = groupByFunctions;
-        this.cursor = new AsyncWindowJoinRecordCursor(configuration, groupByFunctions, slaveFactory.getMetadata());
+        final int columnSplit = masterFactory.getMetadata().getColumnCount();
+        this.cursor = new AsyncWindowJoinRecordCursor(
+                configuration,
+                groupByFunctions,
+                slaveFactory.getMetadata(),
+                columnSplit,
+                filter != null
+        );
         final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
                 asm,
                 configuration,
@@ -120,7 +127,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 joinWindowLo,
                 joinWindowHi,
                 masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getColumnCount(),
+                columnSplit,
                 valueTypes,
                 groupByFunctions,
                 perWorkerGroupByFunctions,
@@ -207,14 +214,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        // aggregates are stored in rows, without row ids
+        // The list will hold only group by value slots.
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
+        task.setFilteredRowCount(frameRowCount);
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long joinWindowLo = atom.getJoinWindowLo();
         final long joinWindowHi = atom.getJoinWindowHi();
-        final long valueSizeInBytes = atom.getValueSizeInBytes();
+        final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
@@ -258,10 +266,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
                         if (joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
-                                functionUpdater.updateNew(value, record, baseRowId + r);
+                                functionUpdater.updateNew(value, joinRecord, baseRowId + r);
                                 value.setNew(false);
                             } else {
-                                functionUpdater.updateExisting(value, record, baseRowId + r);
+                                functionUpdater.updateExisting(value, joinRecord, baseRowId + r);
                             }
                         }
                         if (slaveRowId < slaveTimeFrameHelper.getTimeFrameRowHi() - 1) {
@@ -297,14 +305,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
-        // aggregates are stored in rows, right after row ids
+        // The list will row ids followed by group by value slots.
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long joinWindowLo = atom.getJoinWindowLo();
         final long joinWindowHi = atom.getJoinWindowHi();
-        final long valueSizeInBytes = atom.getValueSizeInBytes();
+        final long valueSizeInBytes = atom.getValueSizeBytes();
         assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
         final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
 
@@ -327,6 +335,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
+            final long filteredRowCount = rows.size();
+            task.setFilteredRowCount(filteredRowCount);
 
             record.setRowIndex(0);
             final long baseRowId = record.getRowId();
@@ -334,7 +344,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             // TODO: we could clear once per query, at the cursor.of(), since we're moving forward in time
             slaveTimeFrameHelper.clear();
 
-            for (long p = 0, n = rows.size(); p < n; p++) {
+            for (long p = 0; p < filteredRowCount; p++) {
                 long r = rows.get(p);
                 record.setRowIndex(r);
 
@@ -358,10 +368,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         }
                         if (joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
-                                functionUpdater.updateNew(value, record, baseRowId + r);
+                                functionUpdater.updateNew(value, joinRecord, baseRowId + r);
                                 value.setNew(false);
                             } else {
-                                functionUpdater.updateExisting(value, record, baseRowId + r);
+                                functionUpdater.updateExisting(value, joinRecord, baseRowId + r);
                             }
                         }
                         if (slaveRowId < slaveTimeFrameHelper.getTimeFrameRowHi() - 1) {

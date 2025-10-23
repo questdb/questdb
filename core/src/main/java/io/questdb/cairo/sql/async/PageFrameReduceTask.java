@@ -49,10 +49,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errorMessagePosition;
+    private long filteredRowCount;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
@@ -78,6 +79,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
+        filteredRowCount = 0;
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
@@ -86,10 +88,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
-        Misc.free(frameMemoryPool);
+        filteredRowCount = 0;
         Misc.free(filteredRows);
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
+        Misc.free(frameMemoryPool);
     }
 
     /**
@@ -112,6 +115,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public CharSequence getErrorMsg() {
         return errorMsg;
+    }
+
+    public long getFilteredRowCount() {
+        return filteredRowCount;
     }
 
     public DirectLongList getFilteredRows() {
@@ -148,7 +155,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public boolean hasError() {
-        return errorMsg.length() > 0;
+        return !errorMsg.isEmpty();
     }
 
     public boolean isCancelled() {
@@ -238,6 +245,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             isOutOfMemory = ce.isOutOfMemory();
             errorMessagePosition = ce.getPosition();
         }
+    }
+
+    public void setFilteredRowCount(long filteredRowCount) {
+        this.filteredRowCount = filteredRowCount;
     }
 
     public void setTaskType(byte taskType) {

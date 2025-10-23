@@ -371,12 +371,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final PageFrameSequence<AsyncGroupByAtom> frameSequence = task.getFrameSequence(AsyncGroupByAtom.class);
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
+        final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();

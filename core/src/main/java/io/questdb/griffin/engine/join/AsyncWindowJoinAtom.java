@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
@@ -77,18 +76,18 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
+    private final DirectMapValue ownerGroupByValue;
     private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
-    private final DirectMapValue ownerMapValue;
     private final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
+    private final ObjList<DirectMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
-    private final ObjList<DirectMapValue> perWorkerMapValues;
     private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final long valueSizeInBytes;
 
@@ -100,7 +99,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> perWorkerJoinFilters,
             long joinWindowLo,
             long joinWindowHi,
-            int split,
+            int columnSplit,
             int masterTimestampIndex,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -136,10 +135,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(slaveFactory.newTimeFrameCursor()));
             }
 
-            this.ownerJoinRecord = new JoinRecord(split);
+            this.ownerJoinRecord = new JoinRecord(columnSplit);
             this.perWorkerJoinRecords = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerJoinRecords.extendAndSet(i, new JoinRecord(split));
+                perWorkerJoinRecords.extendAndSet(i, new JoinRecord(columnSplit));
             }
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -162,11 +161,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             }
 
             final int valueCount = valueTypes.getColumnCount();
-            ownerMapValue = new DirectMapValue(valueCount);
-            valueSizeInBytes = ownerMapValue.getSizeInBytes();
-            perWorkerMapValues = new ObjList<>(slotCount);
+            ownerGroupByValue = new DirectMapValue(valueCount);
+            valueSizeInBytes = ownerGroupByValue.getSizeInBytes();
+            perWorkerGroupByValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMapValues.extendAndSet(i, new DirectMapValue(valueCount));
+                perWorkerGroupByValues.extendAndSet(i, new DirectMapValue(valueCount));
             }
         } catch (Throwable th) {
             close();
@@ -258,9 +257,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public DirectMapValue getMapValue(int slotId) {
         if (slotId == -1) {
-            return ownerMapValue;
+            return ownerGroupByValue;
         }
-        return perWorkerMapValues.getQuick(slotId);
+        return perWorkerGroupByValues.getQuick(slotId);
     }
 
     public int getMasterTimestampIndex() {
@@ -268,8 +267,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     // Thread-unsafe, should be used by query owner thread only.
-    public DirectMapValue getOwnerMapValue() {
-        return ownerMapValue;
+    public DirectMapValue getOwnerGroupByValue() {
+        return ownerGroupByValue;
     }
 
     public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
@@ -279,7 +278,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
     }
 
-    public long getValueSizeInBytes() {
+    public long getValueSizeBytes() {
         return valueSizeInBytes;
     }
 
@@ -370,23 +369,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             // Owner thread is free to use the original functions anytime.
             return -1;
         }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
-    /**
-     * Attempts to acquire a slot for the given worker thread.
-     * On success, a {@link #release(int)} call must follow.
-     *
-     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
-     */
-    public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use its own private filter, function updaters, allocator,
-            // etc. anytime.
-            return -1;
-        }
-        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
-        // to use shared resources.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 

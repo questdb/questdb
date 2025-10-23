@@ -36,11 +36,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.log.Log;
@@ -56,8 +59,12 @@ import org.jetbrains.annotations.NotNull;
 // TODO(puzpuzpuz): implement calculateSize using the filter only
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
+    private final int columnSplit;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final PageFrameMemoryRecord record;
+    private final VirtualRecord groupByRecord;
+    private final boolean isMasterFiltered;
+    private final PageFrameMemoryRecord masterRecord;
+    private final JoinRecord record;
     private final RecordMetadata slaveMetadata;
     private final LongList slavePartitionTimestamps = new LongList();
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
@@ -65,25 +72,35 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList slaveTimeFrameRowCounts = new LongList();
     private boolean allFramesActive;
     private long cursor = -1;
+    private DirectLongList filteredRows;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;
     private long frameRowIndex;
+    private long frameValueOffset;
+    private DirectMapValue groupByValue;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private PageFrameSequence<AsyncWindowJoinAtom> masterFrameSequence;
-    private DirectLongList rows;
     private TablePageFrameCursor slaveFrameCursor;
+    private long valueSizeBytes;
 
     public AsyncWindowJoinRecordCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull RecordMetadata slaveMetadata
+            @NotNull RecordMetadata slaveMetadata,
+            int columnSplit,
+            boolean isMasterFiltered
     ) {
         this.groupByFunctions = groupByFunctions;
         this.slaveMetadata = slaveMetadata;
+        this.columnSplit = columnSplit;
+        this.isMasterFiltered = isMasterFiltered;
         slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
-        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        groupByRecord = new VirtualRecord(groupByFunctions);
+        record = new JoinRecord(columnSplit);
+        record.of(masterRecord, groupByRecord);
     }
 
     @Override
@@ -119,59 +136,33 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        // TODO(puzpuzpuz): we need to pick up frameSequence or groupby functions depending on the index
-        return masterFrameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
+        if (columnIndex < columnSplit) {
+            return masterFrameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
+        }
+        return (SymbolTable) groupByFunctions.getQuick(columnIndex - columnSplit);
     }
 
     @Override
     public boolean hasNext() {
         buildSlaveTimeFrameCacheConditionally();
 
-        // Check for the first hasNext call.
-        if (frameIndex == -1) {
-            fetchNextFrame();
+        if (isMasterFiltered) {
+            return hasNextFiltered();
         }
-
-        // We have rows in the current frame we still need to dispatch
-        if (frameRowIndex < frameRowCount) {
-            record.setRowIndex(rows.get(frameRowIndex++));
-            return true;
-        }
-
-        // Release the previous queue item.
-        // There is no identity check here because this check
-        // had been done when 'cursor' was assigned.
-        collectCursor(false);
-
-        // Do we have more frames?
-        if (frameIndex < frameLimit) {
-            fetchNextFrame();
-            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
-                record.setRowIndex(rows.get(frameRowIndex++));
-                return true;
-            }
-        }
-
-        if (!allFramesActive) {
-            throwTimeoutException();
-        }
-        return false;
+        return hasNextNoFilter();
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        // TODO(puzpuzpuz): we need to pick up frameSequence or groupby functions depending on the index
-        return masterFrameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+        if (columnIndex < columnSplit) {
+            return masterFrameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+        }
+        return ((SymbolFunction) groupByFunctions.getQuick(columnIndex - columnSplit)).newSymbolTable();
     }
 
     @Override
     public long preComputedStateSize() {
         return 0;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-
     }
 
     @Override
@@ -189,6 +180,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
         frameRowIndex = -1;
+        frameValueOffset = -1;
         frameRowCount = -1;
         allFramesActive = true;
     }
@@ -236,7 +228,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             cursor = -1;
             // We also need to clear the record as it's initialized with the task's
             // page frame memory that is now closed.
-            record.clear();
+            masterRecord.clear();
         }
     }
 
@@ -270,12 +262,14 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     }
 
                     allFramesActive &= masterFrameSequence.isActive();
-                    rows = task.getFilteredRows();
-                    frameRowCount = rows.size();
+                    filteredRows = task.getFilteredRows();
+                    // if there is no master filter, this value is set to frame size
+                    frameRowCount = task.getFilteredRowCount();
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
+                    frameValueOffset = frameRowCount * Long.BYTES;
                     if (frameRowCount > 0 && masterFrameSequence.isActive()) {
-                        record.init(task.getFrameMemory());
+                        masterRecord.init(task.getFrameMemory());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
@@ -303,6 +297,78 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    private boolean hasNextFiltered() {
+        // Check for the first hasNext call.
+        if (frameIndex == -1) {
+            fetchNextFrame();
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            masterRecord.setRowIndex(filteredRows.get(frameRowIndex++));
+            groupByValue.of(filteredRows.getAddress() + frameValueOffset);
+            frameValueOffset += valueSizeBytes;
+            return true;
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        // Do we have more frames?
+        if (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                masterRecord.setRowIndex(filteredRows.get(frameRowIndex++));
+                groupByValue.of(filteredRows.getAddress() + frameValueOffset);
+                frameValueOffset += valueSizeBytes;
+                return true;
+            }
+        }
+
+        if (!allFramesActive) {
+            throwTimeoutException();
+        }
+        return false;
+    }
+
+    private boolean hasNextNoFilter() {
+        // Check for the first hasNext call.
+        if (frameIndex == -1) {
+            fetchNextFrame();
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            masterRecord.setRowIndex(frameRowIndex++);
+            groupByValue.of(filteredRows.getAddress() + frameValueOffset);
+            frameValueOffset += valueSizeBytes;
+            return true;
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        // Do we have more frames?
+        if (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                masterRecord.setRowIndex(frameRowIndex++);
+                groupByValue.of(filteredRows.getAddress() + frameValueOffset);
+                frameValueOffset += valueSizeBytes;
+                return true;
+            }
+        }
+
+        if (!allFramesActive) {
+            throwTimeoutException();
+        }
+        return false;
+    }
+
     private void throwTimeoutException() {
         if (masterFrameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
             throw CairoException.queryCancelled();
@@ -324,8 +390,14 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         frameIndex = -1;
         frameLimit = -1;
         frameRowIndex = -1;
+        frameValueOffset = -1;
         frameRowCount = -1;
-        record.of(masterFrameSequence.getSymbolTableSource());
+        masterRecord.of(masterFrameSequence.getSymbolTableSource());
+        final AsyncWindowJoinAtom atom = masterFrameSequence.getAtom();
+        valueSizeBytes = atom.getValueSizeBytes();
+        groupByValue = atom.getOwnerGroupByValue();
+        groupByRecord.of(groupByValue);
+        // TODO(puzpuzpuz): we need join symbol table source here
         Function.init(groupByFunctions, masterFrameSequence.getSymbolTableSource(), executionContext, null);
     }
 }
