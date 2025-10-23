@@ -10,6 +10,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/griffin/**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-o3:
@@ -46,7 +47,7 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/cairo/fuzz/**"
+          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-fuzz:
@@ -131,7 +132,6 @@ jobs:
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/o3/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-mv:
