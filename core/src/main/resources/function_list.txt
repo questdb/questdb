@@ -574,6 +574,7 @@ io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.SumLong256GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumBoolGroupByFunctionFactory
 
 # 'last' group by function
 io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunctionFactory
