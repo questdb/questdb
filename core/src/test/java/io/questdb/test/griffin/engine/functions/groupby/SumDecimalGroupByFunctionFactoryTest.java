@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -82,6 +85,50 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testSumDecimal128AllOverflown() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 2);
+            engine.execute(
+                    "create table x as (" +
+                            "select " +
+                            "cast('99999999999999999999999999999999999999' as decimal(38,0)) v " +
+                            "from long_sequence(100_000)" +
+                            ")"
+            );
+            TestUtils.execute(
+                    pool,
+                    (CustomisableRunnable) (engine, compiler, sqlExecutionContext) -> TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select sum(v) sum from x",
+                            sink,
+                            """
+                                    sum
+                                    999999999999999999999999999999999999990000000
+                                    """
+                    ),
+                    configuration,
+                    LOG
+            );
+        });
+//        assertQuery(
+//                """
+//                        sum
+//                        999999999999999999999999999999999999990000000
+//                        """,
+//                "select sum(v) sum from x",
+//                "create table x as (" +
+//                        "select " +
+//                        "cast('99999999999999999999999999999999999999' as decimal(38,0)) v " +
+//                        "from long_sequence(10_000_000)" +
+//                        ")",
+//                null,
+//                false,
+//                true
+//        );
     }
 
     @Test
