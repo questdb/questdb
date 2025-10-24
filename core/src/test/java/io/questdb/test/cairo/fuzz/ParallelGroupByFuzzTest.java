@@ -831,11 +831,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByArray(
                 "SELECT first(darr), last(darr), key FROM tab order by key",
                 "first\tlast\tkey\n" +
-                        "[0.21583224269349388,0.15786635599554755,null]\t[0.19548881160742315,0.2934080080690735]\tk0\n" +
-                        "[0.2845577791213847,0.20447441837877756]\t[null,0.6170231709845024]\tk1\n" +
-                        "[0.19202208853547864,0.5093827001617407,0.11427984775756228]\t[null,null,null]\tk2\n" +
-                        "[null,0.7261136209823622]\t[null,null,null]\tk3\n" +
-                        "[0.3100545983862456,0.1985581797355932,0.33608255572515877]\t[null,null]\tk4\n"
+                        "[[null,null,null],[null,0.7883065830055033,null]]\t[[0.8522582952903538,0.6179906752583175],[null,null],[null,null]]\tk0\n" +
+                        "[[null,0.20447441837877756],[null,null]]\t[[null,null],[null,0.9164539569237466],[null,null]]\tk1\n" +
+                        "[[0.3491070363730514,0.7611029514995744],[0.4217768841969397,null],[0.7261136209823622,0.4224356661645131]]\t[[0.47845408543565093,null,0.19197284817490712],[null,null,0.21496623812935467]]\tk2\n" +
+                        "[[null,0.33608255572515877],[0.690540444367637,null]]\t[[0.7339245159010606,null],[0.39425956944686746,0.55078841544971]]\tk3\n" +
+                        "[[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\tk4\n"
         );
     }
 
@@ -3463,7 +3463,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(32) ageolong," +
                                         " rnd_str(5,16,3) astring," +
                                         " rnd_uuid4() auuid," +
-                                        " rnd_double_array(2, 2, 3) darr," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(10000)) timestamp(ts) partition by day",
                                 sqlExecutionContext
@@ -3570,7 +3569,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 compiler,
                                 "create table tab as (select" +
                                         " 'k' || ((50 + x) % 5) key," +
-                                        " rnd_double_array(1, 2, 3) darr," +
+                                        " rnd_double_array(2, 2, 3) darr," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
                                 sqlExecutionContext
