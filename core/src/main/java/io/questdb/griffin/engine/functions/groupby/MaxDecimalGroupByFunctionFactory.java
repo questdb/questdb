@@ -78,8 +78,8 @@ public class MaxDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean shouldStoreA(long aHigh, long aLow, long bHigh, long bLow) {
-            return Decimal128.compare(aHigh, aLow, bHigh, bLow) > 0;
+        protected boolean shouldStoreA(Decimal128 decimal128A, Decimal128 decimal128B) {
+            return decimal128A.compareTo(decimal128B) > 0;
         }
     }
 
@@ -112,8 +112,8 @@ public class MaxDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean shouldStoreA(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
-            return Decimal256.compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) > 0;
+        protected boolean shouldStoreA(Decimal256 decimal256A, Decimal256 decimal256B) {
+            return decimal256A.compareTo(decimal256B) > 0;
         }
     }
 

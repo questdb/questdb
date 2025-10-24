@@ -81,27 +81,12 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         rec.getDecimal256(valueIndex, decimal256A);
         if (!decimal256A.isNull() && decimal256A.hasOverflowed()) {
             throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
         }
-        return decimal256A.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

@@ -27,7 +27,6 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 
 public interface MapValue extends Record {
@@ -96,45 +95,17 @@ public interface MapValue extends Record {
 
     void putDate(int index, long value);
 
-    void putDecimal128(int index, long hi, long lo);
+    void putDecimal128(int index, Record record, int colIndex);
 
-    default void putDecimal128Null(int index) {
-        putDecimal128(
-                index,
-                Decimals.DECIMAL128_HI_NULL,
-                Decimals.DECIMAL128_LO_NULL
-        );
-    }
+    void putDecimal128(int index, Decimal128 decimal128);
 
-    void putDecimal256(int index, long hh, long hl, long lh, long ll);
+    void putDecimal128Null(int index);
 
-    default void putDecimal256(int index, Decimal256 decimal) {
-        putDecimal256(
-                index,
-                decimal.getHh(),
-                decimal.getHl(),
-                decimal.getLh(),
-                decimal.getLl()
-        );
-    }
+    void putDecimal256(int index, Record record, int colIndex);
 
-    default void putDecimal256Null(int index) {
-        putDecimal256(
-                index,
-                Decimals.DECIMAL256_HH_NULL,
-                Decimals.DECIMAL256_HL_NULL,
-                Decimals.DECIMAL256_LH_NULL,
-                Decimals.DECIMAL256_LL_NULL
-        );
-    }
+    void putDecimal256(int index, Decimal256 decimal256);
 
-    default void putDecimal128(int index, Decimal128 decimal) {
-        putDecimal128(
-                index,
-                decimal.getHigh(),
-                decimal.getLow()
-        );
-    }
+    void putDecimal256Null(int index);
 
     void putDouble(int index, double value);
 

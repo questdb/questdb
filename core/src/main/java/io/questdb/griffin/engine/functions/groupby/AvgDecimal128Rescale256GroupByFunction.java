@@ -104,18 +104,12 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         if (calc(rec)) {
-            decimal128A.ofRaw(0, decimal256A.getLl());
-            return (short) decimal256A.getLh();
+            sink.ofRaw((short) decimal256A.getLh(), decimal256A.getLl());
+        } else {
+            sink.ofRawNull();
         }
-        decimal128A.ofRawNull();
-        return Decimals.DECIMAL128_HI_NULL;
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return decimal128A.getLow();
     }
 
     @Override
@@ -127,26 +121,11 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         if (!calc(rec)) {
             decimal256A.ofRawNull();
         }
-        return decimal256A.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

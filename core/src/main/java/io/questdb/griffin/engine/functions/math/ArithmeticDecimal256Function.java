@@ -60,21 +60,22 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         if (!calc(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL128_HI_NULL;
+            sink.ofRaw(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+            return;
         }
-        isNull = false;
-        return decimal.getLh();
+        sink.ofRaw(decimal.getLh(), decimal.getLl());
     }
 
     @Override
-    public long getDecimal128Lo(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL128_LO_NULL;
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        if (!calc(rec)) {
+            sink.ofRaw(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                      Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+            return;
         }
-        return decimal.getLl();
+        sink.copyRaw(decimal);
     }
 
     @Override
@@ -83,40 +84,6 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
             return Decimals.DECIMAL16_NULL;
         }
         return (short) decimal.getLl();
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        if (!calc(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL256_HH_NULL;
-        }
-        isNull = false;
-        return decimal.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_HL_NULL;
-        }
-        return decimal.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LH_NULL;
-        }
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LL_NULL;
-        }
-        return decimal.getLl();
     }
 
     @Override
@@ -202,23 +169,29 @@ abstract class ArithmeticDecimal256Function extends DecimalFunction implements B
                     return false;
                 }
                 break;
-            case ColumnType.DECIMAL128:
-                rightLH = right.getDecimal128Hi(rec);
-                rightLL = right.getDecimal128Lo(rec);
+            case ColumnType.DECIMAL128: {
+                Decimal128 rightDec = new Decimal128();
+                right.getDecimal128(rec, rightDec);
+                if (rightDec.isNull()) {
+                    return false;
+                }
+                rightLH = rightDec.getHigh();
+                rightLL = rightDec.getLow();
                 rightHL = rightHH = rightLH < 0 ? -1 : 0;
-                if (Decimal128.isNull(rightLH, rightLL)) {
+                break;
+            }
+            default: {
+                Decimal256 rightDec = new Decimal256();
+                right.getDecimal256(rec, rightDec);
+                if (rightDec.isNull()) {
                     return false;
                 }
+                rightHH = rightDec.getHh();
+                rightHL = rightDec.getHl();
+                rightLH = rightDec.getLh();
+                rightLL = rightDec.getLl();
                 break;
-            default:
-                rightHH = right.getDecimal256HH(rec);
-                rightHL = right.getDecimal256HL(rec);
-                rightLH = right.getDecimal256LH(rec);
-                rightLL = right.getDecimal256LL(rec);
-                if (Decimal256.isNull(rightHH, rightHL, rightLH, rightLL)) {
-                    return false;
-                }
-                break;
+            }
         }
 
         try {

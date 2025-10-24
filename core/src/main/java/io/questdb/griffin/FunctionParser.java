@@ -135,6 +135,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -1481,9 +1483,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof Decimal128Constant) {
                     return function;
                 } else {
+                    Decimal128 d = new Decimal128();
+                    function.getDecimal128(null, d);
                     return new Decimal128Constant(
-                            function.getDecimal128Hi(null),
-                            function.getDecimal128Lo(null),
+                            d.getHigh(),
+                            d.getLow(),
                             type
                     );
                 }
@@ -1491,11 +1495,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof Decimal256Constant) {
                     return function;
                 } else {
+                    Decimal256 d = new Decimal256();
+                    function.getDecimal256(null, d);
                     return new Decimal256Constant(
-                            function.getDecimal256HH(null),
-                            function.getDecimal256HL(null),
-                            function.getDecimal256LH(null),
-                            function.getDecimal256LL(null),
+                            d.getHh(),
+                            d.getHl(),
+                            d.getLh(),
+                            d.getLl(),
                             type
                     );
                 }

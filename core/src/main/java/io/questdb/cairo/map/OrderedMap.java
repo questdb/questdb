@@ -37,6 +37,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
@@ -98,6 +100,8 @@ public class OrderedMap implements Map, Reopenable {
     private static final int MIN_KEY_CAPACITY = 16;
 
     private final OrderedMapCursor cursor;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final int heapMemoryTag;
     private final Key key;
     private final long keyOffset;
@@ -642,6 +646,16 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            return decimal128;
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            return decimal256;
+        }
+
+        @Override
         public long hash() {
             return Hash.hashMem64(startAddress, keySize);
         }
@@ -686,18 +700,18 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128(long hi, long lo) {
-            Unsafe.getUnsafe().putLong(appendAddress, hi);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
+        public void putDecimal128() {
+            Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
             appendAddress += 16L;
         }
 
         @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
-            Unsafe.getUnsafe().putLong(appendAddress, hh);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hl);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, lh);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, ll);
+        public void putDecimal256() {
+            Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, decimal256.getLl());
             appendAddress += 32L;
         }
 
@@ -923,6 +937,16 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            return decimal128;
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            return decimal256;
+        }
+
+        @Override
         public long hash() {
             return Hash.hashMem64(startAddress + keyOffset, len);
         }
@@ -981,20 +1005,20 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128(long hi, long lo) {
+        public void putDecimal128() {
             checkCapacity(16L);
-            Unsafe.getUnsafe().putLong(appendAddress, hi);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
+            Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
             appendAddress += 16L;
         }
 
         @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
+        public void putDecimal256() {
             checkCapacity(32L);
-            Unsafe.getUnsafe().putLong(appendAddress, hh);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hl);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, lh);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, ll);
+            Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, decimal256.getLl());
             appendAddress += 32L;
         }
 

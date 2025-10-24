@@ -29,6 +29,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -39,6 +41,8 @@ import io.questdb.std.str.Utf8Sequence;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     private static final int INITIAL_CAPACITY_BYTES = 8;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final long maxHeapSize;
     private final int memoryTag;
     private long appendAddress;
@@ -62,6 +66,16 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
             appendAddress = 0;
             heapStart = 0;
         }
+    }
+
+    @Override
+    public Decimal128 getDecimal128() {
+        return decimal128;
+    }
+
+    @Override
+    public Decimal256 getDecimal256() {
+        return decimal256;
     }
 
     public boolean memeq(SingleRecordSink other) {
@@ -128,6 +142,24 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     }
 
     @Override
+    public void putDecimal128() {
+        checkCapacity(16);
+        Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
+        appendAddress += 16;
+    }
+
+    @Override
+    public void putDecimal256() {
+        checkCapacity(32L);
+        Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, decimal256.getLl());
+        appendAddress += 32L;
+    }
+
+    @Override
     public void putDouble(double value) {
         checkCapacity(8);
         Unsafe.getUnsafe().putDouble(appendAddress, value);
@@ -168,24 +200,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         checkCapacity(8);
         Unsafe.getUnsafe().putLong(appendAddress, value);
         appendAddress += 8;
-    }
-
-    @Override
-    public void putDecimal128(long hi, long lo) {
-        checkCapacity(16);
-        Unsafe.getUnsafe().putLong(appendAddress, hi);
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, lo);
-        appendAddress += 16;
-    }
-
-    @Override
-    public void putDecimal256(long hh, long hl, long lh, long ll) {
-        checkCapacity(32L);
-        Unsafe.getUnsafe().putLong(appendAddress, hh);
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hl);
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, lh);
-        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, ll);
-        appendAddress += 32L;
     }
 
     @Override

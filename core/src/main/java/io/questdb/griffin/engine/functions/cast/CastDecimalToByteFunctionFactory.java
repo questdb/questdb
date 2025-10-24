@@ -38,7 +38,6 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
@@ -60,7 +59,14 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             return newUnscaledInstance(position, fromType, arg);
         }
 
-        return new ScaledDecimalFunction(arg, position);
+        return switch (ColumnType.tagOf(fromType)) {
+            case ColumnType.DECIMAL8 -> new ScaledDecimal8Function(arg, position);
+            case ColumnType.DECIMAL16 -> new ScaledDecimal16Function(arg, position);
+            case ColumnType.DECIMAL32 -> new ScaledDecimal32Function(arg, position);
+            case ColumnType.DECIMAL64 -> new ScaledDecimal64Function(arg, position);
+            case ColumnType.DECIMAL128 -> new ScaledDecimal128Function(arg, position);
+            default -> new ScaledDecimal256Function(arg, position);
+        };
     }
 
     @Override
@@ -88,7 +94,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         final int fromScale = ColumnType.getDecimalScale(fromType);
 
         Decimal256 decimal = sqlExecutionContext.getDecimal256();
-        DecimalUtil.load(decimal, value, null, fromType);
+        DecimalUtil.load(decimal, sqlExecutionContext.getDecimal128(), value, null, fromType);
 
         if (decimal.isNull()) {
             return ByteConstant.ZERO;
@@ -122,35 +128,92 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static boolean overflowsByte(Decimal256 decimal) {
-        return overflowsByte(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+    private static boolean overflowsByte(Decimal256 decimal256) {
+        return decimal256.getHh() >= 0 ? decimal256.compareTo(0, 0, 0, Byte.MAX_VALUE, 0) > 0 :
+                decimal256.compareTo(-1, -1, -1, Byte.MIN_VALUE, 0) < 0;
     }
 
-    private static boolean overflowsByte(long hh, long hl, long lh, long ll) {
-        return hh >= 0 ? Decimal256.compareTo(hh, hl, lh, ll, 0, 0, 0, 0, Byte.MAX_VALUE, 0) > 0 :
-                Decimal256.compareTo(hh, hl, lh, ll, 0, -1, -1, -1, Byte.MIN_VALUE, 0) < 0;
+    private static boolean overflowsByte(Decimal128 decimal128) {
+        return decimal128.getHigh() >= 0 ? decimal128.compareTo(0, Byte.MAX_VALUE, 0) > 0 :
+                decimal128.compareTo(-1, Byte.MIN_VALUE, 0) < 0;
     }
 
-    private static boolean overflowsByte(long high, long low) {
-        return high >= 0 ? Decimal128.compareTo(high, low, 0, 0, Byte.MAX_VALUE, 0) > 0 :
-                Decimal128.compareTo(high, low, 0, -1, Byte.MIN_VALUE, 0) < 0;
-    }
-
-    private static class ScaledDecimalFunction extends AbstractCastToByteFunction {
+    private static class ScaledDecimal128Function extends AbstractCastToByteFunction {
+        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int fromScale;
-        private final int fromType;
         private final int position;
 
-        public ScaledDecimalFunction(Function arg, int position) {
+        public ScaledDecimal128Function(Function arg, int position) {
             super(arg);
-            this.fromType = arg.getType();
             this.position = position;
-            this.fromScale = ColumnType.getDecimalScale(fromType);
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
         }
 
         public byte getByte(Record rec) {
-            DecimalUtil.load(decimal256, arg, rec, fromType);
+            arg.getDecimal128(rec, decimal128);
+            if (decimal128.isNull()) {
+                return 0;
+            }
+            decimal256.of(decimal128, fromScale);
+            decimal256.round(0, RoundingMode.DOWN);
+            if (overflowsByte(decimal256)) {
+                decimal256.of(decimal128, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class ScaledDecimal16Function extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
+        private final int position;
+
+        public ScaledDecimal16Function(Function arg, int position) {
+            super(arg);
+            this.position = position;
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
+        }
+
+        public byte getByte(Record rec) {
+            short decimal16 = arg.getDecimal16(rec);
+            if (decimal16 == Decimals.DECIMAL16_NULL) {
+                return 0;
+            }
+            decimal256.ofLong(decimal16, fromScale);
+            decimal256.round(0, RoundingMode.DOWN);
+            if (overflowsByte(decimal256)) {
+                decimal256.ofLong(decimal16, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class ScaledDecimal256Function extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
+        private final int position;
+
+        public ScaledDecimal256Function(Function arg, int position) {
+            super(arg);
+            this.position = position;
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
+        }
+
+        public byte getByte(Record rec) {
+            arg.getDecimal256(rec, decimal256);
             if (decimal256.isNull()) {
                 return 0;
             }
@@ -161,7 +224,100 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsByte(decimal256)) {
                 decimal256.of(hh, hl, lh, ll, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.BYTE).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class ScaledDecimal32Function extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
+        private final int position;
+
+        public ScaledDecimal32Function(Function arg, int position) {
+            super(arg);
+            this.position = position;
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
+        }
+
+        public byte getByte(Record rec) {
+            int decimal32 = arg.getDecimal32(rec);
+            if (decimal32 == Decimals.DECIMAL32_NULL) {
+                return 0;
+            }
+            decimal256.ofLong(decimal32, fromScale);
+            decimal256.round(0, RoundingMode.DOWN);
+            if (overflowsByte(decimal256)) {
+                decimal256.ofLong(decimal32, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class ScaledDecimal64Function extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
+        private final int position;
+
+        public ScaledDecimal64Function(Function arg, int position) {
+            super(arg);
+            this.position = position;
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
+        }
+
+        public byte getByte(Record rec) {
+            long decimal64 = arg.getDecimal64(rec);
+            if (decimal64 == Decimals.DECIMAL64_NULL) {
+                return 0;
+            }
+            decimal256.ofLong(decimal64, fromScale);
+            decimal256.round(0, RoundingMode.DOWN);
+            if (overflowsByte(decimal256)) {
+                decimal256.ofLong(decimal64, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+            }
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+    }
+
+    private static class ScaledDecimal8Function extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
+        private final int fromScale;
+        private final int position;
+
+        public ScaledDecimal8Function(Function arg, int position) {
+            super(arg);
+            this.position = position;
+            this.fromScale = ColumnType.getDecimalScale(arg.getType());
+        }
+
+        public byte getByte(Record rec) {
+            byte decimal8 = arg.getDecimal8(rec);
+            if (decimal8 == Decimals.DECIMAL8_NULL) {
+                return 0;
+            }
+            decimal256.ofLong(decimal8, fromScale);
+            decimal256.round(0, RoundingMode.DOWN);
+            if (overflowsByte(decimal256)) {
+                decimal256.ofLong(decimal8, fromScale);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
             }
             return (byte) decimal256.getLl();
         }
@@ -173,6 +329,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledDecimal128Func extends AbstractCastToByteFunction {
+        private final Decimal128 decimal128 = new Decimal128();
         private final int position;
 
         public UnscaledDecimal128Func(Function value, int position) {
@@ -181,17 +338,19 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         }
 
         public byte getByte(Record rec) {
-            long hi = this.arg.getDecimal128Hi(rec);
-            long lo = this.arg.getDecimal128Lo(rec);
-            if (Decimal128.isNull(hi, lo)) {
+            this.arg.getDecimal128(rec, decimal128);
+            if (decimal128.isNull()) {
                 return 0;
             }
-            if (overflowsByte(hi, lo)) {
-                var decimal128 = Misc.getThreadLocalDecimal128();
-                decimal128.of(hi, lo, 0);
+            if (overflowsByte(decimal128)) {
                 throw ImplicitCastException.inconvertibleValue(decimal128, arg.getType(), ColumnType.BYTE).position(position);
             }
-            return (byte) lo;
+            return (byte) decimal128.getLow();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
@@ -216,6 +375,7 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledDecimal256Func extends AbstractCastToByteFunction {
+        private final Decimal256 decimal256 = new Decimal256();
         private final int position;
 
         public UnscaledDecimal256Func(Function value, int position) {
@@ -224,19 +384,19 @@ public class CastDecimalToByteFunctionFactory implements FunctionFactory {
         }
 
         public byte getByte(Record rec) {
-            long hh = this.arg.getDecimal256HH(rec);
-            long hl = this.arg.getDecimal256HL(rec);
-            long lh = this.arg.getDecimal256LH(rec);
-            long ll = this.arg.getDecimal256LL(rec);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            this.arg.getDecimal256(rec, decimal256);
+            if (decimal256.isNull()) {
                 return 0;
             }
-            if (overflowsByte(hh, hl, lh, ll)) {
-                Decimal256 decimal256 = Misc.getThreadLocalDecimal256();
-                decimal256.of(hh, hl, lh, ll, 0);
+            if (overflowsByte(decimal256)) {
                 throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.BYTE).position(position);
             }
-            return (byte) ll;
+            return (byte) decimal256.getLl();
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 

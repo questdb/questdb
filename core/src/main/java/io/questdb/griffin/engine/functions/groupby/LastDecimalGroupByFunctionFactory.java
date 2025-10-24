@@ -31,7 +31,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Decimals;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -68,6 +69,7 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     private static class Decimal128Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal128Func {
+        private final Decimal128 decimal128 = new Decimal128();
 
         public Decimal128Func(Function arg) {
             super(arg);
@@ -89,11 +91,8 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId > destRowId) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal128(
-                        valueIndex + 1,
-                        srcValue.getDecimal128Hi(valueIndex + 1),
-                        srcValue.getDecimal128Lo(valueIndex + 1)
-                );
+                srcValue.getDecimal128(valueIndex + 1, decimal128);
+                destValue.putDecimal128(valueIndex + 1, decimal128);
             }
         }
     }
@@ -126,6 +125,7 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     private static class Decimal256Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal256Func {
+        private final Decimal256 decimal256 = new Decimal256();
 
         public Decimal256Func(Function arg) {
             super(arg);
@@ -147,13 +147,8 @@ public class LastDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId > destRowId) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal256(
-                        valueIndex + 1,
-                        srcValue.getDecimal256HH(valueIndex + 1),
-                        srcValue.getDecimal256HL(valueIndex + 1),
-                        srcValue.getDecimal256LH(valueIndex + 1),
-                        srcValue.getDecimal256LL(valueIndex + 1)
-                );
+                srcValue.getDecimal256(valueIndex + 1, decimal256);
+                destValue.putDecimal256(valueIndex + 1, decimal256);
             }
         }
     }

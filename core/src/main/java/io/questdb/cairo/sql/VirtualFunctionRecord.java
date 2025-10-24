@@ -113,16 +113,6 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
-        return getFunction(col).getDecimal128Hi(internalJoinRecord);
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        return getFunction(col).getDecimal128Lo(internalJoinRecord);
-    }
-
-    @Override
     public short getDecimal16(int col) {
         return getFunction(col).getDecimal16(internalJoinRecord);
     }
@@ -130,26 +120,6 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
         getFunction(col).getDecimal256(internalJoinRecord, sink);
-    }
-
-    @Override
-    public long getDecimal256HH(int col) {
-        return getFunction(col).getDecimal256HH(internalJoinRecord);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        return getFunction(col).getDecimal256HL(internalJoinRecord);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        return getFunction(col).getDecimal256LH(internalJoinRecord);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        return getFunction(col).getDecimal256LL(internalJoinRecord);
     }
 
     @Override

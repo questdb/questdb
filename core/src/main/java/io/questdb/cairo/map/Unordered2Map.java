@@ -33,6 +33,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
@@ -353,6 +355,16 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long hash() {
             return 0; // no-op
         }
@@ -401,12 +413,12 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128(long hi, long lo) {
+        public void putDecimal128() {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
+        public void putDecimal256() {
             throw new UnsupportedOperationException();
         }
 

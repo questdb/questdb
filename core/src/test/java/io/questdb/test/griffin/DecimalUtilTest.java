@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
@@ -46,6 +45,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -59,19 +59,19 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DecimalUtilTest extends AbstractCairoTest {
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
+
     public static @NotNull Record getDecimalRecord(int fromType, Decimal256 value) {
         int fromTag = ColumnType.tagOf(fromType);
         return new Record() {
             @Override
-            public long getDecimal128Hi(int col) {
+            public void getDecimal128(int col, Decimal128 decimal128) {
                 Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
-            }
-
-            @Override
-            public long getDecimal128Lo(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
+                decimal128.ofRaw(
+                        value.getLh(),
+                        value.getLl()
+                );
             }
 
             @Override
@@ -81,27 +81,9 @@ public class DecimalUtilTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getDecimal256HH(int col) {
+            public void getDecimal256(int col, Decimal256 decimal256) {
                 Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHh();
-            }
-
-            @Override
-            public long getDecimal256HL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getHl();
-            }
-
-            @Override
-            public long getDecimal256LH(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLh();
-            }
-
-            @Override
-            public long getDecimal256LL(int col) {
-                Assert.assertEquals(ColumnType.DECIMAL256, fromTag);
-                return value.getLl();
+                decimal256.copyRaw(value);
             }
 
             @Override
@@ -242,8 +224,9 @@ public class DecimalUtilTest extends AbstractCairoTest {
     @Test
     public void testCreateNullDecimal128Constant() {
         try (Function func = DecimalUtil.createNullDecimalConstant(30, 15)) {
-            Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, func.getDecimal128Hi(null));
-            Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, func.getDecimal128Lo(null));
+            func.getDecimal128(null, decimal128);
+            Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, decimal128.getHigh());
+            Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, decimal128.getLow());
             Assert.assertTrue(func.isNullConstant());
             Assert.assertEquals(30, ColumnType.getDecimalPrecision(func.getType()));
             Assert.assertEquals(15, ColumnType.getDecimalScale(func.getType()));
@@ -263,10 +246,11 @@ public class DecimalUtilTest extends AbstractCairoTest {
     @Test
     public void testCreateNullDecimal256Constant() {
         try (Function func = DecimalUtil.createNullDecimalConstant(72, 25)) {
-            Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, func.getDecimal256HH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, func.getDecimal256HL(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, func.getDecimal256LH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, func.getDecimal256LL(null));
+            func.getDecimal256(null, decimal256);
+            Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, decimal256.getHh());
+            Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, decimal256.getHl());
+            Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, decimal256.getLh());
+            Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, decimal256.getLl());
             Assert.assertTrue(func.isNullConstant());
             Assert.assertEquals(72, ColumnType.getDecimalPrecision(func.getType()));
             Assert.assertEquals(25, ColumnType.getDecimalScale(func.getType()));
@@ -676,7 +660,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
         final int targetPrecision = 15;
         final int targetScale = 5;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, decimal128, targetPrecision, targetScale);
         Assert.assertNotSame(constantFunc, result);
         Assert.assertTrue(result.isConstant());
         Assert.assertEquals(precision + targetScale - scale, ColumnType.getDecimalPrecision(result.getType()));
@@ -687,7 +671,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
     public void testMaybeRescaleDecimalConstantNonConstantFunction() {
         final Decimal256 decimal = new Decimal256();
         final Function nonConstantFunc = new TestNonConstantDecimalFunction();
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(nonConstantFunc, decimal, 10, 5);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(nonConstantFunc, decimal, decimal128, 10, 5);
         Assert.assertSame(nonConstantFunc, result);
     }
 
@@ -699,7 +683,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
         final int targetPrecision = 20;
         final int targetScale = 5;
         final ConstantFunction constantFunc = new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(precision, scale));
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, decimal128, targetPrecision, targetScale);
         Assert.assertNotSame(constantFunc, result);
         Assert.assertTrue(result.isConstant());
         Assert.assertTrue(result.isNullConstant());
@@ -715,7 +699,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
         final int targetPrecision = 10;
         final int targetScale = 5;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, decimal128, targetPrecision, targetScale);
         Assert.assertSame(constantFunc, result);
     }
 
@@ -727,7 +711,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
         final int targetPrecision = 10;
         final int targetScale = 2;
         final ConstantFunction constantFunc = DecimalUtil.createDecimalConstant(0, 0, 0, 12345, precision, scale);
-        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, targetPrecision, targetScale);
+        final Function result = DecimalUtil.maybeRescaleDecimalConstant(constantFunc, decimal, decimal128, targetPrecision, targetScale);
         Assert.assertSame(constantFunc, result);
     }
 
@@ -1252,41 +1236,41 @@ public class DecimalUtilTest extends AbstractCairoTest {
         assertStoreRow(value, 72);
     }
 
-    private static void assertLoadDecimal128(CharSequence expected, Function value) {
+    private void assertLoadDecimal(Decimal256 value, int type) {
+        var rec = getDecimalRecord(type, value);
+        Decimal256 actual = new Decimal256();
+        DecimalUtil.load(actual, decimal128, rec, 0, type);
+        Assert.assertEquals(value, actual);
+    }
+
+    private void assertLoadDecimal128(CharSequence expected, Function value) {
         Decimal128 decimal128 = new Decimal128();
-        DecimalUtil.load(decimal128, value, null);
+        DecimalUtil.load(decimal128, decimal256, value, null);
         Assert.assertEquals(expected, decimal128.toString());
     }
 
-    private static void assertLoadDecimal256(CharSequence expected, Function value) {
+    private void assertLoadDecimal256(CharSequence expected, Function value) {
         Decimal256 decimal256 = new Decimal256();
-        DecimalUtil.load(decimal256, value, null);
+        DecimalUtil.load(decimal256, decimal128, value, null);
         Assert.assertEquals(expected, decimal256.toString());
     }
 
-    private static void assertLoadDecimal64(CharSequence expected, Function value) {
+    private void assertLoadDecimal64(CharSequence expected, Function value) {
         Decimal64 decimal64 = new Decimal64();
-        DecimalUtil.load(decimal64, value, null);
+        DecimalUtil.load(decimal64, decimal128, decimal256, value, null);
         Assert.assertEquals(expected, decimal64.toString());
     }
 
-    private static void assertLoadDecimals(CharSequence expected, Function value) {
+    private void assertLoadDecimals(CharSequence expected, Function value) {
         assertLoadDecimal64(expected, value);
         assertLoadDecimal128(expected, value);
         assertLoadDecimal256(expected, value);
     }
 
-    private void assertLoadDecimal(Decimal256 value, int type) {
-        var rec = getDecimalRecord(type, value);
-        Decimal256 actual = new Decimal256();
-        DecimalUtil.load(actual, rec, 0, type);
-        Assert.assertEquals(value, actual);
-    }
-
     private void assertLoadNullDecimal(Decimal256 value, int type) {
         var rec = getDecimalRecord(type, value);
         Decimal256 actual = new Decimal256();
-        DecimalUtil.load(actual, rec, 0, type);
+        DecimalUtil.load(actual, decimal128, rec, 0, type);
         Assert.assertTrue(actual.isNull());
     }
 
@@ -1298,11 +1282,8 @@ public class DecimalUtilTest extends AbstractCairoTest {
                 d.ofNull();
             }
             DecimalUtil.store(d, mem, ColumnType.getDecimalType(38, 0));
-            Decimal128 result = new Decimal128(
-                    mem.getDecimal128Hi(0),
-                    mem.getDecimal128Lo(0),
-                    0
-            );
+            Decimal128 result = new Decimal128();
+            mem.getDecimal128(0, result);
             Assert.assertEquals(decimal128, result);
         }
     }
@@ -1310,13 +1291,8 @@ public class DecimalUtilTest extends AbstractCairoTest {
     private void assertStoreDecimal256(Decimal256 decimal256) {
         try (MemoryCARWImpl mem = new MemoryCARWImpl(Decimal256.BYTES, 1, MemoryTag.NATIVE_DEFAULT)) {
             DecimalUtil.store(decimal256, mem, ColumnType.getDecimalType(76, 0));
-            Decimal256 result = new Decimal256(
-                    mem.getDecimal256HH(0),
-                    mem.getDecimal256HL(0),
-                    mem.getDecimal256LH(0),
-                    mem.getDecimal256LL(0),
-                    0
-            );
+            Decimal256 result = new Decimal256();
+            mem.getDecimal256(0, result);
             Assert.assertEquals(decimal256, result);
         }
     }

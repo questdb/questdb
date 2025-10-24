@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.ObjList;
 
 class DecimalCaseFunction extends DecimalFunction implements CaseFunction {
@@ -45,13 +47,8 @@ class DecimalCaseFunction extends DecimalFunction implements CaseFunction {
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return picker.pick(rec).getDecimal128Hi(rec);
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return picker.pick(rec).getDecimal128Lo(rec);
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        picker.pick(rec).getDecimal128(rec, sink);
     }
 
     @Override
@@ -60,23 +57,8 @@ class DecimalCaseFunction extends DecimalFunction implements CaseFunction {
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
-        return picker.pick(rec).getDecimal256HH(rec);
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return picker.pick(rec).getDecimal256HL(rec);
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return picker.pick(rec).getDecimal256LH(rec);
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return picker.pick(rec).getDecimal256LL(rec);
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        picker.pick(rec).getDecimal256(rec, sink);
     }
 
     @Override

@@ -93,16 +93,11 @@ class AvgDecimal64Rescale128GroupByFunction extends Decimal128Function implement
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         if (!calc(rec)) {
             decimal128A.ofRawNull();
         }
-        return decimal128A.getHigh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return decimal128A.getLow();
+        sink.ofRaw(decimal128A.getHigh(), decimal128A.getLow());
     }
 
     @Override

@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
 public class Decimal8Constant extends Decimal8Function implements ConstantFunction {
@@ -41,6 +43,16 @@ public class Decimal8Constant extends Decimal8Function implements ConstantFuncti
     @Override
     public byte getDecimal8(Record rec) {
         return value;
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

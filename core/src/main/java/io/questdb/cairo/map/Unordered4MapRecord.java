@@ -205,16 +205,6 @@ final class Unordered4MapRecord implements MapRecord {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 8L);
-    }
-
-    @Override
     public short getDecimal16(int col) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(col));
     }
@@ -222,26 +212,6 @@ final class Unordered4MapRecord implements MapRecord {
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
         sink.ofRawAddress(addressOfColumn(col));
-    }
-
-    @Override
-    public long getDecimal256HH(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col));
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 8L);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 16L);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(col) + 24L);
     }
 
     @Override

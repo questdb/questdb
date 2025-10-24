@@ -27,6 +27,8 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -100,13 +102,8 @@ public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
-        return getFunction(col).getDecimal128Hi(base);
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        return getFunction(col).getDecimal128Lo(base);
+    public void getDecimal128(int col, Decimal128 sink) {
+        getFunction(col).getDecimal128(base, sink);
     }
 
     @Override
@@ -115,23 +112,8 @@ public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
     }
 
     @Override
-    public long getDecimal256HH(int col) {
-        return getFunction(col).getDecimal256HH(base);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        return getFunction(col).getDecimal256HL(base);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        return getFunction(col).getDecimal256LH(base);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        return getFunction(col).getDecimal256LL(base);
+    public void getDecimal256(int col, Decimal256 sink) {
+        getFunction(col).getDecimal256(base, sink);
     }
 
     @Override

@@ -64,6 +64,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         left = DecimalUtil.maybeRescaleDecimalConstant(
                 left,
                 sqlExecutionContext.getDecimal256(),
+                sqlExecutionContext.getDecimal128(),
                 ColumnType.getDecimalPrecision(right.getType()),
                 ColumnType.getDecimalScale(right.getType())
         );
@@ -71,6 +72,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         right = DecimalUtil.maybeRescaleDecimalConstant(
                 right,
                 sqlExecutionContext.getDecimal256(),
+                sqlExecutionContext.getDecimal128(),
                 ColumnType.getDecimalPrecision(left.getType()),
                 ColumnType.getDecimalScale(left.getType())
         );

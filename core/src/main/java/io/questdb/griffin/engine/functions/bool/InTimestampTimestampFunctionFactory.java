@@ -39,6 +39,8 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -235,6 +237,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
@@ -274,6 +286,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 return negated;
             }
             return negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -322,6 +344,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(tsFunc);
             if (negated) {
@@ -358,6 +390,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 }
             }
             return negated;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -422,6 +464,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final long ts = left.getTimestamp(rec);
             return ts == Numbers.LONG_NULL ? negated : negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -518,6 +570,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 }
             }
             return negated;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -27,20 +27,16 @@ package io.questdb.griffin.engine.functions.decimal;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 
 public abstract class Decimal32Function extends DecimalFunction implements Function {
     protected Decimal32Function(int type) {
         super(type);
     }
 
-
     @Override
-    public final long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal128Lo(Record rec) {
+    public final void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -50,22 +46,7 @@ public abstract class Decimal32Function extends DecimalFunction implements Funct
     }
 
     @Override
-    public final long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LL(Record rec) {
+    public final void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

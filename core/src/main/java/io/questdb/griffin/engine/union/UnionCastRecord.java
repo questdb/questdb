@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -107,19 +109,12 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
+    public void getDecimal128(int col, Decimal128 decimal128) {
         if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal128Hi(recordA);
+            castFunctionsA.getQuick(col).getDecimal128(recordA, decimal128);
+        } else {
+            castFunctionsB.getQuick(col).getDecimal128(recordB, decimal128);
         }
-        return castFunctionsB.getQuick(col).getDecimal128Hi(recordB);
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal128Lo(recordA);
-        }
-        return castFunctionsB.getQuick(col).getDecimal128Lo(recordB);
     }
 
     @Override
@@ -131,35 +126,12 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public long getDecimal256HH(int col) {
+    public void getDecimal256(int col, Decimal256 decimal256) {
         if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal256HH(recordA);
+            castFunctionsA.getQuick(col).getDecimal256(recordA, decimal256);
+        } else {
+            castFunctionsB.getQuick(col).getDecimal256(recordB, decimal256);
         }
-        return castFunctionsB.getQuick(col).getDecimal256HH(recordB);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal256HL(recordA);
-        }
-        return castFunctionsB.getQuick(col).getDecimal256HL(recordB);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal256LH(recordA);
-        }
-        return castFunctionsB.getQuick(col).getDecimal256LH(recordB);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        if (useA) {
-            return castFunctionsA.getQuick(col).getDecimal256LL(recordA);
-        }
-        return castFunctionsB.getQuick(col).getDecimal256LL(recordB);
     }
 
     @Override

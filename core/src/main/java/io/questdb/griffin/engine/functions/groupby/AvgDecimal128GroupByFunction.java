@@ -59,7 +59,7 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal128(record, decimal128A);
         if (decimal128A.isNull()) {
-            mapValue.putDecimal128(valueIndex + 1, 0, 0);
+            mapValue.putDecimal128(valueIndex + 1, Decimal128.ZERO);
             mapValue.putLong(valueIndex + 2, 0);
         } else {
             mapValue.putDecimal128(valueIndex + 1, decimal128A);
@@ -103,14 +103,9 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         calc(rec);
-        return decimal128A.getHigh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return decimal128A.getLow();
+        sink.ofRaw(decimal128A.getHigh(), decimal128A.getLow());
     }
 
     @Override
@@ -217,7 +212,7 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDecimal128(valueIndex + 1, 0, 0);
+        mapValue.putDecimal128(valueIndex + 1, Decimal128.ZERO);
         mapValue.putLong(valueIndex + 2, 0);
         mapValue.putBool(valueIndex + 3, false);
     }

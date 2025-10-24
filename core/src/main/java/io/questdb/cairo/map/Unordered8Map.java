@@ -34,6 +34,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -531,6 +533,16 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long hash() {
             return Hash.hashLong64(Unsafe.getUnsafe().getLong(keyMemStart));
         }
@@ -579,6 +591,16 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
+        public void putDecimal128() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putDouble(double value) {
             Unsafe.getUnsafe().putDouble(appendAddress, value);
             appendAddress += 8L;
@@ -610,16 +632,6 @@ public class Unordered8Map implements Map, Reopenable {
         public void putLong(long value) {
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += 8L;
-        }
-
-        @Override
-        public void putDecimal128(long hi, long lo) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

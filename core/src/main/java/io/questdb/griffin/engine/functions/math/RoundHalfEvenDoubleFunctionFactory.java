@@ -38,6 +38,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 
 public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
 
@@ -96,6 +98,16 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Function getLeft() {
             return left;
         }
@@ -136,6 +148,16 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
         }
@@ -163,6 +185,16 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
             }
 
             return Numbers.roundHalfEvenPosScale(l, scale);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

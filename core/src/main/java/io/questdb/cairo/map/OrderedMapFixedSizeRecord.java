@@ -241,16 +241,6 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public long getDecimal128Hi(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
-    }
-
-    @Override
-    public long getDecimal128Lo(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + 8L);
-    }
-
-    @Override
     public short getDecimal16(int columnIndex) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
     }
@@ -258,26 +248,6 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
         sink.ofRawAddress(addressOfColumn(col));
-    }
-
-    @Override
-    public long getDecimal256HH(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
-    }
-
-    @Override
-    public long getDecimal256HL(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + 8L);
-    }
-
-    @Override
-    public long getDecimal256LH(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + 16L);
-    }
-
-    @Override
-    public long getDecimal256LL(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + 24L);
     }
 
     @Override

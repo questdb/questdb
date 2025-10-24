@@ -63,7 +63,6 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Decimal128Func extends Decimal128Function implements UnaryFunction {
-        final Decimal128 decimal128 = new Decimal128();
         final Function function;
 
         public Decimal128Func(int type, Function function) {
@@ -77,19 +76,11 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            long hi = function.getDecimal128Hi(rec);
-            long lo = function.getDecimal128Lo(rec);
-            decimal128.of(hi, lo, 0);
-            if (decimal128.isNegative()) {
-                decimal128.negate();
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            function.getDecimal128(rec, sink);
+            if (sink.isNegative()) {
+                sink.negate();
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return decimal128.getLow();
         }
 
         @Override
@@ -129,7 +120,6 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Decimal256Func extends Decimal256Function implements UnaryFunction {
-        final Decimal256 decimal256 = new Decimal256();
         final Function function;
 
         public Decimal256Func(int type, Function function) {
@@ -143,31 +133,11 @@ public class AbsDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            long hh = function.getDecimal256HH(rec);
-            long hl = function.getDecimal256HL(rec);
-            long lh = function.getDecimal256LH(rec);
-            long ll = function.getDecimal256LL(rec);
-            decimal256.of(hh, hl, lh, ll, 0);
-            if (decimal256.isNegative()) {
-                decimal256.negate();
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            function.getDecimal256(rec, sink);
+            if (sink.isNegative()) {
+                sink.negate();
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return decimal256.getLl();
         }
 
         @Override

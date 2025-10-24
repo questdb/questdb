@@ -31,8 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
@@ -79,9 +77,8 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long high = mapValue.getDecimal128Hi(valueIndex + 1);
-            final long low = mapValue.getDecimal128Lo(valueIndex + 1);
-            if (Decimal128.isNull(high, low)) {
+            mapValue.getDecimal128(valueIndex + 1, decimal128);
+            if (decimal128.isNull()) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -93,15 +90,15 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHigh = srcValue.getDecimal128Hi(valueIndex + 1);
-            final long srcLow = srcValue.getDecimal128Lo(valueIndex + 1);
-            if (!Decimal128.isNull(srcHigh, srcLow)) {
+            srcValue.getDecimal128(valueIndex + 1, decimal128);
+            if (!decimal128.isNull()) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
                 if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
-                    destValue.putDecimal128(valueIndex + 1, srcHigh, srcLow);
+
+                    destValue.putDecimal128(valueIndex + 1, decimal128);
                 }
             }
         }
@@ -148,11 +145,8 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long hh = mapValue.getDecimal256HH(valueIndex + 1);
-            final long hl = mapValue.getDecimal256HL(valueIndex + 1);
-            final long lh = mapValue.getDecimal256LH(valueIndex + 1);
-            final long ll = mapValue.getDecimal256LL(valueIndex + 1);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            mapValue.getDecimal256(valueIndex + 1, decimal256);
+            if (decimal256.isNull()) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -164,17 +158,14 @@ public class FirstNotNullDecimalGroupByFunctionFactory implements FunctionFactor
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHH = srcValue.getDecimal256HH(valueIndex + 1);
-            final long srcHL = srcValue.getDecimal256HL(valueIndex + 1);
-            final long srcLH = srcValue.getDecimal256LH(valueIndex + 1);
-            final long srcLL = srcValue.getDecimal256LL(valueIndex + 1);
-            if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)) {
+            srcValue.getDecimal256(valueIndex + 1, decimal256);
+            if (!decimal256.isNull()) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 // srcRowId is non-null at this point since we know that the value is non-null
                 if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
                     destValue.putLong(valueIndex, srcRowId);
-                    destValue.putDecimal256(valueIndex + 1, srcHH, srcHL, srcLH, srcLL);
+                    destValue.putDecimal256(valueIndex + 1, decimal256);
                 }
             }
         }

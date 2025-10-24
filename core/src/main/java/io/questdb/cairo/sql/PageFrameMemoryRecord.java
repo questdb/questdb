@@ -237,7 +237,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
-    @Override
     public long getDecimal128Hi(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -246,7 +245,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getDecimal128Hi(0);
     }
 
-    @Override
     public long getDecimal128Lo(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -275,7 +273,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
-    @Override
     public long getDecimal256HH(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -284,7 +281,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getDecimal256HH(0);
     }
 
-    @Override
     public long getDecimal256HL(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -293,7 +289,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getDecimal256HL(0);
     }
 
-    @Override
     public long getDecimal256LH(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
@@ -302,7 +297,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return NullMemoryCMR.INSTANCE.getDecimal256LH(0);
     }
 
-    @Override
     public long getDecimal256LL(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {

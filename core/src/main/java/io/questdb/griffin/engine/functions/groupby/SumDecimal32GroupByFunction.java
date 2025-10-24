@@ -97,25 +97,18 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        // by convention, this is called directly before "lo" call
+    public void getDecimal128(Record rec, Decimal128 sink) {
         overflow = rec.getBool(valueIndex + 2);
         if (overflow) {
-            return rec.getDecimal128Hi(valueIndex);
+            rec.getDecimal128(valueIndex, sink);
+        } else {
+            value = rec.getDecimal64(valueIndex + 1);
+            if (value == Decimals.DECIMAL64_NULL) {
+                sink.ofRawNull();
+            } else {
+                sink.ofRaw(value < 0 ? -1 : 0, value);
+            }
         }
-        value = rec.getDecimal64(valueIndex + 1);
-        if (value == Decimals.DECIMAL64_NULL) {
-            return Decimals.DECIMAL128_HI_NULL;
-        }
-        return value < 0 ? -1 : 0;
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        if (overflow) {
-            return rec.getDecimal128Lo(valueIndex);
-        }
-        return value == Decimals.DECIMAL64_NULL ? Decimals.DECIMAL128_LO_NULL : value;
     }
 
     @Override

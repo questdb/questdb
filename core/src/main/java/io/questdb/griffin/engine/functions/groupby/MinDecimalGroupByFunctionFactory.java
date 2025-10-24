@@ -93,8 +93,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean shouldStoreA(long aHigh, long aLow, long bHigh, long bLow) {
-            return Decimal128.compare(aHigh, aLow, bHigh, bLow) < 0;
+        protected boolean shouldStoreA(Decimal128 decimal128A, Decimal128 decimal128B) {
+            return decimal128A.compareTo(decimal128B) < 0;
         }
     }
 
@@ -127,8 +127,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean shouldStoreA(long aHH, long aHL, long aLH, long aLL, long bHH, long bHL, long bLH, long bLL) {
-            return Decimal256.compare(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) < 0;
+        protected boolean shouldStoreA(Decimal256 decimal256A, Decimal256 decimal256B) {
+            return decimal256A.compareTo(decimal256B) < 0;
         }
     }
 
@@ -184,6 +184,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     abstract static class MinMaxDecimal128Func extends MinMaxDecimalFunc {
+        private final Decimal128 decimal128A = new Decimal128();
+        private final Decimal128 decimal128B = new Decimal128();
 
         public MinMaxDecimal128Func(@NotNull Function arg) {
             super(arg);
@@ -191,32 +193,24 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final long high = arg.getDecimal128Hi(record);
-            final long low = arg.getDecimal128Lo(record);
-            mapValue.putDecimal128(valueIndex, high, low);
+            arg.getDecimal128(record, decimal128A);
+            mapValue.putDecimal128(valueIndex, decimal128A);
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long aHigh = arg.getDecimal128Hi(record);
-            final long aLow = arg.getDecimal128Lo(record);
-            if (!Decimal128.isNull(aHigh, aLow)) {
-                final long bHigh = mapValue.getDecimal128Hi(valueIndex);
-                final long bLow = mapValue.getDecimal128Lo(valueIndex);
-                if (shouldStoreA(aHigh, aLow, bHigh, bLow) || Decimal128.isNull(bHigh, bLow)) {
-                    mapValue.putDecimal128(valueIndex, aHigh, aLow);
+            arg.getDecimal128(record, decimal128A);
+            if (!decimal128A.isNull()) {
+                mapValue.getDecimal128(valueIndex, decimal128B);
+                if (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull()) {
+                    mapValue.putDecimal128(valueIndex, decimal128A);
                 }
             }
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            return rec.getDecimal128Hi(valueIndex);
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return rec.getDecimal128Lo(valueIndex);
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            rec.getDecimal128(valueIndex, sink);
         }
 
         @Override
@@ -227,21 +221,18 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHigh = srcValue.getDecimal128Hi(valueIndex);
-            final long srcLow = srcValue.getDecimal128Lo(valueIndex);
-
-            final long destHigh = destValue.getDecimal128Hi(valueIndex);
-            final long destLow = destValue.getDecimal128Lo(valueIndex);
-
-            if (!Decimal128.isNull(srcHigh, srcLow)
-                    && (shouldStoreA(srcHigh, srcLow, destHigh, destLow) || Decimal128.isNull(destHigh, destLow))) {
-                destValue.putDecimal128(valueIndex, srcHigh, srcLow);
+            srcValue.getDecimal128(valueIndex, decimal128A);
+            destValue.getDecimal128(valueIndex, decimal128B);
+            if (!decimal128A.isNull()
+                    && (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull())) {
+                destValue.putDecimal128(valueIndex, decimal128A);
             }
         }
 
         @Override
         public void setDecimal128(MapValue mapValue, long high, long low) {
-            mapValue.putDecimal128(valueIndex, high, low);
+            decimal128A.ofRaw(high, low);
+            mapValue.putDecimal128(valueIndex, decimal128A);
         }
 
         @Override
@@ -249,7 +240,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             mapValue.putDecimal128Null(valueIndex);
         }
 
-        protected abstract boolean shouldStoreA(long aHigh, long aLow, long bHigh, long bLow);
+        protected abstract boolean shouldStoreA(Decimal128 decimal128A, Decimal128 decimal128B);
     }
 
     abstract static class MinMaxDecimal16Func extends MinMaxDecimalFunc {
@@ -309,6 +300,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     abstract static class MinMaxDecimal256Func extends MinMaxDecimalFunc {
+        private final Decimal256 decimal256A = new Decimal256();
+        private final Decimal256 decimal256B = new Decimal256();
 
         public MinMaxDecimal256Func(@NotNull Function arg) {
             super(arg);
@@ -316,48 +309,24 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final long hh = arg.getDecimal256HH(record);
-            final long hl = arg.getDecimal256HL(record);
-            final long lh = arg.getDecimal256LH(record);
-            final long ll = arg.getDecimal256LL(record);
-            mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
+            arg.getDecimal256(record, decimal256A);
+            mapValue.putDecimal256(valueIndex, decimal256A);
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long aHH = arg.getDecimal256HH(record);
-            final long aHL = arg.getDecimal256HL(record);
-            final long aLH = arg.getDecimal256LH(record);
-            final long aLL = arg.getDecimal256LL(record);
-            if (!Decimal256.isNull(aHH, aHL, aLH, aLL)) {
-                final long bHH = mapValue.getDecimal256HH(valueIndex);
-                final long bHL = mapValue.getDecimal256HL(valueIndex);
-                final long bLH = mapValue.getDecimal256LH(valueIndex);
-                final long bLL = mapValue.getDecimal256LL(valueIndex);
-                if (shouldStoreA(aHH, aHL, aLH, aLL, bHH, bHL, bLH, bLL) || Decimal256.isNull(bHH, bHL, bLH, bLL)) {
-                    mapValue.putDecimal256(valueIndex, aHH, aHL, aLH, aLL);
+            arg.getDecimal256(record, decimal256A);
+            if (!decimal256A.isNull()) {
+                mapValue.getDecimal256(valueIndex, decimal256B);
+                if (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull()) {
+                    mapValue.putDecimal256(valueIndex, decimal256A);
                 }
             }
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            return rec.getDecimal256HH(valueIndex);
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return rec.getDecimal256HL(valueIndex);
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return rec.getDecimal256LH(valueIndex);
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return rec.getDecimal256LL(valueIndex);
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            rec.getDecimal256(valueIndex, sink);
         }
 
         @Override
@@ -367,26 +336,25 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHH = srcValue.getDecimal256HH(valueIndex);
-            final long srcHL = srcValue.getDecimal256HL(valueIndex);
-            final long srcLH = srcValue.getDecimal256LH(valueIndex);
-            final long srcLL = srcValue.getDecimal256LL(valueIndex);
+            srcValue.getDecimal256(valueIndex, decimal256A);
+            destValue.getDecimal256(valueIndex, decimal256B);
 
-            final long destHH = destValue.getDecimal256HH(valueIndex);
-            final long destHL = destValue.getDecimal256HL(valueIndex);
-            final long destLH = destValue.getDecimal256LH(valueIndex);
-            final long destLL = destValue.getDecimal256LL(valueIndex);
-
-            if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)
-                    && (shouldStoreA(srcHH, srcHL, srcLH, srcLL, destHH, destHL, destLH, destLL) || Decimal256.isNull(destHH, destHL, destLH, destLL))) {
-                destValue.putDecimal256(valueIndex, srcHH, srcHL, srcLH, srcLL);
+            if (!decimal256A.isNull()
+                    && (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull())) {
+                destValue.putDecimal256(valueIndex, decimal256A);
             }
         }
 
         @Override
         public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
-            mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
+            decimal256A.ofRaw(hh, hl, lh, ll);
+            mapValue.putDecimal256(valueIndex, decimal256A);
         }
 
         @Override
@@ -394,10 +362,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             mapValue.putDecimal256Null(valueIndex);
         }
 
-        protected abstract boolean shouldStoreA(
-                long aHH, long aHL, long aLH, long aLL,
-                long bHH, long bHL, long bLH, long bLL
-        );
+        protected abstract boolean shouldStoreA(Decimal256 decimal256A, Decimal256 decimal256B);
     }
 
     abstract static class MinMaxDecimal32Func extends MinMaxDecimalFunc {
@@ -583,12 +548,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -598,22 +558,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             throw new UnsupportedOperationException();
         }
 

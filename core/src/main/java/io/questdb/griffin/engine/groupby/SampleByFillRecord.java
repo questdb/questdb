@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -87,13 +89,8 @@ public class SampleByFillRecord implements Record {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
-        return getFunction(col).getDecimal128Hi(base);
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        return getFunction(col).getDecimal128Lo(base);
+    public void getDecimal128(int col, Decimal128 sink) {
+        getFunction(col).getDecimal128(base, sink);
     }
 
     @Override
@@ -102,23 +99,8 @@ public class SampleByFillRecord implements Record {
     }
 
     @Override
-    public long getDecimal256HH(int col) {
-        return getFunction(col).getDecimal256HH(base);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        return getFunction(col).getDecimal256HL(base);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        return getFunction(col).getDecimal256LH(base);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        return getFunction(col).getDecimal256LL(base);
+    public void getDecimal256(int col, Decimal256 sink) {
+        getFunction(col).getDecimal256(base, sink);
     }
 
     @Override

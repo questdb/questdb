@@ -34,6 +34,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -121,13 +123,8 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return wrappedFunction.getDecimal128Hi(rec);
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return wrappedFunction.getDecimal128Lo(rec);
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        wrappedFunction.getDecimal128(rec, sink);
     }
 
     @Override
@@ -136,23 +133,8 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
-        return wrappedFunction.getDecimal256HH(rec);
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return wrappedFunction.getDecimal256HL(rec);
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return wrappedFunction.getDecimal256LH(rec);
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return wrappedFunction.getDecimal256LL(rec);
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        wrappedFunction.getDecimal256(rec, sink);
     }
 
     @Override

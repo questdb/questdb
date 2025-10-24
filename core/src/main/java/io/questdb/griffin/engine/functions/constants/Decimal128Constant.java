@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 
 public class Decimal128Constant extends Decimal128Function implements ConstantFunction {
     private final long hi;
@@ -46,13 +47,8 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return hi;
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return lo;
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

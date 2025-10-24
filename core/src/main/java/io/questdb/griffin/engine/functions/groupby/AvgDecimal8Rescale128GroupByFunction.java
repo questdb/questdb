@@ -84,7 +84,7 @@ class AvgDecimal8Rescale128GroupByFunction extends Decimal128Function implements
 
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         long count = rec.getLong(valueIndex + 1);
         if (count > 0) {
             try {
@@ -97,12 +97,7 @@ class AvgDecimal8Rescale128GroupByFunction extends Decimal128Function implements
         } else {
             decimal128A.ofRawNull();
         }
-        return decimal128A.getHigh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return decimal128A.getLow();
+        sink.ofRaw(decimal128A.getHigh(), decimal128A.getLow());
     }
 
     @Override

@@ -159,18 +159,18 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class ScaledDecimal128FuncAbstract extends ScaledDecimalFunctionAbstract {
+        private final Decimal128 decimal128 = new Decimal128();
+
         public ScaledDecimal128FuncAbstract(int position, int targetType, Function value, int fromScale) {
             super(value, targetType, position, fromScale);
         }
 
         protected boolean load(Record rec) {
-            long hi = this.arg.getDecimal128Hi(rec);
-            long lo = this.arg.getDecimal128Lo(rec);
-            if (Decimal128.isNull(hi, lo)) {
+            arg.getDecimal128(rec, decimal128);
+            if (decimal128.isNull()) {
                 return false;
             }
-            long s = hi < 0 ? -1 : 0;
-            decimal.of(s, s, hi, lo, fromScale);
+            decimal.of(decimal128, fromScale);
             return true;
         }
     }
@@ -196,14 +196,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean load(Record rec) {
-            long hh = this.arg.getDecimal256HH(rec);
-            long hl = this.arg.getDecimal256HL(rec);
-            long lh = this.arg.getDecimal256LH(rec);
-            long ll = this.arg.getDecimal256LL(rec);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            this.arg.getDecimal256(rec, decimal);
+            if (decimal.isNull()) {
                 return false;
             }
-            decimal.of(hh, hl, lh, ll, fromScale);
+            decimal.setScale(fromScale);
             return true;
         }
     }
@@ -286,18 +283,18 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledNarrowDecimal128FuncAbstract extends AbstractCastToDecimalFunction {
+        private final Decimal128 decimal128 = new Decimal128();
+
         public UnscaledNarrowDecimal128FuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
         protected boolean cast(Record rec) {
-            long hi = this.arg.getDecimal128Hi(rec);
-            long lo = this.arg.getDecimal128Lo(rec);
-            if (Decimal128.isNull(hi, lo)) {
+            this.arg.getDecimal128(rec, decimal128);
+            if (decimal128.isNull()) {
                 return false;
             }
-            long s = hi < 0 ? -1 : 0;
-            decimal.of(s, s, hi, lo, 0);
+            decimal.of(decimal128, 0);
             if (!decimal.comparePrecision(precision)) {
                 throw ImplicitCastException.inconvertibleValue(decimal, arg.getType(), type).position(position);
             }
@@ -334,14 +331,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            long hh = this.arg.getDecimal256HH(rec);
-            long hl = this.arg.getDecimal256HL(rec);
-            long lh = this.arg.getDecimal256LH(rec);
-            long ll = this.arg.getDecimal256LL(rec);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            this.arg.getDecimal256(rec, decimal);
+            if (decimal.isNull()) {
                 return false;
             }
-            decimal.of(hh, hl, lh, ll, 0);
+            decimal.setScale(0);
             if (!decimal.comparePrecision(precision)) {
                 throw ImplicitCastException.inconvertibleValue(decimal, arg.getType(), type).position(position);
             }
@@ -419,18 +413,18 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledWidenDecimal128UncheckedFuncAbstract extends AbstractCastToDecimalFunction {
+        private final Decimal128 decimal128 = new Decimal128();
+
         public UnscaledWidenDecimal128UncheckedFuncAbstract(int position, int targetType, Function value) {
             super(value, targetType, position);
         }
 
         protected boolean cast(Record rec) {
-            long hi = this.arg.getDecimal128Hi(rec);
-            long lo = this.arg.getDecimal128Lo(rec);
-            if (Decimal128.isNull(hi, lo)) {
+            arg.getDecimal128(rec, decimal128);
+            if (decimal128.isNull()) {
                 return false;
             }
-            long s = hi < 0 ? -1 : 0;
-            decimal.of(s, s, hi, lo, 0);
+            decimal.of(decimal128, 0);
             return true;
         }
     }
@@ -456,14 +450,11 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         }
 
         protected boolean cast(Record rec) {
-            long hh = this.arg.getDecimal256HH(rec);
-            long hl = this.arg.getDecimal256HL(rec);
-            long lh = this.arg.getDecimal256LH(rec);
-            long ll = this.arg.getDecimal256LL(rec);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            this.arg.getDecimal256(rec, decimal);
+            if (decimal.isNull()) {
                 return false;
             }
-            decimal.of(hh, hl, lh, ll, 0);
+            decimal.setScale(0);
             return true;
         }
     }

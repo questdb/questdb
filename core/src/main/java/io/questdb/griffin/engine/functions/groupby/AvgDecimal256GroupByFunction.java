@@ -89,7 +89,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         long count = rec.getLong(valueIndex + 1);
         if (count > 0) {
             rec.getDecimal256(valueIndex, decimal256A);
@@ -106,22 +106,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
         } else {
             decimal256A.ofRawNull();
         }
-        return decimal256A.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

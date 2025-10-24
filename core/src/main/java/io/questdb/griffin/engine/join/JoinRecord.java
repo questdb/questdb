@@ -92,24 +92,6 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public void getDecimal128(int col, Decimal128 sink) {
-        if (col < split) {
-            master.getDecimal128(col, sink);
-        } else {
-            slave.getDecimal128(col - split, sink);
-        }
-    }
-
-    @Override
-    public void getDecimal256(int col, Decimal256 sink) {
-        if (col < split) {
-            master.getDecimal256(col, sink);
-        } else {
-            slave.getDecimal256(col - split, sink);
-        }
-    }
-
-    @Override
     public long getDate(int col) {
         if (col < split) {
             return master.getDate(col);
@@ -118,19 +100,12 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
+    public void getDecimal128(int col, Decimal128 sink) {
         if (col < split) {
-            return master.getDecimal128Hi(col);
+            master.getDecimal128(col, sink);
+        } else {
+            slave.getDecimal128(col - split, sink);
         }
-        return slave.getDecimal128Hi(col - split);
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        if (col < split) {
-            return master.getDecimal128Lo(col);
-        }
-        return slave.getDecimal128Lo(col - split);
     }
 
     @Override
@@ -142,35 +117,12 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public long getDecimal256HH(int col) {
+    public void getDecimal256(int col, Decimal256 sink) {
         if (col < split) {
-            return master.getDecimal256HH(col);
+            master.getDecimal256(col, sink);
+        } else {
+            slave.getDecimal256(col - split, sink);
         }
-        return slave.getDecimal256HH(col - split);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        if (col < split) {
-            return master.getDecimal256HL(col);
-        }
-        return slave.getDecimal256HL(col - split);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        if (col < split) {
-            return master.getDecimal256LH(col);
-        }
-        return slave.getDecimal256LH(col - split);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        if (col < split) {
-            return master.getDecimal256LL(col);
-        }
-        return slave.getDecimal256LL(col - split);
     }
 
     @Override

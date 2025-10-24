@@ -35,6 +35,8 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -87,12 +89,7 @@ public interface WindowFunction extends Function {
     }
 
     @Override
-    default long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getDecimal128Lo(Record rec) {
+    default void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -102,22 +99,7 @@ public interface WindowFunction extends Function {
     }
 
     @Override
-    default long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default long getDecimal256LL(Record rec) {
+    default void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

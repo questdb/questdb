@@ -36,7 +36,7 @@ public class Decimal128 implements Sinkable, Decimal {
     public static final Decimal128 MAX_VALUE = new Decimal128(5421010862427522170L, 687399551400673279L);
     public static final Decimal128 MIN_VALUE = new Decimal128(-5421010862427522171L, -687399551400673279L);
     public static final Decimal128 NULL_VALUE = new Decimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
-    public static final Decimal128 ZERO = new Decimal128(0, 0);
+    public static final Decimal128 ZERO = new Decimal128(0, 0, 0);
     static final long LONG_MASK = 0xffffffffL;
     /**
      * Pre-computed powers of 10 table for decimal arithmetic.
@@ -231,7 +231,6 @@ public class Decimal128 implements Sinkable, Decimal {
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
-    // @formatter:off
     private int scale;  // Number of decimal places
 
     /**
@@ -424,9 +423,9 @@ public class Decimal128 implements Sinkable, Decimal {
      * - The decimal value must be positive
      * - The decimal value must be less than 10^pow (e.g., for pow=3, decimal must be &lt; 10000)
      *
-     * @param high  high 64 bits of the 128-bit decimal
+     * @param high high 64 bits of the 128-bit decimal
      * @param low  low 64 bits of the 128-bit decimal
-     * @param pow the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
+     * @param pow  the power of ten position to extract (0 = ones place, 1 = tens place, etc.)
      * @return the digit (0-9) at the specified power-of-ten position
      */
     public static int getDigitAtPowerOfTen(long high, long low, int pow) {
@@ -629,7 +628,8 @@ public class Decimal128 implements Sinkable, Decimal {
         add(this, this.high, this.low, this.scale, otherHigh, otherLow, otherScale);
     }
 
-    @Override public void addPowerOfTenMultiple(int pow, int multiplier) {
+    @Override
+    public void addPowerOfTenMultiple(int pow, int multiplier) {
         if (multiplier == 0 || multiplier > 9) {
             return;
         }
@@ -661,6 +661,16 @@ public class Decimal128 implements Sinkable, Decimal {
         this.high = source.high;
         this.low = source.low;
         this.scale = source.scale;
+    }
+
+    /**
+     * Copy values from another Decimal128 instance without the scale.
+     *
+     * @param other the Decimal128 instance to copy from
+     */
+    public void copyRaw(Decimal128 other) {
+        this.high = other.high;
+        this.low = other.low;
     }
 
     /**
@@ -940,8 +950,8 @@ public class Decimal128 implements Sinkable, Decimal {
     /**
      * Sets this Decimal128 to the specified 128-bit value. Keeps the existing scale.
      *
-     * @param high  the high 64 bits (bits 64-127)
-     * @param low   the low 64 bits (bits 0-63)
+     * @param high the high 64 bits (bits 64-127)
+     * @param low  the low 64 bits (bits 0-63)
      */
     public void ofRaw(long high, long low) {
         this.high = high;

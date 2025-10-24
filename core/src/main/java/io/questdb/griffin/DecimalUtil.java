@@ -158,17 +158,48 @@ public final class DecimalUtil {
     }
 
     /**
-     * Load any decimal value from a Function into a Decimal256
+     * Returns the precision and scale that can accommodate a specific type.
+     * Note that all types aren't supported, only those are:
+     * - Decimals
+     * - Long
+     * - Int
+     * - Short
+     * - Byte
+     * - Timestamp
+     * - Date
+     *
+     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
+     * if the type is not supported.
      */
-    public static void load(Decimal256 decimal, Function value, @Nullable Record rec) {
-        final int fromType = value.getType();
-        load(decimal, value, rec, fromType);
+    public static int getTypePrecisionScale(int type) {
+        int tag = ColumnType.tagOf(type);
+        if (ColumnType.isDecimalType(tag)) {
+            short p = (short) ColumnType.getDecimalPrecision(type);
+            short s = (short) ColumnType.getDecimalScale(type);
+            return Numbers.encodeLowHighShorts(p, s);
+        }
+        return switch (tag) {
+            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
+                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
+            case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
+            case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
+            case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
+            default -> 0;
+        };
     }
 
     /**
      * Load any decimal value from a Function into a Decimal256
      */
-    public static void load(Decimal256 decimal, Function value, @Nullable Record rec, int fromType) {
+    public static void load(Decimal256 decimal, Decimal128 decimal128, Function value, @Nullable Record rec) {
+        final int fromType = value.getType();
+        load(decimal, decimal128, value, rec, fromType);
+    }
+
+    /**
+     * Load any decimal value from a Function into a Decimal256
+     */
+    public static void load(Decimal256 decimal, Decimal128 decimal128, Function value, @Nullable Record rec, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
@@ -203,23 +234,16 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
-//                value.getDecimal128(rec, decimal);
-//                decimal.setScale(ColumnType.getDecimalScale(fromType));
-                long hi = value.getDecimal128Hi(rec);
-                long lo = value.getDecimal128Lo(rec);
-                if (Decimal128.isNull(hi, lo)) {
+                value.getDecimal128(rec, decimal128);
+                if (decimal128.isNull()) {
                     decimal.ofNull();
                 } else {
-                    long v = hi < 0 ? -1 : 0;
-                    decimal.of(v, v, hi, lo, ColumnType.getDecimalScale(fromType));
+                    decimal.of(decimal128, ColumnType.getDecimalScale(fromType));
                 }
                 break;
             case ColumnType.DECIMAL256:
-                long hh = value.getDecimal256HH(rec);
-                long hl = value.getDecimal256HL(rec);
-                long lh = value.getDecimal256LH(rec);
-                long ll = value.getDecimal256LL(rec);
-                decimal.of(hh, hl, lh, ll, ColumnType.getDecimalScale(fromType));
+                value.getDecimal256(rec, decimal);
+                decimal.setScale(ColumnType.getDecimalScale(fromType));
                 break;
             case ColumnType.LONG: {
                 long v = value.getLong(rec);
@@ -273,7 +297,7 @@ public final class DecimalUtil {
     /**
      * Load a decimal value from a Record into a Decimal256
      */
-    public static void load(Decimal256 decimal, @NotNull Record rec, int col, int fromType) {
+    public static void load(Decimal256 decimal, Decimal128 decimal128, @NotNull Record rec, int col, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = rec.getDecimal8(col);
@@ -308,21 +332,16 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
-                long hi = rec.getDecimal128Hi(col);
-                long lo = rec.getDecimal128Lo(col);
-                if (Decimal128.isNull(hi, lo)) {
+                rec.getDecimal128(col, decimal128);
+                if (decimal128.isNull()) {
                     decimal.ofNull();
                 } else {
-                    long v = hi < 0 ? -1 : 0;
-                    decimal.of(v, v, hi, lo, ColumnType.getDecimalScale(fromType));
+                    decimal.of(decimal128, ColumnType.getDecimalScale(fromType));
                 }
                 break;
             default:
-                long hh = rec.getDecimal256HH(col);
-                long hl = rec.getDecimal256HL(col);
-                long lh = rec.getDecimal256LH(col);
-                long ll = rec.getDecimal256LL(col);
-                decimal.of(hh, hl, lh, ll, ColumnType.getDecimalScale(fromType));
+                rec.getDecimal256(col, decimal);
+                decimal.setScale(ColumnType.getDecimalScale(fromType));
                 break;
         }
     }
@@ -330,14 +349,14 @@ public final class DecimalUtil {
     /**
      * Load a decimal value from a Function into a Decimal64
      */
-    public static void load(Decimal64 decimal, Function value, @Nullable Record rec) {
-        load(decimal, value, rec, value.getType());
+    public static void load(Decimal64 decimal, Decimal128 decimal128, Decimal256 decimal256, Function value, @Nullable Record rec) {
+        load(decimal, decimal128, decimal256, value, rec, value.getType());
     }
 
     /**
      * Load a decimal value from a Function into a Decimal64
      */
-    public static void load(Decimal64 decimal, Function value, @Nullable Record rec, int fromType) {
+    public static void load(Decimal64 decimal, Decimal128 decimal128, Decimal256 decimal256, Function value, @Nullable Record rec, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
@@ -372,23 +391,19 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
-                long hi = value.getDecimal128Hi(rec);
-                long lo = value.getDecimal128Lo(rec);
-                if (Decimal128.isNull(hi, lo)) {
+                value.getDecimal128(rec, decimal128);
+                if (decimal128.isNull()) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(lo, ColumnType.getDecimalScale(fromType));
+                    decimal.of(decimal128.getLow(), ColumnType.getDecimalScale(fromType));
                 }
                 break;
             case ColumnType.DECIMAL256:
-                long hh = value.getDecimal256HH(rec);
-                long hl = value.getDecimal256HL(rec);
-                long lh = value.getDecimal256LH(rec);
-                long ll = value.getDecimal256LL(rec);
-                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                value.getDecimal256(rec, decimal256);
+                if (decimal256.isNull()) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(ll, ColumnType.getDecimalScale(fromType));
+                    decimal.of(decimal256.getLl(), ColumnType.getDecimalScale(fromType));
                 }
                 break;
             case ColumnType.LONG: {
@@ -443,14 +458,14 @@ public final class DecimalUtil {
     /**
      * Load a decimal value from a Function into a Decimal128
      */
-    public static void load(Decimal128 decimal, Function value, @Nullable Record rec) {
-        load(decimal, value, rec, value.getType());
+    public static void load(Decimal128 decimal, Decimal256 decimal256, Function value, @Nullable Record rec) {
+        load(decimal, decimal256, value, rec, value.getType());
     }
 
     /**
      * Load a decimal value from a Function into a Decimal128
      */
-    public static void load(Decimal128 decimal, Function value, @Nullable Record rec, int fromType) {
+    public static void load(Decimal128 decimal, Decimal256 decimal256, Function value, @Nullable Record rec, int fromType) {
         switch (ColumnType.tagOf(fromType)) {
             case ColumnType.DECIMAL8:
                 byte b = value.getDecimal8(rec);
@@ -485,25 +500,15 @@ public final class DecimalUtil {
                 }
                 break;
             case ColumnType.DECIMAL128:
-//                value.getDecimal128(rec, decimal);
-//                decimal.setScale(ColumnType.getDecimalScale(fromType));
-                long hi = value.getDecimal128Hi(rec);
-                long lo = value.getDecimal128Lo(rec);
-                if (Decimal128.isNull(hi, lo)) {
-                    decimal.ofNull();
-                } else {
-                    decimal.of(hi, lo, ColumnType.getDecimalScale(fromType));
-                }
+                value.getDecimal128(rec, decimal);
+                decimal.setScale(ColumnType.getDecimalScale(fromType));
                 break;
             case ColumnType.DECIMAL256:
-                long hh = value.getDecimal256HH(rec);
-                long hl = value.getDecimal256HL(rec);
-                long lh = value.getDecimal256LH(rec);
-                long ll = value.getDecimal256LL(rec);
-                if (Decimal256.isNull(hh, hl, lh, ll)) {
+                value.getDecimal256(rec, decimal256);
+                if (decimal256.isNull()) {
                     decimal.ofNull();
                 } else {
-                    decimal.of(lh, ll, ColumnType.getDecimalScale(fromType));
+                    decimal.of(decimal256.getLh(), decimal256.getLl(), ColumnType.getDecimalScale(fromType));
                 }
                 break;
             case ColumnType.LONG: {
@@ -571,6 +576,7 @@ public final class DecimalUtil {
     public static @NotNull Function maybeRescaleDecimalConstant(
             @NotNull Function func,
             @NotNull Decimal256 decimal,
+            @NotNull Decimal128 decimal128,
             int targetPrecision,
             int targetScale
     ) {
@@ -586,7 +592,7 @@ public final class DecimalUtil {
                     if (func.isNullConstant()) {
                         newFunc = createNullDecimalConstant(targetPrecision, targetScale);
                     } else {
-                        load(decimal, func, null);
+                        load(decimal, decimal128, func, null);
                         decimal.rescale(targetScale);
                         newFunc = createDecimalConstant(decimal, targetPrecision, targetScale);
                     }
@@ -599,7 +605,6 @@ public final class DecimalUtil {
         }
         return func;
     }
-
 
     /**
      * Parses a decimal from a literal to the most adapted decimal type as a constant.
@@ -799,36 +804,5 @@ public final class DecimalUtil {
                 );
                 break;
         }
-    }
-
-    /**
-     * Returns the precision and scale that can accommodate a specific type.
-     * Note that all types aren't supported, only those are:
-     * - Decimals
-     * - Long
-     * - Int
-     * - Short
-     * - Byte
-     * - Timestamp
-     * - Date
-     *
-     * @return the precision and scale as low/high short encoded with {@link Numbers#encodeLowHighShorts} or 0
-     * if the type is not supported.
-     */
-    public static int getTypePrecisionScale(int type) {
-        int tag = ColumnType.tagOf(type);
-        if (ColumnType.isDecimalType(tag)) {
-            short p = (short) ColumnType.getDecimalPrecision(type);
-            short s = (short) ColumnType.getDecimalScale(type);
-            return Numbers.encodeLowHighShorts(p, s);
-        }
-        return switch (tag) {
-            case ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.LONG ->
-                    Numbers.encodeLowHighShorts((short) 19, (short) 0);
-            case ColumnType.INT -> Numbers.encodeLowHighShorts((short) 10, (short) 0);
-            case ColumnType.SHORT -> Numbers.encodeLowHighShorts((short) 5, (short) 0);
-            case ColumnType.BYTE -> Numbers.encodeLowHighShorts((short) 3, (short) 0);
-            default -> 0;
-        };
     }
 }

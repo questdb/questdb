@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
@@ -34,6 +36,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 final class Unordered2MapValue implements MapValue {
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
@@ -127,16 +131,6 @@ final class Unordered2MapValue implements MapValue {
     }
 
     @Override
-    public long getDecimal128Hi(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col));
-    }
-
-    @Override
-    public long getDecimal128Lo(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + 8L);
-    }
-
-    @Override
     public short getDecimal16(int col) {
         return Unsafe.getUnsafe().getShort(address0(col));
     }
@@ -144,26 +138,6 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
         sink.ofRawAddress(address0(col));
-    }
-
-    @Override
-    public long getDecimal256HH(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col));
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + 8L);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + 16L);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        return Unsafe.getUnsafe().getLong(address0(col) + 24L);
     }
 
     @Override
@@ -315,19 +289,53 @@ final class Unordered2MapValue implements MapValue {
     }
 
     @Override
-    public void putDecimal128(int index, long hi, long lo) {
+    public void putDecimal128(int index, Record record, int colIndex) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, hi);
-        Unsafe.getUnsafe().putLong(p + 8L, lo);
+        record.getDecimal128(colIndex, decimal128);
+        Unsafe.getUnsafe().putLong(p, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(p + 8L, decimal128.getLow());
     }
 
     @Override
-    public void putDecimal256(int index, long hh, long hl, long lh, long ll) {
+    public void putDecimal128(int index, Decimal128 decimal128) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, hh);
-        Unsafe.getUnsafe().putLong(p + 8L, hl);
-        Unsafe.getUnsafe().putLong(p + 16L, lh);
-        Unsafe.getUnsafe().putLong(p + 24L, ll);
+        Unsafe.getUnsafe().putLong(p, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(p + 8L, decimal128.getLow());
+    }
+
+    @Override
+    public void putDecimal128Null(int index) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Decimals.DECIMAL128_HI_NULL);
+        Unsafe.getUnsafe().putLong(p + 8L, Decimals.DECIMAL128_LO_NULL);
+    }
+
+    @Override
+    public void putDecimal256(int index, Record record, int colIndex) {
+        final long p = address0(index);
+        record.getDecimal256(colIndex, decimal256);
+        Unsafe.getUnsafe().putLong(p, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(p + 8L, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(p + 16L, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(p + 24L, decimal256.getLl());
+    }
+
+    @Override
+    public void putDecimal256(int index, Decimal256 decimal256) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(p + 8L, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(p + 16L, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(p + 24L, decimal256.getLl());
+    }
+
+    @Override
+    public void putDecimal256Null(int index) {
+        final long p = address0(index);
+        Unsafe.getUnsafe().putLong(p, Decimals.DECIMAL256_HH_NULL);
+        Unsafe.getUnsafe().putLong(p + 8L, Decimals.DECIMAL256_HL_NULL);
+        Unsafe.getUnsafe().putLong(p + 16L, Decimals.DECIMAL256_LH_NULL);
+        Unsafe.getUnsafe().putLong(p + 24L, Decimals.DECIMAL256_LL_NULL);
     }
 
     @Override

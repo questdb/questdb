@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
@@ -84,44 +85,28 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     @Override
-    default long getDecimal256HH(long offset) {
-        final long addr = addressOf(offset + Decimal256.BYTES);
-        return Unsafe.getUnsafe().getLong(addr - Decimal256.BYTES);
+    default void getDecimal128(long offset, Decimal128 sink) {
+        final long addr = addressOf(offset + 16L);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr - 16L),
+                Unsafe.getUnsafe().getLong(addr - 8L)
+        );
     }
 
     @Override
-    default long getDecimal256HL(long offset) {
-        final long addr = addressOf(offset + Decimal256.BYTES);
-        return Unsafe.getUnsafe().getLong(addr - 3 * Long.BYTES);
+    default short getDecimal16(long offset) {
+        return getShort(offset);
     }
 
     @Override
-    default long getDecimal256LH(long offset) {
-        final long addr = addressOf(offset + Decimal256.BYTES);
-        return Unsafe.getUnsafe().getLong(addr - 2 * Long.BYTES);
-    }
-
-    @Override
-    default long getDecimal256LL(long offset) {
-        final long addr = addressOf(offset + Decimal256.BYTES);
-        return Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-    }
-
-    @Override
-    default long getDecimal128Hi(long offset) {
-        final long addr = addressOf(offset + (Long.BYTES << 1));
-        return Unsafe.getUnsafe().getLong(addr - (Long.BYTES << 1));
-    }
-
-    @Override
-    default long getDecimal128Lo(long offset) {
-        final long addr = addressOf(offset + (Long.BYTES << 1));
-        return Unsafe.getUnsafe().getLong(addr - Long.BYTES);
-    }
-
-    @Override
-    default long getDecimal64(long offset) {
-        return getLong(offset);
+    default void getDecimal256(long offset, Decimal256 sink) {
+        final long addr = addressOf(offset + 32L);
+        sink.ofRaw(
+                Unsafe.getUnsafe().getLong(addr - 32L),
+                Unsafe.getUnsafe().getLong(addr - 24L),
+                Unsafe.getUnsafe().getLong(addr - 16L),
+                Unsafe.getUnsafe().getLong(addr - 8L)
+        );
     }
 
     @Override
@@ -130,8 +115,8 @@ public interface MemoryCR extends MemoryC, MemoryR {
     }
 
     @Override
-    default short getDecimal16(long offset) {
-        return getShort(offset);
+    default long getDecimal64(long offset) {
+        return getLong(offset);
     }
 
     @Override

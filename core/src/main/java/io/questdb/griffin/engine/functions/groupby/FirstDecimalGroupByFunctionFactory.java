@@ -35,6 +35,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -90,11 +92,8 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal128(
-                        valueIndex + 1,
-                        srcValue.getDecimal128Hi(valueIndex + 1),
-                        srcValue.getDecimal128Lo(valueIndex + 1)
-                );
+                srcValue.getDecimal128(valueIndex + 1, decimal128);
+                destValue.putDecimal128(valueIndex + 1, decimal128);
             }
         }
     }
@@ -138,13 +137,8 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             final long destRowId = destValue.getLong(valueIndex);
             if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
                 destValue.putLong(valueIndex, srcRowId);
-                destValue.putDecimal256(
-                        valueIndex + 1,
-                        srcValue.getDecimal256HH(valueIndex + 1),
-                        srcValue.getDecimal256HL(valueIndex + 1),
-                        srcValue.getDecimal256LH(valueIndex + 1),
-                        srcValue.getDecimal256LL(valueIndex + 1)
-                );
+                srcValue.getDecimal256(valueIndex + 1, decimal256);
+                destValue.putDecimal256(valueIndex + 1, decimal256);
             }
         }
     }
@@ -216,6 +210,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     abstract static class FirstLastDecimal128Func extends FirstLastDecimalFunc {
+        protected final Decimal128 decimal128 = new Decimal128();
 
         public FirstLastDecimal128Func(@NotNull Function arg) {
             super(arg);
@@ -223,10 +218,9 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final long high = arg.getDecimal128Hi(record);
-            final long low = arg.getDecimal128Lo(record);
+            arg.getDecimal128(record, decimal128);
             mapValue.putLong(valueIndex, rowId);
-            mapValue.putDecimal128(valueIndex + 1, high, low);
+            mapValue.putDecimal128(valueIndex + 1, decimal128);
         }
 
         @Override
@@ -235,13 +229,8 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            return rec.getDecimal128Hi(valueIndex + 1);
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return rec.getDecimal128Lo(valueIndex + 1);
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            rec.getDecimal128(valueIndex + 1, sink);
         }
 
         @Override
@@ -256,7 +245,8 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
             // This method is used to define interpolated points and to init
             // an empty value, so it's ok to reset the row id field here.
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putDecimal128(valueIndex + 1, high, low);
+            decimal128.ofRaw(high, low);
+            mapValue.putDecimal128(valueIndex + 1, decimal128);
         }
 
         @Override
@@ -312,6 +302,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
     }
 
     abstract static class FirstLastDecimal256Func extends FirstLastDecimalFunc {
+        protected final Decimal256 decimal256 = new Decimal256();
 
         public FirstLastDecimal256Func(@NotNull Function arg) {
             super(arg);
@@ -319,12 +310,9 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final long hh = arg.getDecimal256HH(record);
-            final long hl = arg.getDecimal256HL(record);
-            final long lh = arg.getDecimal256LH(record);
-            final long ll = arg.getDecimal256LL(record);
+            arg.getDecimal256(record, decimal256);
             mapValue.putLong(valueIndex, rowId);
-            mapValue.putDecimal256(valueIndex + 1, hh, hl, lh, ll);
+            mapValue.putDecimal256(valueIndex + 1, decimal256);
         }
 
         @Override
@@ -333,23 +321,8 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            return rec.getDecimal256HH(valueIndex + 1);
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return rec.getDecimal256HL(valueIndex + 1);
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return rec.getDecimal256LH(valueIndex + 1);
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return rec.getDecimal256LL(valueIndex + 1);
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            rec.getDecimal256(valueIndex + 1, sink);
         }
 
         @Override
@@ -361,10 +334,11 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
+            decimal256.ofRaw(hh, hl, lh, ll);
             // This method is used to define interpolated points and to init
             // an empty value, so it's ok to reset the row id field here.
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putDecimal256(valueIndex + 1, hh, hl, lh, ll);
+            mapValue.putDecimal256(valueIndex + 1, decimal256);
         }
 
         @Override
@@ -529,12 +503,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -544,22 +513,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -595,7 +549,7 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            return UnaryFunction.super.isThreadSafe();
+            return false;
         }
 
         @Override

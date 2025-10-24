@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 
 public class SpreadBpsFunctionFactory implements FunctionFactory {
 
@@ -62,6 +64,16 @@ public class SpreadBpsFunctionFactory implements FunctionFactory {
             final double a = ask.getDouble(rec);
 
             return FinanceUtils.spread(b, a) / FinanceUtils.mid(b, a) * 10_000;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -59,6 +61,16 @@ public class EqLong128FunctionFactory implements FunctionFactory {
                     left.getLong128Lo(rec) == right.getLong128Lo(rec)
                             && left.getLong128Hi(rec) == right.getLong128Hi(rec)
             );
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
     }
 }

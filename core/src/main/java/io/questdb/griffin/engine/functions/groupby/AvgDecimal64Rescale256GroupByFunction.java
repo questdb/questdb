@@ -96,9 +96,9 @@ class AvgDecimal64Rescale256GroupByFunction extends Decimal256Function implement
 
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         calc(rec);
-        return decimal256A.getHh();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     private void calc(Record rec) {
@@ -122,21 +122,6 @@ class AvgDecimal64Rescale256GroupByFunction extends Decimal256Function implement
         } else {
             decimal256A.ofRawNull();
         }
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
     }
 
     @Override

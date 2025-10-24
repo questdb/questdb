@@ -83,11 +83,11 @@ public final class Decimals {
      * @param scale defines the place of the dot
      * @param sink  to write the value to
      */
-    public static void append(long hi, long lo, int precision, int scale, CharSink<?> sink) {
-        if (Decimal128.isNull(hi, lo)) {
+    public static void append(Decimal128 decimal128, int precision, int scale, CharSink<?> sink) {
+        if (decimal128.isNull()) {
             sink.put("null");
         } else {
-            Decimal128.toSink(sink, hi, lo, scale, precision);
+            appendNonNull(decimal128, precision, scale, sink);
         }
     }
 
@@ -97,12 +97,40 @@ public final class Decimals {
      * @param scale defines the place of the dot
      * @param sink  to write the value to
      */
-    public static void append(long hh, long hl, long lh, long ll, int precision, int scale, CharSink<?> sink) {
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
+    public static void append(Decimal256 decimal256, int precision, int scale, CharSink<?> sink) {
+        if (decimal256.isNull()) {
             sink.put("null");
         } else {
-            Decimal256.toSink(sink, hh, hl, lh, ll, scale, precision);
+            appendNonNull(decimal256, precision, scale, sink);
         }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void appendNonNull(Decimal256 decimal256, int precision, int scale, CharSink<?> sink) {
+        Decimal256.toSink(
+                sink,
+                decimal256.getHh(),
+                decimal256.getHl(),
+                decimal256.getLh(),
+                decimal256.getLl(),
+                scale,
+                precision
+        );
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void appendNonNull(Decimal128 decimal128, int precision, int scale, CharSink<?> sink) {
+        Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), scale, precision);
     }
 
     public static int getDecimalTagPrecision(int tag) {

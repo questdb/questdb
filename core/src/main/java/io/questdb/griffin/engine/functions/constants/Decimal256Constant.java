@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 
 public class Decimal256Constant extends Decimal256Function implements ConstantFunction {
@@ -45,23 +46,13 @@ public class Decimal256Constant extends Decimal256Function implements ConstantFu
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
-        return hh;
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRaw(lh, ll);
     }
 
     @Override
-    public long getDecimal256HL(Record rec) {
-        return hl;
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return lh;
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return ll;
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        sink.ofRaw(hh, hl, lh, ll);
     }
 
     @Override

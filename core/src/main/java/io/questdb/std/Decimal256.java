@@ -33,6 +33,7 @@ public class Decimal256 implements Sinkable, Decimal {
     public static final Decimal256 MAX_VALUE = new Decimal256(1593091911132452277L, 532749306367912313L, 8607968719199866879L, -1L, 0); // 10⁷⁶ - 1
     public static final Decimal256 MIN_VALUE = new Decimal256(-1593091911132452278L, -532749306367912314L, -8607968719199866880L, 1L, 0); // -10⁷⁶ + 1
     public static final Decimal256 NULL_VALUE = new Decimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, 0);
+    public static final Decimal256 ZERO = new Decimal256(0, 0, 0, 0, 0);
     // @formatter:off
     /**
      * Pre-computed powers of 10 table for decimal arithmetic.
@@ -945,6 +946,18 @@ public class Decimal256 implements Sinkable, Decimal {
     }
 
     /**
+     * Copy values from another Decimal256 instance without the scale.
+     *
+     * @param other the Decimal256 instance to copy from
+     */
+    public void copyRaw(Decimal256 other) {
+        this.hh = other.hh;
+        this.hl = other.hl;
+        this.lh = other.lh;
+        this.ll = other.ll;
+    }
+
+    /**
      * In-place division.
      *
      * @param divisor      the Decimal256 to divide by
@@ -1360,6 +1373,19 @@ public class Decimal256 implements Sinkable, Decimal {
         this.hl = hl;
         this.lh = lh;
         this.ll = ll;
+        this.scale = scale;
+    }
+
+    /**
+     * Sets this Decimal256 to the specified 128-bit value and scale.
+     *
+     * @param decimal128 is copied to this
+     * @param scale      the number of decimal places
+     */
+    public void of(Decimal128 decimal128, int scale) {
+        this.hh = this.hl = decimal128.getHigh() < 0 ? -1L : 0L;
+        this.lh = decimal128.getHigh();
+        this.ll = decimal128.getLow();
         this.scale = scale;
     }
 

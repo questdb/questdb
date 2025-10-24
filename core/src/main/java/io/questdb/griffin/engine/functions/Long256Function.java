@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -71,12 +73,7 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public final long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal128Lo(Record rec) {
+    public final void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -86,22 +83,7 @@ public abstract class Long256Function implements Function {
     }
 
     @Override
-    public final long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LL(Record rec) {
+    public final void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

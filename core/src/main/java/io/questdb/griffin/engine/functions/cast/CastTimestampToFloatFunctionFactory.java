@@ -31,6 +31,8 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 
 public class CastTimestampToFloatFunctionFactory implements FunctionFactory {
     @Override
@@ -51,6 +53,16 @@ public class CastTimestampToFloatFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             return arg.getFloat(rec);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            throw new UnsupportedOperationException();
         }
     }
 }

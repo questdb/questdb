@@ -32,6 +32,7 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -59,21 +60,17 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         if (!calc(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL128_HI_NULL;
+            sink.ofRaw(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+            return;
         }
-        isNull = false;
-        return decimal.getHigh();
+        sink.copyRaw(decimal);
     }
 
     @Override
-    public long getDecimal128Lo(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL128_LO_NULL;
-        }
-        return decimal.getLow();
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -82,26 +79,6 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
             return Decimals.DECIMAL16_NULL;
         }
         return (short) decimal.getLow();
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -187,13 +164,16 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
                     return false;
                 }
                 break;
-            default:
-                rightHigh = right.getDecimal128Hi(rec);
-                rightLow = right.getDecimal128Lo(rec);
-                if (Decimal128.isNull(rightHigh, rightLow)) {
+            default: {
+                Decimal128 rightDec = new Decimal128();
+                right.getDecimal128(rec, rightDec);
+                if (rightDec.isNull()) {
                     return false;
                 }
+                rightHigh = rightDec.getHigh();
+                rightLow = rightDec.getLow();
                 break;
+            }
         }
 
         try {

@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -84,7 +85,12 @@ class AvgDecimal8Rescale256GroupByFunction extends Decimal256Function implements
 
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
         long count = rec.getLong(valueIndex + 1);
         if (count > 0) {
             try {
@@ -98,22 +104,7 @@ class AvgDecimal8Rescale256GroupByFunction extends Decimal256Function implements
         } else {
             decimal256A.ofRawNull();
         }
-        return decimal256A.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

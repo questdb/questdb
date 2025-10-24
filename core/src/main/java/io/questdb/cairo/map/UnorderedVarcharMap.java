@@ -36,6 +36,8 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -623,6 +625,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         @Override
+        public Decimal128 getDecimal128() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long hash() {
             return Hash.hashMem64(ptrWithUnstableFlag & PTR_MASK, size);
         }
@@ -670,12 +682,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128(long hi, long lo) {
+        public void putDecimal128() {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
+        public void putDecimal256() {
             throw new UnsupportedOperationException();
         }
 

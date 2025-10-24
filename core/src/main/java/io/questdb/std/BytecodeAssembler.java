@@ -190,6 +190,10 @@ public class BytecodeAssembler {
         putByte(0x5c);
     }
 
+    public void dup_x2() {
+        putByte(0x5b);
+    }
+
     public void endMethod() {
         putInt(codeAttributeStart - 4, position() - codeAttributeStart);
     }

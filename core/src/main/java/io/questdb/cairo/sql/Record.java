@@ -133,26 +133,6 @@ public interface Record {
     }
 
     /**
-     * Gets the high 64-bit part of a 128-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit signed integer
-     */
-    default long getDecimal128Hi(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the low 64-bit part of a 128-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit unsigned integer
-     */
-    default long getDecimal128Lo(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
      * Gets the 16-bit decimal value by index.
      *
      * @param col numeric index of the column
@@ -163,46 +143,6 @@ public interface Record {
     }
 
     default void getDecimal256(int col, Decimal256 sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the highest 64-bit part of a 256-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit signed integer
-     */
-    default long getDecimal256HH(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the high 64-bit part of a 256-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit unsigned integer
-     */
-    default long getDecimal256HL(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the middle 64-bit part of a 256-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit unsigned integer
-     */
-    default long getDecimal256LH(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Gets the low 64-bit part of a 256-bit decimal value by index.
-     *
-     * @param col numeric index of the column
-     * @return 64-bit unsigned integer
-     */
-    default long getDecimal256LL(int col) {
         throw new UnsupportedOperationException();
     }
 

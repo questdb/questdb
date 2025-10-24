@@ -26,6 +26,8 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -67,37 +69,17 @@ public abstract class ArrayFunction implements Function {
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public final void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getDecimal128Lo(Record rec) {
+    public final short getDecimal16(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getDecimal16(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
+    public final void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

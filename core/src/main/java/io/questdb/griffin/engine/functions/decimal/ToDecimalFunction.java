@@ -32,22 +32,10 @@ import io.questdb.std.Decimals;
 
 public abstract class ToDecimalFunction extends DecimalFunction {
     protected final Decimal256 decimal = new Decimal256();
-    private boolean isNull;
 
     public ToDecimalFunction(int targetType) {
         super(targetType);
     }
-
-    @Override
-    public long getDecimal128Hi(Record rec) {
-        if (!store(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL128_HI_NULL;
-        }
-        isNull = false;
-        return decimal.getLh();
-    }
-
 
     @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
@@ -56,22 +44,6 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         } else {
             sink.ofRaw(decimal.getLh(), decimal.getLl());
         }
-    }
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        if (!store(rec)) {
-            sink.ofRawNull();
-        } else {
-            sink.copyFrom(decimal);
-        }
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL128_LO_NULL;
-        }
-        return decimal.getLl();
     }
 
     @Override
@@ -83,37 +55,12 @@ public abstract class ToDecimalFunction extends DecimalFunction {
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         if (!store(rec)) {
-            isNull = true;
-            return Decimals.DECIMAL256_HH_NULL;
+            sink.ofRawNull();
+        } else {
+            sink.copyRaw(decimal);
         }
-        isNull = false;
-        return decimal.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_HL_NULL;
-        }
-        return decimal.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LH_NULL;
-        }
-        return decimal.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        if (isNull) {
-            return Decimals.DECIMAL256_LL_NULL;
-        }
-        return decimal.getLl();
     }
 
     @Override

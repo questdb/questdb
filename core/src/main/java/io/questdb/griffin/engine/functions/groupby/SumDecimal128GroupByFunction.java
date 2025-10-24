@@ -109,37 +109,22 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         this.overflow = rec.getBool(valueIndex + 2);
         if (overflow) {
-            return rec.getDecimal256HH(valueIndex);
+            rec.getDecimal256(valueIndex, sink);
+        } else {
+            rec.getDecimal128(valueIndex + 1, decimal128A);
+            if (decimal128A.isNull()) {
+                sink.ofRawNull();
+            } else {
+                long hh = decimal128A.getHigh() < 0 ? -1 : 0;
+                long hl = decimal128A.getHigh() < 0 ? -1 : 0;
+                long lh = decimal128A.getHigh();
+                long ll = decimal128A.getLow();
+                sink.ofRaw(hh, hl, lh, ll);
+            }
         }
-        rec.getDecimal128(valueIndex + 1, decimal128A);
-        return decimal128A.isNull() ? Decimals.DECIMAL256_HH_NULL : decimal128A.getHigh() < 0 ? -1 : 0;
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        if (overflow) {
-            return rec.getDecimal256HL(valueIndex);
-        }
-        return decimal128A.isNull() ? Decimals.DECIMAL256_HL_NULL : decimal128A.getHigh() < 0 ? -1 : 0;
-    }
-
-    @Override
-    public long getDecimal256LH(io.questdb.cairo.sql.Record rec) {
-        if (overflow) {
-            return rec.getDecimal256LH(valueIndex);
-        }
-        return decimal128A.isNull() ? Decimals.DECIMAL256_LH_NULL : decimal128A.getHigh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        if (overflow) {
-            return rec.getDecimal256LL(valueIndex);
-        }
-        return decimal128A.isNull() ? Decimals.DECIMAL256_LL_NULL : decimal128A.getLow();
     }
 
     @Override

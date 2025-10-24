@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -57,7 +58,7 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal256(record, decimal256A);
         if (decimal256A.isNull()) {
-            mapValue.putDecimal256(valueIndex, 0, 0, 0, 0);
+            mapValue.putDecimal256(valueIndex, Decimal256.ZERO);
             mapValue.putLong(valueIndex + 1, 0);
         } else {
             mapValue.putDecimal256(valueIndex, decimal256A);
@@ -90,17 +91,12 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         if (calc(rec)) {
-            return (short) decimal256A.getLh();
+            sink.ofRaw(decimal256A.getLh(), decimal256A.getLl());
+        } else {
+            sink.ofRawNull();
         }
-        decimal256A.ofRaw(0, 0, 0, Decimals.DECIMAL128_LO_NULL);
-        return Decimals.DECIMAL128_HI_NULL;
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return decimal256A.getLl();
     }
 
     @Override
@@ -112,26 +108,11 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         if (!calc(rec)) {
             decimal256A.ofRawNull();
         }
-        return decimal256A.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return decimal256A.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return decimal256A.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return decimal256A.getLl();
+        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

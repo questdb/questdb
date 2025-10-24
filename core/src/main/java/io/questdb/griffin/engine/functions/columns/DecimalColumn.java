@@ -54,16 +54,6 @@ public class DecimalColumn extends DecimalFunction {
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return rec.getDecimal128Hi(columnIndex);
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return rec.getDecimal128Lo(columnIndex);
-    }
-
-    @Override
     public short getDecimal16(Record rec) {
         return rec.getDecimal16(columnIndex);
     }
@@ -71,26 +61,6 @@ public class DecimalColumn extends DecimalFunction {
     @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
         rec.getDecimal256(columnIndex, sink);
-    }
-
-    @Override
-    public long getDecimal256HH(Record rec) {
-        return rec.getDecimal256HH(columnIndex);
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return rec.getDecimal256HL(columnIndex);
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return rec.getDecimal256LH(columnIndex);
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return rec.getDecimal256LL(columnIndex);
     }
 
     @Override

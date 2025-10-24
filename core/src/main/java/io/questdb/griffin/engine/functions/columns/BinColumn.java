@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -54,6 +56,16 @@ public class BinColumn extends BinFunction implements ColumnFunction {
     @Override
     public long getBinLen(Record rec) {
         return rec.getBinLen(columnIndex);
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

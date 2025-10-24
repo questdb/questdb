@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -88,12 +90,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     }
 
     @Override
-    public final long getDecimal128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal128Lo(Record rec) {
+    public final void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -103,22 +100,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     }
 
     @Override
-    public final long getDecimal256HH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256HL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LL(Record rec) {
+    public final void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 

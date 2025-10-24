@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -34,6 +36,17 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public interface RecordSinkSPI {
+    /**
+     * Returns an instance of a Decimal128 that can be filled to be later
+     * written by calling {@link this#putDecimal128()}
+     */
+    Decimal128 getDecimal128();
+
+    /**
+     * Returns an instance of a Decimal256 that can be filled to be later
+     * written by calling {@link this#putDecimal256()}
+     */
+    Decimal256 getDecimal256();
 
     void putArray(ArrayView view);
 
@@ -46,6 +59,16 @@ public interface RecordSinkSPI {
     void putChar(char value);
 
     void putDate(long value);
+
+    /**
+     * Store the decimal128 that was previously returned by {@link this#getDecimal128()}
+     */
+    void putDecimal128();
+
+    /**
+     * Store the decimal256 that was previously returned by {@link this#getDecimal256()}
+     */
+    void putDecimal256();
 
     void putDouble(double value);
 
@@ -88,10 +111,6 @@ public interface RecordSinkSPI {
     void putTimestamp(long value);
 
     void putVarchar(Utf8Sequence value);
-
-    void putDecimal128(long hi, long lo);
-
-    void putDecimal256(long hh, long hl, long lh, long ll);
 
     default void putVarchar(CharSequence value) {
         if (value == null) {

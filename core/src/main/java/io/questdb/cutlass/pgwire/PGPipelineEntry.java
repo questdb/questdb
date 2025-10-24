@@ -116,6 +116,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
     private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
+    private static final short NUMERIC_NEG = 0x4000;
+    private static final short NUMERIC_POS = 0x0000;
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -126,8 +128,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
-    private static short NUMERIC_NEG = 0x4000;
-    private static short NUMERIC_POS = 0x0000;
     private final ObjectPool<PGNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PGNonNullBinaryArrayView::new, 1);
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -2083,14 +2083,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type) {
-        long hi = rec.getDecimal128Hi(col);
-        long lo = rec.getDecimal128Lo(col);
-        if (Decimal128.isNull(hi, lo)) {
+    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal128 decimal128) {
+        rec.getDecimal128(col, decimal128);
+        if (decimal128.isNull()) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
-            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
+            Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), utf8Sink);
             utf8Sink.putLenEx(a);
         }
     }
@@ -2104,16 +2103,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type) {
-        long hh = rec.getDecimal256HH(col);
-        long hl = rec.getDecimal256HL(col);
-        long lh = rec.getDecimal256LH(col);
-        long ll = rec.getDecimal256LL(col);
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
+    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal256 decimal256) {
+        rec.getDecimal256(col, decimal256);
+        if (decimal256.isNull()) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
-            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type),
+            Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type),
                     ColumnType.getDecimalScale(type), utf8Sink);
             utf8Sink.putLenEx(a);
         }
@@ -2608,10 +2604,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtDecimal64(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL128:
-                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal128());
                         break;
                     case ColumnType.DECIMAL256:
-                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal256());
                         break;
                     case BINARY_TYPE_DECIMAL8:
                     case BINARY_TYPE_DECIMAL16:
@@ -2620,7 +2616,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_DECIMAL128:
                     case BINARY_TYPE_DECIMAL256:
                         Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
-                        DecimalUtil.load(decimal256, record, colIndex, columnType);
+                        Decimal256 decimal128 = sqlExecutionContext.getDecimal128();
+                        DecimalUtil.load(decimal256, decimal128, record, colIndex, columnType);
                         outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;
                     default:

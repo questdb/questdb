@@ -26,6 +26,8 @@ package io.questdb.cairo.vm.api;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
@@ -56,6 +58,18 @@ public interface MemoryR extends Closeable {
 
     char getChar(long offset);
 
+    void getDecimal128(long offset, Decimal128 sink);
+
+    short getDecimal16(long offset);
+
+    void getDecimal256(long offset, Decimal256 sink);
+
+    int getDecimal32(long offset);
+
+    long getDecimal64(long offset);
+
+    byte getDecimal8(long offset);
+
     default DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
@@ -79,26 +93,6 @@ public interface MemoryR extends Closeable {
     Long256 getLong256A(long offset);
 
     Long256 getLong256B(long offset);
-
-    byte getDecimal8(long offset);
-
-    short getDecimal16(long offset);
-
-    int getDecimal32(long offset);
-
-    long getDecimal64(long offset);
-
-    long getDecimal128Hi(long offset);
-
-    long getDecimal128Lo(long offset);
-
-    long getDecimal256HH(long offset);
-
-    long getDecimal256HL(long offset);
-
-    long getDecimal256LH(long offset);
-
-    long getDecimal256LL(long offset);
 
     long getPageAddress(int pageIndex);
 

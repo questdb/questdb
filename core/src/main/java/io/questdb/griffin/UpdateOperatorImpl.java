@@ -49,6 +49,8 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -220,6 +222,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                         }
 
                         appendRowUpdate(
+                                sqlExecutionContext,
                                 rowPartitionIndex,
                                 affectedColumnCount,
                                 prevRow,
@@ -362,6 +365,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     }
 
     private void appendRowUpdate(
+            SqlExecutionContext executionContext,
             int rowPartitionIndex,
             int affectedColumnCount,
             long prevRow,
@@ -482,17 +486,23 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.DECIMAL64:
                     dstFixMem.putLong(masterRecord.getDecimal64(i));
                     break;
-                case ColumnType.DECIMAL128:
-                    dstFixMem.putDecimal128(masterRecord.getDecimal128Hi(i), masterRecord.getDecimal128Lo(i));
+                case ColumnType.DECIMAL128: {
+                    Decimal128 decimal128 = executionContext.getDecimal128();
+                    masterRecord.getDecimal128(i, decimal128);
+                    dstFixMem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
                     break;
-                case ColumnType.DECIMAL256:
+                }
+                case ColumnType.DECIMAL256: {
+                    Decimal256 decimal256 = executionContext.getDecimal256();
+                    masterRecord.getDecimal256(i, decimal256);
                     dstFixMem.putDecimal256(
-                            masterRecord.getDecimal256HH(i),
-                            masterRecord.getDecimal256HL(i),
-                            masterRecord.getDecimal256LH(i),
-                            masterRecord.getDecimal256LL(i)
+                            decimal256.getHh(),
+                            decimal256.getHl(),
+                            decimal256.getLh(),
+                            decimal256.getLl()
                     );
                     break;
+                }
                 default:
                     throw CairoException.nonCritical()
                             .put("Column type ").put(ColumnType.nameOf(toType))
