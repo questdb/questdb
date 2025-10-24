@@ -99,13 +99,11 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
-        return this;
+        return writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
     }
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
-        return this;
+        return writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
     }
 }

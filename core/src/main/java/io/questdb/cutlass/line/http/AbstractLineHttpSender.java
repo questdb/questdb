@@ -275,7 +275,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex = i % hosts.size();
                     if (currentAddressIndex < 64) {
                         // we can blacklist only the first 64 hosts, that's fine, we don't expect more hosts anyway
-                        // and if there ever are more hosts then the side-effect is that we will retry on the same host
+                        // and if there ever are more hosts then the side effect is that we will retry on the same host
                         // even after it returned a non-retryable error
                         if (hostBlacklistBitmap == allBlacklistedMask) {
                             // if all hosts are blacklisted, we can't retry
@@ -673,7 +673,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 if (isSuccessResponse(statusCode)) {
                     consumeChunkedResponse(response); // if any
                     if (keepAliveDisabled(response)) {
-                        // Server has HTTP keep-alive disabled and it's closing this TCP connection.
+                        // Server has HTTP keep-alive disabled, and it's closing this TCP connection.
                         client.disconnect();
                     }
                     lastFlushFailed = false;

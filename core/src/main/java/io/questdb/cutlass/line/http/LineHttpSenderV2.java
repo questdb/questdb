@@ -290,15 +290,11 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
     private void putTimestamp(long timestamp, ChronoUnit unit) {
         // nanos sent as nanos, everything else is sent as micros
         switch (unit) {
-            case NANOS:
-                request.put(timestamp).putAscii('n');
-                break;
-            case MICROS:
-                request.put(timestamp).putAscii('t');
-                break;
-            default:
+            case NANOS -> request.put(timestamp).putAscii('n');
+            case MICROS -> request.put(timestamp).putAscii('t');
+            default ->
                 // unit needs conversion to micros
-                request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAscii('t');
+                    request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAscii('t');
         }
     }
 

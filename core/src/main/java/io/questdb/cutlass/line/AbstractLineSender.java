@@ -301,8 +301,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     // doesn't do special char checks
     public AbstractLineSender putAsciiInternal(char c) {
-        put((byte) c);
-        return this;
+        return put((byte) c);
     }
 
     // doesn't do special char checks

@@ -262,15 +262,11 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     private void putTimestamp(long timestamp, ChronoUnit unit) {
         // nanos sent as nanos, everything else is sent as micros
         switch (unit) {
-            case NANOS:
-                put(timestamp).putAsciiInternal('n');
-                break;
-            case MICROS:
-                put(timestamp).putAsciiInternal('t');
-                break;
-            default:
+            case NANOS -> put(timestamp).putAsciiInternal('n');
+            case MICROS -> put(timestamp).putAsciiInternal('t');
+            default ->
                 // unit needs conversion to micros
-                put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
+                    put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).putAsciiInternal('t');
         }
     }
 
