@@ -37,6 +37,14 @@ public abstract class ToDecimal128Function extends Decimal128Function {
     }
 
     @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRaw(
+                decimal.getHigh(),
+                decimal.getLow()
+        );
+    }
+
+    @Override
     public long getDecimal128Hi(Record rec) {
         if (!store(rec)) {
             isNull = true;

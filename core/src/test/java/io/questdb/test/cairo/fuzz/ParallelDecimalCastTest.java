@@ -48,61 +48,69 @@ public class ParallelDecimalCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimalCastDoubleRoundtrip() throws Exception {
+    public void testDecimalCastDoubleRoundTrip() throws Exception {
         assertDecimalCasting("""
-                CREATE TABLE x AS (
-                  SELECT
-                    timestamp_sequence(0, 1000000) AS ts,
-                    rnd_symbol(5, 4, 4, 2) AS sym,
-                    cast(((x % 200000) - 100000) * 0.001 as DECIMAL(18,6)) AS dec64,
-                    cast(((x % 200000000) - 100000000) * 0.00001 as DECIMAL(30,10)) AS dec128,
-                    cast(((x % 200000000) - 100000000) * 0.0000001 as DECIMAL(50,18)) AS dec256
-                  FROM long_sequence(2000)
-                ) TIMESTAMP(ts) PARTITION BY DAY""", """
-                SELECT sym,
-                       sum(cast(cast(dec64 as double) as DECIMAL(18,6))) AS dec64_roundtrip,
-                       sum(cast(cast(dec128 as double) as DECIMAL(30,10))) AS dec128_roundtrip,
-                       sum(cast(cast(dec256 as double) as DECIMAL(38,12))) AS dec256_roundtrip
-                FROM x
-                GROUP BY sym
-                ORDER BY sym""", """
-                sym\tdec64_roundtrip\tdec128_roundtrip\tdec256_roundtrip
-                \t-65037.536000\t-656993.3753600000\t-6569.933753599838
-                CPSW\t-27131.350000\t-273997.3135000000\t-2739.973134999927
-                HYRX\t-25045.585000\t-252997.4558500000\t-2529.974558499936
-                PEHN\t-23942.021000\t-241997.4202100000\t-2419.974202099944
-                RXGZ\t-29298.103000\t-295996.9810300000\t-2959.969810299919
-                VTJW\t-27544.405000\t-277997.4440500000\t-2779.974440499926
-                """);
+                        CREATE TABLE x AS (
+                          SELECT
+                            timestamp_sequence(0, 1000000) AS ts,
+                            rnd_symbol(5, 4, 4, 2) AS sym,
+                            cast(((x % 200000) - 100000) * 0.001 as DECIMAL(18,6)) AS dec64,
+                            cast(((x % 200000000) - 100000000) * 0.00001 as DECIMAL(30,10)) AS dec128,
+                            cast(((x % 200000000) - 100000000) * 0.0000001 as DECIMAL(50,18)) AS dec256
+                          FROM long_sequence(2000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY""",
+                """
+                        SELECT sym,
+                               sum(cast(cast(dec64 as double) as DECIMAL(18,6))) AS dec64_roundtrip,
+                               sum(cast(cast(dec128 as double) as DECIMAL(30,10))) AS dec128_roundtrip,
+                               sum(cast(cast(dec256 as double) as DECIMAL(38,12))) AS dec256_roundtrip
+                        FROM x
+                        GROUP BY sym
+                        ORDER BY sym""", """
+                        sym\tdec64_roundtrip\tdec128_roundtrip\tdec256_roundtrip
+                        \t-65037.536000\t-656993.3753600000\t-6569.933753599838
+                        CPSW\t-27131.350000\t-273997.3135000000\t-2739.973134999927
+                        HYRX\t-25045.585000\t-252997.4558500000\t-2529.974558499936
+                        PEHN\t-23942.021000\t-241997.4202100000\t-2419.974202099944
+                        RXGZ\t-29298.103000\t-295996.9810300000\t-2959.969810299919
+                        VTJW\t-27544.405000\t-277997.4440500000\t-2779.974440499926
+                        """
+        );
     }
 
     @Test
     public void testDecimalCastFromIntegers() throws Exception {
-        assertDecimalCasting("""
-                CREATE TABLE x AS (
-                  SELECT
-                    timestamp_sequence(0, 1000000) AS ts,
-                    rnd_symbol(5, 4, 4, 2) AS sym,
-                    ((x % 100000) - 50000)::int AS int_col,
-                    ((x % 2000) - 1000)::short AS short_col,
-                    ((x % 200) - 100)::byte AS byte_col
-                  FROM long_sequence(2000)
-                ) TIMESTAMP(ts) PARTITION BY DAY""", """
-                SELECT sym,
-                       sum(cast(int_col as DECIMAL(18,4))) AS int_decimal,
-                       sum(cast(short_col as DECIMAL(10,2))) AS short_decimal,
-                       sum(cast(byte_col as DECIMAL(8,2))) AS byte_decimal
-                FROM x
-                GROUP BY sym
-                ORDER BY sym""", """
-                sym\tint_decimal\tshort_decimal\tbyte_decimal
-                \t-32187536.0000\t5464.00\t1364.00
-                CPSW\t-13431350.0000\t-5350.00\t-950.00
-                HYRX\t-12395585.0000\t-585.00\t-1285.00
-                PEHN\t-11842021.0000\t15979.00\t-421.00
-                RXGZ\t-14498103.0000\t5897.00\t297.00
-                VTJW\t-13644405.0000\t-22405.00\t-5.00
-                """);
+        assertDecimalCasting(
+                """
+                        CREATE TABLE x AS (
+                          SELECT
+                            timestamp_sequence(0, 1000000) AS ts,
+                            rnd_symbol(5, 4, 4, 2) AS sym,
+                            ((x % 100000) - 50000)::int AS int_col,
+                            ((x % 2000) - 1000)::short AS short_col,
+                            ((x % 200) - 100)::byte AS byte_col
+                          FROM long_sequence(2000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """,
+                """
+                        SELECT sym,
+                               sum(cast(int_col as DECIMAL(18,4))) AS int_decimal,
+                               sum(cast(short_col as DECIMAL(10,2))) AS short_decimal,
+                               sum(cast(byte_col as DECIMAL(8,2))) AS byte_decimal
+                        FROM x
+                        GROUP BY sym
+                        ORDER BY sym
+                        """,
+                """
+                        sym\tint_decimal\tshort_decimal\tbyte_decimal
+                        \t-32187536.0000\t5464.00\t1364.00
+                        CPSW\t-13431350.0000\t-5350.00\t-950.00
+                        HYRX\t-12395585.0000\t-585.00\t-1285.00
+                        PEHN\t-11842021.0000\t15979.00\t-421.00
+                        RXGZ\t-14498103.0000\t5897.00\t297.00
+                        VTJW\t-13644405.0000\t-22405.00\t-5.00
+                        """
+        );
     }
 
     @Test
