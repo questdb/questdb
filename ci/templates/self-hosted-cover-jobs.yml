@@ -1,5 +1,7 @@
 jobs:
   - job: RunOn
+    workspace:
+      clean: all
     displayName: "on"
     strategy:
       matrix:
