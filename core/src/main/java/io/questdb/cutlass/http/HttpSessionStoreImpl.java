@@ -80,9 +80,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     @Override
     public synchronized int size(@NotNull CharSequence principal) {
         int count = 0;
-        final Iterator<Map.Entry<CharSequence, SessionInfo>> iterator = sessionsById.entrySet().iterator();
-        while (iterator.hasNext()) {
-            final Map.Entry<CharSequence, SessionInfo> entry = iterator.next();
+        for (Map.Entry<CharSequence, SessionInfo> entry : sessionsById.entrySet()) {
             final SessionInfo sessionInfo = entry.getValue();
             if (Chars.equals(principal, sessionInfo.getPrincipal())) {
                 count++;
@@ -92,14 +90,18 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public synchronized void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
-        // ideally these would be compared as sets, but it is ok
-        // unlikely that the order of groups changing constantly
-        if (groups.equals(groupsByEntity.get(principal))) {
+    public void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
+        final ObjList<CharSequence> currentGroups = groupsByEntity.get(principal);
+        if (currentGroups == null) {
+            groupsByEntity.put(principal, groups);
             return;
         }
 
-        groupsByEntity.put(principal, new ObjList<>(groups));
+        // ideally these would be compared as sets, but it is ok
+        // unlikely that the order of groups changing constantly
+        if (!groups.equals(currentGroups)) {
+            groupsByEntity.replace(principal, currentGroups, new ObjList<>(groups));
+        }
     }
 
     @Override
