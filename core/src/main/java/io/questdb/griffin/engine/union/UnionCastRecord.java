@@ -107,6 +107,86 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
+    public long getDecimal128Hi(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal128Hi(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal128Hi(recordB);
+    }
+
+    @Override
+    public long getDecimal128Lo(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal128Lo(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal128Lo(recordB);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal16(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal16(recordB);
+    }
+
+    @Override
+    public long getDecimal256HH(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal256HH(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal256HH(recordB);
+    }
+
+    @Override
+    public long getDecimal256HL(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal256HL(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal256HL(recordB);
+    }
+
+    @Override
+    public long getDecimal256LH(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal256LH(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal256LH(recordB);
+    }
+
+    @Override
+    public long getDecimal256LL(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal256LL(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal256LL(recordB);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal32(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal32(recordB);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal64(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal64(recordB);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal8(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal8(recordB);
+    }
+
+    @Override
     public double getDouble(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getDouble(recordA);

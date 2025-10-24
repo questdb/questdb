@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.cutlass.text.types.TypeManager;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -55,12 +56,14 @@ public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
     private static DirectUtf16Sink utf16Sink;
     private static DirectUtf8Sink utf8Sink;
+    private static Decimal256 decimal256;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
         utf16Sink = new DirectUtf16Sink(64);
         utf8Sink = new DirectUtf8Sink(64);
+        decimal256 = new Decimal256();
         jsonLexer = new JsonLexer(1024, 2048);
     }
 
@@ -158,13 +161,13 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4,DECIMAL(18,3)]", typeManager.getAllAdapters().toString());
     }
 
     @Test
     public void testEmpty() throws JsonException {
         TypeManager typeManager = createTypeManager("/textloader/types/empty.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4,DECIMAL(18,3)]", typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -192,7 +195,7 @@ public class TypeManagerTest extends AbstractTest {
         File configFile = new File(root, "my_awesome_text_loader.json");
         TestUtils.writeStringToFile(configFile, "{\n}\n");
         TypeManager typeManager = createTypeManager("/my_awesome_text_loader.json");
-        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4]", typeManager.getAllAdapters().toString());
+        Assert.assertEquals("[CHAR,INT,LONG,DOUBLE,BOOLEAN,LONG256,UUID,IPv4,DECIMAL(18,3)]", typeManager.getAllAdapters().toString());
     }
 
     @Test
@@ -283,12 +286,12 @@ public class TypeManagerTest extends AbstractTest {
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);
-        return new TypeManager(new DefaultTextConfiguration(getClass(), root, fileResource), utf16Sink, utf8Sink);
+        return new TypeManager(new DefaultTextConfiguration(getClass(), root, fileResource), utf16Sink, utf8Sink, decimal256);
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) {
         TextConfiguration textConfiguration = new DefaultTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink, decimal256);
         try {
             typeManager.getTypeAdapter(columnType);
             Assert.fail();

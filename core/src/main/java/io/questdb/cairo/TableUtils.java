@@ -52,6 +52,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -746,7 +747,7 @@ public final class TableUtils {
         }
     }
 
-    public static long getNullLong(int columnType, @SuppressWarnings("unused") int longIndex) {
+    public static long getNullLong(int columnType, int longIndex) {
         // In theory, we can have a column type where `NULL` value will be different `LONG` values,
         // then this should return different values on longIndex. At the moment there are no such types.
         return switch (ColumnType.tagOf(columnType)) {
@@ -765,6 +766,22 @@ public final class TableUtils {
             case ColumnType.IPv4 -> Numbers.IPv4_NULL;
             case ColumnType.VARCHAR, ColumnType.BINARY, ColumnType.ARRAY -> NULL_LEN;
             case ColumnType.STRING -> Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
+            case ColumnType.DECIMAL8 -> Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
+                if (longIndex == 0) {
+                    yield Decimals.DECIMAL128_HI_NULL;
+                }
+                yield Decimals.DECIMAL128_LO_NULL;
+            }
+            case ColumnType.DECIMAL256 -> switch (longIndex) {
+                case 0 -> Decimals.DECIMAL256_HH_NULL;
+                case 1 -> Decimals.DECIMAL256_HL_NULL;
+                case 2 -> Decimals.DECIMAL256_LH_NULL;
+                default -> Decimals.DECIMAL256_LL_NULL;
+            };
             default -> {
                 assert false : "Invalid column type: " + columnType;
                 yield 0;
@@ -1632,6 +1649,28 @@ public final class TableUtils {
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
+                break;
+            case ColumnType.INTERVAL:
+                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
+                break;
+            case ColumnType.DECIMAL8:
+                Vect.memset(addr, count, Decimals.DECIMAL8_NULL);
+                break;
+            case ColumnType.DECIMAL16:
+                Vect.setMemoryShort(addr, Decimals.DECIMAL16_NULL, count);
+                break;
+            case ColumnType.DECIMAL32:
+                Vect.setMemoryInt(addr, Decimals.DECIMAL32_NULL, count);
+                break;
+            case ColumnType.DECIMAL64:
+                Vect.setMemoryLong(addr, Decimals.DECIMAL64_NULL, count);
+                break;
+            case ColumnType.DECIMAL128:
+                Vect.setMemoryLong128(addr, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, count);
+                break;
+            case ColumnType.DECIMAL256:
+                Vect.setMemoryLong256(addr, Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
+                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, count);
                 break;
             default:
                 break;

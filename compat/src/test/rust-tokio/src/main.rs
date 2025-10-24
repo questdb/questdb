@@ -1,20 +1,20 @@
 use crate::TestError::AssertionError;
 use chrono::NaiveDateTime;
+use fallible_iterator::FallibleIterator;
+use postgres_protocol::types::{float8_from_sql, Array};
 use regex::Regex;
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_yaml::Value;
 use std::collections::HashMap;
 use std::env;
+use std::error::Error;
+use std::fmt;
 use std::fs;
 use std::process;
 use thiserror::Error;
+use tokio_postgres::types::{FromSql, Kind, Type};
 use tokio_postgres::{types::ToSql, Client, NoTls, Row};
-use std::error::Error;
-use std::fmt;
-use postgres_protocol::types::{float8_from_sql, Array};
-use tokio_postgres::types::{FromSql, Type, Kind};
-use fallible_iterator::FallibleIterator;
-
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
@@ -129,11 +129,13 @@ async fn run_tests(client: &Client, test_file: &TestFile) -> TestResult<bool> {
 
         if let Some(excludes) = &test.exclude {
             if excludes.contains(&rust_string) {
-                println!("Skipping test: {:?} because it's excluded for Rust", test.name);
+                println!(
+                    "Skipping test: {:?} because it's excluded for Rust",
+                    test.name
+                );
                 continue;
             }
         }
-
 
         for i in 0..iterations {
             println!("Running test '{}' (iteration {})", test.name, i);
@@ -328,7 +330,7 @@ fn extract_parameters(
                             let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
                             let float_array: Vec<Option<f64>> = trimmed
                                 .split(',')
-                                .map(|s | s.trim())
+                                .map(|s| s.trim())
                                 .filter(|s| !s.is_empty())
                                 .map(|s| {
                                     if s.eq_ignore_ascii_case("NULL") {
@@ -340,6 +342,8 @@ fn extract_parameters(
                                 .collect::<Result<Vec<Option<f64>>, _>>()?;
                             Box::new(float_array)
                         }
+
+                        "numeric" => Box::new(substituted.parse::<Decimal>()?),
 
                         _ => return Err("Unsupported parameter type".into()),
                     }
@@ -400,12 +404,8 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
         Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
         Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
-        Type::FLOAT4 => {
-            Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx)))
-        }
-        Type::FLOAT8 => {
-            Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx)))
-        }
+        Type::FLOAT4 => Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx))),
+        Type::FLOAT8 => Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx))),
         Type::BOOL => Value::Bool(row.get(idx)),
         Type::TIMESTAMP => {
             let val: NaiveDateTime = row.get(idx);
@@ -413,8 +413,14 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         }
         Type::VARCHAR => Value::String(row.get(idx)),
         Type::FLOAT8_ARRAY => {
-            let PgArrayString (float_array) = row.get(idx);
+            let PgArrayString(float_array) = row.get(idx);
             Value::String(float_array)
+        }
+        Type::NUMERIC => {
+            let val: Decimal = row.get(idx);
+            // Decimals are represented as string instead of number to avoid loosing precision
+            // using a float
+            Value::String(val.normalize().to_string())
         }
         _ => Value::String(row.get(idx)),
     }
@@ -525,7 +531,7 @@ impl<'a> FromSql<'a> for PgArrayString {
                 let mut buffer = String::new();
                 array_to_text(&array, 0, 0, &mut buffer, element_type)?;
                 Ok(PgArrayString(buffer))
-            },
+            }
             _ => Err("expected array type".into()),
         }
     }
@@ -540,7 +546,7 @@ fn array_to_text(
     dim: usize,
     mut flat_index: usize,
     buffer: &mut String,
-    element_type: &Type
+    element_type: &Type,
 ) -> Result<usize, Box<dyn Error + Sync + Send>> {
     // Get dimensions info - manually collect them
     let mut dimensions = Vec::new();
@@ -558,7 +564,10 @@ fn array_to_text(
 
     // Calculate stride for this dimension
     let stride = if dim < dimensions.len() - 1 {
-        dimensions[dim + 1..].iter().map(|d| d.len as usize).product()
+        dimensions[dim + 1..]
+            .iter()
+            .map(|d| d.len as usize)
+            .product()
     } else {
         1 // Leaf dimension
     };
@@ -576,7 +585,9 @@ fn array_to_text(
             }
 
             // Get the value at flat_index
-            let value = array.values().nth(flat_index)?
+            let value = array
+                .values()
+                .nth(flat_index)?
                 .ok_or("Value index out of bounds")?;
 
             match value {

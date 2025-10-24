@@ -149,7 +149,7 @@ public class Decimal128ModuloBenchmark {
             case "MIXED_128_64":
                 // Modulo of 128-bit by 64-bit value: large 128-bit % normal 64-bit
                 decimal128Dividend = new Decimal128();
-                decimal128Dividend.set(123456789L, 987654321098765432L, 6);
+                decimal128Dividend.of(123456789L, 987654321098765432L, 6);
                 decimal128Divisor = Decimal128.fromDouble(12345.678, 3);
                 bigDecimalDividend = new BigDecimal("123456789987654321098.765432");
                 bigDecimalDivisor = new BigDecimal("12345.678");

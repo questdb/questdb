@@ -35,6 +35,8 @@ import java.util.Arrays;
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
+    private static final ThreadLocal<Decimal128> tlDecimal128 = new ThreadLocal<>(Decimal128::new);
+    private static final ThreadLocal<Decimal256> tlDecimal256 = new ThreadLocal<>(Decimal256::new);
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 
@@ -116,6 +118,14 @@ public final class Misc {
         if (list != null) {
             freeObjList0(list);
         }
+    }
+
+    public static Decimal128 getThreadLocalDecimal128() {
+        return tlDecimal128.get();
+    }
+
+    public static Decimal256 getThreadLocalDecimal256() {
+        return tlDecimal256.get();
     }
 
     public static StringSink getThreadLocalSink() {

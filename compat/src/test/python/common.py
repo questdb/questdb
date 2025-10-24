@@ -23,7 +23,7 @@
 import datetime
 import yaml
 from string import Template
-
+from decimal import Decimal
 
 def load_yaml(file_path):
     with open(file_path, 'r') as file:
@@ -102,6 +102,8 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'char':
         str_val = str(value)
         resolved_parameters.append(str_val)
+    elif type == 'numeric':
+        resolved_parameters.append(Decimal(value))
     else:
         resolved_parameters.append(value)
 
@@ -166,6 +168,10 @@ def convert_value(value):
     # Handle dictionaries by recursively converting their values
     elif isinstance(value, dict):
         return {k: convert_value(v) for k, v in value.items()}
+    
+    # Handle decimal to print them as string
+    elif isinstance(value, Decimal):
+        return value.normalize().__str__()
 
     # Return other types unchanged
     else:

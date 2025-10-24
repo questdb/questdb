@@ -41,6 +41,9 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.IntStack;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
@@ -56,6 +59,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
+    private final Decimal64 decimal64 = new Decimal64();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
     private final int sharedQueryWorkerCount;
@@ -199,6 +205,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
+    }
+
+    public Decimal128 getDecimal128() {
+        return decimal128;
+    }
+
+    public Decimal256 getDecimal256() {
+        return decimal256;
+    }
+
+    public Decimal64 getDecimal64() {
+        return decimal64;
     }
 
     @Override
@@ -426,8 +444,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
     }
 
-    public void with(SqlExecutionCircuitBreaker circuitBreaker) {
+    public SqlExecutionContext with(SqlExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
+        return this;
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {

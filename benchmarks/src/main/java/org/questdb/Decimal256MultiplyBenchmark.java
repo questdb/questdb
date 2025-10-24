@@ -151,7 +151,7 @@ public class Decimal256MultiplyBenchmark {
             case "MIXED_256_128":
                 // Multiplication of 256-bit and 128-bit values: large 256-bit * normal 128-bit
                 decimal256Multiplicand = new Decimal256();
-                decimal256Multiplicand.setFromLong(123456789098765432L, 6);
+                decimal256Multiplicand.ofLong(123456789098765432L, 6);
                 decimal256Multiplier = Decimal256.fromDouble(7.89, 2);
                 bigDecimalMultiplicand = new BigDecimal("123456789098.765432");
                 bigDecimalMultiplier = new BigDecimal("7.89");

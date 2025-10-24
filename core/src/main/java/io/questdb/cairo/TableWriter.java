@@ -90,6 +90,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -3165,6 +3166,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     break;
                 case ColumnType.GEOLONG:
                     nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
+                    break;
+                case ColumnType.DECIMAL8:
+                    nullers.add(() -> dataMem.putByte(Byte.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL16:
+                    nullers.add(() -> dataMem.putShort(Short.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL32:
+                    nullers.add(() -> dataMem.putInt(Integer.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL64:
+                    nullers.add(() -> dataMem.putLong(Long.MIN_VALUE));
+                    break;
+                case ColumnType.DECIMAL128:
+                    nullers.add(() -> dataMem.putDecimal128(Long.MIN_VALUE, -1));
+                    break;
+                case ColumnType.DECIMAL256:
+                    nullers.add(() -> dataMem.putDecimal256(Long.MIN_VALUE, -1, -1, -1));
                     break;
                 default:
                     nullers.add(NOOP);
@@ -10764,6 +10783,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void putDate(int columnIndex, long value);
 
+        void putDecimal(int columnIndex, Decimal256 value);
+
+        void putDecimal128(int columnIndex, long high, long low);
+
+        void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll);
+
+        @SuppressWarnings("unused")
+        void putDecimalStr(int columnIndex, CharSequence value, Decimal256 decimal);
+
         void putDouble(int columnIndex, double value);
 
         void putFloat(int columnIndex, float value);
@@ -10879,6 +10907,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putDate(int columnIndex, long value) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            // no-op
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence cs, Decimal256 decimal) {
             // no-op
         }
 
@@ -11082,6 +11130,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putDate(int columnIndex, long value) {
             putLong(columnIndex, value);
+        }
+
+        @Override
+        public void putDecimal(int columnIndex, Decimal256 value) {
+            int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimal(columnIndex, value, type, this);
+        }
+
+        @Override
+        public void putDecimal128(int columnIndex, long high, long low) {
+            getPrimaryColumn(columnIndex).putDecimal128(high, low);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
+            getPrimaryColumn(columnIndex).putDecimal256(hh, hl, lh, ll);
+            setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putDecimalStr(int columnIndex, CharSequence cs, Decimal256 decimal) {
+            final int type = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalStr(columnIndex, decimal, cs, type, this);
         }
 
         @Override

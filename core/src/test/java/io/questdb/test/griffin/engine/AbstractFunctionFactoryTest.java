@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
@@ -414,7 +415,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             expression1,
                             expression2,
                             0,
-                            args[0]);
+                            args[0]
+                    );
 
                     expression1.put(' ').put(name).put(' ');
                     expression2.put(' ').put(name).put(' ');
@@ -429,7 +431,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             expression1,
                             expression2,
                             1,
-                            args[1]);
+                            args[1]
+                    );
                     break;
             }
         } else {
@@ -560,6 +563,26 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
+            cleanup();
+        }
+
+        public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
+            Assert.assertEquals(hh, function1.getDecimal256HH(record));
+            Assert.assertEquals(hl, function1.getDecimal256HL(record));
+            Assert.assertEquals(lh, function1.getDecimal256LH(record));
+            Assert.assertEquals(ll, function1.getDecimal256LL(record));
+            Assert.assertEquals(scale, ColumnType.getDecimalScale(function1.getType()));
+            cleanup();
+        }
+
+        public void andAssertDecimal256Null() {
+            Assert.assertTrue(Decimal256.isNull(
+                    function1.getDecimal256HH(record),
+                    function1.getDecimal256HL(record),
+                    function1.getDecimal256LH(record),
+                    function1.getDecimal256LL(record)
+            ));
+            Assert.assertEquals(0, ColumnType.getDecimalScale(function1.getType()));
             cleanup();
         }
 

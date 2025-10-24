@@ -37,7 +37,7 @@ import io.questdb.std.str.Utf8Sequence;
  * Allows for setting the values of bind variables passed
  * in an SQL query by their index (position in a list of bind variables).
  * <p>
- * Types of bind variables are can be defined either via setting them explicitly before
+ * Types of bind variables can be defined either via setting them explicitly before
  * SQL is executed or having SQL compiler infer types from expression where bind variable
  * is used. Once type is set, bind variable can be assigned value only from a compatible type.
  */
@@ -205,6 +205,32 @@ public interface BindVariableService extends Mutable {
      *                      that is not compatible with Date
      */
     void setDate(int index, long value) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as Decimal and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param hh    highest 64 bits of Decimal
+     * @param hl    high 64 bits of Decimal
+     * @param lh    middle 64 bits of Decimal
+     * @param ll    lower 64 bits of Decimal
+     * @param type  type of Decimal, containing the precision/scale
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as Decimal and provide a value
+     *
+     * @param name of the bind variable
+     * @param hh   highest 64 bits of Decimal
+     * @param hl   high 64 bits of Decimal
+     * @param lh   middle 64 bits of Decimal
+     * @param ll   lower 64 bits of Decimal
+     * @param type type of Decimal, containing the precision/scale
+     * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
+     */
+    void setDecimal(CharSequence name, long hh, long hl, long lh, long ll, int type) throws SqlException;
 
     /**
      * Set type of bind variable by name as double and provide a value

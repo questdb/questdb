@@ -2757,6 +2757,145 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnAllDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table t1 (
+                        val int,
+                        dec8 decimal(2, 0),
+                        dec16 decimal(4, 1),
+                        dec32 decimal(9, 2),
+                        dec64 decimal(18, 3),
+                        dec128 decimal(38, 4),
+                        dec256 decimal(76, 5),
+                        ts timestamp
+                    ) timestamp(ts)
+                    """);
+            execute("""
+                    insert into t1 values
+                    (1, 1m, 1.2m, 12.34m, 123.456m, 1234.5678m, 12345.6789m, '1970-01-01T00:00:00.000000Z'),
+                    (2, 2m, 2.3m, 23.45m, 234.567m, 2345.6789m, 23456.78901m, '1970-01-01T00:00:01.000000Z'),
+                    (3, 3m, 3.4m, 34.56m, 345.678m, 3456.789m, 34567.89012m, '1970-01-01T00:00:02.000000Z'),
+                    (4, 4m, 4.5m, 45.67m, 456.789m, 4567.8901m, 45678.90123m, '1970-01-01T00:00:03.000000Z')
+                    """);
+
+            execute("""
+                    create table t2 (
+                        val int,
+                        dec8 decimal(2, 0),
+                        dec16 decimal(4, 1),
+                        dec32 decimal(9, 2),
+                        dec64 decimal(18, 3),
+                        dec128 decimal(38, 4),
+                        dec256 decimal(76, 5),
+                        ts timestamp
+                    ) timestamp(ts)
+                    """);
+            execute("""
+                    insert into t2 values
+                    (0, 5m, 5.6m, 56.78m, 567.89m, 5678.9012m, 56789.01234m, '1970-01-01T00:00:00.000000Z'),
+                    (1, 6m, 6.7m, 67.89m, 678.901m, 6789.0123m, 67890.12345m, '1970-01-01T00:00:01.000000Z'),
+                    (3, 7m, 7.8m, 78.9m, 789.012m, 7890.1234m, 78901.23456m, '1970-01-01T00:00:02.000000Z'),
+                    (5, 8m, 8.9m, 89.01m, 890.123m, 8901.2345m, 89012.34567m, '1970-01-01T00:00:03.000000Z')
+                    """);
+
+            String expected = """
+                    val\tdec8\tdec16\tdec32\tdec64\tdec128\tdec256\tts\tval1\tdec81\tdec161\tdec321\tdec641\tdec1281\tdec2561\tts1
+                    1\t1\t1.2\t12.34\t123.456\t1234.5678\t12345.67890\t1970-01-01T00:00:00.000000Z\t1\t6\t6.7\t67.89\t678.901\t6789.0123\t67890.12345\t1970-01-01T00:00:01.000000Z
+                    3\t3\t3.4\t34.56\t345.678\t3456.7890\t34567.89012\t1970-01-01T00:00:02.000000Z\t3\t7\t7.8\t78.90\t789.012\t7890.1234\t78901.23456\t1970-01-01T00:00:02.000000Z
+                    """;
+
+            String sql = "select * from t1 join t2 on t1.val = t2.val";
+
+            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+        });
+    }
+
+    @Test
+    public void testJoinOnDecimalFailureMixedScale() throws Exception {
+        // We don't support implicit casting between different decimals during join resolution
+        assertMemoryLeak(() -> {
+            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+
+            try {
+                assertQueryNoLeakCheck("", "select * from t1 join t2 on t1.dec = t2.dec");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinOnDecimalKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t1 (dec, ts) values
+                    (1.1m, '1970-01-01T00:00:00.000000Z'),
+                    (1.2m, '1970-01-01T00:00:01.000000Z'),
+                    (1.3m, '1970-01-01T00:00:02.000000Z'),
+                    (1.4m, '1970-01-01T00:00:03.000000Z')
+                    """);
+
+            execute("create table t2 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t2 (dec, ts) values
+                    (1.5m, '1970-01-01T00:00:04.000000Z'),
+                    (1.4m, '1970-01-01T00:00:05.000000Z'),
+                    (1.2m, '1970-01-01T00:00:06.000000Z'),
+                    (1.1m, '1970-01-01T00:00:07.000000Z')
+                    """);
+
+            String expected = """
+                    dec\tts\tdec1\tts1
+                    1.10\t1970-01-01T00:00:00.000000Z\t1.10\t1970-01-01T00:00:07.000000Z
+                    1.20\t1970-01-01T00:00:01.000000Z\t1.20\t1970-01-01T00:00:06.000000Z
+                    1.40\t1970-01-01T00:00:03.000000Z\t1.40\t1970-01-01T00:00:05.000000Z
+                    """;
+
+            String sql = "select * from t1 join t2 on t1.dec = t2.dec";
+
+            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+        });
+    }
+
+    @Test
+    public void testJoinOnDecimalKeyMixedScales() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t1 (dec, ts) values
+                    (1.1m, '1970-01-01T00:00:00.000000Z'),
+                    (1.2m, '1970-01-01T00:00:01.000000Z'),
+                    (1.3m, '1970-01-01T00:00:02.000000Z'),
+                    (1.41m, '1970-01-01T00:00:03.000000Z')
+                    """);
+
+            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+            execute("""
+                    insert into t2 (dec, ts) values
+                    (1.5432m, '1970-01-01T00:00:04.000000Z'),
+                    (1.41m, '1970-01-01T00:00:05.000000Z'),
+                    (1.200m, '1970-01-01T00:00:06.000000Z'),
+                    (1.1000m, '1970-01-01T00:00:07.000000Z')
+                    """);
+
+            String expected = """
+                    dec\tts\tdec1\tts1
+                    1.10\t1970-01-01T00:00:00.000000Z\t1.1000\t1970-01-01T00:00:07.000000Z
+                    1.20\t1970-01-01T00:00:01.000000Z\t1.2000\t1970-01-01T00:00:06.000000Z
+                    1.41\t1970-01-01T00:00:03.000000Z\t1.4100\t1970-01-01T00:00:05.000000Z
+                    """;
+
+            String sql = "select * from t1 join t2 on cast(t1.dec as decimal(8, 4)) = t2.dec";
+
+            assertQueryNoLeakCheck(expected, sql, "ts", false, false);
+        });
+    }
+
+    @Test
     public void testJoinOnGeohash() throws Exception {
         assertMemoryLeak(() -> {
             execute(

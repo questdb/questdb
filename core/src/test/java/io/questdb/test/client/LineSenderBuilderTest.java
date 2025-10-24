@@ -277,7 +277,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_interval=1;", "cannot set auto flush interval when interval based auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush=off;auto_flush_rows=1;", "cannot set auto flush rows when auto-flush is already disabled");
             assertConfStrError("http::addr=localhost;auto_flush_bytes=1024;", "auto_flush_bytes is only supported for TCP transport");
-            assertConfStrError("http::addr=localhost;protocol_version=10", "current client only supports protocol version 1(text format for all datatypes), 2(binary format for part datatypes) or explicitly unset");
+            assertConfStrError("http::addr=localhost;protocol_version=10", "current client only supports protocol version 1(text format for all datatypes), 2(binary format for part datatypes), 3(decimal datatype) or explicitly unset");
             assertConfStrError("http::addr=localhost:48884;max_name_len=10;", "max_name_len must be at least 16 bytes [max_name_len=10]");
 
             assertConfStrOk("addr=localhost:8080", "auto_flush_rows=100", "protocol_version=1");
@@ -331,6 +331,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=unsafe_off;auto_flush_rows=100;protocol_version=2;max_name_len=256;");
             assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=2;");
+            assertConfStrOk("https::addr=localhost:8080;tls_verify=on;protocol_version=3;");
             assertConfStrError("https::addr=2001:0db8:85a3:0000:0000:8a2e:0370:7334;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=2001:0db8:85a3:0000:0000:8a2e:0370:7334]");
             assertConfStrError("https::addr=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000;tls_verify=on;", "cannot parse a port from the address, use IPv4 address or a domain name [address=[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:9000]");
         });

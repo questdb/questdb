@@ -228,7 +228,6 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");
-        properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");
         properties.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY.getPropertyPath(), "128");
         properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE.getPropertyPath(), "1073741824");

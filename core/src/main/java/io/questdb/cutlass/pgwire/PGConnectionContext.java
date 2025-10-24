@@ -1757,6 +1757,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
+        public void putNetworkInt(long address, int value) {
+            checkCapacity(address, Integer.BYTES);
+            putInt(address, value);
+        }
+
+        @Override
         public void putNetworkLong(long value) {
             checkCapacity(Long.BYTES);
             putLong(sendBufferPtr, value);
@@ -1768,6 +1774,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             checkCapacity(Short.BYTES);
             putShort(sendBufferPtr, value);
             sendBufferPtr += Short.BYTES;
+        }
+
+        @Override
+        public void putNetworkShort(long address, short value) {
+            checkCapacity(address, Short.BYTES);
+            putShort(address, value);
         }
 
         @Override
@@ -1826,6 +1838,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             long checkpoint = sendBufferPtr;
             sendBufferPtr += Integer.BYTES;
             return checkpoint;
+        }
+
+        private void checkCapacity(long address, long size) {
+            if (address + size < sendBufferLimit) {
+                return;
+            }
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
     }
 }

@@ -169,6 +169,56 @@ public class JsonExtractFunction implements Function {
     }
 
     @Override
+    public long getDecimal128Hi(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal128Lo(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256HH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256HL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LH(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal256LL(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null || pointer == null) {
@@ -217,22 +267,22 @@ public class JsonExtractFunction implements Function {
             return Numbers.IPv4_NULL;
         }
         final long res = queryPointerValue(jsonInput);
-        switch (stateA.simdJsonResult.getType()) {
-            case SimdJsonType.STRING:
+        return switch (stateA.simdJsonResult.getType()) {
+            case SimdJsonType.STRING -> {
                 assert stateA.destUtf8Sink != null;
-                return Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
-            case SimdJsonType.NUMBER: {
+                yield Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
+            }
+            case SimdJsonType.NUMBER -> {
                 if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
                     final int asInt = (int) res;
                     if (asInt == res) {  // precision is intact
-                        return asInt;
+                        yield asInt;
                     }
                 }
-                return Numbers.IPv4_NULL;
+                yield Numbers.IPv4_NULL;
             }
-            default:
-                return Numbers.IPv4_NULL;
-        }
+            default -> Numbers.IPv4_NULL;
+        };
     }
 
     @Override

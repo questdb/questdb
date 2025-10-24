@@ -37,6 +37,7 @@ import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -84,6 +85,16 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
         putAsciiInternal(' ');
         putTimestamp(timestamp);
         atNow();
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override
@@ -271,7 +282,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     }
 
     private void putTimestamp(Instant timestamp) {
-        // always send as nanos as long as it fits in a long 
+        // always send as nanos as long as it fits in a long
         try {
             put(NanosTimestampDriver.INSTANCE.from(timestamp)).putAsciiInternal('n');
         } catch (ArithmeticException e) {

@@ -71,7 +71,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final ObjList<String> hosts;
-    private final int initialBackoffMillis;
     private final boolean isTls;
     private final int maxBackoffMillis;
     private final int maxNameLength;
@@ -179,7 +178,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         assert authToken == null || (username == null && password == null);
         this.maxRetriesNanos = maxRetriesNanos;
         this.maxBackoffMillis = maxBackoffMillis;
-        this.initialBackoffMillis = Math.min(maxBackoffMillis, RETRY_INITIAL_BACKOFF_MS);
         this.hosts = hosts;
         this.ports = ports;
         this.currentAddressIndex = currentAddressIndex;
@@ -357,8 +355,8 @@ public abstract class AbstractLineHttpSender implements Sender {
             throw new LineSenderException("Failed to detect server line protocol version");
         }
 
-        if (protocolVersion == PROTOCOL_VERSION_V1) {
-            return new LineHttpSenderV1(
+        return switch (protocolVersion) {
+            case PROTOCOL_VERSION_V1 -> new LineHttpSenderV1(
                     hosts,
                     ports,
                     path,
@@ -377,8 +375,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex,
                     rnd
             );
-        } else {
-            return new LineHttpSenderV2(
+            case PROTOCOL_VERSION_V2 -> new LineHttpSenderV2(
                     hosts,
                     ports,
                     path,
@@ -397,7 +394,27 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex,
                     rnd
             );
-        }
+            case PROTOCOL_VERSION_V3 -> new LineHttpSenderV3(
+                    hosts,
+                    ports,
+                    path,
+                    clientConfiguration,
+                    tlsConfig,
+                    cli,
+                    autoFlushRows,
+                    authToken,
+                    username,
+                    password,
+                    maxNameLength,
+                    maxRetriesNanos,
+                    maxBackoffMillis,
+                    minRequestThroughput,
+                    flushIntervalNanos,
+                    currentAddressIndex,
+                    rnd
+            );
+            default -> throw new LineSenderException("Unsupported protocol version: " + protocolVersion);
+        };
     }
 
     public static boolean isNotFound(DirectUtf8Sequence statusCode) {
@@ -647,7 +664,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
-        int retryBackoff = initialBackoffMillis;
+        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
         int contentLen = request.getContentLength();
         int actualTimeoutMillis = baseTimeoutMillis;
         if (minRequestThroughput > 0) {
@@ -1056,7 +1073,9 @@ public abstract class AbstractLineHttpSender implements Sender {
             if (supportVersions.size() == 0) {
                 return PROTOCOL_VERSION_V1;
             }
-            if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
+            if (supportVersions.contains(PROTOCOL_VERSION_V3)) {
+                return PROTOCOL_VERSION_V3;
+            } else if (supportVersions.contains(PROTOCOL_VERSION_V2)) {
                 return PROTOCOL_VERSION_V2;
             } else if (supportVersions.contains(PROTOCOL_VERSION_V1)) {
                 return PROTOCOL_VERSION_V1;

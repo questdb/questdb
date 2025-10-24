@@ -128,5 +128,6 @@ open module io.questdb {
     exports io.questdb.cutlass.line.array;
     exports io.questdb.preferences;
     exports io.questdb.griffin.engine.functions.memoization;
+    exports io.questdb.griffin.engine.functions.decimal;
     exports io.questdb.cutlass.parquet;
 }

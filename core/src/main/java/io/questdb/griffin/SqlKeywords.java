@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 public class SqlKeywords {
     public static final int CAST_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
+    public static final int DECIMAL_KEYWORD_LENGTH = 7;
     public static final int GEOHASH_KEYWORD_LENGTH = 7;
     protected static final LowerCaseCharSequenceHashSet KEYWORDS = new LowerCaseCharSequenceHashSet();
     private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
@@ -397,6 +398,11 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'a'
                 && (tok.charAt(4) | 32) == 'd'
                 && (tok.charAt(5) | 32) == 'e';
+    }
+
+    public static boolean isDecimalKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && isDecimalKeywordInternal(tok);
     }
 
     public static boolean isDeclareKeyword(CharSequence tok) {
@@ -1433,6 +1439,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 's';
     }
 
+    public static boolean isNumericKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'c';
+    }
+
     public static boolean isO3MaxLagKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'o'
@@ -2272,6 +2289,10 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
+    public static boolean startsWithDecimalKeyword(CharSequence tok) {
+        return isDecimalKeywordInternal(tok);
+    }
+
     public static boolean startsWithGeoHashKeyword(CharSequence tok) {
         return (tok.length() >= 7)
                 && isGeoHashKeywordInternal(tok);
@@ -2293,6 +2314,16 @@ public class SqlKeywords {
             default:
                 break;
         }
+    }
+
+    private static boolean isDecimalKeywordInternal(CharSequence tok) {
+        return (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'm'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 'l';
     }
 
     private static boolean isGeoHashKeywordInternal(CharSequence tok) {

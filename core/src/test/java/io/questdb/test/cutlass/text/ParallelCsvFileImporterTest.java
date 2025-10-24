@@ -221,8 +221,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                       db double,
                                       str string,
                                       sym symbol,
-                                      l256 long256,\
-                                      ge geohash(20b)\
+                                      l256 long256,
+                                      ge geohash(20b),
+                                      dec decimal(15, 3)
                                     ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -232,19 +233,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            """
-                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
-                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
-                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d
-                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
-                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d
-                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d
-                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
-                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d
-                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
-                                    """,
+                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec\n" +
+                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000\n" +
+                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300\n" +
+                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340\n" +
+                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400\n" +
+                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400\n" +
+                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400\n" +
+                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400\n" +
+                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400\n" +
+                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400\n" +
+                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400\n",
                             "select * from alltypes",
                             "tstmp",
                             true,
@@ -275,8 +274,9 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                                       db double,
                                       str string,
                                       sym symbol index capacity 64,
-                                      l256 long256,\
-                                      ge geohash(20b)\
+                                      l256 long256,
+                                      ge geohash(20b),
+                                      dec decimal(15, 3)
                                     ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
                     );
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -286,19 +286,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                     refreshTablesInBaseEngine();
                     assertQueryNoLeakCheck(
-                            """
-                                    bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge
-                                    false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d
-                                    false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d
-                                    false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d
-                                    false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d
-                                    false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d
-                                    false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d
-                                    false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d
-                                    true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d
-                                    false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d
-                                    true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d
-                                    """,
+                            "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tdec\n" +
+                                    "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t1.000\n" +
+                                    "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t2.300\n" +
+                                    "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t12.340\n" +
+                                    "false\t105\t31772\t\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t123.400\n" +
+                                    "false\t123\t8110\tE\tnull\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t123.400\n" +
+                                    "false\t98\t25729\tM\t6\tnull\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t123.400\n" +
+                                    "false\t44\t-19823\tU\t7\tnull\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t123.400\n" +
+                                    "true\t102\t5672\tS\t8\t8\t\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t123.400\n" +
+                                    "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\t\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t123.400\n" +
+                                    "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\t\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t123.400\n",
                             "select * from alltypes", "tstmp", true, false, true
                     );
                 }
@@ -1621,6 +1619,32 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 }
         );
     }
+
+//    @Test
+//    public void testImportNoRowsCsv() throws Exception {
+//        executeWithPool(
+//                4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+//                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
+//                        importer.setMinChunkSize(10);
+//                        importer.of(
+//                                "t",
+//                                "test-quotes-header-only.csv",
+//                                1,
+//                                PartitionBy.MONTH,
+//                                (byte) ',',
+//                                "ts",
+//                                "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
+//                                true,
+//                                null
+//                        );
+//                        importer.process(AllowAllSecurityContext.INSTANCE);
+//                        Assert.fail();
+//                    } catch (TextImportException e) {
+//                        TestUtils.assertContains(e.getMessage(), "No rows in input file to import.");
+//                    }
+//                }
+//        );
+//    }
 
     @Test
     public void testImportTimestampTypeFormatMismatch() {
@@ -3057,9 +3081,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                           db double,
                           str string,
                           sym symbol,
-                          l256 long256,\
-                          ge geohash(20b),\
-                          uid uuid\
+                          l256 long256,
+                          ge geohash(20b),
+                          uid uuid,
+                          dec decimal(15, 3)
                         ) timestamp(tstmp) partition by DAY;""", sqlExecutionContext
         );
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, 4)) {
@@ -3069,19 +3094,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         refreshTablesInBaseEngine();
         assertQueryNoLeakCheck(
-                """
-                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid
-                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111
-                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111
-                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111
-                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111
-                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111
-                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111
-                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111
-                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111
-                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111
-                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111
-                        """,
+                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec\n" +
+                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230\n" +
+                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000\n" +
+                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000\n" +
+                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450\n" +
+                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456\n" +
+                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220\n" +
+                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330\n" +
+                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440\n" +
+                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550\n" +
+                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660\n",
                 "select * from alltypes", "tstmp", true, false, true
         );
     }
@@ -3095,19 +3118,17 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         refreshTablesInBaseEngine();
 
         assertQuery(
-                """
-                        bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid
-                        false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111
-                        false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111
-                        false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111
-                        false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111
-                        false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111
-                        false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111
-                        false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111
-                        true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111
-                        false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111
-                        true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111
-                        """,
+                "bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\tdec\n" +
+                        "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\t1.230\n" +
+                        "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\t1.000\n" +
+                        "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\t123.000\n" +
+                        "false\t105\t31772\tC\t4\t4\t1970-01-05T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\t11111111-1111-1111-4444-111111111111\t123.450\n" +
+                        "false\t123\t8110\tE\t5\t5\t1970-01-06T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\t11111111-1111-1111-5555-111111111111\t123.456\n" +
+                        "false\t98\t25729\tM\t6\t6\t1970-01-07T00:00:00.000Z\t1970-01-07T00:00:00.000000Z\t6.1\t6.2\ts6\tsy6\t0x8fbdd90a38ecfaa89b71e0b7a1d088ada82ff4bad36b72c47056f3fabd4cfeed\tu33d\t11111111-1111-1111-6666-111111111111\t222.220\n" +
+                        "false\t44\t-19823\tU\t7\t7\t1970-01-08T00:00:00.000Z\t1970-01-08T00:00:00.000000Z\t7.1\t7.2\ts7\tsy7\t0xfb87e052526d72b5faf2f76f0f4bd855bc983a6991a2e7c78c671857b35a8755\tu33d\t11111111-1111-1111-7777-111111111111\t333.330\n" +
+                        "true\t102\t5672\tS\t8\t8\t1970-01-09T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\t11111111-1111-1111-8888-111111111111\t444.440\n" +
+                        "false\t73\t-5962\tE\t9\t9\t1970-01-10T00:00:00.000Z\t1970-01-10T00:00:00.000000Z\t9.1\t9.2\ts9\tsy9\t0xdc33dd2e6ea8cc86a6ef5e562486cceb67886eea99b9dd07ba84e3fba7f66cd6\tu33d\t11111111-1111-1111-9999-111111111111\t555.550\n" +
+                        "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\t11111111-1111-1111-0000-111111111111\t666.660\n",
                 "select * from alltypes",
                 "tstmp",
                 true,
@@ -3131,7 +3152,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         "sym\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
                         "l256\tLONG256\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
                         "ge\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
-                        "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
+                        "uid\tUUID\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "dec\tDECIMAL(18,3)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\n",
                 "show columns from alltypes",
                 null,
                 sqlExecutionContext,

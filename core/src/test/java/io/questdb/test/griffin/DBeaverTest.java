@@ -47,7 +47,8 @@ public class DBeaverTest extends AbstractCairoTest {
                         "pg_catalog\t2950\t11\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t2281\t11\tinternal\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "pg_catalog\t26\t11\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
-                        "pg_catalog\t1022\t11\t_float8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
+                        "pg_catalog\t1022\t11\t_float8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "pg_catalog\t1700\t11\tnumeric\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -175,6 +176,7 @@ public class DBeaverTest extends AbstractCairoTest {
                         "1043\t1043\tvarchar\t0\t1015\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1114\t1114\ttimestamp\t0\t1115\t11\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1700\t1700\tnumeric\t0\t0\t11\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "2281\t2281\tinternal\t0\t0\t11\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "2950\t2950\tuuid\t0\t0\t11\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
                 "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
