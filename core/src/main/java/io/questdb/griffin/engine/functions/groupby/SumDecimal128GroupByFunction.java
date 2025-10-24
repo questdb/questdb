@@ -115,7 +115,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
             return rec.getDecimal256HH(valueIndex);
         }
         rec.getDecimal128(valueIndex + 1, decimal128A);
-        return decimal128A.isNull() ? Decimals.DECIMAL256_HH_NULL : 0;
+        return decimal128A.isNull() ? Decimals.DECIMAL256_HH_NULL : decimal128A.getHigh() < 0 ? -1 : 0;
     }
 
     @Override
@@ -123,7 +123,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         if (overflow) {
             return rec.getDecimal256HL(valueIndex);
         }
-        return decimal128A.isNull() ? Decimals.DECIMAL256_HL_NULL : 0;
+        return decimal128A.isNull() ? Decimals.DECIMAL256_HL_NULL : decimal128A.getHigh() < 0 ? -1 : 0;
     }
 
     @Override

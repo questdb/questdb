@@ -377,9 +377,20 @@ public class Decimal256 implements Sinkable, Decimal {
      */
     public static void divide(
             DecimalKnuthDivider divider,
-            long dividendHH, long dividendHL, long dividendLH, long dividendLL, int dividendScale,
-            long divisorHH, long divisorHL, long divisorLH, long divisorLL, int divisorScale,
-            Decimal256 result, int scale, RoundingMode roundingMode) {
+            long dividendHH,
+            long dividendHL,
+            long dividendLH,
+            long dividendLL,
+            int dividendScale,
+            long divisorHH,
+            long divisorHL,
+            long divisorLH,
+            long divisorLL,
+            int divisorScale,
+            Decimal256 result,
+            int scale,
+            RoundingMode roundingMode
+    ) {
         if (isNull(dividendHH, dividendHL, dividendLH, dividendLL) || isNull(divisorHH, divisorHL, divisorLH, divisorLL)) {
             result.ofNull();
             return;

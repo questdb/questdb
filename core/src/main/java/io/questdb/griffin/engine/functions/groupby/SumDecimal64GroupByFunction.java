@@ -108,7 +108,7 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
         if (value == Decimals.DECIMAL64_NULL) {
             return Decimals.DECIMAL128_HI_NULL;
         }
-        return 0;
+        return value < 0 ? -1 : 0;
     }
 
     @Override
