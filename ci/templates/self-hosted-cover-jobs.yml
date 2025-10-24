@@ -1,48 +1,80 @@
 jobs:
   - job: RunOn
+    workspace:
+      clean: all
     displayName: "on"
     strategy:
       matrix:
-        linux-griffin:
+        linux-griffin-root:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-griffin"
-          includeTests: "**/griffin/**"
+          testset: "coverage-griffin-root"
+          includeTests: "**/griffin/*"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-fuzz:
+        linux-griffin-sub:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-fuzz"
+          testset: "coverage-griffin-sub"
+          includeTests: "**/griffin/**/*"
+          excludeTests: "**/griffin/*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz1:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz1"
+          includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-fuzz2:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-fuzz2"
           includeTests: "**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-cairo:
+        linux-cairo-root:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-cairo"
-          includeTests: "**/cairo/**"
+          testset: "coverage-cairo-root"
+          includeTests: "**/cairo/*"
           excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        linux-cairo-sub:
+          imageName: "ubuntu-latest"
+          poolName: "hetzner-docker"
+          os: Linux
+          jdk: "1.17"
+          testset: "coverage-cairo-sub"
+          includeTests: "**/cairo/**/*"
+          excludeTests: "**/cairo/*,**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-pgwire:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
-          testset: "coverage-cutlass"
+          testset: "coverage-pgwire"
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: "hetzner-docker"
           os: Linux
           jdk: "1.17"
           testset: "coverage-other"

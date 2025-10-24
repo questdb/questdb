@@ -109,9 +109,8 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                     final StringSink sink = new StringSink();
                     try {
                         startBarrier.await();
-
                         try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
-                            for (int i = 0; i < nIterations; i++) {
+                            for (int i = 0, localLeaks = 0; i < nIterations && localLeaks < 5; i++) {
                                 final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1_999_990, 2_000_000";
                                 final StringBuilder sb = new StringBuilder(query);
                                 if (!useQueryCache) {
@@ -143,6 +142,7 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                                 } catch (PSQLException e) {
                                     // timeouts are fine
                                     TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                                    localLeaks++;
                                     timeouts.incrementAndGet();
                                 }
 
