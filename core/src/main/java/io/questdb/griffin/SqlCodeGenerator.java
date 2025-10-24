@@ -137,6 +137,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -192,6 +193,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.DisabledSymbolShortCircuit;
@@ -298,6 +300,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.microtime.Micros;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1288,7 +1291,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
-            JoinContext context
+            JoinContext context,
+            SqlExecutionContext executionContext
     ) {
         /*
          * JoinContext provides the following information:
@@ -1346,7 +1350,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER) {
                 valueTypes.add(BOOLEAN);
             }
-            if (filter != null) {
+
+            boolean isHack = Chars.equals(master.getTableToken().getTableName(), "trades") && Chars.equals(slave.getTableToken().getTableName(), "prices");
+            if (filter != null && !isHack) {
                 return new HashOuterJoinFilteredLightRecordCursorFactory(
                         configuration,
                         metadata,
@@ -1360,6 +1366,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter,
                         context,
                         joinType
+                );
+            }
+
+            // TODO(puzpuzpuz): remove this ugly hack and implement proper WINDOW JOIN support in SQL engine
+            if (isHack) {
+                GenericRecordMetadata windowJoinMetadata = GenericRecordMetadata.deepCopyOf(masterMetadata);
+                // one more column for avg(price)
+                windowJoinMetadata.add(new TableColumnMetadata(
+                        "avg_price",
+                        DOUBLE,
+                        false,
+                        0,
+                        false,
+                        null
+                ));
+                final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(1);
+                groupByFunctions.add(new AvgDoubleGroupByFunction(LongColumn.newInstance(4)));
+                ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+                groupByFunctions.getQuick(0).initValueTypes(valueTypes);
+                return new AsyncWindowJoinRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        asm,
+                        configuration,
+                        executionContext.getMessageBus(),
+                        windowJoinMetadata,
+                        master,
+                        slave,
+                        filter,
+                        null,
+                        Micros.SECOND_MICROS,
+                        Micros.SECOND_MICROS,
+                        valueTypes,
+                        groupByFunctions,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        reduceTaskFactory,
+                        executionContext.getSharedQueryWorkerCount()
                 );
             }
 
@@ -3168,7 +3215,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slave,
                                         joinType,
                                         filter,
-                                        slaveModel.getJoinContext()
+                                        slaveModel.getJoinContext(),
+                                        executionContext
                                 );
                                 masterAlias = null;
                                 break;
