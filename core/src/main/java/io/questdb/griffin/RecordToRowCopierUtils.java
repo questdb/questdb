@@ -209,7 +209,7 @@ public class RecordToRowCopierUtils {
         int transferDecimal16 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal16", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IIS)V");
         int transferDecimal32 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal32", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;III)V");
         int transferDecimal64 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal64", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IIJ)V");
-        int transferDecimal128 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal128", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;Lio/questdb/std/Decimal128;II)V");
+        int transferDecimal128 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal128", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;IILio/questdb/std/Decimal128;)V");
         int transferDecimal256 = asm.poolMethod(RecordToRowCopierUtils.class, "transferDecimal256", "(Lio/questdb/cairo/TableWriter$Row;ILio/questdb/std/Decimal256;II)V");
         int transferByteToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferByteToDecimal", "(Lio/questdb/cairo/TableWriter$Row;IBLio/questdb/std/Decimal256;I)V");
         int transferShortToDecimal = asm.poolMethod(RecordToRowCopierUtils.class, "transferShortToDecimal", "(Lio/questdb/cairo/TableWriter$Row;ISLio/questdb/std/Decimal256;I)V");
