@@ -55,9 +55,9 @@ steps:
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         ne(variables['poolName'], 'hetzner-docker')
       )
-  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
-    displayName: "Ensure .m2/repository exists (PowerShell)"
-    condition: eq(variables['os'], 'Windows')
+  #  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
+  #    displayName: "Ensure .m2/repository exists (PowerShell)"
+  #    condition: eq(variables['os'], 'Windows')
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
