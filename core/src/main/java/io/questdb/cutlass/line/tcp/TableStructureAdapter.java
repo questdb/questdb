@@ -175,7 +175,7 @@ public class TableStructureAdapter implements TableStructure {
         entities.clear();
         timestampIndex = -1;
         timestampUnit = parser.hasTimestamp() ? parser.getTimestampUnit() : (
-                defaultColumnTypes.defaultCreateTimestampColumnType == TIMESTAMP_NANO ? TIMESTAMP_UNIT_NANOS : TIMESTAMP_UNIT_MICROS
+                defaultColumnTypes.defaultTimestampColumnType == TIMESTAMP_NANO ? TIMESTAMP_UNIT_NANOS : TIMESTAMP_UNIT_MICROS
         );
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);

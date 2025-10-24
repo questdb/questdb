@@ -3519,11 +3519,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportCopyReportFrequencyLines() {
-            return parquetExportCopyReportFrequencyLines;
-        }
-
-        @Override
         public int getParquetExportCompressionCodec() {
             return parquetExportCompressionCodec;
         }
@@ -3531,6 +3526,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParquetExportCompressionLevel() {
             return parquetExportCompressionLevel;
+        }
+
+        @Override
+        public int getParquetExportCopyReportFrequencyLines() {
+            return parquetExportCopyReportFrequencyLines;
         }
 
         @Override
@@ -3544,13 +3544,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParquetExportVersion() {
-            return parquetExportVersion;
+        public CharSequence getParquetExportTableNamePrefix() {
+            return parquetExportTableNamePrefix;
         }
 
         @Override
-        public CharSequence getParquetExportTableNamePrefix() {
-            return parquetExportTableNamePrefix;
+        public int getParquetExportVersion() {
+            return parquetExportVersion;
         }
 
         @Override
@@ -4963,13 +4963,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultCreateTimestampColumnType() {
-            return lineDefaultTimestampColumnType;
+        public int getDefaultPartitionBy() {
+            return lineTcpDefaultPartitionBy;
         }
 
         @Override
-        public int getDefaultPartitionBy() {
-            return lineTcpDefaultPartitionBy;
+        public int getDefaultTimestampColumnType() {
+            return lineDefaultTimestampColumnType;
         }
 
         @Override
