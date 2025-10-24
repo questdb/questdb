@@ -8,6 +8,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -22,7 +23,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     private static final Log LOG = LogFactory.getLog(HttpSessionStoreImpl.class);
     private static final int MAX_GENERATION_ATTEMPTS = 5;
     private static final int SESSION_ID_SIZE_BYTES = 32;
-    protected final ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity = new ConcurrentHashMap<>();
+    protected final ConcurrentHashMap<ReadOnlyObjList<CharSequence>> groupsByEntity = new ConcurrentHashMap<>();
     private final long evictionCheckInterval;
     private final MicrosecondClock microsClock;
     private final long rotatedSessionEvictionTime;
@@ -91,16 +92,16 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
 
     @Override
     public void updateUserGroups(@NotNull CharSequence principal, @NotNull ObjList<CharSequence> groups) {
-        final ObjList<CharSequence> currentGroups = groupsByEntity.get(principal);
+        final ReadOnlyObjList<CharSequence> currentGroups = groupsByEntity.get(principal);
         if (currentGroups == null) {
-            groupsByEntity.put(principal, groups);
+            groupsByEntity.put(principal, groups.copy());
             return;
         }
 
         // ideally these would be compared as sets, but it is ok
         // unlikely that the order of groups changing constantly
         if (!groups.equals(currentGroups)) {
-            groupsByEntity.replace(principal, currentGroups, new ObjList<>(groups));
+            groupsByEntity.replace(principal, currentGroups, groups.copy());
         }
     }
 
