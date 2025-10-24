@@ -120,9 +120,9 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             if (perWorkerGroupByFunctions != null) {
                 perWorkerAllocators = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    final GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
-                    perWorkerAllocators.extendAndSet(i, allocator);
-                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
+                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    perWorkerAllocators.extendAndSet(i, workerAllocator);
+                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
                 }
             } else {
                 perWorkerAllocators = null;
