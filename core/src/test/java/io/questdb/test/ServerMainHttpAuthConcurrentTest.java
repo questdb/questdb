@@ -159,14 +159,23 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     assertEquals(0, sessionIds.size());
                     return;
                 }
-            } finally {
-                // wait for all checks to be done with the old session id
-                // has to happen before it gets evicted
-                barriers[2].await();
+            } catch (Exception e) {
+                // although this thread failed, let other threads finish instead of making them wait for a long timeout
+                awaitAllBarriers(barriers, 2);
+                throw e;
             }
+
+            // wait for all checks to be done with the old session id
+            // has to happen before it gets evicted
+            barriers[2].await();
 
             final long evictionIncrement = sessionTimeout / 3 + 1_000_000L;
             final long evictAt = currentMicros.get() + sessionTimeout / 3;
+
+            // wait for all threads to calculate evictAt
+            // because one thread could run away and move the clock already before
+            // others calculated it, and that will result in rotating newSessionId
+            barriers[3].await();
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
@@ -413,6 +422,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 // these barriers are used to synchronize the test threads when they should reach certain phases together
                 // for example, a barrier can be used to make sure all threads created a session before we move onto rotate/evict them
                 final CyclicBarrier[] barriers = new CyclicBarrier[]{
+                        new CyclicBarrier(numOfThreads),
                         new CyclicBarrier(numOfThreads),
                         new CyclicBarrier(numOfThreads),
                         new CyclicBarrier(numOfThreads)
