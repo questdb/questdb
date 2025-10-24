@@ -78,6 +78,7 @@ public interface HttpSessionStore {
      * @param httpContext HTTP context associated with the user's connection
      * @return session associated with the session id, or null if the session does not exist or expired
      */
+    @Nullable
     SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext);
 
     class SessionInfo implements PrincipalContext {
