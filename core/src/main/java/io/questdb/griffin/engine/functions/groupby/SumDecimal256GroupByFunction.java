@@ -66,7 +66,7 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
                 mapValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
                 }
@@ -144,7 +144,7 @@ class SumDecimal256GroupByFunction extends Decimal256Function implements GroupBy
                 destValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
                 }
