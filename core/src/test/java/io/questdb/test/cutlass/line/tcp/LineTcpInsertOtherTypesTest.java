@@ -887,13 +887,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     @Test
     public void testInsertTimestamp() throws Exception {
         assertTimestamp(
-                """
-                        value\ttimestamp
-                        0.0\t2021-09-06T13:12:01.000000Z
-                        1.0\t2021-09-06T13:12:01.000000Z
-                        2.0\t2021-09-06T13:12:01.000000Z
-                        3.0\t2021-09-06T13:12:01.000000Z
-                        """,
                 new CharSequence[]{
                         "1630933921000000000",
                         "1630933921000000000n",
@@ -907,13 +900,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
     public void testInsertTimestampNS() throws Exception {
         timestampType = TestTimestampType.NANO;
         assertTimestamp(
-                """
-                        value\ttimestamp
-                        0.0\t2021-09-06T13:12:01.000000Z
-                        1.0\t2021-09-06T13:12:01.000000Z
-                        2.0\t2021-09-06T13:12:01.000000Z
-                        3.0\t2021-09-06T13:12:01.000000Z
-                        """,
                 new CharSequence[]{
                         "1630933921000000000",
                         "1630933921000000000n",
@@ -1105,7 +1091,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         useLegacyString = true; // restore default
     }
 
-    private void assertTimestamp(String expected, CharSequence[] values) throws Exception {
+    private void assertTimestamp(CharSequence[] values) throws Exception {
         runInContext(() -> {
             sink.clear();
             for (int i = 0; i < values.length; i++) {
@@ -1122,7 +1108,13 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             closeContext();
             mayDrainWalQueue();
             try (TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), TABLE)) {
-                TestUtils.assertReader(expected, reader, sink);
+                TestUtils.assertReader("""
+                        value\ttimestamp
+                        0.0\t2021-09-06T13:12:01.000000Z
+                        1.0\t2021-09-06T13:12:01.000000Z
+                        2.0\t2021-09-06T13:12:01.000000Z
+                        3.0\t2021-09-06T13:12:01.000000Z
+                        """, reader, sink);
             }
         });
     }
@@ -1138,9 +1130,9 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
             }
             sink.clear();
             long ts = 0L;
-            for (int i = 0; i < values.length; i++) {
+            for (CharSequence value : values) {
                 sink.put(TABLE)
-                        .put(isTag ? ',' : ' ').put(TARGET_COLUMN_NAME).put('=').put(values[i])
+                        .put(isTag ? ',' : ' ').put(TARGET_COLUMN_NAME).put('=').put(value)
                         .put(isTag ? "  " : " ").put(ts += 1000000000)
                         .put('\n');
             }
