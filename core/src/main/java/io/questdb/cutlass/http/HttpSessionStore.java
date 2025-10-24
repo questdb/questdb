@@ -4,6 +4,7 @@ import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -82,14 +83,14 @@ public interface HttpSessionStore {
     class SessionInfo implements PrincipalContext {
         private static final ObjList<CharSequence> EMPTY_LIST = new ObjList<>();
         private final byte authType;
-        private final ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity;
+        private final ConcurrentHashMap<ReadOnlyObjList<CharSequence>> groupsByEntity;
         private final AtomicBoolean lock = new AtomicBoolean();
         private final String principal;
         private volatile long expiresAt;
         private volatile long rotateAt;
         private volatile String sessionId;
 
-        public SessionInfo(@NotNull String sessionId, String principal, @NotNull ConcurrentHashMap<ObjList<CharSequence>> groupsByEntity, byte authType, long expiresAt, long rotateAt) {
+        public SessionInfo(@NotNull String sessionId, String principal, @NotNull ConcurrentHashMap<ReadOnlyObjList<CharSequence>> groupsByEntity, byte authType, long expiresAt, long rotateAt) {
             this.sessionId = sessionId;
             this.principal = principal;
             this.groupsByEntity = groupsByEntity;
@@ -108,8 +109,8 @@ public interface HttpSessionStore {
         }
 
         @Override
-        public ObjList<CharSequence> getGroups() {
-            final ObjList<CharSequence> groups = groupsByEntity.get(principal);
+        public ReadOnlyObjList<CharSequence> getGroups() {
+            final ReadOnlyObjList<CharSequence> groups = groupsByEntity.get(principal);
             return groups != null ? groups : EMPTY_LIST;
         }
 
