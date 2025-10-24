@@ -922,7 +922,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     factory.supportImplicitCastCharToStr() &&
                                     arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
-                            (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
+                            (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType)) || (sigArgTypeTag == argTypeTag + 1 && argTypeTag == ColumnType.BOOLEAN)) {
                         match = mergeWithExactMatch(match);
                         continue;
                     }
