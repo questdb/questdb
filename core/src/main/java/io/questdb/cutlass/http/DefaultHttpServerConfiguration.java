@@ -239,13 +239,13 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
-            return ColumnType.TIMESTAMP_MICRO;
+        public int getDefaultPartitionBy() {
+            return PartitionBy.DAY;
         }
 
         @Override
-        public int getDefaultPartitionBy() {
-            return PartitionBy.DAY;
+        public int getDefaultTimestampColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override
