@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -37,6 +38,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
@@ -751,11 +753,11 @@ public class HttpResponseSink implements Closeable, Mutable {
          * Sends "text/plain" content type response with customised message and
          * optional additional header and cookie.
          *
-         * @param code        response code, has to be compatible with "text" response type
-         * @param message     optional message, if not provided, a standard message for the response code will be used
-         * @param header      optional header
-         * @param cookieName  optional cookie name, when name is not null the value must be not-null too
-         * @param cookieValue optional cookie value
+         * @param code         response code, has to be compatible with "text" response type
+         * @param message      optional message, if not provided, a standard message for the response code will be used
+         * @param header       optional header
+         * @param cookieNames  optional cookie names, cookie names and values must be provided in pairs
+         * @param cookieValues optional cookie values
          * @throws PeerDisconnectedException exception if HTTP client disconnects during us sending
          * @throws PeerIsSlowToReadException exception if HTTP client does not keep up with us sending
          */
@@ -763,10 +765,10 @@ public class HttpResponseSink implements Closeable, Mutable {
                 int code,
                 @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1L, true);
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieNames, cookieValues, -1L, true);
         }
 
         public void sendStatusTextContent(
@@ -785,8 +787,13 @@ public class HttpResponseSink implements Closeable, Mutable {
             sendStatusTextContent(code, null, header);
         }
 
-        public void sendStatusWithCookie(int code, Utf8Sequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusTextContent(code, message, null, cookieName, cookieValue);
+        public void sendStatusWithCookie(
+                int code,
+                Utf8Sequence message,
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, message, null, cookieNames, cookieValues);
         }
 
         public void shutdownWrite() {
@@ -798,8 +805,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 int code,
                 @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue,
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues,
                 long contentLength,
                 boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -809,8 +816,21 @@ public class HttpResponseSink implements Closeable, Mutable {
                 if (header != null) {
                     headerImpl.put(header).put(Misc.EOL);
                 }
-                if (cookieName != null) {
-                    setCookie(cookieName, cookieValue);
+                if (cookieNames != null) {
+                    if (cookieValues == null) {
+                        throw CairoException.critical(0)
+                                .put("Cookie values are missing [cookieNames=").put(cookieNames)
+                                .put(", cookieValues=null]");
+                    }
+                    if (cookieValues.size() != cookieNames.size()) {
+                        throw CairoException.critical(0)
+                                .put("The number of cookie names and values are not matching [cookieNames=").put(cookieNames)
+                                .put(", cookieValues=").put(cookieValues)
+                                .put(']');
+                    }
+                    for (int i = 0, n = cookieNames.size(); i < n; i++) {
+                        setCookie(cookieNames.getQuick(i), cookieValues.getQuick(i));
+                    }
                 }
                 prepareHeaderSink();
                 headerSent = true;

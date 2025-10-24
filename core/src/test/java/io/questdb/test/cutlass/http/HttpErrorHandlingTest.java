@@ -34,7 +34,6 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpCookieHandler;
-import io.questdb.cutlass.http.HttpResponseHeader;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -97,9 +96,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, "create table x as (select 1L y)", HttpURLConnection.HTTP_INTERNAL_ERROR,
-                            "{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}"
-                    );
+                    assertExecRequest(httpClient);
                 }
             }
         });
@@ -124,12 +121,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                     public @NotNull HttpCookieHandler getHttpCookieHandler() {
                                         return new HttpCookieHandler() {
                                             @Override
-                                            public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
+                                            public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public void setCookie(HttpResponseHeader header, SecurityContext securityContext) {
                                             }
                                         };
                                     }
@@ -158,18 +151,13 @@ public class HttpErrorHandlingTest extends BootstrapTest {
         });
     }
 
-    private void assertExecRequest(
-            HttpClient httpClient,
-            String sql,
-            int expectedHttpStatusCode,
-            String expectedHttpResponse
-    ) {
+    private void assertExecRequest(HttpClient httpClient) {
         final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
-        request.GET().url("/exec").query("query", sql);
+        request.GET().url("/exec").query("query", "create table x as (select 1L y)");
         try (HttpClient.ResponseHeaders responseHeaders = request.send()) {
             responseHeaders.await();
 
-            TestUtils.assertEquals(String.valueOf(expectedHttpStatusCode), responseHeaders.getStatusCode());
+            TestUtils.assertEquals(String.valueOf(HttpURLConnection.HTTP_INTERNAL_ERROR), responseHeaders.getStatusCode());
 
             final Utf8StringSink sink = new Utf8StringSink();
 
@@ -179,7 +167,7 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 Utf8s.strCpy(fragment.lo(), fragment.hi(), sink);
             }
 
-            TestUtils.assertEquals(expectedHttpResponse, sink.toString());
+            TestUtils.assertEquals("{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}", sink.toString());
             sink.clear();
         }
     }

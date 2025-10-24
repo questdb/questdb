@@ -34,9 +34,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
+import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.AbstractBootstrapTest;
@@ -52,12 +52,11 @@ import static org.junit.Assert.fail;
 
 public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     private static final LogCapture capture = new LogCapture();
-    private static final Class<?>[] guaranteedLoggers = new Class[]{LineHttpProcessorState.class};
 
     @Before
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging(guaranteedLoggers);
+        LogFactory.enableGuaranteedLogging(TableUpdateDetails.class);
         super.setUp();
         capture.start();
         TestUtils.unchecked(() -> createDummyConfiguration());
@@ -69,7 +68,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(guaranteedLoggers);
+        LogFactory.disableGuaranteedLogging(TableUpdateDetails.class);
     }
 
     @Test
@@ -125,7 +124,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
                                     public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                                        return (principal, groups, authType, interfaceId) -> testSecurityContext;
+                                        return (principalContext, interfaceId) -> testSecurityContext;
                                     }
                                 }
                         );

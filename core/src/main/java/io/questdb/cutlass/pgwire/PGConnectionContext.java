@@ -602,10 +602,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (r == SocketAuthenticator.OK) {
                 try {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
-                            authenticator.getPrincipal(),
-                            authenticator.getGroups(),
-                            authenticator.getAuthType(),
-                            SecurityContextFactory.PGWIRE
+                            authenticator, SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
