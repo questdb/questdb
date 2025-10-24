@@ -29,6 +29,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillsTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -39,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -283,12 +285,24 @@ public class MillsTimestampDriverTest extends AbstractCairoTest {
 
     @Test
     public void testFromTimestampUnit() {
+        Assert.assertEquals(Numbers.LONG_NULL, driver.from(LineTcpParser.NULL_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MILLIS));
         Assert.assertEquals(56L, driver.from(56799001, CommonUtils.TIMESTAMP_UNIT_NANOS));
         Assert.assertEquals(56L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MICROS));
         Assert.assertEquals(56799L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_MILLIS));
         Assert.assertEquals(60_000L, driver.from(60, CommonUtils.TIMESTAMP_UNIT_SECONDS));
         Assert.assertEquals(3600_000L, driver.from(60, CommonUtils.TIMESTAMP_UNIT_MINUTES));
         Assert.assertEquals(86400_000L, driver.from(24, CommonUtils.TIMESTAMP_UNIT_HOURS));
+        try {
+            driver.from(123456, (byte) 100);
+            Assert.fail("Expected UnsupportedOperationException");
+        } catch (UnsupportedOperationException expected) {
+        }
+        try {
+            driver.from(123456789000000L, CommonUtils.TIMESTAMP_UNIT_HOURS);
+            Assert.fail("Expected ArithmeticException");
+        } catch (ArithmeticException e) {
+            TestUtils.assertContains(e.getMessage(), "long overflow");
+        }
     }
 
     @Test
