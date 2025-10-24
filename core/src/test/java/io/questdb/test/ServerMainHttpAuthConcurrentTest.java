@@ -43,6 +43,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -54,10 +55,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.*;
 
 public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     private static final String PASSWORD = "quest";
@@ -149,14 +147,14 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     newSessionId = sessionIds.getList().getQuick(0);
 
                     // assert that old session id still works
-                    assertNotNull(session = sessionStore.getSession(sessionId));
+                    Assert.assertNotNull(session = sessionStore.getSession(sessionId));
                     // assert that old and new session ids belong to the same session
-                    assertEquals(session, sessionStore.getSession(newSessionId));
-                    assertEquals(newSessionId, session.getSessionId());
+                    Assert.assertEquals(session, sessionStore.getSession(newSessionId));
+                    Assert.assertEquals(newSessionId, session.getSessionId());
                 } else {
                     // session id was not rotated
                     // we can return after asserting that there is no new session id
-                    assertEquals(0, sessionIds.size());
+                    Assert.assertEquals(0, sessionIds.size());
                     return;
                 }
             } catch (Exception e) {
@@ -180,7 +178,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = 10 + rnd.nextInt(10);
                 for (int i = 0; i < numOfIterations; i++) {
-                    assertNull(runSuccessfulQuery(httpClient, newSessionId, rnd));
+                    Assert.assertNull(runSuccessfulQuery(httpClient, newSessionId, rnd));
 
                     // select a thread to move the clock over evictAt
                     synchronized (this) {
@@ -200,9 +198,9 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             }
 
             // assert that old session id is not registered anymore, has been evicted
-            assertNull(sessionStore.getSession(sessionId));
+            Assert.assertNull(sessionStore.getSession(sessionId));
             // assert that new session id is still registered
-            assertEquals(session, sessionStore.getSession(newSessionId));
+            Assert.assertEquals(session, sessionStore.getSession(newSessionId));
         }, numOfSessions -> numOfSessions <= numOfThreads);
     }
 
@@ -284,11 +282,11 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
     private static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
         final HttpCookie sessionCookie = responseHeaders.getCookie(SESSION_COOKIE_NAME_UTF8);
-        assertNotNull(sessionCookie);
-        assertEquals(SESSION_COOKIE_NAME, sessionCookie.cookieName.toString());
-        assertTrue(sessionCookie.httpOnly);
-        assertEquals(-1L, sessionCookie.expires);
-        assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
+        Assert.assertNotNull(sessionCookie);
+        Assert.assertEquals(SESSION_COOKIE_NAME, sessionCookie.cookieName.toString());
+        Assert.assertTrue(sessionCookie.httpOnly);
+        Assert.assertEquals(-1L, sessionCookie.expires);
+        Assert.assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
         return sessionCookie.value.toString();
     }
 
@@ -331,7 +329,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
 
-        assertNotNull(sessionStore.getSession(sessionId));
+        Assert.assertNotNull(sessionStore.getSession(sessionId));
         return sessionId;
     }
 
@@ -463,7 +461,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                     for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
                         LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
                     }
-                    fail("Error in threads");
+                    Assert.fail("Error in threads");
                 }
             }
         });
