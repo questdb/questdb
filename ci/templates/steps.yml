@@ -125,9 +125,13 @@ steps:
       fi
     displayName: "Set Maven profiles based on Rust changes"
     condition: >
-      or(
-          eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-          eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
       )
 
   - task: Maven@3
