@@ -43,68 +43,6 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     private static final int TYPE = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1, true);
 
     @Test
-    public void testPutSingleElement() throws Exception {
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByArraySink sink = new GroupByArraySink(TYPE);
-                sink.setAllocator(allocator);
-
-                ArrayView expected = createArray(allocator, 42.0);
-                sink.put(expected);
-
-                ArrayView result = sink.getArray();
-                TestUtils.assertEquals(expected, result);
-            }
-        });
-    }
-
-    @Test
-    public void testPut() throws Exception {
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByArraySink sink = new GroupByArraySink(TYPE);
-                sink.setAllocator(allocator);
-
-                ArrayView expected = createArray(allocator, 1.0, 2.0, 3.0);
-                sink.put(expected);
-
-                ArrayView result = sink.getArray();
-                TestUtils.assertEquals(expected, result);
-            }
-        });
-    }
-
-    @Test
-    public void testPutNull() throws Exception {
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByArraySink sink = new GroupByArraySink(TYPE);
-                sink.setAllocator(allocator);
-
-                sink.put(null);
-
-                Assert.assertNull(sink.getArray());
-            }
-        });
-    }
-
-    @Test
-    public void testPutEmptyArray() throws Exception {
-        assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
-                GroupByArraySink sink = new GroupByArraySink(TYPE);
-                sink.setAllocator(allocator);
-
-                ArrayView expected = createArray(allocator);
-                sink.put(expected);
-
-                ArrayView result = sink.getArray();
-                TestUtils.assertEquals(expected, result);
-            }
-        });
-    }
-
-    @Test
     public void testClear() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
@@ -122,14 +60,19 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplace() throws Exception {
+    public void testGrowthFromSmallToLarge() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 GroupByArraySink sink = new GroupByArraySink(TYPE);
                 sink.setAllocator(allocator);
 
                 sink.put(createArray(allocator, 1.0, 2.0));
-                ArrayView expected = createArray(allocator, 3.0, 4.0, 5.0, 6.0, 7.0);
+
+                double[] largeArray = new double[1000];
+                for (int i = 0; i < largeArray.length; i++) {
+                    largeArray[i] = i;
+                }
+                ArrayView expected = createArray(allocator, largeArray);
                 sink.put(expected);
 
                 TestUtils.assertEquals(expected, sink.getArray());
@@ -156,22 +99,33 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGrowthFromSmallToLarge() throws Exception {
+    public void testPut() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 GroupByArraySink sink = new GroupByArraySink(TYPE);
                 sink.setAllocator(allocator);
 
-                sink.put(createArray(allocator, 1.0, 2.0));
-
-                double[] largeArray = new double[1000];
-                for (int i = 0; i < largeArray.length; i++) {
-                    largeArray[i] = i;
-                }
-                ArrayView expected = createArray(allocator, largeArray);
+                ArrayView expected = createArray(allocator, 1.0, 2.0, 3.0);
                 sink.put(expected);
 
-                TestUtils.assertEquals(expected, sink.getArray());
+                ArrayView result = sink.getArray();
+                TestUtils.assertEquals(expected, result);
+            }
+        });
+    }
+
+    @Test
+    public void testPutEmptyArray() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByArraySink sink = new GroupByArraySink(TYPE);
+                sink.setAllocator(allocator);
+
+                ArrayView expected = createArray(allocator);
+                sink.put(expected);
+
+                ArrayView result = sink.getArray();
+                TestUtils.assertEquals(expected, result);
             }
         });
     }
@@ -204,7 +158,7 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
                 sink.setAllocator(allocator);
 
                 double[] values = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
-                ArrayView vanillaArray = create2DArray(allocator, nDims, 2, 3, values);
+                ArrayView vanillaArray = create2DArray(allocator, nDims, 3, 2, values);
                 DerivedArrayView derivedArray = new DerivedArrayView();
                 derivedArray.of(vanillaArray);
                 derivedArray.transpose();
@@ -219,20 +173,50 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         });
     }
 
-    private ArrayView createArray(GroupByAllocator allocator, double... values) {
-        long nDims = ColumnType.decodeArrayDimensionality(TYPE);
-        long shapeLen = nDims * Integer.BYTES;
+    @Test
+    public void testPutNull() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByArraySink sink = new GroupByArraySink(TYPE);
+                sink.setAllocator(allocator);
 
-        long ptr = allocator.malloc(shapeLen + (values.length * 8L));
+                sink.put(null);
 
-        Unsafe.getUnsafe().putInt(ptr, values.length);
+                Assert.assertNull(sink.getArray());
+            }
+        });
+    }
 
-        long arrayPtr = ptr + shapeLen;
-        for (int i = 0; i < values.length; i++) {
-            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
-        }
+    @Test
+    public void testPutSingleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByArraySink sink = new GroupByArraySink(TYPE);
+                sink.setAllocator(allocator);
 
-        return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);
+                ArrayView expected = createArray(allocator, 42.0);
+                sink.put(expected);
+
+                ArrayView result = sink.getArray();
+                TestUtils.assertEquals(expected, result);
+            }
+        });
+    }
+
+    @Test
+    public void testReplace() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByArraySink sink = new GroupByArraySink(TYPE);
+                sink.setAllocator(allocator);
+
+                sink.put(createArray(allocator, 1.0, 2.0));
+                ArrayView expected = createArray(allocator, 3.0, 4.0, 5.0, 6.0, 7.0);
+                sink.put(expected);
+
+                TestUtils.assertEquals(expected, sink.getArray());
+            }
+        });
     }
 
     private ArrayView create2DArray(GroupByAllocator allocator, int nDims, int rows, int cols, double[] values) {
@@ -249,5 +233,21 @@ public class GroupByArraySinkTest extends AbstractCairoTest {
         }
 
         return new BorrowedArray().of(type, ptr, arrayPtr, values.length * 8);
+    }
+
+    private ArrayView createArray(GroupByAllocator allocator, double... values) {
+        long nDims = ColumnType.decodeArrayDimensionality(TYPE);
+        long shapeLen = nDims * Integer.BYTES;
+
+        long ptr = allocator.malloc(shapeLen + (values.length * 8L));
+
+        Unsafe.getUnsafe().putInt(ptr, values.length);
+
+        long arrayPtr = ptr + shapeLen;
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putDouble(arrayPtr + i * 8L, values[i]);
+        }
+
+        return new BorrowedArray().of(TYPE, ptr, arrayPtr, values.length * 8);
     }
 }
