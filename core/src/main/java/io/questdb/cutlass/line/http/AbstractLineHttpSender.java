@@ -647,7 +647,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
-        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        int retryBackoff = initialBackoffMillis;
         int contentLen = request.getContentLength();
         int actualTimeoutMillis = baseTimeoutMillis;
         if (minRequestThroughput > 0) {
