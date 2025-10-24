@@ -45,17 +45,14 @@ public final class Micros {
     public static final long DAY_SECONDS = 86400L;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
-    public static final long HOUR_MILLIS = 3600000L;
     public static final long HOUR_SECONDS = 3600L;
     public static final long MICRO_NANOS = 1000L;
     public static final long MILLI_MICROS = 1000L;
     public static final long MINUTE_MICROS = 60000000L;
-    public static final long MINUTE_MILLIS = 60000L;
     public static final long MINUTE_SECONDS = 60L;
     public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
     public static final long SECOND_MICROS = 1000000L;
     public static final int SECOND_MILLIS = 1000;
-    public static final long SECOND_NANOS = 1000000000L;
     public static final long STARTUP_TIMESTAMP;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 7 * DAY_MICROS;

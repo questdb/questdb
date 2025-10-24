@@ -218,9 +218,9 @@ public class MillsTimestampDriver implements TimestampDriver {
             case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts / Nanos.MILLI_NANOS;
             case CommonUtils.TIMESTAMP_UNIT_MICROS -> ts / Micros.MILLI_MICROS;
             case CommonUtils.TIMESTAMP_UNIT_MILLIS -> ts;
-            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Micros.SECOND_MILLIS);
-            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Micros.MINUTE_MILLIS);
-            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Micros.HOUR_MILLIS);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Dates.SECOND_MILLIS);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Dates.MINUTE_MILLIS);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Dates.HOUR_MILLIS);
             default -> throw new UnsupportedOperationException();
         };
     }
