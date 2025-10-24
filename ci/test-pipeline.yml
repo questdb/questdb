@@ -25,34 +25,34 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  #  - stage: SelfHostedRunGriffin
-  #    displayName: "SelfHosted Griffin And Fuzz tests"
-  #    condition: eq(variables['System.PullRequest.IsFork'], 'false')
-  #    dependsOn:
-  #      - CheckChanges
-  #    jobs:
-  #      - template: templates/start-self-hosted-job.yml
-  #      - template: templates/self-hosted-jobs.yml
-  #    variables:
-  #      includeTests: "**/griffin/**,**/cairo/**"
+      #  - stage: SelfHostedRunGriffin
+      #    displayName: "SelfHosted Griffin And Fuzz tests"
+      #    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+      #    dependsOn:
+      #      - CheckChanges
+      #    jobs:
+      #      - template: templates/start-self-hosted-job.yml
+      #      - template: templates/self-hosted-jobs.yml
+      #    variables:
+      #      includeTests: "**/griffin/**,**/cairo/**"
 
-  #  - stage: SelfHostedRunOther
-  #    displayName: "SelfHosted Other tests"
-  #    condition: eq(variables['System.PullRequest.IsFork'], 'false')
-  #    dependsOn:
-  #      - CheckChanges
-  #    jobs:
-  #      - template: templates/start-self-hosted-job.yml
-  #      - template: templates/self-hosted-jobs.yml
-  #    variables:
-  #      excludeTests: "**/griffin/**,**/cairo/**"
+      #  - stage: SelfHostedRunOther
+      #    displayName: "SelfHosted Other tests"
+      #    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+      #    dependsOn:
+      #      - CheckChanges
+      #    jobs:
+      #      - template: templates/start-self-hosted-job.yml
+      #      - template: templates/self-hosted-jobs.yml
+      #    variables:
+      #      excludeTests: "**/griffin/**,**/cairo/**"
 
-  #  - stage: HostedRunTestsBranches
-  #    displayName: "Hosted Running tests"
-  #    dependsOn:
-  #      - CheckChanges
-  #    jobs:
-  #      - template: templates/hosted-jobs.yml
+  - stage: HostedRunTestsBranches
+    displayName: "Hosted Running tests"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/hosted-jobs.yml
 
   - stage: SelfHostedRunTestsCoverageBranches
     displayName: "SelfHosted Running tests with cover"
