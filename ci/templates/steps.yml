@@ -116,6 +116,16 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+
+  - script: |
+      if [ "$(RUST_SOURCE_CODE_CHANGED)" = "true" ]; then
+        echo "##vso[task.setvariable variable=MAVEN_PROFILES]-P qdbr-coverage,build-web-console"
+      else
+        echo "##vso[task.setvariable variable=MAVEN_PROFILES]-P build-web-console"
+      fi
+    displayName: "Set Maven profiles based on Rust changes"
+    condition: startsWith(variables['testset'], 'coverage')
+
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
@@ -124,12 +134,12 @@ steps:
       mavenPomFile: "core/pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: >-
+        --batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
-        -P qdbr-coverage,build-web-console
-        $(MAVEN_RUN_OPTS)"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        $(MAVEN_PROFILES)
+        $(MAVEN_RUN_OPTS)
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -140,7 +150,10 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['System.PullRequest.IsFork'], 'false'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
       )
 
   - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
