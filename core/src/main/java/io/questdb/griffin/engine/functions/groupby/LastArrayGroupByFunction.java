@@ -148,9 +148,4 @@ public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFu
     public boolean supportsParallelism() {
         return true;
     }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-    }
 }
