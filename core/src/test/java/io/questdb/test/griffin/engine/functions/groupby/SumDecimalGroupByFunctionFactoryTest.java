@@ -152,11 +152,11 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                     (CustomisableRunnable) (engine, compiler, sqlExecutionContext) -> TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select sum(v) sum from (x)",
+                            "select sum(v) sum_dec, sum(v::double) sum_d from (x)",
                             sink,
                             """
-                                    sum
-                                    900000000000000000000000000000494999595
+                                    sum_dec	sum_d
+                                    900000000000000000000000000000494999595	9.0E38
                                     """
                     ),
                     configuration,

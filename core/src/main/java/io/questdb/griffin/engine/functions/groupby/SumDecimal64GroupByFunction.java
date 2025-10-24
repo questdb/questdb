@@ -172,31 +172,24 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
                 destValue.putLong(valueIndex + 1, decimal64B);
             }
         } else if (srcOverflow && !destOverflow) {
+            // src value cannot be null, null does not overflow
             srcValue.getDecimal128(valueIndex, decimal128A);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
-            boolean srcNull = decimal128A.isNull();
             boolean destNull = decimal64A == Decimals.DECIMAL64_NULL;
 
-            if (!destNull && !srcNull) {
+            if (!destNull) {
                 Decimal128.uncheckedAdd(decimal128A, decimal64A);
             }
             destValue.putDecimal128(valueIndex, decimal128A);
-            destValue.putBool(valueIndex + 2, false);
+            destValue.putBool(valueIndex + 2, true);
         } else if (!srcOverflow) {
-            // dest overflown
+            // dest overflown, it cannot be null
             long decimal64A = srcValue.getDecimal64(valueIndex + 1);
             destValue.getDecimal128(valueIndex, decimal128A);
-
-            boolean srcNull = decimal64A == Decimals.DECIMAL64_NULL;
-            boolean destNull = decimal128A.isNull();
-
-            if (!destNull && !srcNull) {
+            if (decimal64A != Decimals.DECIMAL64_NULL) {
                 // both not null
                 Decimal128.uncheckedAdd(decimal128A, decimal64A);
                 destValue.putDecimal128(valueIndex, decimal128A);
-            } else if (destNull) {
-                // put src value in, dest was null, so we get it back into 128bit range
-                destValue.putLong(valueIndex + 1, decimal64A);
             }
         } else {
             // all overflown

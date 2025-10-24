@@ -183,17 +183,14 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         if (!srcOverflow && !destOverflow) {
             srcValue.getDecimal128(valueIndex + 1, decimal128B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
-
-            boolean srcNull = decimal128B.isNull();
-            boolean destNull = decimal128A.isNull();
-
+            final boolean srcNull = decimal128B.isNull();
+            final boolean destNull = decimal128A.isNull();
             if (!destNull && !srcNull) {
                 // both not null
                 try {
-                    decimal128A.add(decimal128B);
+                    Decimal128.uncheckedAdd(decimal128A, decimal128B);
                     destValue.putDecimal128(valueIndex + 1, decimal128A);
                 } catch (NumericException e) {
-                    // overflow
                     decimal256A.ofRaw(0, 0, 0, 0);
                     Decimal256.uncheckedAdd(decimal256A, decimal128A);
                     Decimal256.uncheckedAdd(decimal256A, decimal128B);
@@ -205,44 +202,33 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
                 destValue.putDecimal128(valueIndex + 1, decimal128B);
             }
         } else if (srcOverflow && !destOverflow) {
+            // src overflown, therefore it could not be null (null does not overflow)
             srcValue.getDecimal256(valueIndex, decimal256B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
-            boolean srcNull = decimal128B.isNull();
-            boolean destNull = decimal128A.isNull();
 
-            if (!destNull && !srcNull) {
-                decimal256B.add(0, 0, decimal128A.getHigh(), decimal128A.getLow(), decimal128A.getScale());
+            boolean destNull = decimal128A.isNull();
+            if (!destNull) {
+                Decimal256.uncheckedAdd(decimal256B, decimal128A);
             }
             destValue.putDecimal256(valueIndex, decimal256B);
-            destValue.putBool(valueIndex + 2, false);
+            destValue.putBool(valueIndex + 2, true);
         } else if (!srcOverflow) {
-            // dest overflown
+            // dest overflown, it cannot be null
             srcValue.getDecimal128(valueIndex + 1, decimal128A);
             destValue.getDecimal256(valueIndex, decimal256B);
             boolean srcNull = decimal128A.isNull();
-            boolean destNull = decimal256B.isNull();
 
-            if (!destNull && !srcNull) {
+            if (!srcNull) {
                 // both not null
-                decimal256B.add(0, 0, decimal128A.getHigh(), decimal128A.getLow(), decimal128A.getScale());
+                Decimal256.uncheckedAdd(decimal256B, decimal128A);
                 destValue.putDecimal256(valueIndex, decimal256B);
-            } else if (destNull) {
-                // put src value in, dest was null, so we get it back into 128bit range
-                destValue.putDecimal128(valueIndex + 1, decimal128B);
             }
         } else {
-            // both overflown
+            // both overflown, neither could ne null
             srcValue.getDecimal256(valueIndex, decimal256A);
-            if (decimal128A.isNull()) {
-                return;
-            }
             destValue.getDecimal256(valueIndex, decimal256B);
-            if (decimal256B.isNull()) {
-                destValue.putDecimal256(valueIndex, decimal256A);
-            } else {
-                decimal256B.add(decimal256A);
-                destValue.putDecimal256(valueIndex, decimal256B);
-            }
+            decimal256B.add(decimal256A);
+            destValue.putDecimal256(valueIndex, decimal256B);
         }
     }
 
