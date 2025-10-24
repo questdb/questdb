@@ -3265,6 +3265,39 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeOffsets() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("date\trow_count\ttotal_value\n" +
+                            "2023-12-31T23:55:00.000000Z\t1\t100.0\n" +
+                            "2024-01-31T23:55:00.000000Z\t1\t200.0\n" +
+                            "2024-02-29T23:55:00.000000Z\t1\t300.0\n" +
+                            "2024-03-31T23:55:00.000000Z\t1\t400.0\n" +
+                            "2024-04-30T23:55:00.000000Z\t1\t500.0\n" +
+                            "2024-05-31T23:55:00.000000Z\t1\t600.0\n",
+                    "SELECT \n" +
+                            "    date,\n" +
+                            "    COUNT(*) AS row_count,\n" +
+                            "    SUM(value) AS total_value\n" +
+                            "FROM (\n" +
+                            "    SELECT cast('2024-01-15T12:00:00.000000Z' as timestamp) as date, 100.0 as value FROM long_sequence(1)\n" +
+                            "    UNION ALL\n" +
+                            "    SELECT cast('2024-02-15T12:00:00.000000Z' as timestamp), 200.0 FROM long_sequence(1)\n" +
+                            "    UNION ALL\n" +
+                            "    SELECT cast('2024-03-15T12:00:00.000000Z' as timestamp), 300.0 FROM long_sequence(1)\n" +
+                            "    UNION ALL\n" +
+                            "    SELECT cast('2024-04-15T12:00:00.000000Z' as timestamp), 400.0 FROM long_sequence(1)\n" +
+                            "    UNION ALL\n" +
+                            "    SELECT cast('2024-05-15T12:00:00.000000Z' as timestamp), 500.0 FROM long_sequence(1)\n" +
+                            "    UNION ALL\n" +
+                            "    SELECT cast('2024-06-15T12:00:00.000000Z' as timestamp), 600.0 FROM long_sequence(1)\n" +
+                            "    ORDER BY date\n" +
+                            ")\n" +
+                            "SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-00:05';"
+            );
+        });
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +

@@ -1031,6 +1031,16 @@ public final class Nanos {
     public static long toNanos(
             int y,
             boolean leap,
+            int month,
+            int day
+    ) {
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        return yearNanos(y, leap) + monthOfYearNanos(month, leap) + maxDay * DAY_NANOS;
+    }
+
+    public static long toNanos(
+            int y,
+            boolean leap,
             int day,
             int month,
             int hour,
