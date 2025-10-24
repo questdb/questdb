@@ -47,19 +47,19 @@ stages:
   #    variables:
   #      excludeTests: "**/griffin/**,**/cairo/**"
 
-  - stage: HostedRunTestsBranches
-    displayName: "Hosted Running tests"
+  #  - stage: HostedRunTestsBranches
+  #    displayName: "Hosted Running tests"
+  #    dependsOn:
+  #      - CheckChanges
+  #    jobs:
+  #      - template: templates/hosted-jobs.yml
+
+  - stage: SelfHostedRunTestsCoverageBranches
+    displayName: "SelfHosted Running tests with cover"
     dependsOn:
       - CheckChanges
     jobs:
-      - template: templates/hosted-jobs.yml
-
-#  - stage: SelfHostedRunTestsCoverageBranches
-#    displayName: "SelfHosted Running tests with cover"
-#    dependsOn:
-#      - CheckChanges
-#    jobs:
-#      - template: templates/self-hosted-cover-jobs.yml
+      - template: templates/self-hosted-cover-jobs.yml
 
 #  - stage: JavaAndRustLint
 #    displayName: "Rust Test and Lint"
