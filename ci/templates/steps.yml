@@ -18,10 +18,7 @@ steps:
       echo "JAVA_HOME will be set to: $JAVA_PATH"
     displayName: "Install JDK and Maven"
     condition: |
-      or(
-        eq(variables['poolName'], 'vmss-uksouth-spot'),
-        eq(variables['poolName'], 'hetzner-docker')
-      )
+      eq(variables['poolName'], 'hetzner-docker')
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
