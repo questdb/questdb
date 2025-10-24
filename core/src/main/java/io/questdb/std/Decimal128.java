@@ -938,15 +938,6 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
-     * Set this Decimal128 to the null value. Leaves the scale unchanged, could be
-     * useful for reusable containers.
-     */
-    public void ofNullRaw() {
-        high = Decimals.DECIMAL128_HI_NULL;
-        low = Decimals.DECIMAL128_LO_NULL;
-    }
-
-    /**
      * Sets this Decimal128 to the specified 128-bit value. Keeps the existing scale.
      *
      * @param high  the high 64 bits (bits 64-127)
@@ -955,6 +946,16 @@ public class Decimal128 implements Sinkable, Decimal {
     public void ofRaw(long high, long low) {
         this.high = high;
         this.low = low;
+    }
+
+    /**
+     * Sets this Decimal128 to the specified 64-bit value. Keeps the existing scale.
+     *
+     * @param value the value to sign-extend
+     */
+    public void ofRaw(long value) {
+        this.high = value < 0 ? -1L : 0L;
+        this.low = value;
     }
 
     /**
@@ -1587,6 +1588,6 @@ public class Decimal128 implements Sinkable, Decimal {
     static boolean hasCarry(long a, long sum) {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
-        return Long.compareUnsigned(sum, a) < 0;
+        return (sum + Long.MIN_VALUE) < (a + Long.MIN_VALUE);
     }
 }

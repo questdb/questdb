@@ -50,9 +50,44 @@ import java.math.RoundingMode;
 
 public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory {
 
+    public static Function newInstance(Function arg, int position, int targetScale) {
+        final int argType = arg.getType();
+        final int argPrecision = ColumnType.getDecimalPrecision(argType);
+        final int argScale = ColumnType.getDecimalScale(argType);
+        final int targetPrecision = argPrecision - argScale + targetScale;
+        final int targetType = ColumnType.getDecimalType(targetPrecision, targetScale);
+        final int targetTag = ColumnType.tagOf(targetType);
+        return switch (ColumnType.tagOf(argType)) {
+            case ColumnType.DECIMAL8 -> switch (targetTag) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                        new AvgDecimal8Rescale64GroupByFunction(arg, position, targetType);
+                case ColumnType.DECIMAL128 -> new AvgDecimal8Rescale128GroupByFunction(arg, position, targetType);
+                default -> new AvgDecimal8Rescale256GroupByFunction(arg, position, targetType);
+            };
+            case ColumnType.DECIMAL16 -> switch (targetTag) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                        new AvgDecimal16Rescale64GroupByFunction(arg, position, targetType);
+                case ColumnType.DECIMAL128 -> new AvgDecimal16Rescale128GroupByFunction(arg, position, targetType);
+                default -> new AvgDecimal16Rescale256GroupByFunction(arg, position, targetType);
+            };
+            case ColumnType.DECIMAL32 -> switch (targetTag) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                     ColumnType.DECIMAL128 -> new AvgDecimal32Rescale128GroupByFunction(arg, position, targetType);
+                default -> new AvgDecimal32Rescale256GroupByFunction(arg, position, targetType);
+            };
+            case ColumnType.DECIMAL64 -> switch (targetTag) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
+                     ColumnType.DECIMAL128 -> new AvgDecimal64Rescale128GroupByFunction(arg, position, targetType);
+                default -> new AvgDecimal64Rescale256GroupByFunction(arg, position, targetType);
+            };
+            case ColumnType.DECIMAL128 -> new AvgDecimal128Rescale256GroupByFunction(arg, position, targetType);
+            default -> new AvgDecimal256Rescale256GroupByFunction(arg, position, targetType);
+        };
+    }
+
     @Override
     public String getSignature() {
-        return "avg_decimal(Ξi)";
+        return "avg(Ξi)";
     }
 
     @Override
@@ -84,239 +119,6 @@ public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory 
             throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ").put(Decimals.MAX_PRECISION)
                     .put(": ").put(targetPrecision);
         }
-
-        if (argScale >= targetScale) {
-            return new AvgDecimalGroupByFunctionFactory.Func(arg, position);
-        }
-        return new ScaledFunc(arg, targetPrecision, targetScale, position);
-    }
-
-    private static class ScaledFunc extends DecimalFunction implements GroupByFunction, UnaryFunction {
-        private final Function arg;
-        private final Decimal256 decimal = new Decimal256();
-        private final int position;
-        private final int scale;
-        private int valueIndex;
-
-        public ScaledFunc(@NotNull Function arg, int precision, int scale, int position) {
-            super(ColumnType.getDecimalType(precision, scale));
-            this.arg = arg;
-            this.position = position;
-            this.scale = scale;
-        }
-
-        @Override
-        public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            DecimalUtil.load(decimal, arg, record);
-            if (!decimal.isNull()) {
-                try {
-                    decimal.rescale(scale);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
-                }
-                mapValue.putDecimal256(valueIndex, decimal);
-                mapValue.putLong(valueIndex + 1, 1);
-            } else {
-                mapValue.putDecimal256(valueIndex, 0, 0, 0, 0);
-                mapValue.putLong(valueIndex + 1, 0);
-            }
-        }
-
-        @Override
-        public void computeNext(MapValue mapValue, Record record, long rowId) {
-            DecimalUtil.load(decimal, arg, record);
-            if (!decimal.isNull()) {
-                final long hh = mapValue.getDecimal256HH(valueIndex);
-                final long hl = mapValue.getDecimal256HL(valueIndex);
-                final long lh = mapValue.getDecimal256LH(valueIndex);
-                final long ll = mapValue.getDecimal256LL(valueIndex);
-                try {
-                    decimal.rescale(scale);
-                    decimal.add(hh, hl, lh, ll, scale);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
-                }
-                mapValue.putDecimal256(valueIndex, decimal);
-                mapValue.addLong(valueIndex + 1, 1);
-            }
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getDecimal128Hi(Record rec) {
-            calc(rec);
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL128_HI_NULL;
-            }
-            return decimal.getLh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL128_LO_NULL;
-            }
-            return decimal.getLl();
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            calc(rec);
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL16_NULL;
-            }
-            return (short) decimal.getLl();
-        }
-
-        @Override
-        public long getDecimal256HH(Record rec) {
-            calc(rec);
-            return decimal.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return decimal.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return decimal.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return decimal.getLl();
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            calc(rec);
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL32_NULL;
-            }
-            return (int) decimal.getLl();
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            calc(rec);
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL64_NULL;
-            }
-            return decimal.getLl();
-        }
-
-        @Override
-        public byte getDecimal8(Record rec) {
-            calc(rec);
-            if (decimal.isNull()) {
-                return Decimals.DECIMAL8_NULL;
-            }
-            return (byte) decimal.getLl();
-        }
-
-        @Override
-        public String getName() {
-            return "avg_decimal";
-        }
-
-        @Override
-        public int getValueIndex() {
-            return valueIndex;
-        }
-
-        @Override
-        public void initValueIndex(int valueIndex) {
-            this.valueIndex = valueIndex;
-        }
-
-        @Override
-        public void initValueTypes(ArrayColumnTypes columnTypes) {
-            this.valueIndex = columnTypes.getColumnCount();
-            columnTypes.add(ColumnType.DECIMAL256);
-            columnTypes.add(ColumnType.LONG);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcCount = srcValue.getLong(valueIndex + 1);
-            if (srcCount > 0) {
-                final long srcHH = srcValue.getDecimal256HH(valueIndex);
-                final long srcHL = srcValue.getDecimal256HL(valueIndex);
-                final long srcLH = srcValue.getDecimal256LH(valueIndex);
-                final long srcLL = srcValue.getDecimal256LL(valueIndex);
-
-                final long destCount = destValue.getLong(valueIndex + 1);
-                if (destCount > 0) {
-                    final long destHH = destValue.getDecimal256HH(valueIndex);
-                    final long destHL = destValue.getDecimal256HL(valueIndex);
-                    final long destLH = destValue.getDecimal256LH(valueIndex);
-                    final long destLL = destValue.getDecimal256LL(valueIndex);
-
-                    decimal.of(destHH, destHL, destLH, destLL, scale);
-                    try {
-                        decimal.add(srcHH, srcHL, srcLH, srcLL, scale);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position)
-                                .put('\'').put(getName()).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    destValue.putDecimal256(valueIndex, decimal);
-                    destValue.putLong(valueIndex + 1, destCount + srcCount);
-                } else {
-                    destValue.putDecimal256(valueIndex, srcHH, srcHL, srcLH, srcLL);
-                    destValue.putLong(valueIndex + 1, srcCount);
-                }
-            }
-        }
-
-        @Override
-        public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
-            mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
-            mapValue.putLong(valueIndex + 1, 1);
-        }
-
-        @Override
-        public void setNull(MapValue mapValue) {
-            mapValue.putDecimal256Null(valueIndex);
-            mapValue.putLong(valueIndex + 1, 0);
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return UnaryFunction.super.supportsParallelism();
-        }
-
-        private void calc(Record rec) {
-            final long count = rec.getLong(valueIndex + 1);
-            if (count > 0) {
-                final long hh = rec.getDecimal256HH(valueIndex);
-                final long hl = rec.getDecimal256HL(valueIndex);
-                final long lh = rec.getDecimal256LH(valueIndex);
-                final long ll = rec.getDecimal256LL(valueIndex);
-                decimal.of(hh, hl, lh, ll, scale);
-                try {
-                    decimal.divide(0, 0, 0, count, 0, scale, RoundingMode.HALF_EVEN);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg_decimal aggregation failed: ").put(e.getFlyweightMessage());
-                }
-            } else {
-                decimal.ofNull();
-            }
-        }
+        return newInstance(arg, position, targetScale);
     }
 }

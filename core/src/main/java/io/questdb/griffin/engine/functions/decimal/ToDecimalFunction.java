@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
@@ -45,6 +46,24 @@ public abstract class ToDecimalFunction extends DecimalFunction {
         }
         isNull = false;
         return decimal.getLh();
+    }
+
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        if (!store(rec)) {
+            sink.ofRawNull();
+        } else {
+            sink.ofRaw(decimal.getLh(), decimal.getLl());
+        }
+    }
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        if (!store(rec)) {
+            sink.ofRawNull();
+        } else {
+            sink.copyFrom(decimal);
+        }
     }
 
     @Override

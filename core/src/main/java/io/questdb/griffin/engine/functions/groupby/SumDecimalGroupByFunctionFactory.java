@@ -58,7 +58,7 @@ public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
         return switch (k) {
             case ColumnType.DECIMAL8 -> new SumDecimal8GroupByFunction(arg);
             case ColumnType.DECIMAL16 -> new SumDecimal16GroupByFunction(arg);
-            case ColumnType.DECIMAL32 -> new SumDecimal32GroupByFunction(arg);
+            case ColumnType.DECIMAL32 -> new SumDecimal32GroupByFunction(arg, position);
             case ColumnType.DECIMAL64 -> new SumDecimal64GroupByFunction(arg, position);
             case ColumnType.DECIMAL128 -> new SumDecimal128GroupByFunction(arg, position);
             default -> new SumDecimal256GroupByFunction(arg, position);

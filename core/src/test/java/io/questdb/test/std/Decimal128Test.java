@@ -51,6 +51,13 @@ public class Decimal128Test {
     }
 
     @Test
+    public void testAddZeroMaxValue() {
+        Decimal128 b = new Decimal128(0, 0, 0);
+        b.add(Decimal128.MAX_VALUE);
+        Assert.assertEquals(b, Decimal128.MAX_VALUE);
+    }
+
+    @Test
     public void testAddRescaleB() {
         Decimal128 a = new Decimal128(0, 100, 2);
         Decimal128 b = new Decimal128(0, 1, 0);

@@ -603,7 +603,7 @@ public class Decimal256 implements Sinkable, Decimal {
     public static boolean hasCarry(long a, long sum) {
         // We can check against either a or b - both work
         // Using a for consistency, b parameter kept for clarity
-        return Long.compareUnsigned(sum, a) < 0;
+        return (sum + Long.MIN_VALUE) < (a + Long.MIN_VALUE);
     }
 
     /**
@@ -788,6 +788,40 @@ public class Decimal256 implements Sinkable, Decimal {
         carry |= hasCarry(t, r) ? 1L : 0L;
         result.hl = r;
         result.hh = result.hh + carry + sign;
+    }
+
+    /**
+     * Adds the two's-complement representation of {@link Decimal64} {@code b} to {@code result} in place.
+     * <p>
+     * The 64-bit operand is sign-extended to 256 bits before performing the addition. This helper assumes
+     * that both operands already share the same scale and that the resulting value fits within a {@link Decimal256};
+     * callers must enforce those preconditions because no overflow or scale validation is performed here.
+     *
+     * @param result the accumulator that receives the sum (updated in place)
+     * @param b      the 64-bit value to add, interpreted using two's-complement semantics
+     */
+    public static void uncheckedAdd(Decimal256 result, long b) {
+        long sign = b < 0 ? -1L : 0L;
+        long r = result.ll + b;
+        long carry = hasCarry(result.ll, r) ? 1L : 0L;
+        result.ll = r;
+
+        long t = result.lh + carry;
+        carry = hasCarry(result.lh, t) ? 1L : 0L;
+        r = t + sign;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.lh = r;
+
+        t = result.hl + carry;
+        carry = hasCarry(result.hl, t) ? 1L : 0L;
+        r = t + sign;
+        carry |= hasCarry(t, r) ? 1L : 0L;
+        result.hl = r;
+        result.hh = result.hh + carry + sign;
+    }
+
+    public static void uncheckedAdd(Decimal256 result, Decimal256 b) {
+        uncheckedAdd(result, b.hh, b.hl, b.lh, b.ll);
     }
 
     /**
@@ -1370,6 +1404,20 @@ public class Decimal256 implements Sinkable, Decimal {
         this.hl = hl;
         this.lh = lh;
         this.ll = ll;
+    }
+
+    /**
+     * Sets this Decimal256 to the specified 128-bit value, but does not change the scale.
+     *
+     * @param high the high 64 bits (bits 64-127)
+     * @param low  the low 64 bits (bits 0-63)
+     */
+    public void ofRaw(long high, long low) {
+        long s = high < 0 ? -1L : 0L;
+        this.hh = s;
+        this.hl = s;
+        this.lh = high;
+        this.ll = low;
     }
 
     public void ofRawAddress(long addr) {

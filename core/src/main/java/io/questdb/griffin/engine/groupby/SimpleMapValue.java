@@ -143,20 +143,21 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
+        int index = 2 * col;
         sink.ofRaw(
-                getDecimal128Hi(col),
-                getDecimal128Lo(col)
+                values[index],
+                values[index+1]
         );
     }
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
-        sink.of(
-                getDecimal256HH(col),
-                getDecimal256HL(col),
-                getDecimal256LH(col),
-                getDecimal256LL(col),
-                0
+        int index = 4 * col;
+        sink.ofRaw(
+                values[index],
+                values[index+1],
+                values[index+2],
+                values[index+3]
         );
     }
 
