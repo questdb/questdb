@@ -218,6 +218,7 @@ import io.questdb.griffin.engine.join.SingleSymbolSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SingleVarcharSymbolShortCircuit;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
+import io.questdb.griffin.engine.orderby.ExpressionBasedRecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -3662,13 +3663,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return recordCursorFactory;
         }
         try {
-            final LowerCaseCharSequenceIntHashMap orderByColumnNameToIndexMap = model.getOrderHash();
-            final ObjList<CharSequence> orderByColumnNames = orderByColumnNameToIndexMap.keys();
-            final int orderByColumnCount = orderByColumnNames.size();
+            final ObjList<ExpressionNode> orderByNodes = model.getOrderBy();
+            final int orderByColumnCount = orderByNodes.size();
 
             if (orderByColumnCount > 0) {
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final int timestampIndex = metadata.getTimestampIndex();
+
+                // Check if any ORDER BY item is a complex expression
+                boolean hasComplexExpressions = false;
+                for (int i = 0; i < orderByColumnCount; i++) {
+                    ExpressionNode node = orderByNodes.getQuick(i);
+                    if (node.type == ExpressionNode.ARRAY_ACCESS ||
+                            node.type == ExpressionNode.FUNCTION ||
+                            node.type == ExpressionNode.OPERATION) {
+                        hasComplexExpressions = true;
+                        break;
+                    }
+                }
+
+                if (hasComplexExpressions) {
+                    return generateOrderByWithExpressions(recordCursorFactory, model, executionContext);
+                }
+
+                final LowerCaseCharSequenceIntHashMap orderByColumnNameToIndexMap = model.getOrderHash();
+                final ObjList<CharSequence> orderByColumnNames = orderByColumnNameToIndexMap.keys();
+                final int orderByColumnNamesCount = orderByColumnNames.size();
 
                 listColumnFilterA.clear();
                 intHashSet.clear();
@@ -3676,9 +3696,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int orderedByTimestampIndex = -1;
                 // column index sign indicates a direction;
                 // therefore, 0 index is not allowed
-                for (int i = 0; i < orderByColumnCount; i++) {
+                // update: we now use -1 for DESC and +1 for ASC
+                for (int i = 0; i < orderByColumnNamesCount; i++) {
                     final CharSequence column = orderByColumnNames.getQuick(i);
                     int index = metadata.getColumnIndexQuiet(column);
+
+                    // Check if column exists before getting type
+                    if (index == -1) {
+                        ObjList<ExpressionNode> nodes = model.getOrderBy();
+                        ExpressionNode orderByNode = null;
+                        int position = 0;
+
+                        for (int j = 0, y = nodes.size(); j < y; j++) {
+                            if (Chars.equals(column, nodes.getQuick(j).token)) {
+                                orderByNode = nodes.getQuick(j);
+                                position = orderByNode.position;
+                                break;
+                            }
+                        }
+
+                        // If this is an array access expression
+                        if (orderByNode != null && orderByNode.type == ExpressionNode.ARRAY_ACCESS) {
+                            throw SqlException.$(position,
+                                    "Array access expressions in ORDER BY are not yet supported");
+                        }
+
+                        throw SqlException.invalidColumn(position, column);
+                    }
 
                     // check if the column type is supported
                     final int columnType = metadata.getColumnType(index);
@@ -3870,6 +3914,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             recordCursorFactory.close();
             throw e;
         }
+    }
+
+    private RecordCursorFactory generateOrderByWithExpressions(
+            RecordCursorFactory recordCursorFactory,
+            QueryModel model,
+            SqlExecutionContext executionContext) throws SqlException {
+
+        // Get the record metadata from the factory
+        RecordMetadata metadata = recordCursorFactory.getMetadata();
+
+        // Prepare lists for order by functions and directions
+        ObjList<Function> orderByFunctions = new ObjList<>();
+        IntList directions = new IntList();
+
+        // Process each ORDER BY expression
+        for (int i = 0, n = model.getOrderBy().size(); i < n; i++) {
+            ExpressionNode node = model.getOrderBy().getQuick(i);
+
+            // Parse the expression into a Function
+            Function function = functionParser.parseFunction(node, metadata, executionContext);
+            orderByFunctions.add(function);
+
+            // Track direction (ASC/DESC)
+            directions.add(model.getOrderByDirection().getQuick(i));
+        }
+
+        // Create a comparator that uses the compiled functions
+        RecordComparator comparator = new ExpressionBasedRecordComparator(orderByFunctions, directions);
+
+        // Create column filter that includes all columns
+        ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            columnFilter.add(i);
+        }
+
+        // Create RecordSink using RecordSinkFactory
+        EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+        entityColumnFilter.of(metadata.getColumnCount());
+
+        // Return sorted cursor factory with our custom comparator
+        return new SortedRecordCursorFactory(
+                configuration,
+                metadata,
+                recordCursorFactory,
+                RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter),
+                comparator,
+                columnFilter);
     }
 
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
