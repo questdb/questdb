@@ -410,7 +410,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
                 // Restore snapshot here
                 checkpointRecover();
-                engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
+                engine.notifyWalTxnQueueOverflow(engine.verifyTableName(tableNameWal));
                 if (afterSnapshot.size() > 0) {
                     fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
                 } else {

@@ -1230,7 +1230,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         .$(", table=").$(tableToken)
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
-                notifyWalTxnRepublisher(tableToken);
+                notifyWalTxnQueueOverflow(tableToken);
                 return false;
             }
         }
@@ -1242,7 +1242,7 @@ public class CairoEngine implements Closeable, WriterSource {
      *
      * @param tableToken the destination table for the notification.
      */
-    public void notifyWalTxnRepublisher(TableToken tableToken) {
+    public void notifyWalTxnQueueOverflow(TableToken tableToken) {
         tableSequencerAPI.updateWriterTxns(tableToken, SeqTxnTracker.UNINITIALIZED_TXN, SeqTxnTracker.UNINITIALIZED_TXN);
         unpublishedWalTxnCount.incrementAndGet();
     }
