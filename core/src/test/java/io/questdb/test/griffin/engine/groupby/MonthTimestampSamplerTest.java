@@ -234,4 +234,48 @@ public class MonthTimestampSamplerTest {
                 sink
         );
     }
+
+    @Test
+    public void testSimpleNegative() throws Exception {
+        final StringSink sink = new StringSink();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final TimestampSampler sampler = timestampDriver.getTimestampSampler(6, 'M', 0);
+
+        long timestamp = timestampDriver.parseFloorLiteral("1960-11-16T15:00:00.000000Z");
+        sampler.setStart(timestamp);
+
+        for (int i = 0; i < 20; i++) {
+            long ts = sampler.nextTimestamp(timestamp);
+            sink.putISODate(timestampDriver, ts).put('\n');
+            Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
+            timestamp = ts;
+        }
+
+        TestUtils.assertEquals(
+                AbstractCairoTest.replaceTimestampSuffix(
+                        "1961-05-16T15:00:00.000000Z\n" +
+                                "1961-11-16T15:00:00.000000Z\n" +
+                                "1962-05-16T15:00:00.000000Z\n" +
+                                "1962-11-16T15:00:00.000000Z\n" +
+                                "1963-05-16T15:00:00.000000Z\n" +
+                                "1963-11-16T15:00:00.000000Z\n" +
+                                "1964-05-16T15:00:00.000000Z\n" +
+                                "1964-11-16T15:00:00.000000Z\n" +
+                                "1965-05-16T15:00:00.000000Z\n" +
+                                "1965-11-16T15:00:00.000000Z\n" +
+                                "1966-05-16T15:00:00.000000Z\n" +
+                                "1966-11-16T15:00:00.000000Z\n" +
+                                "1967-05-16T15:00:00.000000Z\n" +
+                                "1967-11-16T15:00:00.000000Z\n" +
+                                "1968-05-16T15:00:00.000000Z\n" +
+                                "1968-11-16T15:00:00.000000Z\n" +
+                                "1969-05-16T15:00:00.000000Z\n" +
+                                "1969-11-16T15:00:00.000000Z\n" +
+                                "1970-05-16T15:00:00.000000Z\n" +
+                                "1970-11-16T15:00:00.000000Z\n",
+                        timestampType.getTypeName()
+                ),
+                sink
+        );
+    }
 }
