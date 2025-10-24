@@ -88,12 +88,12 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
@@ -1114,7 +1114,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             long multipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MULTIPART_IDLE_SPIN_COUNT, 10_000);
             boolean httpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
-            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
+            boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_COOKIES_ENABLED, true);
+            long httpSessionTimeout = getMicros(properties, env, PropertyKey.HTTP_SESSION_TIMEOUT, 1_800_000_000L);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
 
             this.httpNetAcceptLoopTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_ACCEPT_LOOP_TIMEOUT, 500);
@@ -1150,6 +1151,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpFrozenClock,
                     httpReadOnlySecurityContext,
                     httpServerCookiesEnabled,
+                    httpSessionTimeout,
                     httpServerKeepAlive,
                     httpVersion,
                     isReadOnlyInstance,
@@ -1168,7 +1170,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             long minHttpMultipartIdleSpinCount = getLong(properties, env, PropertyKey.HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT, 0);
             boolean minHttpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean minHttpMinServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
-            boolean minHttpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
             int httpMinRequestHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE, 4096);
 
             httpMinContextConfiguration = new PropHttpContextConfiguration(
@@ -1180,7 +1181,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpForceSendFragmentationChunkSize,
                     httpFrozenClock,
                     true,
-                    minHttpServerCookiesEnabled,
+                    httpServerCookiesEnabled,
+                    httpSessionTimeout,
                     minHttpMinServerKeepAlive,
                     httpVersion,
                     isReadOnlyInstance,
@@ -1486,7 +1488,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
             this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 3);
-            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.75");
+            this.sqlCountDistinctLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR, "0.5");
             final String sqlCopyFormatsFile = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_FORMATS_FILE, "/text_loader.json");
             final String dateLocale = getString(properties, env, PropertyKey.CAIRO_DATE_LOCALE, "en");
             this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -4928,7 +4930,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public Clock getNanosecondClock() {
+        public NanosecondClock getNanosecondClock() {
             return httpFrozenClock ? StationaryNanosClock.INSTANCE : NanosecondClockImpl.INSTANCE;
         }
     }
@@ -4981,7 +4983,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
 
@@ -5221,7 +5223,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
