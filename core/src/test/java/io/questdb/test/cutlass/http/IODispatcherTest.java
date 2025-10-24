@@ -114,7 +114,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
@@ -216,7 +216,7 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
-    private Clock nanosecondClock = NanosecondClockImpl.INSTANCE;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -1211,7 +1211,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -1298,7 +1298,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 });
@@ -4936,13 +4936,32 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryPreTouchEnabledForFilteredQueryWithHint() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            createTableX(engine, 10);
-            testHttpClient.assertGet(
-                    "{\"query\":\"explain select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"Async Filter workers: 1\"],[\"&nbsp;&nbsp;filter: i='A' [pre-touch]\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"],[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]],\"count\":5}",
-                    "explain select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'"
-            );
-        });
+        testJsonQuery(
+                10,
+                "GET /query?query=" + urlEncodeQuery("select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'") + " HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                """
+                        HTTP/1.1 200 OK\r
+                        Server: questDB/1.0\r
+                        Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                        Transfer-Encoding: chunked\r
+                        Content-Type: application/json; charset=utf-8\r
+                        Keep-Alive: timeout=5, max=10000\r
+                        \r
+                        0204\r
+                        {"query":"select /*+ ENABLE_PRE_TOUCH(x) */ * from x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"}],"timestamp":-1,"dataset":[],"count":0}\r
+                        00\r
+                        \r
+                        """
+        );
     }
 
     @Test
@@ -7393,7 +7412,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
 
                         @Override
-                        public Clock getNanosecondClock() {
+                        public NanosecondClock getNanosecondClock() {
                             return StationaryNanosClock.INSTANCE;
                         }
                     }
@@ -10542,7 +10561,8 @@ public class IODispatcherTest extends AbstractTest {
         boolean valid;
     }
 
-    private record TestJsonQueryProcessorFactory(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration,
+    private record TestJsonQueryProcessorFactory(CairoEngine engine,
+            HttpFullFatServerConfiguration httpConfiguration,
                                                  int workerCount) implements HttpRequestHandlerFactory {
 
         @Override

@@ -36,10 +36,11 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.datetime.CommonUtils.*;
 
 public class LineTcpParser implements QuietCloseable {
 
@@ -88,7 +89,6 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 21;
     public static final byte ENTITY_TYPE_VARCHAR = 22;
-    public static final byte ENTITY_UNIT_NONE = 0;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_DECIMAL + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_DECIMAL + 1;
@@ -376,7 +376,7 @@ public class LineTcpParser implements QuietCloseable {
         currentEntity = null;
         entityHandler = ENTITY_HANDLER_TABLE;
         timestamp = NULL_TIMESTAMP;
-        timestampUnit = ENTITY_UNIT_NONE;
+        timestampUnit = TIMESTAMP_UNIT_UNSET;
         errorCode = ErrorCode.NONE;
         nQuoteCharacters = 0;
         scape = false;
@@ -386,19 +386,14 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
-        switch (entityHandler) {
-            case ENTITY_HANDLER_TABLE:
-                return expectTableName(endOfEntityByte);
-            case ENTITY_HANDLER_NAME:
-                return expectEntityName(endOfEntityByte, bufHi);
-            case ENTITY_HANDLER_VALUE:
-                return expectEntityValue(endOfEntityByte, bufHi);
-            case ENTITY_HANDLER_TIMESTAMP:
-                return expectTimestamp(endOfEntityByte);
-            case ENTITY_HANDLER_NEW_LINE:
-                return expectEndOfLine(endOfEntityByte);
-        }
-        return false;
+        return switch (entityHandler) {
+            case ENTITY_HANDLER_TABLE -> expectTableName(endOfEntityByte);
+            case ENTITY_HANDLER_NAME -> expectEntityName(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_VALUE -> expectEntityValue(endOfEntityByte, bufHi);
+            case ENTITY_HANDLER_TIMESTAMP -> expectTimestamp(endOfEntityByte);
+            case ENTITY_HANDLER_NEW_LINE -> expectEndOfLine(endOfEntityByte);
+            default -> false;
+        };
     }
 
     private boolean expectBinaryFormat(long bufHi) {
@@ -572,15 +567,15 @@ public class LineTcpParser implements QuietCloseable {
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
                         case 'n':
-                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_NANOS;
+                            timestampUnit = TIMESTAMP_UNIT_NANOS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 't':
-                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_MICROS;
+                            timestampUnit = TIMESTAMP_UNIT_MICROS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         case 'm':
-                            timestampUnit = CommonUtils.TIMESTAMP_UNIT_MILLIS;
+                            timestampUnit = TIMESTAMP_UNIT_MILLIS;
                             timestamp = Numbers.parseLong(charSeq.decHi());
                             break;
                         // fall through
@@ -594,7 +589,7 @@ public class LineTcpParser implements QuietCloseable {
             errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
             return false;
         } catch (NumericException ex) {
-            timestampUnit = ENTITY_UNIT_NONE;
+            timestampUnit = TIMESTAMP_UNIT_UNSET;
             errorCode = ErrorCode.INVALID_TIMESTAMP;
             return false;
         }
@@ -742,7 +737,7 @@ public class LineTcpParser implements QuietCloseable {
         private double floatValue;
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
-        private byte unit = ENTITY_UNIT_NONE;
+        private byte unit = TIMESTAMP_UNIT_UNSET;
 
         @Override
         public void close() {
@@ -798,7 +793,7 @@ public class LineTcpParser implements QuietCloseable {
 
         private void clear() {
             type = ENTITY_TYPE_NONE;
-            unit = ENTITY_UNIT_NONE;
+            unit = TIMESTAMP_UNIT_UNSET;
             value.clear();
         }
 
@@ -819,12 +814,12 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 'n':
                     if (valueLen > 1) {
-                        unit = CommonUtils.TIMESTAMP_UNIT_NANOS;
+                        unit = TIMESTAMP_UNIT_NANOS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                 case 'm':
                     if (valueLen > 1) {
-                        unit = CommonUtils.TIMESTAMP_UNIT_MILLIS;
+                        unit = TIMESTAMP_UNIT_MILLIS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -832,7 +827,7 @@ public class LineTcpParser implements QuietCloseable {
                     return false;
                 case 't':
                     if (valueLen > 1) {
-                        unit = CommonUtils.TIMESTAMP_UNIT_MICROS;
+                        unit = TIMESTAMP_UNIT_MICROS;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -1009,7 +1004,7 @@ public class LineTcpParser implements QuietCloseable {
                 value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
             } catch (NumericException notANumber) {
-                unit = ENTITY_UNIT_NONE;
+                unit = TIMESTAMP_UNIT_UNSET;
                 type = ENTITY_TYPE_SYMBOL;
                 return false;
             }

@@ -28,8 +28,10 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Chars;
-import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.NotNull;
 
 public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityContextFactory {
     private final boolean httpReadOnly;
@@ -49,17 +51,15 @@ public final class ReadOnlyUsersAwareSecurityContextFactory implements SecurityC
     }
 
     @Override
-    public SecurityContext getInstance(CharSequence principal, ObjList<CharSequence> groups, byte authType, byte interfaceId) {
-        switch (interfaceId) {
-            case SecurityContextFactory.HTTP:
-                return httpReadOnly
-                        ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)
-                        : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE);
-            case SecurityContextFactory.PGWIRE:
-                return isReadOnlyPgWireUser(principal) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
-            default:
-                return AllowAllSecurityContext.INSTANCE;
-        }
+    public SecurityContext getInstance(@Transient @NotNull PrincipalContext principalContext, byte interfaceId) {
+        return switch (interfaceId) {
+            case SecurityContextFactory.HTTP -> httpReadOnly
+                    ? (settingsReadOnly ? ReadOnlySecurityContext.SETTINGS_READ_ONLY : ReadOnlySecurityContext.INSTANCE)
+                    : (settingsReadOnly ? AllowAllSecurityContext.SETTINGS_READ_ONLY : AllowAllSecurityContext.INSTANCE);
+            case SecurityContextFactory.PGWIRE ->
+                    isReadOnlyPgWireUser(principalContext.getPrincipal()) ? ReadOnlySecurityContext.INSTANCE : AllowAllSecurityContext.INSTANCE;
+            default -> AllowAllSecurityContext.INSTANCE;
+        };
     }
 
     private boolean isReadOnlyPgWireUser(CharSequence principal) {

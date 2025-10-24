@@ -125,7 +125,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
                                     public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                                        return (principal, groups, authType, interfaceId) -> testSecurityContext;
+                                        return (principalContext, interfaceId) -> testSecurityContext;
                                     }
                                 }
                         );

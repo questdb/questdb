@@ -330,6 +330,134 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCountDistinctFuzz() throws Exception {
+        // With this test, we aim to verify correctness of merge() method
+        // implementation in count_distinct functions.
+
+        // This test controls sets enable parallel GROUP BY flag on its own.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab as (" +
+                                        "  select" +
+                                        "    rnd_int() anint," +
+                                        "    rnd_ipv4() anipv4," +
+                                        "    rnd_symbol(100,4,4,2) asymbol," +
+                                        "    rnd_long() along," +
+                                        "    rnd_uuid4() auuid," +
+                                        "    rnd_long256() along256," +
+                                        "    timestamp_sequence(0, 86400000000) ts" +  // 1 day per row
+                                        "  from long_sequence(1)" +
+                                        ") timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+
+                        // Now insert varying amounts of data per partition to cover various branches.
+                        long timestamp = 86400000000L; // Start from day 2
+
+                        for (int i = 0; i < 50; i++) {
+                            final int prob = rnd.nextInt(100);
+                            if (prob < 25) {
+                                // Add partition with 1 row (for inlined value branch).
+                                execute(
+                                        compiler,
+                                        "insert into tab values(rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
+                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp)",
+                                        sqlExecutionContext
+                                );
+                            } else if (prob < 50) {
+                                // Add partition with a varying row counts.
+                                final int rows = rnd.nextInt(100) + 1;
+                                execute(
+                                        compiler,
+                                        "insert into tab " +
+                                                "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
+                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp " +
+                                                "from long_sequence(" + rows + ")",
+                                        sqlExecutionContext
+                                );
+                            } else if (prob < 75) {
+                                // Add partition with exactly PAGE_FRAME_MAX_ROWS.
+                                execute(
+                                        compiler,
+                                        "insert into tab " +
+                                                "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
+                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp " +
+                                                "from long_sequence(" + PAGE_FRAME_MAX_ROWS + ")",
+                                        sqlExecutionContext
+                                );
+                            } else {
+                                // Add partition with PAGE_FRAME_MAX_ROWS + 1 rows.
+                                execute(
+                                        compiler,
+                                        "insert into tab " +
+                                                "select rnd_int(), rnd_ipv4(), rnd_symbol(100,4,4,2), " +
+                                                "rnd_long(), rnd_uuid4(), rnd_long256(), " + timestamp + "::timestamp " +
+                                                "from long_sequence(" + (PAGE_FRAME_MAX_ROWS + 1) + ")",
+                                        sqlExecutionContext
+                                );
+                            }
+                            timestamp += 86400000000L; // next day
+                        }
+
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        final String query = "SELECT " +
+                                "count_distinct(anint) cd_int, " +
+                                "count_distinct(anipv4) cd_ipv4, " +
+                                "count_distinct(asymbol) cd_symbol, " +
+                                "count_distinct(along) cd_long, " +
+                                "count_distinct(auuid) cd_uuid, " +
+                                "count_distinct(along256) cd_long256 " +
+                                "FROM tab";
+
+                        // Run with single-threaded GROUP BY.
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink
+                            );
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        // Run with parallel GROUP BY.
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sinkB
+                            );
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        // Compare the results.
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelCountOverMultiKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);

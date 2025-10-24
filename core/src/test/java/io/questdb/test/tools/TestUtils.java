@@ -2210,8 +2210,8 @@ public final class TestUtils {
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
-                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        expected.getDouble(expectedFlatIndex + i * expected.getStride(dim)),
+                        actual.getDouble(actualFlatIndex + i * actual.getStride(dim)),
                         Numbers.TOLERANCE
                 );
             }

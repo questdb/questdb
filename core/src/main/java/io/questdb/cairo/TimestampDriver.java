@@ -185,7 +185,9 @@ public interface TimestampDriver {
      *
      * @param ts   the timestamp value to convert
      * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
+     *             supported units: nanos, micros, millis, seconds, minutes, hours
      * @return the timestamp value
+     * @throws UnsupportedOperationException if the unit is not supported
      */
     default long from(long ts, byte unit) {
         return switch (unit) {
