@@ -63,7 +63,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
-    private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final SimpleMapValue ownerMapValue;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<Function> perWorkerFilters;
@@ -95,7 +94,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             this.bindVarFunctions = bindVarFunctions;
             this.ownerFilter = ownerFilter;
             this.perWorkerFilters = perWorkerFilters;
-            this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -117,9 +115,17 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             }
 
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-            perWorkerAllocators = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
+            // Make sure to set worker-local allocator for the group by functions.
+            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
+            if (perWorkerGroupByFunctions != null) {
+                perWorkerAllocators = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    final GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    perWorkerAllocators.extendAndSet(i, allocator);
+                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
+                }
+            } else {
+                perWorkerAllocators = null;
             }
 
             clear();
@@ -187,11 +193,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         if (slotId == -1 || perWorkerFunctionUpdaters == null) {
-            // Make sure to set worker-local allocator for the functions backed by the returned updater.
-            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             return ownerFunctionUpdater;
         }
-        GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(slotId), perWorkerAllocators.getQuick(slotId));
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 

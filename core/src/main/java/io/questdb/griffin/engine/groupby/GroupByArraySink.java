@@ -46,14 +46,12 @@ import io.questdb.std.Unsafe;
  */
 public class GroupByArraySink implements Mutable {
     private final BorrowedArray borrowedArray = new BorrowedArray();
-
-    private final int type;
-    private final int nDims;
     private final int elemSize;
-
+    private final int nDims;
+    private final int type;
+    private long allocatedSize;
     private GroupByAllocator allocator;
     private long ptr;
-    private long allocatedSize;
 
     public GroupByArraySink(int type) {
         this.type = type;
@@ -68,21 +66,20 @@ public class GroupByArraySink implements Mutable {
     }
 
     public ArrayView getArray() {
-        if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0)
+        if (ptr == 0 || Unsafe.getUnsafe().getInt(ptr) < 0) {
             return null;
-
+        }
         return ArrayTypeDriver.getCompactPlainValue(ptr, type, nDims, borrowedArray);
     }
 
     public GroupByArraySink of(long ptr) {
         this.ptr = ptr;
-
         if (ptr != 0) {
             int dataSize = Unsafe.getUnsafe().getInt(ptr);
             this.allocatedSize = Integer.BYTES + dataSize;
-        } else
+        } else {
             this.allocatedSize = 0;
-
+        }
         return this;
     }
 
