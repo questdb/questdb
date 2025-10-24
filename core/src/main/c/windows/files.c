@@ -344,6 +344,21 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
     return -1;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified0
+        (JNIEnv* e, jclass cl, jint fd) {
+    FILETIME creation;
+    FILETIME access;
+    FILETIME write;
+
+    if (GetFileTime(FD_TO_HANDLE(fd), &creation, &access, &write)) {
+      return ((((jlong)write.dwHighDateTime) << 32) | write.dwLowDateTime) /
+                 10000 -
+             MILLIS_SINCE_1970;
+    }
+    SaveLastError();
+    return -1;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0(JNIEnv *e, jclass cl, jlong lpszName) {
     int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszName, -1, NULL, 0);
     if (len > 0) {

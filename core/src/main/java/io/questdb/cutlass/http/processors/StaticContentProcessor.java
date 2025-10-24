@@ -271,7 +271,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
                 }
                 header.put("Accept-Ranges: bytes").putEOL();
                 header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).putEOL();
-                header.put("ETag: ").put(ff.getLastModified(path)).putEOL();
+                header.put("ETag: ").put('"').put(ff.getLastModified(state.fd)).put('"').putEOL();
                 if (keepAliveHeader != null) {
                     header.put(keepAliveHeader);
                 }
@@ -309,7 +309,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
             if (asAttachment) {
                 header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorUtf8Sequence.get(path)).put("\"").putEOL();
             }
-            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').putEOL();
+            header.put("ETag: ").put('"').put(ff.getLastModified(fd)).put('"').putEOL();
             header.setKeepAlive(keepAliveHeader);
             header.send();
             resumeSend(context);

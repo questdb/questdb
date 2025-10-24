@@ -76,6 +76,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentDispositionName;
     private long contentLength;
     private DirectUtf8String contentType;
+    private boolean deleteRequest = false;
     private boolean getRequest = false;
     private DirectUtf8String headerName;
     private long headerPtr;
@@ -140,6 +141,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.cookieList.clear();
         this.cookiePool.clear();
         this.ignoredCookieCount = 0;
+        this.getRequest = false;
+        this.postRequest = false;
+        this.putRequest = false;
+        this.deleteRequest = false;
         // do not clear the pool
         // this.pool.clear();
     }
@@ -256,6 +261,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public boolean hasBoundary() {
         return boundary != null;
+    }
+
+    @Override
+    public boolean isDeleteRequest() {
+        return deleteRequest;
     }
 
     @Override
@@ -798,6 +808,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     getRequest = HttpKeywords.isGET(method);
                     postRequest = HttpKeywords.isPOST(method);
                     putRequest = HttpKeywords.isPUT(method);
+                    deleteRequest = HttpKeywords.isDELETE(method);
 
                     // parse and decode query string
                     if (query != null) {

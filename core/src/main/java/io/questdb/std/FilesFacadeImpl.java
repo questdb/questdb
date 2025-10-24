@@ -214,6 +214,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getLastModified(long fd) {
+        return Files.getLastModified0(fd);
+    }
+
+    @Override
     public long getMapCountLimit() {
         return Files.getMapCountLimit();
     }

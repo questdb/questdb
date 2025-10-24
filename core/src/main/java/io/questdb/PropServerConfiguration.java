@@ -222,6 +222,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
+    private final ObjList<String> httpContextPathApiV1 = new ObjList<>();
     private final ObjList<String> httpContextPathExec = new ObjList<>();
     private final ObjList<String> httpContextPathExport = new ObjList<>();
     private final ObjList<String> httpContextPathILP = new ObjList<>();
@@ -1046,6 +1047,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_TABLE_STATUS, this.httpContextPathTableStatus, httpContextWebConsole + "/chk");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_EXECUTE, this.httpContextPathExec, httpContextWebConsole + "/exec");
             getUrls(properties, env, PropertyKey.HTTP_CONTEXT_WARNINGS, this.httpContextPathWarnings, httpContextWebConsole + "/warnings");
+            getUrls(properties, env, PropertyKey.HTTP_CONTEXT_API_V1, this.httpContextPathApiV1, httpContextWebConsole + "/api/v1");
+
 
             // If any REST services that the Web Console depends on are overridden,
             // ensure the required context paths remain available,
@@ -1061,6 +1064,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // 4. table status, to support CSV import UI
             // 5. JSON query execution, e.g. exec
             // 6. warnings, that displays warnings in the table view
+            // 7. new export/import rest api
 
             // we use defaults, because this is what the Web Console expects
             httpContextPathImport.add(httpContextWebConsole + "/imp");
@@ -1069,6 +1073,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             httpContextPathTableStatus.add(httpContextWebConsole + "/chk");
             httpContextPathExec.add(httpContextWebConsole + "/exec");
             httpContextPathWarnings.add(httpContextWebConsole + "/warnings");
+            httpContextPathApiV1.add(httpContextWebConsole + "/api/v1");
 
             // read the redirect map
             this.redirectMap = new Utf8SequenceObjHashMap<>();
@@ -4643,6 +4648,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public LongGauge getConnectionCountGauge() {
             return metrics.httpMetrics().connectionCountGauge();
+        }
+
+        @Override
+        public ObjList<String> getContextPathApiV1() {
+            return httpContextPathApiV1;
         }
 
         @Override

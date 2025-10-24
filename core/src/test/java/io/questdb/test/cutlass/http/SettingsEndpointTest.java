@@ -451,9 +451,11 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
                     final HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT).DELETE()
                             .url("/settings?version=" + 0L).withContent().put("{\"instance_name\":\"instance1\",\"instance_desc\":\"desc1\"}");
-                    assertResponse(request, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
+                    assertResponse(request, HTTP_BAD_REQUEST, "DELETE request method cannot have content\r\n");
+                    final HttpClient.Request request1 = httpClient.newRequest("localhost", HTTP_PORT).DELETE()
+                            .url("/settings?version=" + 0L);
+                    assertResponse(request1, HTTP_BAD_METHOD, "Method DELETE not supported\r\n");
                     assertPreferencesStore(settingsStore, 0, "\"preferences\":{}");
-
                     assertSettingsRequest(httpClient, "{" +
                             "\"config\":{" +
                             "\"release.type\":\"OSS\"," +
