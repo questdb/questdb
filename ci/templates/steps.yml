@@ -140,10 +140,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['System.PullRequest.IsFork'], 'false'),
-        or( 
-            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
-        )
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
   - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
