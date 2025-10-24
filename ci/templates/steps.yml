@@ -124,7 +124,11 @@ steps:
         echo "##vso[task.setvariable variable=MAVEN_PROFILES]-P build-web-console"
       fi
     displayName: "Set Maven profiles based on Rust changes"
-    condition: startsWith(variables['testset'], 'coverage')
+    condition: >
+      or(
+          eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+          eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      )
 
   - task: Maven@3
     displayName: "Run tests with Coverage"
