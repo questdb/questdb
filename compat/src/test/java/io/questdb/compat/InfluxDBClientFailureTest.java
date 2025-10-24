@@ -169,7 +169,11 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                         influxDB,
                         points,
                         "failed_table,tag1=value1 f1=1i,y=12i",
-                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: 2, error: could not open read-write"
+                        // the expected error message is split into 2 to avoid asserting the exact errno.
+                        // why? test artificially fails at `openRW()`. Upon failure QuestDB fetches errno(), but this will get
+                        // whatever errno was set at the last actual failure. thus is not determistic, on Windows it occasionally
+                        // gets 0. 
+                        "{\"code\":\"internal error\",\"message\":\"failed to parse line protocol:errors encountered on line(s):write error: failed_table, errno: ", "error: could not open read-write"
                 );
 
                 // Retry is ok
