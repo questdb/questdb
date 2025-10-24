@@ -174,7 +174,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void skip(long p) {
-        assert pos + p * Long.BYTES <= capacity;
+        assert pos + p * Long.BYTES <= limit;
         pos += p << 3;
     }
 

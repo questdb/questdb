@@ -126,8 +126,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 perWorkerJoinFilters,
                 joinWindowLo,
                 joinWindowHi,
-                masterFactory.getMetadata().getTimestampIndex(),
                 columnSplit,
+                masterFactory.getMetadata().getTimestampIndex(),
                 valueTypes,
                 groupByFunctions,
                 perWorkerGroupByFunctions,
@@ -400,6 +400,5 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(slaveFactory);
         Misc.free(frameSequence);
         Misc.free(cursor);
-        Misc.freeObjListAndClear(groupByFunctions);
     }
 }

@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
@@ -87,6 +88,11 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return frameCursor.getSymbolTable(columnIndex);
     }
 
     @Override

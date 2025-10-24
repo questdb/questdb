@@ -64,12 +64,10 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     }
 
     /**
-     * Returns symbol table for the given symbol column. Not available on concurrent implementation.
+     * Returns symbol table for the given symbol column.
      */
     @Override
-    default StaticSymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
-    }
+    StaticSymbolTable getSymbolTable(int columnIndex);
 
     /**
      * Time frame should be used only if a previously called {@link #next()} or {@link #prev()}

@@ -1286,14 +1286,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory createHashJoin(
-            RecordMetadata metadata,
+            JoinRecordMetadata metadata,
             RecordCursorFactory master,
             RecordCursorFactory slave,
             int joinType,
             Function filter,
             JoinContext context,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         /*
          * JoinContext provides the following information:
          * a/bIndexes - index of model where join column is coming from
@@ -1371,6 +1371,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // TODO(puzpuzpuz): remove this ugly hack and implement proper WINDOW JOIN support in SQL engine
             if (isHack) {
+                OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
+                ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
+                node.paramCount = 2;
+                node.lhs = expressionNodePool.next().of(LITERAL, "t.sym", 0, 0);
+                node.rhs = expressionNodePool.next().of(LITERAL, "p.sym", 0, 0);
+                filter = compileJoinFilter(node, metadata, executionContext);
+                ObjList<Function> perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
+                for (int i = 0, n = executionContext.getSharedQueryWorkerCount(); i < n; i++) {
+                    perWorkerJoinFilters.add(compileJoinFilter(node, metadata, executionContext));
+                }
                 GenericRecordMetadata windowJoinMetadata = GenericRecordMetadata.deepCopyOf(masterMetadata);
                 // one more column for avg(price)
                 windowJoinMetadata.add(new TableColumnMetadata(
@@ -1382,7 +1392,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null
                 ));
                 final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(1);
-                groupByFunctions.add(new AvgDoubleGroupByFunction(LongColumn.newInstance(4)));
+                groupByFunctions.add(new AvgDoubleGroupByFunction(DoubleColumn.newInstance(4)));
                 ArrayColumnTypes valueTypes = new ArrayColumnTypes();
                 groupByFunctions.getQuick(0).initValueTypes(valueTypes);
                 return new AsyncWindowJoinRecordCursorFactory(
@@ -1394,7 +1404,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         master,
                         slave,
                         filter,
-                        null,
+                        perWorkerJoinFilters,
                         Micros.SECOND_MICROS,
                         Micros.SECOND_MICROS,
                         valueTypes,
@@ -4467,6 +4477,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (overrideTimestampRequired) {
                 executionContext.popTimestampRequiredFlag();
             }
+        }
+
+        // TODO(puzpuzpuz): another hack
+        if (factory instanceof AsyncWindowJoinRecordCursorFactory) {
+            return factory;
         }
 
         final RecordMetadata metadata = factory.getMetadata();
