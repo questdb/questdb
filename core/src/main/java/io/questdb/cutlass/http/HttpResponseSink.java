@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -816,8 +817,17 @@ public class HttpResponseSink implements Closeable, Mutable {
                     headerImpl.put(header).put(Misc.EOL);
                 }
                 if (cookieNames != null) {
-                    assert cookieValues != null;
-                    assert cookieNames.size() == cookieValues.size();
+                    if (cookieValues == null) {
+                        throw CairoException.critical(0)
+                                .put("Cookie values are missing [cookieNames=").put(cookieNames)
+                                .put(", cookieValues=null]");
+                    }
+                    if (cookieValues.size() != cookieNames.size()) {
+                        throw CairoException.critical(0)
+                                .put("The number of cookie names and values are not matching [cookieNames=").put(cookieNames)
+                                .put(", cookieValues=").put(cookieValues)
+                                .put(']');
+                    }
                     for (int i = 0, n = cookieNames.size(); i < n; i++) {
                         setCookie(cookieNames.getQuick(i), cookieValues.getQuick(i));
                     }
