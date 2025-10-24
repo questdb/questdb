@@ -249,7 +249,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     )
             ) {
                 Record rec = records.getRecord();
-                long lastTs = 0;
+                long lastTs = Long.MIN_VALUE;
                 ColumnPurgeRetryTask task = null;
 
                 CharSequenceObjHashMap<String> stringIntern = new CharSequenceObjHashMap<>();
@@ -280,6 +280,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
                         if (token == null || token.getTableId() != tableId) {
                             LOG.debug().$("table deleted, skipping [tableDir=").$safe(tableName).I$();
+                            lastTs = Long.MIN_VALUE; // reset timestamp to force task initialization on the next iteration
                             continue;
                         }
 
