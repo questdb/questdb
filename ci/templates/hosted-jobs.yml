@@ -3,113 +3,53 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        # ==================================================================
-        # macOS Jobs
-        # ==================================================================
-        # Pattern: Directory-based jobs exclude O3/Fuzz to avoid overlap
-        #          with fuzz jobs. Fuzz jobs run all O3/Fuzz tests.
-        # ==================================================================
-        #        mac-griffin: # Excludes O3/Fuzz to delegate those to mac-fuzz
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/griffin/**"
-        #          excludeTests: "**/O3*Test**,**/**Fuzz**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cairo-o3: # Excludes Fuzz only, runs O3 tests in this directory
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cairo/o3/**"
-        #          excludeTests: "**/**Fuzz**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cairo-etc: # Excludes O3/Fuzz to delegate those to mac-fuzz
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
-        #          excludeTests: "**/O3*Test**,**/**Fuzz**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cairo-core: # Excludes subdirs already covered + O3/Fuzz
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cairo/**"
-        #          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/O3*Test**,**/**Fuzz**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cairo-fuzz: # No excludes - runs all tests in cairo/fuzz/
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cairo/fuzz/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-fuzz: # Runs ALL O3/Fuzz tests, excludes cairo/fuzz and cairo/o3 to avoid overlap
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/O3*Test**,**/**Fuzz**"
-        #          excludeTests: "**/cairo/fuzz/**,**/cairo/o3/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cutlass-pgwire: # No excludes - pgwire tests don't overlap with O3/Fuzz patterns
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/pgwire/**/*.java"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cutlass-tcp: # No excludes - specific directory, no overlap
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cutlass/line/tcp/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-cutlass-other: # Excludes tcp and pgwire subsets already covered
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          includeTests: "**/cutlass/**"
-        #          excludeTests: "**/cutlass/line/tcp/**,**/cutlass/pgwire/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-        #        mac-other: # No includes - runs everything else (compat, cliutil, etc.)
-        #          imageName: "macos-latest"
-        #          poolName: "Azure Pipelines"
-        #          os: macOS
-        #          jdk: "1.17"
-        #          testset: "all"
-        #          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/cutlass/**"
-        #          javadoc_step: ""
-        #          javadoc_profile: ""
-
-        # ==================================================================
-        # Windows Jobs (same pattern as macOS)
-        # ==================================================================
-        windows-griffin: # Excludes O3/Fuzz to delegate those to windows-fuzz
+        mac-griffin:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/griffin/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/**"
+          excludeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-cairo-fuzz:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/cairo/fuzz/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-pgwire:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          includeTests: "**/pgwire/**/*.java"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-other:
+          imageName: "macos-latest"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.17"
+          testset: "all"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-griffin:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
@@ -119,7 +59,7 @@ jobs:
           excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo-fuzz: # No excludes - runs all tests in cairo/fuzz/
+        windows-fuzz1:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
@@ -128,47 +68,27 @@ jobs:
           includeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-fuzz: # Runs ALL O3/Fuzz tests, excludes cairo/fuzz and cairo/o3 to avoid overlap
+        windows-fuzz2:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/O3*Test**,**/**Fuzz**"
-          excludeTests: "**/cairo/fuzz/**,**/cairo/o3/**"
+          excludeTests: "**/cairo/fuzz/**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cairo-o3: # Excludes Fuzz only, runs O3 tests in this directory
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/o3/**"
-          excludeTests: "**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cairo-etc: # Excludes O3/Fuzz to delegate those to windows-fuzz
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**"
-          excludeTests: "**/O3*Test**,**/**Fuzz**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cairo-core: # Excludes subdirs already covered + O3/Fuzz
+        windows-cairo:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
           includeTests: "**/cairo/**"
-          excludeTests: "**/cairo/o3/**,**/cairo/mv/**,**/cairo/wal/**,**/cairo/mig/**,**/cairo/pool/**,**/cairo/map/**,**/cairo/vm/**,**/cairo/file/**,**/cairo/sql/**,**/O3*Test**,**/**Fuzz**"
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cutlass-pgwire: # No excludes - pgwire tests don't overlap with O3/Fuzz patterns
+        windows-pgwire:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
@@ -177,32 +97,13 @@ jobs:
           includeTests: "**/pgwire/**/*.java"
           javadoc_step: ""
           javadoc_profile: ""
-        windows-cutlass-tcp: # No excludes - specific directory, no overlap
+        windows-other:
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.17"
           testset: "all"
-          includeTests: "**/cutlass/line/tcp/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-cutlass-other: # Excludes tcp and pgwire subsets already covered
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.17"
-          testset: "all"
-          includeTests: "**/cutlass/**"
-          excludeTests: "**/cutlass/line/tcp/**,**/cutlass/pgwire/**"
-          javadoc_step: ""
-          javadoc_profile: ""
-        windows-other: # No includes - runs everything else (compat, cliutil, etc.)
-          imageName: "windows-latest"
-          poolName: "Azure Pipelines"
-          os: Windows
-          jdk: "1.17"
-          testset: "all"
-          excludeTests: "**/griffin/**,**/cairo/**,**/pgwire/**,**/cutlass/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
 
