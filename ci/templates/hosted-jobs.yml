@@ -111,7 +111,7 @@ jobs:
         # ==================================================================
         windows-griffin: # Excludes O3/Fuzz to delegate those to windows-fuzz
           imageName: "windows-latest"
-          poolName: "Azure Pipelines"
+          poolName: "vmss-uksouth-windows-spot"
           os: Windows
           jdk: "1.17"
           testset: "all"
