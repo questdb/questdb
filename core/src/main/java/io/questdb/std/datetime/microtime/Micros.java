@@ -659,14 +659,6 @@ public final class Micros {
         }
     }
 
-    public static int getNanosOfSecond(long micros) {
-        if (micros > -1) {
-            return (int) ((micros % SECOND_MICROS) * MICRO_NANOS);
-        } else {
-            return (int) ((SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS)) * MICRO_NANOS);
-        }
-    }
-
     // Years in the 1900s are in the second millennium. The third millennium started January 1, 2001.
     public static int getMillennium(long micros) {
         int year = getYear(micros);
@@ -756,6 +748,14 @@ public final class Micros {
 
     public static long getNanosBetween(long a, long b) {
         return Math.abs(a - b) * MICRO_NANOS;
+    }
+
+    public static int getNanosOfSecond(long micros) {
+        if (micros > -1) {
+            return (int) ((micros % SECOND_MICROS) * MICRO_NANOS);
+        } else {
+            return (int) ((SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS)) * MICRO_NANOS);
+        }
     }
 
     public static long getPeriodBetween(char type, long start, long end) {
@@ -974,15 +974,25 @@ public final class Micros {
             int millis,
             int micros
     ) {
-        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        int minDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
         return yearMicros(y, leap)
                 + monthOfYearMicros(month, leap)
-                + maxDay * DAY_MICROS
+                + minDay * DAY_MICROS
                 + hour * HOUR_MICROS
                 + min * MINUTE_MICROS
                 + sec * SECOND_MICROS
                 + millis * MILLI_MICROS
                 + micros;
+    }
+
+    public static long toMicros(
+            int y,
+            boolean leap,
+            int month,
+            int day
+    ) {
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        return yearMicros(y, leap) + monthOfYearMicros(month, leap) + maxDay * DAY_MICROS;
     }
 
     public static long toMicros(int y, int m, int d) {
