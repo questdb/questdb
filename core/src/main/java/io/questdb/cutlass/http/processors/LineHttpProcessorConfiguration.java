@@ -25,7 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 
 public interface LineHttpProcessorConfiguration {
 
@@ -47,7 +47,7 @@ public interface LineHttpProcessorConfiguration {
 
     long getMaxRecvBufferSize();
 
-    Clock getMicrosecondClock();
+    MicrosecondClock getMicrosecondClock();
 
     long getSymbolCacheWaitUsBeforeReload();
 

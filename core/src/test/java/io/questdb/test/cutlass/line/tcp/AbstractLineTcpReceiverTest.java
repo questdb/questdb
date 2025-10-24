@@ -55,7 +55,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -184,7 +184,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return testMicrosClock;
         }
 
