@@ -36,7 +36,9 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_OCTET_STREAM = "application/octet-stream";
     public static final String CONTENT_TYPE_PARQUET = "application/vnd.apache.parquet";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    public static final char COOKIE_SEPARATOR = ';';
     public static final char COOKIE_VALUE_SEPARATOR = '=';
+    public static final String DELETED_COOKIE = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
     public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_CODEC = new Utf8String("compression_codec");
     public static final Utf8String EXPORT_PARQUET_OPTION_COMPRESSION_LEVEL = new Utf8String("compression_level");
     public static final Utf8String EXPORT_PARQUET_OPTION_DATA_PAGE_SIZE = new Utf8String("data_page_size");
@@ -66,6 +68,11 @@ public final class HttpConstants {
     public static final String METHOD_POST = "POST";
     @SuppressWarnings("unused")
     public static final String METHOD_PUT = "PUT";
+    public static final long SESSION_COOKIE_MAX_AGE_SECONDS = 2592000L;
+    public static final String SESSION_COOKIE_ATTRIBUTES = "; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_COOKIE_MAX_AGE_SECONDS;
+    public static final String SESSION_COOKIE_NAME = "qdb_session";
+    public static final Utf8String SESSION_COOKIE_NAME_UTF8 = new Utf8String(SESSION_COOKIE_NAME);
+    public static final String SESSION_ID_PREFIX = "qs1";
     public static final Utf8String URL_PARAM_ATOMICITY = new Utf8String("atomicity");
     public static final Utf8String URL_PARAM_ATTACHMENT = new Utf8String("attachment");
     public static final Utf8String URL_PARAM_COLS = new Utf8String("cols");
@@ -86,6 +93,7 @@ public final class HttpConstants {
     public static final Utf8String URL_PARAM_PARTITION_BY = new Utf8String("partitionBy");
     public static final Utf8String URL_PARAM_QUERY = new Utf8String("query");
     public static final Utf8String URL_PARAM_QUOTE_LARGE_NUM = new Utf8String("quoteLargeNum");
+    public static final Utf8String URL_PARAM_SESSION = new Utf8String("session");
     public static final Utf8String URL_PARAM_SKIP_LEV = new Utf8String("skipLev");
     public static final Utf8String URL_PARAM_SRC = new Utf8String("src");
     public static final Utf8String URL_PARAM_STATUS_FORMAT = new Utf8String("f");
