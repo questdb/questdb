@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import org.jetbrains.annotations.NotNull;
 
 public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit {
@@ -60,7 +60,7 @@ public final class SingleStringSymbolShortCircuit implements SymbolShortCircuit 
     }
 
     @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
+    public void of(TimeFrameCursor slaveCursor) {
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }

@@ -243,13 +243,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
 
+        final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -265,6 +265,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         } finally {
             atom.releaseFilter(filterId);
         }
+
+        task.setFilteredRowCount(rows.size());
 
         // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
