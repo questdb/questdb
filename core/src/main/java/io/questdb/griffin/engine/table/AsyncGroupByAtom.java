@@ -58,7 +58,6 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -154,7 +153,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            shardCount = Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
+            shardCount = 256;//Math.min(Numbers.ceilPow2(2 * workerCount), MAX_SHARDS);
             shardCountShr = Long.numberOfLeadingZeros(shardCount) + 1;
             lastShardStats = new ObjList<>(shardCount);
             for (int i = 0; i < shardCount; i++) {
@@ -170,12 +169,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards = new ObjList<>(shardCount);
             destShards.setPos(shardCount);
 
-            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
-            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
+            final Class<? extends RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
+                    asm,
+                    columnTypes,
+                    listColumnFilter,
+                    ownerKeyFunctions,
+                    null
+            );
+            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, listColumnFilter, ownerKeyFunctions);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, perWorkerKeyFunctions.getQuick(i)));
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, listColumnFilter, perWorkerKeyFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerMapSinks = null;

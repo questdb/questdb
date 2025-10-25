@@ -218,6 +218,20 @@ public class Unordered8Map implements Map, Reopenable {
         }
     }
 
+    public MapValue createValueWithKey(long key) {
+        if (key != 0) {
+            return createNonZeroKeyValue(key, Hash.hashLong64(key));
+        }
+        return createZeroKeyValue();
+    }
+
+    public MapValue createValueWithKey(long key, long hashCode) {
+        if (key != 0) {
+            return createNonZeroKeyValue(key, hashCode);
+        }
+        return createZeroKeyValue();
+    }
+
     @Override
     public MapRecordCursor getCursor() {
         if (hasZero) {
@@ -381,6 +395,25 @@ public class Unordered8Map implements Map, Reopenable {
         return valueOf(startAddress, true, value);
     }
 
+    private MapValue createNonZeroKeyValue(long key, long hashCode) {
+        long startAddress = getStartAddress(hashCode & mask);
+        long k = Unsafe.getUnsafe().getLong(startAddress);
+        if (k == 0) {
+            return asNew(startAddress, key, hashCode, value);
+        } else if (k == key) {
+            return valueOf(startAddress, false, value);
+        }
+        return probe0(key, startAddress, hashCode, value);
+    }
+
+    private MapValue createZeroKeyValue() {
+        if (hasZero) {
+            return valueOf(zeroMemStart, false, value);
+        }
+        hasZero = true;
+        return valueOf(zeroMemStart, true, value);
+    }
+
     // Advance through the map data structure sequentially,
     // avoiding multiplication and pseudo-random access.
     private long getNextAddress(long entryAddress) {
@@ -500,19 +533,19 @@ public class Unordered8Map implements Map, Reopenable {
         @Override
         public MapValue createValue() {
             long key = Unsafe.getUnsafe().getLong(keyMemStart);
-            if (key == 0) {
-                return createZeroKeyValue();
+            if (key != 0) {
+                return createNonZeroKeyValue(key, Hash.hashLong64(key));
             }
-            return createNonZeroKeyValue(key, Hash.hashLong64(key));
+            return createZeroKeyValue();
         }
 
         @Override
         public MapValue createValue(long hashCode) {
             long key = Unsafe.getUnsafe().getLong(keyMemStart);
-            if (key == 0) {
-                return createZeroKeyValue();
+            if (key != 0) {
+                return createNonZeroKeyValue(key, hashCode);
             }
-            return createNonZeroKeyValue(key, hashCode);
+            return createZeroKeyValue();
         }
 
         @Override

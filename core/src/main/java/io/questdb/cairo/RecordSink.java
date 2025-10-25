@@ -31,5 +31,9 @@ import io.questdb.std.ObjList;
 public interface RecordSink {
     void copy(Record r, RecordSinkSPI w);
 
+    default void setColumnIndex(int columnIndex) {
+        // no-op
+    }
+
     void setFunctions(ObjList<Function> keyFunctions);
 }
