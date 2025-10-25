@@ -50,13 +50,13 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final void at(long timestamp, ChronoUnit unit) {
-        putAsciiInternal(' ').put(timestamp * unitToNanos(unit));
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
         atNow();
     }
 
     @Override
     public final void at(Instant timestamp) {
-        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.fromSeconds(timestamp.getEpochSecond()) + timestamp.getNano());
+        putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
         atNow();
     }
 
@@ -112,14 +112,14 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value));
+    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAsciiInternal('t');
         return this;
     }
 
     @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit));
+    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAsciiInternal('t');
         return this;
     }
 }

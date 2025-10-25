@@ -30,27 +30,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
-import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
-import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
-import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
-import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
-import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
-import io.questdb.cutlass.text.CopyJob;
-import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.CopyImportJob;
+import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,7 +46,6 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
@@ -68,13 +54,12 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.File;
-import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.PropertyKey.EXPORT_WORKER_COUNT;
 import static io.questdb.PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT;
 
 public class ServerMain implements Closeable {
@@ -143,46 +128,6 @@ public class ServerMain implements Closeable {
         };
     }
 
-    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
-        HttpFullFatServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
-        String username = httpConfig.getUsername();
-        if (Chars.empty(username)) {
-            return DefaultHttpAuthenticatorFactory.INSTANCE;
-        }
-        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
-    }
-
-    public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
-        LineAuthenticatorFactory authenticatorFactory;
-        // create default authenticator for Line TCP protocol
-        if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
-            // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getDbRoot()).getParent();
-            final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
-            CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
-            authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
-        } else {
-            authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
-        }
-        return authenticatorFactory;
-    }
-
-    public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
-        boolean readOnlyInstance = configuration.getCairoConfiguration().isReadOnlyInstance();
-        if (readOnlyInstance) {
-            return ReadOnlySecurityContextFactory.INSTANCE;
-        } else {
-            PGConfiguration pgConfiguration = configuration.getPGWireConfiguration();
-            HttpContextConfiguration httpContextConfiguration = configuration.getHttpServerConfiguration().getHttpContextConfiguration();
-            boolean settingsReadOnly = configuration.getHttpServerConfiguration().isSettingsReadOnly();
-            boolean pgWireReadOnlyContext = pgConfiguration.readOnlySecurityContext();
-            boolean pgWireReadOnlyUserEnabled = pgConfiguration.isReadOnlyUserEnabled();
-            String pgWireReadOnlyUsername = pgWireReadOnlyUserEnabled ? pgConfiguration.getReadOnlyUsername() : null;
-            boolean httpReadOnly = httpContextConfiguration.readOnlySecurityContext();
-            return new ReadOnlyUsersAwareSecurityContextFactory(pgWireReadOnlyContext, pgWireReadOnlyUsername, httpReadOnly, settingsReadOnly);
-        }
-    }
-
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
@@ -231,6 +176,8 @@ public class ServerMain implements Closeable {
                 // Still useful in case of custom logger
                 bootstrap.getLog().info().$("QuestDB is shutting down...").$();
             }
+            // Signal long-running task to exit ASAP
+            engine.signalClose();
             if (initialized) {
                 workerPoolManager.halt();
                 fileWatcher = Misc.free(fileWatcher);
@@ -255,6 +202,13 @@ public class ServerMain implements Closeable {
             return httpServer.getPort();
         }
         throw CairoException.nonCritical().put("http server is not running");
+    }
+
+    public long getActiveConnectionCount(String processorName) {
+        if (httpServer == null) {
+            return 0;
+        }
+        return httpServer.getActiveConnectionTracker().getActiveConnections(processorName);
     }
 
     public int getPgWireServerPort() {
@@ -342,9 +296,11 @@ public class ServerMain implements Closeable {
                     }
                     WorkerPoolUtils.setupQueryJobs(sharedPoolQuery, engine);
 
-                    QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
-                    sharedPoolQuery.assign(queryTracingJob);
-                    freeOnExit(queryTracingJob);
+                    if (!config.getCairoConfiguration().isReadOnlyInstance()) {
+                        QueryTracingJob queryTracingJob = new QueryTracingJob(engine);
+                        sharedPoolQuery.assign(queryTracingJob);
+                        freeOnExit(queryTracingJob);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPoolWrite, engine);
@@ -364,15 +320,40 @@ public class ServerMain implements Closeable {
                         }
 
                         // text import
-                        CopyJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
                         if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
-                            final CopyRequestJob copyRequestJob = new CopyRequestJob(
+                            CopyImportJob.assignToPool(engine.getMessageBus(), sharedPoolWrite);
+                            final CopyImportRequestJob copyImportRequestJob = new CopyImportRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
                                     Math.max(1, sharedPoolWrite.getWorkerCount() - 2)
                             );
-                            sharedPoolWrite.assign(copyRequestJob);
-                            sharedPoolWrite.freeOnExit(copyRequestJob);
+                            sharedPoolWrite.assign(copyImportRequestJob);
+                            sharedPoolWrite.freeOnExit(copyImportRequestJob);
+                        }
+                    }
+
+                    // export - current export implementation requires creating temporary table, can only enable on the primary instance
+                    if (!Chars.empty(cairoConfig.getSqlCopyExportRoot()) && !isReadOnly) {
+                        int workerCount = config.getExportPoolConfiguration().getWorkerCount();
+                        if (workerCount > 0) {
+                            WorkerPool exportWorkerPool = getWorkerPool(
+                                    config.getExportPoolConfiguration(),
+                                    Requester.EXPORT,
+                                    sharedPoolQuery
+                            );
+
+                            for (int i = 0; i < workerCount; i++) {
+                                final CopyExportRequestJob copyExportRequestJob = new CopyExportRequestJob(engine);
+                                exportWorkerPool.assign(i, copyExportRequestJob);
+                                exportWorkerPool.freeOnExit(copyExportRequestJob);
+                            }
+
+                            log.info().$("export workers count: ").$(workerCount).$();
+                        } else {
+                            log.advisory().$("export is disabled; set ")
+                                    .$(EXPORT_WORKER_COUNT.getPropertyPath())
+                                    .$(" to a positive value or keep default to enable export.")
+                                    .$();
                         }
                     }
 

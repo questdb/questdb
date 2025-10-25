@@ -95,6 +95,24 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.done = false;
     }
 
+    @Override
+    public void closeAllButSelect() {
+        switch (getType()) {
+            case CompiledQuery.INSERT:
+            case CompiledQuery.INSERT_AS_SELECT:
+                Misc.free(popInsertOperation());
+                break;
+            case CompiledQuery.UPDATE:
+                Misc.free(updateOp);
+                break;
+            case CompiledQuery.ALTER:
+                Misc.free(alterOp);
+                break;
+            default:
+                break;
+        }
+    }
+
     public void done() {
         this.done = true;
     }

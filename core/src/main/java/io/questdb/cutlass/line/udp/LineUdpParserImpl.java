@@ -55,6 +55,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import static io.questdb.cutlass.line.LineUtils.from;
 
 public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final static Log LOG = LogFactory.getLog(LineUdpParserImpl.class);
@@ -270,7 +271,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return writer.newRow(clock.getTicks());
         } else {
             try {
-                return writer.newRow(timestampDriver.from(Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
+                return writer.newRow(from(timestampDriver, Numbers.parseLong(cache.get(columnValues.getQuick(valueCount - 1))), timestampUnit));
             } catch (NumericException e) {
                 LOG.error().$("invalid timestamp: ").$safe(cache.get(columnValues.getQuick(valueCount - 1))).$();
                 return null;
@@ -292,7 +293,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 path,
                 true,
                 tableStructureAdapter.of(cache),
-                false
+                false,
+                TableUtils.TABLE_KIND_REGULAR_TABLE
         );
         appendFirstRowAndCacheWriter(cache);
     }
@@ -401,57 +403,33 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
                 final int columnTypeTag = ColumnType.tagOf(columnType);
-                switch (valueTypeTag) {
-                    case ColumnType.LONG:
-                        valid = columnTypeTag == ColumnType.LONG
-                                || columnTypeTag == ColumnType.INT
-                                || columnTypeTag == ColumnType.SHORT
-                                || columnTypeTag == ColumnType.BYTE
-                                || columnTypeTag == ColumnType.TIMESTAMP
-                                || columnTypeTag == ColumnType.DATE;
-                        break;
-                    case ColumnType.INT:
-                        valid = columnTypeTag == ColumnType.INT
-                                || columnTypeTag == ColumnType.SHORT
-                                || columnTypeTag == ColumnType.BYTE;
-                        break;
-                    case ColumnType.SHORT:
-                        valid = columnTypeTag == ColumnType.SHORT
-                                || columnTypeTag == ColumnType.BYTE;
-                        break;
-                    case ColumnType.BYTE:
-                        valid = columnTypeTag == ColumnType.BYTE;
-                        break;
-                    case ColumnType.BOOLEAN:
-                        valid = columnTypeTag == ColumnType.BOOLEAN;
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.VARCHAR:
-                        valid = columnTypeTag == ColumnType.STRING ||
-                                columnTypeTag == ColumnType.VARCHAR ||
-                                columnTypeTag == ColumnType.CHAR ||
-                                columnTypeTag == ColumnType.IPv4 ||
-                                isForField &&
-                                        (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
-                        break;
-                    case ColumnType.DOUBLE:
-                        valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
-                        break;
-                    case ColumnType.FLOAT:
-                        valid = columnTypeTag == ColumnType.FLOAT;
-                        break;
-                    case ColumnType.SYMBOL:
-                        valid = columnTypeTag == ColumnType.SYMBOL;
-                        break;
-                    case ColumnType.LONG256:
-                        valid = columnTypeTag == ColumnType.LONG256;
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        valid = columnTypeTag == ColumnType.TIMESTAMP;
-                        break;
-                    default:
-                        valid = false;
-                }
+                valid = switch (valueTypeTag) {
+                    case ColumnType.LONG -> columnTypeTag == ColumnType.LONG
+                            || columnTypeTag == ColumnType.INT
+                            || columnTypeTag == ColumnType.SHORT
+                            || columnTypeTag == ColumnType.BYTE
+                            || columnTypeTag == ColumnType.TIMESTAMP
+                            || columnTypeTag == ColumnType.DATE;
+                    case ColumnType.INT -> columnTypeTag == ColumnType.INT
+                            || columnTypeTag == ColumnType.SHORT
+                            || columnTypeTag == ColumnType.BYTE;
+                    case ColumnType.SHORT -> columnTypeTag == ColumnType.SHORT
+                            || columnTypeTag == ColumnType.BYTE;
+                    case ColumnType.BYTE -> columnTypeTag == ColumnType.BYTE;
+                    case ColumnType.BOOLEAN -> columnTypeTag == ColumnType.BOOLEAN;
+                    case ColumnType.STRING, ColumnType.VARCHAR -> columnTypeTag == ColumnType.STRING ||
+                            columnTypeTag == ColumnType.VARCHAR ||
+                            columnTypeTag == ColumnType.CHAR ||
+                            columnTypeTag == ColumnType.IPv4 ||
+                            isForField &&
+                                    (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
+                    case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
+                    case ColumnType.FLOAT -> columnTypeTag == ColumnType.FLOAT;
+                    case ColumnType.SYMBOL -> columnTypeTag == ColumnType.SYMBOL;
+                    case ColumnType.LONG256 -> columnTypeTag == ColumnType.LONG256;
+                    case ColumnType.TIMESTAMP -> columnTypeTag == ColumnType.TIMESTAMP;
+                    default -> false;
+                };
             } else {
                 valid = true; // null is valid, the storage value is assigned later
             }

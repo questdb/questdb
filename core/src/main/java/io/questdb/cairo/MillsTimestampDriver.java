@@ -209,6 +209,23 @@ public class MillsTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long from(long ts, byte unit) {
+        if (ts == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts / Nanos.MILLI_NANOS;
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> ts / Micros.MILLI_MICROS;
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> ts;
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Dates.SECOND_MILLIS);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Dates.MINUTE_MILLIS);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Dates.HOUR_MILLIS);
+            default -> throw new UnsupportedOperationException();
+        };
+    }
+
+    @Override
     public long fromDate(long date) {
         return date;
     }
