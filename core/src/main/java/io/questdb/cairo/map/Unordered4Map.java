@@ -217,6 +217,20 @@ public class Unordered4Map implements Map, Reopenable {
         }
     }
 
+    public MapValue createValueWithKey(int key) {
+        if (key != 0) {
+            return createNonZeroKeyValue(key, Hash.hashInt64(key));
+        }
+        return createZeroKeyValue();
+    }
+
+    public MapValue createValueWithKey(int key, long hashCode) {
+        if (key != 0) {
+            return createNonZeroKeyValue(key, hashCode);
+        }
+        return createZeroKeyValue();
+    }
+
     @Override
     public MapRecordCursor getCursor() {
         if (hasZero) {
@@ -379,6 +393,26 @@ public class Unordered4Map implements Map, Reopenable {
         }
         size++;
         return valueOf(startAddress, true, value);
+    }
+
+    private MapValue createNonZeroKeyValue(int key, long hashCode) {
+        long index = hashCode & mask;
+        long startAddress = getStartAddress(index);
+        int k = Unsafe.getUnsafe().getInt(startAddress);
+        if (k == 0) {
+            return asNew(startAddress, key, hashCode, value);
+        } else if (k == key) {
+            return valueOf(startAddress, false, value);
+        }
+        return probe0(key, startAddress, hashCode, value);
+    }
+
+    private MapValue createZeroKeyValue() {
+        if (hasZero) {
+            return valueOf(zeroMemStart, false, value);
+        }
+        hasZero = true;
+        return valueOf(zeroMemStart, true, value);
     }
 
     // Advance through the map data structure sequentially,
@@ -659,26 +693,6 @@ public class Unordered4Map implements Map, Reopenable {
         @Override
         public void skip(int bytes) {
             appendAddress += bytes;
-        }
-
-        private MapValue createNonZeroKeyValue(int key, long hashCode) {
-            long index = hashCode & mask;
-            long startAddress = getStartAddress(index);
-            int k = Unsafe.getUnsafe().getInt(startAddress);
-            if (k == 0) {
-                return asNew(startAddress, key, hashCode, value);
-            } else if (k == key) {
-                return valueOf(startAddress, false, value);
-            }
-            return probe0(key, startAddress, hashCode, value);
-        }
-
-        private MapValue createZeroKeyValue() {
-            if (hasZero) {
-                return valueOf(zeroMemStart, false, value);
-            }
-            hasZero = true;
-            return valueOf(zeroMemStart, true, value);
         }
 
         private MapValue findValue(Unordered4MapValue value) {
