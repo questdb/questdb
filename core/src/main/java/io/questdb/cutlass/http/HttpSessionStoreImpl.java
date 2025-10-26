@@ -61,6 +61,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     public void destroySession(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         final SessionInfo session = sessionsById.remove(sessionId);
         if (session != null) {
+            session.invalidate();
             LOG.info().$("session destroyed [fd=").$(httpContext.getFd()).$(", principal=").$(session.getPrincipal()).$(']').$();
         }
     }
@@ -108,8 +109,8 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     @Override
     public SessionInfo verifySessionId(@NotNull CharSequence sessionId, @NotNull HttpConnectionContext httpContext) {
         final SessionInfo sessionInfo = sessionsById.get(sessionId);
-        if (sessionInfo == null) {
-            // no session
+        if (sessionInfo == null || sessionInfo.isInvalid()) {
+            // no valid session
             return null;
         }
         final long currentMicros = microsClock.getTicks();

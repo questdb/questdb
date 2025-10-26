@@ -88,6 +88,7 @@ public interface HttpSessionStore {
         private final AtomicBoolean lock = new AtomicBoolean();
         private final String principal;
         private volatile long expiresAt;
+        private volatile boolean invalid = false;
         private volatile long rotateAt;
         private volatile String sessionId;
 
@@ -128,6 +129,14 @@ public interface HttpSessionStore {
             return sessionId;
         }
 
+        public void invalidate() {
+            invalid = true;
+        }
+
+        public boolean isInvalid() {
+            return invalid;
+        }
+
         public void setExpiresAt(long expiresAt) {
             this.expiresAt = expiresAt;
         }
@@ -141,6 +150,7 @@ public interface HttpSessionStore {
                     .put(", expiresAt=").put(expiresAt)
                     .put(", rotateAt=").put(rotateAt)
                     .put(", sessionId=").put(sessionId)
+                    .put(", invalid=").put(invalid)
                     .put("]");
             return sink.toString();
         }
