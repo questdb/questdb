@@ -117,7 +117,7 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     }
 
     @Override
-    public int getDefaultColumnTypeForTimestamp() {
+    public int getDefaultCreateTimestampColumnType() {
         return ColumnType.TIMESTAMP_MICRO;
     }
 

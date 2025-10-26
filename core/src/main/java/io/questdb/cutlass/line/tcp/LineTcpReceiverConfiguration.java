@@ -56,7 +56,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
-    int getDefaultColumnTypeForTimestamp();
+    int getDefaultCreateTimestampColumnType();
 
     int getDefaultPartitionBy();
 
