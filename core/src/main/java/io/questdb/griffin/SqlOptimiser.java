@@ -6463,11 +6463,29 @@ public class SqlOptimiser implements Mutable {
 
         if ((rewriteStatus & REWRITE_STATUS_USE_WINDOW_MODEL) != 0) {
             windowModel.setNestedModel(root);
-            windowModel.moveLimitFrom(limitSource);
+            
+            // Fix for "limit in subquery misapplied when outer window function is used"
+            // When we have a subquery with LIMIT followed by window functions in the outer query,
+            // the LIMIT should be applied to the subquery results first, not to the window function results.
+            boolean shouldMoveLimit = true;
+            if (limitSource != null && limitSource.getLimitLo() != null) {
+                // Check if this is a case where the limit should stay with the subquery
+                // Use the nestedModelIsSubQuery flag to properly identify subqueries that should retain their limits
+                if (limitSource.isNestedModelIsSubQuery() || 
+                    (limitSource != model && limitSource.getNestedModel() != null)) {
+                    // The limitSource represents a subquery that should retain its limit
+                    shouldMoveLimit = false;
+                }
+            }
+            
+            if (shouldMoveLimit) {
+                windowModel.moveLimitFrom(limitSource);
+                limitSource = windowModel;
+            }
+            
             windowModel.moveJoinAliasFrom(limitSource);
             windowModel.copyHints(model.getHints());
             root = windowModel;
-            limitSource = windowModel;
         } else if ((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
