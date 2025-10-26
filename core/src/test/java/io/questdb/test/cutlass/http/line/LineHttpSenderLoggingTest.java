@@ -34,6 +34,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.line.http.AbstractLineHttpSender;
 import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
@@ -52,11 +53,17 @@ import static org.junit.Assert.fail;
 
 public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     private static final LogCapture capture = new LogCapture();
+    private static final Class<?>[] guaranteedLoggers = new Class[]{
+            LineHttpProcessorState.class,
+            TableUpdateDetails.class,
+    };
+
 
     @Before
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging(TableUpdateDetails.class);
+        LogFactory.enableGuaranteedLogging();
+        LogFactory.enableGuaranteedLogging(guaranteedLoggers);
         super.setUp();
         capture.start();
         TestUtils.unchecked(() -> createDummyConfiguration());
@@ -68,7 +75,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(TableUpdateDetails.class);
+        LogFactory.disableGuaranteedLogging(guaranteedLoggers);
     }
 
     @Test
