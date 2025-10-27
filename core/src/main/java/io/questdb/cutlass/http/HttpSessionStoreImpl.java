@@ -22,7 +22,7 @@ import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
 /**
  * Session store with automatic session ID rotation.
  *
- * <h3>Session ID vs SessionInfo</h3>
+ * <h2>Session ID vs SessionInfo</h2>
  * <ul>
  *   <li><b>SessionInfo:</b> The actual session object containing user principal, groups, expiry, etc.
  *       There is exactly one SessionInfo per active session.</li>
@@ -30,7 +30,7 @@ import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
  *       Multiple session IDs can point to the same SessionInfo (during rotation).</li>
  * </ul>
  *
- * <h3>How Rotation Works</h3>
+ * <h2>How Rotation Works</h2>
  * <p>When a session is rotated:</p>
  * <ol>
  *   <li>Generate a new session ID (e.g., "qs1_new")</li>
@@ -42,7 +42,7 @@ import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
  * <p>Result: Both "qs1_old" and "qs1_new" keys exist in the map, both pointing to the same SessionInfo object.
  * The old key can be detected by comparing: {@code mapKey != sessionInfo.getSessionId()}.
  *
- * <h3>Grace Period and Eviction</h3>
+ * <h2>Grace Period and Eviction</h2>
  * <p>Old session IDs remain valid for {@code rotatedSessionEvictionTime} after rotation to allow
  * clients with in-flight requests to transition smoothly. After the grace period, old IDs are
  * removed from the map during periodic eviction sweeps.
