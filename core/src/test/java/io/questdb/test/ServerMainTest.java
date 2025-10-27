@@ -480,6 +480,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.text.roll.buffer.size\tQDB_HTTP_TEXT_ROLL_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.text.timestamp.adapter.pool.capacity\tQDB_HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "http.text.utf8.sink.size\tQDB_HTTP_TEXT_UTF8_SINK_SIZE\t4096\tdefault\tfalse\tfalse\n" +
+                                    "http.server.cookies.enabled\tQDB_HTTP_SERVER_COOKIES_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.session.timeout\tQDB_HTTP_SESSION_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +
                                     "http.version\tQDB_HTTP_VERSION\tHTTP/1.1\tdefault\tfalse\tfalse\n" +
                                     "http.worker.affinity\tQDB_HTTP_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "http.worker.count\tQDB_HTTP_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +

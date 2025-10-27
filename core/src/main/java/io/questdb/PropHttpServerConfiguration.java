@@ -48,6 +48,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     private final boolean httpReadOnlySecurityContext;
     private final boolean httpServerCookiesEnabled;
     private final boolean httpServerKeepAlive;
+    private final long httpSessionTimeout;
     private final String httpVersion;
     private final boolean isReadOnlyInstance;
     private final int multipartHeaderBufferSize;
@@ -65,6 +66,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -82,6 +84,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
                 httpFrozenClock,
                 httpReadOnlySecurityContext,
                 httpServerCookiesEnabled,
+                httpSessionTimeout,
                 httpServerKeepAlive,
                 httpVersion,
                 isReadOnlyInstance,
@@ -104,6 +107,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
             boolean httpFrozenClock,
             boolean httpReadOnlySecurityContext,
             boolean httpServerCookiesEnabled,
+            long httpSessionTimeout,
             boolean httpServerKeepAlive,
             String httpVersion,
             boolean isReadOnlyInstance,
@@ -123,6 +127,7 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
         this.httpFrozenClock = httpFrozenClock;
         this.httpReadOnlySecurityContext = httpReadOnlySecurityContext;
         this.httpServerCookiesEnabled = httpServerCookiesEnabled;
+        this.httpSessionTimeout = httpSessionTimeout;
         this.httpServerKeepAlive = httpServerKeepAlive;
         this.httpVersion = httpVersion;
         this.isReadOnlyInstance = isReadOnlyInstance;
@@ -232,6 +237,11 @@ class PropHttpContextConfiguration implements HttpContextConfiguration {
     @Override
     public boolean getServerKeepAlive() {
         return httpServerKeepAlive;
+    }
+
+    @Override
+    public long getSessionTimeout() {
+        return httpSessionTimeout;
     }
 
     @Override
