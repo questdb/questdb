@@ -74,16 +74,13 @@ public final class HttpUtils {
         return session;
     }
 
-    public static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
-        return assertSessionCookie(responseHeaders, true);
-    }
-
     public static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders, boolean secure) {
         final HttpCookie sessionCookie = responseHeaders.getCookie(SESSION_COOKIE_NAME_UTF8);
         assertNotNull(sessionCookie);
         assertEquals(SESSION_COOKIE_NAME, sessionCookie.cookieName.toString());
         assertEquals(secure, sessionCookie.secure);
         assertTrue(sessionCookie.httpOnly);
+        assertEquals("/", sessionCookie.path.toString());
         assertEquals(-1L, sessionCookie.expires);
         assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
         return sessionCookie.value.toString();
