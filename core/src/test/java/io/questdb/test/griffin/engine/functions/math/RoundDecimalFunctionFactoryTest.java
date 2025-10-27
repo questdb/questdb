@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.math.RoundDecimalFunctionFactory;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -1111,7 +1112,7 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
         });
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
+            DecimalUtil.load(value, Misc.getThreadLocalDecimal128(), func, null);
             if (expectedValue >= 0) {
                 Assert.assertEquals(0, value.getHh());
                 Assert.assertEquals(0, value.getHl());
@@ -1142,7 +1143,7 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
         });
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
+            DecimalUtil.load(value, Misc.getThreadLocalDecimal128(), func, null);
             Assert.assertEquals(hh, value.getHh());
             Assert.assertEquals(hl, value.getHl());
             Assert.assertEquals(lh, value.getLh());
@@ -1173,7 +1174,7 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
         args.add(new IntConstant(scaleValue));
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
+            DecimalUtil.load(value, Misc.getThreadLocalDecimal128(), func, null);
             if (expectedValue >= 0) {
                 Assert.assertEquals(0, value.getHh());
                 Assert.assertEquals(0, value.getHl());
@@ -1199,7 +1200,7 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
         args.add(new IntConstant(scaleValue));
         try (Function func = factory.newInstance(-1, args, null, configuration, sqlExecutionContext)) {
             Decimal256 value = new Decimal256();
-            DecimalUtil.load(value, func, null);
+            DecimalUtil.load(value, Misc.getThreadLocalDecimal128(), func, null);
             Assert.assertEquals(hh, value.getHh());
             Assert.assertEquals(hl, value.getHl());
             Assert.assertEquals(lh, value.getLh());

@@ -142,24 +142,25 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void transform(Decimal128 value, Record record) {
+        public boolean transform(Decimal128 value, Record record) {
             value.setScale(fromScale - scale);
             value.round(0, roundingMode);
             value.rescale(-scale);
             value.setScale(0);
+            return true;
         }
 
         @Override
-        public void transform(Decimal256 value, Record record) {
+        public boolean transform(Decimal256 value, Record record) {
             value.setScale(fromScale - scale);
             value.round(0, roundingMode);
             value.rescale(-scale);
             value.setScale(0);
-
+            return true;
         }
 
         @Override
-        public void transform(Decimal64 value, Record record) {
+        public boolean transform(Decimal64 value, Record record) {
             // We don't support negative scale in our decimal implementation, instead we can fake
             // the scale, round and rescale to simulate the proper scaling behavior.
             // Example: if we want to round 123.456 to -1
@@ -171,7 +172,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
             value.round(0, roundingMode);
             value.rescale(-scale);
             value.setScale(0);
-
+            return true;
         }
     }
 
@@ -182,20 +183,21 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void transform(Decimal128 value, Record record) {
+        public boolean transform(Decimal128 value, Record record) {
             value.round(scale, roundingMode);
-
+            return true;
         }
 
         @Override
-        public void transform(Decimal256 value, Record record) {
+        public boolean transform(Decimal256 value, Record record) {
             value.round(scale, roundingMode);
-
+            return true;
         }
 
         @Override
-        public void transform(Decimal64 value, Record record) {
+        public boolean transform(Decimal64 value, Record record) {
             value.round(scale, roundingMode);
+            return true;
         }
     }
 
@@ -208,16 +210,15 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void transform(Decimal128 value, Record record) {
+        public boolean transform(Decimal128 value, Record record) {
             int roundingScale = scale.getInt(record);
             if (roundingScale == Numbers.INT_NULL) {
-                value.ofRawNull();
-                return;
+                return false;
             }
 
             if (roundingScale >= fromScale) {
                 // We don't need to do any rounding here (floor(123.456, 4) -> 123.456).
-                return;
+                return true;
             }
 
             // This is a bit complicated because the rounding scale is dynamic, but the value's scale is static.
@@ -233,19 +234,19 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
                 value.rescale(fromScale - roundingScale);
                 value.setScale(fromScale);
             }
+            return true;
         }
 
         @Override
-        public void transform(Decimal256 value, Record record) {
+        public boolean transform(Decimal256 value, Record record) {
             int roundingScale = scale.getInt(record);
             if (roundingScale == Numbers.INT_NULL) {
-                value.ofRawNull();
-                return;
+                return false;
             }
 
             if (roundingScale >= fromScale) {
                 // We don't need to do any rounding here (floor(123.456, 4) -> 123.456).
-                return;
+                return true;
             }
 
             // This is a bit complicated because the rounding scale is dynamic, but the value's scale is static.
@@ -261,19 +262,19 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
                 value.rescale(fromScale - roundingScale);
                 value.setScale(fromScale);
             }
+            return true;
         }
 
         @Override
-        public void transform(Decimal64 value, Record record) {
+        public boolean transform(Decimal64 value, Record record) {
             int roundingScale = scale.getInt(record);
             if (roundingScale == Numbers.INT_NULL) {
-                value.ofRawNull();
-                return;
+                return false;
             }
 
             if (roundingScale >= fromScale) {
                 // We don't need to do any rounding here (floor(123.456, 4) -> 123.456).
-                return;
+                return true;
             }
 
             // This is a bit complicated because the rounding scale is dynamic, but the value's scale is static.
@@ -289,6 +290,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
                 value.rescale(fromScale - roundingScale);
                 value.setScale(fromScale);
             }
+            return true;
         }
     }
 }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
@@ -50,7 +51,7 @@ public class CastDecimalToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             Decimal256 d = sqlExecutionContext.getDecimal256();
@@ -63,11 +64,13 @@ public class CastDecimalToStrFunctionFactory implements FunctionFactory {
             sink.put(d);
             return new StrConstant(Chars.toString(sink));
         }
-        return switch (ColumnType.tagOf(arg.getType())) {
+        int tag = ColumnType.tagOf(arg.getType());
+        return switch (tag) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
                     new Func64(Decimal64LoaderFunctionFactory.getInstance(arg));
             case ColumnType.DECIMAL128 -> new Func128(arg);
-            default -> new Func(arg);
+            case ColumnType.DECIMAL256 -> new Func(arg);
+            default -> throw SqlException.$(position, "invalid type for cast to string: " + ColumnType.nameOf(tag));
         };
     }
 
@@ -154,7 +157,7 @@ public class CastDecimalToStrFunctionFactory implements FunctionFactory {
             arg.getDecimal128(rec, decimal128);
             if (!decimal128.isNull()) {
                 sinkB.clear();
-                Decimal128.toSink(sinkA, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
+                Decimal128.toSink(sinkB, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
                 return sinkB;
             }
             return null;

@@ -146,6 +146,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -319,8 +320,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -1961,7 +1962,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.DECIMAL16:
                             case ColumnType.DECIMAL32:
                             case ColumnType.DECIMAL64:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func64(
+                                                Decimal64LoaderFunctionFactory.getInstance(DecimalColumn.newInstance(i, fromType))
+                                        )
+                                );
+                                break;
                             case ColumnType.DECIMAL128:
+                                castFunctions.add(
+                                        new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType))
+                                );
+                                break;
                             case ColumnType.DECIMAL256:
                                 castFunctions.add(
                                         new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType))
@@ -5437,12 +5448,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation

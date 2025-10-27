@@ -103,7 +103,7 @@ public class AvgDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(10)" +
                         ")",
                 7,
-                "avg aggregation failed: Overflow in addition: result exceeds maximum precision"
+                "avg aggregation failed: Overflow in addition: result exceeds 256-bit capacity"
         );
     }
 }

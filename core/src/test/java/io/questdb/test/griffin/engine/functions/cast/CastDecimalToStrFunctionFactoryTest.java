@@ -212,6 +212,8 @@ public class CastDecimalToStrFunctionFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(expected.toString(), strA.toString());
                 Assert.assertEquals(expected.toString(), strB.toString());
             }
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
         }
     }
 

@@ -215,7 +215,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             this.n = args.size();
             this.args = new ObjList<>(n);
             for (int i = 0; i < n; i++) {
-                this.args.setQuick(i, Decimal128LoaderFunctionFactory.getInstance(args.getQuick(i)));
+                this.args.add(Decimal128LoaderFunctionFactory.getInstance(args.getQuick(i)));
             }
             this.argScales = new int[n];
             for (int i = 0; i < n; i++) {
@@ -235,8 +235,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                 Function arg = args.getQuick(i);
                 arg.getDecimal128(rec, decimal128);
                 if (!decimal128.isNull()) {
+                    decimal128.setScale(argScales[i]);
                     if (argScales[i] != scale) {
-                        decimal128.setScale(argScales[i]);
                         decimal128.rescale(scale);
                     }
                     if (decimal128.compareTo(sink) > 0) {
@@ -272,7 +272,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             this.n = args.size();
             this.args = new ObjList<>(n);
             for (int i = 0; i < n; i++) {
-                this.args.setQuick(i, Decimal256LoaderFunctionFactory.getInstance(args.getQuick(i)));
+                this.args.add(Decimal256LoaderFunctionFactory.getInstance(args.getQuick(i)));
             }
             this.argScales = new int[n];
             for (int i = 0; i < n; i++) {
@@ -292,12 +292,15 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                 Function arg = args.getQuick(i);
                 arg.getDecimal256(rec, decimal256);
                 if (!decimal256.isNull()) {
+                    decimal256.setScale(argScales[i]);
                     if (argScales[i] != scale) {
                         try {
-                            decimal256.setScale(argScales[i]);
                             decimal256.rescale(scale);
                         } catch (NumericException ex) {
-                            throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), type)
+                            throw ImplicitCastException.inconvertibleValue(
+                                            decimal256,
+                                            Decimal256LoaderFunctionFactory.getParent(arg).getType(),
+                                            type)
                                     .position(argPositions.getQuick(i));
                         }
                     }
@@ -333,7 +336,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             this.n = args.size();
             this.args = new ObjList<>(n);
             for (int i = 0; i < n; i++) {
-                this.args.setQuick(i, Decimal64LoaderFunctionFactory.getInstance(args.getQuick(i)));
+                this.args.add(Decimal64LoaderFunctionFactory.getInstance(args.getQuick(i)));
             }
             this.argScales = new int[n];
             for (int i = 0; i < n; i++) {
@@ -391,8 +394,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                 Function arg = args.getQuick(i);
                 decimal64.ofRaw(arg.getDecimal64(rec));
                 if (!decimal64.isNull()) {
+                    decimal64.setScale(argScales[i]);
                     if (argScales[i] != scale) {
-                        decimal64.setScale(argScales[i]);
                         decimal64.rescale(scale);
                     }
                     if (decimal64.compareTo(greatest) > 0) {

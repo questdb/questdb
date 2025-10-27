@@ -99,7 +99,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             try {
                 decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }
         }
 
@@ -146,7 +146,7 @@ public class CastFloatToDecimalFunctionFactory implements FunctionFactory {
             try {
                 decimal.ofString(sink, 0, sink.length(), precision, scale, false, true);
             } catch (NumericException e) {
-                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.DOUBLE, type).position(position);
+                throw ImplicitCastException.inconvertibleValue(sink, ColumnType.FLOAT, type).position(position);
             }
         }
 

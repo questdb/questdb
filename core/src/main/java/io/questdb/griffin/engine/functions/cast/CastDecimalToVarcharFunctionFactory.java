@@ -154,7 +154,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
             arg.getDecimal128(rec, decimal128);
             if (!decimal128.isNull()) {
                 sinkB.clear();
-                Decimal128.toSink(sinkA, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
+                Decimal128.toSink(sinkB, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
                 return sinkB;
             }
             return null;

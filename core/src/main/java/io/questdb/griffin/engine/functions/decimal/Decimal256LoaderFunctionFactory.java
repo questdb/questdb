@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.decimal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -47,8 +48,7 @@ public final class Decimal256LoaderFunctionFactory {
      * When the source is already DECIMAL256, the function is returned as-is.
      *
      * @param from the source function to load values from
-     * @return a function that performs the type conversion to DECIMAL256
-     * @throws UnsupportedOperationException if the source type cannot be converted to DECIMAL256
+     * @return a function that performs the type conversion to DECIMAL256 or the original function
      */
     public static Function getInstance(Function from) {
         return switch (ColumnType.tagOf(from.getType())) {
@@ -64,9 +64,20 @@ public final class Decimal256LoaderFunctionFactory {
             case ColumnType.LONG -> new FuncLong(from);
             case ColumnType.DATE -> new FuncDate(from);
             case ColumnType.TIMESTAMP -> new FuncTimestamp(from);
-            default ->
-                    throw new UnsupportedOperationException("Cannot convert " + ColumnType.nameOf(from.getType()) + " to DECIMAL256");
+            default -> from;
         };
+    }
+
+    /**
+     * Returns the parent function of the given function if it is a loader function.
+     * Otherwise, returns the given function.
+     */
+    public static Function getParent(Function function) {
+        var clazz = function.getClass();
+        if (clazz.isMemberClass() && clazz.getEnclosingClass() == Decimal256LoaderFunctionFactory.class) {
+            return ((UnaryFunction) function).getArg();
+        }
+        return function;
     }
 
     private static int buildDecimalType(int fromDecimalType) {
@@ -93,6 +104,11 @@ public final class Decimal256LoaderFunctionFactory {
             byte v = arg.getByte(rec);
             sink.ofRaw(v);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDate extends Decimal256Function implements UnaryFunction {
@@ -116,6 +132,11 @@ public final class Decimal256LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -147,6 +168,11 @@ public final class Decimal256LoaderFunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal16 extends Decimal256Function implements UnaryFunction {
@@ -170,6 +196,11 @@ public final class Decimal256LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -195,6 +226,11 @@ public final class Decimal256LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal64 extends Decimal256Function implements UnaryFunction {
@@ -218,6 +254,11 @@ public final class Decimal256LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -243,6 +284,11 @@ public final class Decimal256LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncInt extends Decimal256Function implements UnaryFunction {
@@ -266,6 +312,11 @@ public final class Decimal256LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -291,6 +342,11 @@ public final class Decimal256LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncShort extends Decimal256Function implements UnaryFunction {
@@ -310,6 +366,11 @@ public final class Decimal256LoaderFunctionFactory {
         public void getDecimal256(Record rec, Decimal256 sink) {
             short v = arg.getShort(rec);
             sink.ofRaw(v);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -334,6 +395,11 @@ public final class Decimal256LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 }

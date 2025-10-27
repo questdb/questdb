@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.decimal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -47,8 +48,7 @@ public final class Decimal128LoaderFunctionFactory {
      * When the source is already DECIMAL128, the function is returned as-is.
      *
      * @param from the source function to load values from
-     * @return a function that performs the type conversion to DECIMAL128
-     * @throws UnsupportedOperationException if the source type cannot be converted to DECIMAL128
+     * @return a function that performs the type conversion to DECIMAL128 or the original function
      */
     public static Function getInstance(Function from) {
         return switch (ColumnType.tagOf(from.getType())) {
@@ -64,8 +64,7 @@ public final class Decimal128LoaderFunctionFactory {
             case ColumnType.LONG -> new FuncLong(from);
             case ColumnType.DATE -> new FuncDate(from);
             case ColumnType.TIMESTAMP -> new FuncTimestamp(from);
-            default ->
-                    throw new UnsupportedOperationException("Cannot convert " + ColumnType.nameOf(from.getType()) + " to DECIMAL128");
+            default -> from;
         };
     }
 
@@ -93,6 +92,11 @@ public final class Decimal128LoaderFunctionFactory {
             byte v = arg.getByte(rec);
             sink.ofRaw(v);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDate extends Decimal128Function implements UnaryFunction {
@@ -117,6 +121,11 @@ public final class Decimal128LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal16 extends Decimal128Function implements UnaryFunction {
@@ -140,6 +149,11 @@ public final class Decimal128LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -171,6 +185,11 @@ public final class Decimal128LoaderFunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal32 extends Decimal128Function implements UnaryFunction {
@@ -194,6 +213,11 @@ public final class Decimal128LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -219,6 +243,11 @@ public final class Decimal128LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal8 extends Decimal128Function implements UnaryFunction {
@@ -242,6 +271,11 @@ public final class Decimal128LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -267,6 +301,11 @@ public final class Decimal128LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncLong extends Decimal128Function implements UnaryFunction {
@@ -291,6 +330,11 @@ public final class Decimal128LoaderFunctionFactory {
                 sink.ofRaw(v);
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncShort extends Decimal128Function implements UnaryFunction {
@@ -310,6 +354,11 @@ public final class Decimal128LoaderFunctionFactory {
         public void getDecimal128(Record rec, Decimal128 sink) {
             short v = arg.getShort(rec);
             sink.ofRaw(v);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -334,6 +383,11 @@ public final class Decimal128LoaderFunctionFactory {
             } else {
                 sink.ofRaw(v);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 }

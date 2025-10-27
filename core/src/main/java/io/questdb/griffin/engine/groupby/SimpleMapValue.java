@@ -126,7 +126,7 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
-        int index = 2 * col;
+        int index = 4 * col;
         sink.ofRaw(
                 values[index],
                 values[index + 1]

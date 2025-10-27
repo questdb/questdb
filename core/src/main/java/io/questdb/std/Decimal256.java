@@ -289,6 +289,13 @@ public class Decimal256 implements Sinkable, Decimal {
         return Long.compareUnsigned(a.getLl(), b.getLl());
     }
 
+    public static int compare(Decimal256 a, long bHH, long bHL, long bLH, long bLL) {
+        return compare(
+                a.getHh(), a.getHl(), a.getLh(), a.getLl(),
+                bHH, bHL, bLH, bLL
+        );
+    }
+
     /**
      * Compare two Decimal256.
      *
@@ -1373,6 +1380,20 @@ public class Decimal256 implements Sinkable, Decimal {
             return;
         }
         negateNonNull();
+    }
+
+    /**
+     * Negates this Decimal256 in-place using two's complement arithmetic.
+     * Changes the sign of the decimal number (positive becomes negative and vice versa).
+     */
+    public void negateNonNull() {
+        ll = ~ll + 1;
+        long c = ll == 0L ? 1L : 0L;
+        lh = ~lh + c;
+        c = (c == 1L && lh == 0L) ? 1L : 0L;
+        hl = ~hl + c;
+        c = (c == 1L && hl == 0L) ? 1L : 0L;
+        hh = ~hh + c;
     }
 
     /**
@@ -2766,20 +2787,6 @@ public class Decimal256 implements Sinkable, Decimal {
         } else {
             multiply64Unchecked(multiplierLL);
         }
-    }
-
-    /**
-     * Negates this Decimal256 in-place using two's complement arithmetic.
-     * Changes the sign of the decimal number (positive becomes negative and vice versa).
-     */
-    public void negateNonNull() {
-        ll = ~ll + 1;
-        long c = ll == 0L ? 1L : 0L;
-        lh = ~lh + c;
-        c = (c == 1L && lh == 0L) ? 1L : 0L;
-        hl = ~hl + c;
-        c = (c == 1L && hl == 0L) ? 1L : 0L;
-        hh = ~hh + c;
     }
 
     /**

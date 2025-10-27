@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.decimal;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -47,8 +48,7 @@ public final class Decimal64LoaderFunctionFactory {
      * When the source is already DECIMAL64, the function is returned as-is.
      *
      * @param from the source function to load values from
-     * @return a function that performs the type conversion to DECIMAL64
-     * @throws UnsupportedOperationException if the source type cannot be converted to DECIMAL64
+     * @return a function that performs the type conversion to DECIMAL64 or the original function
      */
     public static Function getInstance(Function from) {
         return switch (ColumnType.tagOf(from.getType())) {
@@ -64,8 +64,7 @@ public final class Decimal64LoaderFunctionFactory {
             case ColumnType.LONG -> new FuncLong(from);
             case ColumnType.DATE -> new FuncDate(from);
             case ColumnType.TIMESTAMP -> new FuncTimestamp(from);
-            default ->
-                    throw new UnsupportedOperationException("Cannot convert " + ColumnType.nameOf(from.getType()) + " to DECIMAL128");
+            default -> from;
         };
     }
 
@@ -92,6 +91,11 @@ public final class Decimal64LoaderFunctionFactory {
         public long getDecimal64(Record rec) {
             return arg.getByte(rec);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDate extends Decimal64Function implements UnaryFunction {
@@ -115,6 +119,11 @@ public final class Decimal64LoaderFunctionFactory {
             } else {
                 return v;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -146,6 +155,11 @@ public final class Decimal64LoaderFunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal16 extends Decimal64Function implements UnaryFunction {
@@ -169,6 +183,11 @@ public final class Decimal64LoaderFunctionFactory {
             } else {
                 return v;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -200,6 +219,11 @@ public final class Decimal64LoaderFunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncDecimal32 extends Decimal64Function implements UnaryFunction {
@@ -224,29 +248,10 @@ public final class Decimal64LoaderFunctionFactory {
                 return v;
             }
         }
-    }
-
-    private static class FuncDecimal64 extends Decimal64Function implements UnaryFunction {
-        private final Function arg;
-
-        public FuncDecimal64(Function arg) {
-            super(buildDecimalType(arg.getType()));
-            this.arg = arg;
-        }
 
         @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            long v = arg.getDecimal64(rec);
-            if (v == Decimals.DECIMAL64_NULL) {
-                return Decimals.DECIMAL64_NULL;
-            } else {
-                return v;
-            }
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -272,6 +277,11 @@ public final class Decimal64LoaderFunctionFactory {
                 return v;
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncInt extends Decimal64Function implements UnaryFunction {
@@ -295,6 +305,11 @@ public final class Decimal64LoaderFunctionFactory {
             } else {
                 return v;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -320,6 +335,11 @@ public final class Decimal64LoaderFunctionFactory {
                 return v;
             }
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+        }
     }
 
     private static class FuncShort extends Decimal64Function implements UnaryFunction {
@@ -338,6 +358,11 @@ public final class Decimal64LoaderFunctionFactory {
         @Override
         public long getDecimal64(Record rec) {
             return arg.getShort(rec);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 
@@ -362,6 +387,11 @@ public final class Decimal64LoaderFunctionFactory {
             } else {
                 return v;
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
         }
     }
 }

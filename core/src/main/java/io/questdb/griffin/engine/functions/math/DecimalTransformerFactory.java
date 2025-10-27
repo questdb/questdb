@@ -156,7 +156,9 @@ public final class DecimalTransformerFactory {
             value.getDecimal128(record, sink);
             if (!sink.isNull()) {
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -175,7 +177,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL16_NULL;
             }
             decimal128.setScale(fromScale);
-            transformer.transform(decimal128, record);
+            if (!transformer.transform(decimal128, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal128.getLow();
         }
     }
@@ -195,7 +199,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(decimal128.getHigh(), decimal128.getLow());
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -214,7 +220,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL32_NULL;
             }
             decimal128.setScale(fromScale);
-            transformer.transform(decimal128, record);
+            if (!transformer.transform(decimal128, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal128.getLow();
         }
     }
@@ -233,7 +241,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL64_NULL;
             }
             decimal128.setScale(fromScale);
-            transformer.transform(decimal128, record);
+            if (!transformer.transform(decimal128, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal128.getLow();
         }
     }
@@ -252,7 +262,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL8_NULL;
             }
             decimal128.setScale(fromScale);
-            transformer.transform(decimal128, record);
+            if (!transformer.transform(decimal128, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal128.getLow();
         }
     }
@@ -270,7 +282,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -290,7 +304,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal64.getValue();
         }
     }
@@ -308,7 +324,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -328,7 +346,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal64.getValue();
         }
     }
@@ -348,7 +368,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal64.getValue();
         }
     }
@@ -368,7 +390,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal64.getValue();
         }
     }
@@ -387,11 +411,14 @@ public final class DecimalTransformerFactory {
                 sink.ofRawNull();
             } else {
                 decimal256.setScale(fromScale);
-                transformer.transform(decimal256, record);
-                sink.ofRaw(
-                        decimal256.getLh(),
-                        decimal256.getLl()
-                );
+                if (!transformer.transform(decimal256, record)) {
+                    sink.ofRawNull();
+                } else {
+                    sink.ofRaw(
+                            decimal256.getLh(),
+                            decimal256.getLl()
+                    );
+                }
             }
         }
     }
@@ -410,7 +437,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL16_NULL;
             }
             decimal256.setScale(fromScale);
-            transformer.transform(decimal256, record);
+            if (!transformer.transform(decimal256, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal256.getLl();
         }
     }
@@ -425,7 +454,9 @@ public final class DecimalTransformerFactory {
             value.getDecimal256(record, sink);
             if (!sink.isNull()) {
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -444,7 +475,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL32_NULL;
             }
             decimal256.setScale(fromScale);
-            transformer.transform(decimal256, record);
+            if (!transformer.transform(decimal256, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal256.getLl();
         }
     }
@@ -463,7 +496,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL64_NULL;
             }
             decimal256.setScale(fromScale);
-            transformer.transform(decimal256, record);
+            if (!transformer.transform(decimal256, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal256.getLl();
         }
     }
@@ -482,7 +517,9 @@ public final class DecimalTransformerFactory {
                 return Decimals.DECIMAL8_NULL;
             }
             decimal256.setScale(fromScale);
-            transformer.transform(decimal256, record);
+            if (!transformer.transform(decimal256, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal256.getLl();
         }
     }
@@ -500,7 +537,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -520,7 +559,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal64.getValue();
         }
     }
@@ -538,7 +579,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -558,7 +601,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal64.getValue();
         }
     }
@@ -578,7 +623,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal64.getValue();
         }
     }
@@ -598,7 +645,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal64.getValue();
         }
     }
@@ -616,7 +665,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -636,7 +687,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal64.getValue();
         }
     }
@@ -654,7 +707,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -674,7 +729,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal64.getValue();
         }
     }
@@ -694,7 +751,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal64.getValue();
         }
     }
@@ -714,7 +773,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal64.getValue();
         }
     }
@@ -732,7 +793,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -752,7 +815,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL16_NULL;
+            }
             return (short) decimal64.getValue();
         }
     }
@@ -770,7 +835,9 @@ public final class DecimalTransformerFactory {
             } else {
                 sink.ofRaw(v);
                 sink.setScale(fromScale);
-                transformer.transform(sink, record);
+                if (!transformer.transform(sink, record)) {
+                    sink.ofRawNull();
+                }
             }
         }
     }
@@ -790,7 +857,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL32_NULL;
+            }
             return (int) decimal64.getValue();
         }
     }
@@ -810,7 +879,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL64_NULL;
+            }
             return decimal64.getValue();
         }
     }
@@ -830,7 +901,9 @@ public final class DecimalTransformerFactory {
             }
             decimal64.ofRaw(v);
             decimal64.setScale(fromScale);
-            transformer.transform(decimal64, record);
+            if (!transformer.transform(decimal64, record)) {
+                return Decimals.DECIMAL8_NULL;
+            }
             return (byte) decimal64.getValue();
         }
     }

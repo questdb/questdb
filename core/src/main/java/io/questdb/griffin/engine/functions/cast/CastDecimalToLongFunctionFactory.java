@@ -130,13 +130,13 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
     }
 
     private static boolean overflowsLong(Decimal256 decimal256) {
-        return decimal256.getHh() >= 0 ? decimal256.compareTo(0, 0, 0, Long.MAX_VALUE, 0) > 0 :
-                decimal256.compareTo(-1, -1, -1, Long.MIN_VALUE, 0) < 0;
+        return decimal256.getHh() >= 0 ? Decimal256.compare(decimal256, 0, 0, 0, Long.MAX_VALUE) > 0 :
+                Decimal256.compare(decimal256, -1, -1, -1, Long.MIN_VALUE) < 0;
     }
 
     private static boolean overflowsLong(Decimal128 decimal128) {
-        return decimal128.getHigh() >= 0 ? decimal128.compareTo(0, Long.MAX_VALUE, 0) > 0 :
-                decimal128.compareTo(-1, Long.MIN_VALUE, 0) < 0;
+        return decimal128.getHigh() >= 0 ? Decimal128.compare(decimal128, 0, Long.MAX_VALUE) > 0 :
+                Decimal128.compare(decimal128, -1, Long.MIN_VALUE) < 0;
     }
 
     private static class ScaledDecimal128Function extends AbstractCastToLongFunction {
@@ -160,7 +160,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.of(decimal128, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }
@@ -191,7 +191,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.ofLong(decimal16, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }
@@ -222,10 +222,11 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             long hl = decimal256.getHl();
             long lh = decimal256.getLh();
             long ll = decimal256.getLl();
+            decimal256.setScale(fromScale);
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.of(hh, hl, lh, ll, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }
@@ -256,7 +257,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.ofLong(decimal32, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }
@@ -287,7 +288,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.ofLong(decimal64, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }
@@ -318,7 +319,7 @@ public class CastDecimalToLongFunctionFactory implements FunctionFactory {
             decimal256.round(0, RoundingMode.DOWN);
             if (overflowsLong(decimal256)) {
                 decimal256.ofLong(decimal8, fromScale);
-                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.INT).position(position);
+                throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), ColumnType.LONG).position(position);
             }
             return decimal256.getLl();
         }

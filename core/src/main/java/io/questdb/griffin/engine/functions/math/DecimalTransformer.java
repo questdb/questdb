@@ -29,12 +29,61 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 
+/**
+ * Interface for transforming decimal values in place.
+ * <p>
+ * Implementations apply mathematical or logical transformations to decimal values
+ * of varying precisions (64-bit, 128-bit, or 256-bit storage).
+ * </p>
+ */
 public interface DecimalTransformer {
+    /**
+     * Returns the name of this transformer, typically used for function naming
+     * and error reporting.
+     *
+     * @return the transformer name
+     */
     String getName();
 
-    void transform(Decimal128 value, Record record);
+    /**
+     * Transforms a 128-bit decimal value in place.
+     * <p>
+     * The transformer should modify the provided {@code value} object directly.
+     * The value's scale is expected to be set before this method is called.
+     * </p>
+     *
+     * @param value  the decimal value to transform, modified in place
+     * @param record the current record context, may be used for additional data
+     * @return {@code true} if the transformation succeeded and produced a valid result,
+     *         {@code false} if the transformation failed or the result should be NULL
+     */
+    boolean transform(Decimal128 value, Record record);
 
-    void transform(Decimal256 value, Record record);
+    /**
+     * Transforms a 256-bit decimal value in place.
+     * <p>
+     * The transformer should modify the provided {@code value} object directly.
+     * The value's scale is expected to be set before this method is called.
+     * </p>
+     *
+     * @param value  the decimal value to transform, modified in place
+     * @param record the current record context, may be used for additional data
+     * @return {@code true} if the transformation succeeded and produced a valid result,
+     *         {@code false} if the transformation failed or the result should be NULL
+     */
+    boolean transform(Decimal256 value, Record record);
 
-    void transform(Decimal64 value, Record record);
+    /**
+     * Transforms a 64-bit decimal value in place.
+     * <p>
+     * The transformer should modify the provided {@code value} object directly.
+     * The value's scale is expected to be set before this method is called.
+     * </p>
+     *
+     * @param value  the decimal value to transform, modified in place
+     * @param record the current record context, may be used for additional data
+     * @return {@code true} if the transformation succeeded and produced a valid result,
+     *         {@code false} if the transformation failed or the result should be NULL
+     */
+    boolean transform(Decimal64 value, Record record);
 }

@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -45,7 +46,7 @@ public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractCairo
         args.add(left);
         args.add(right);
         try (Function func = getFactory().newInstance(-1, args, null, configuration, sqlExecutionContext)) {
-            DecimalUtil.load(decimal256, func, null);
+            DecimalUtil.load(decimal256, Misc.getThreadLocalDecimal128(), func, null);
             Assert.assertEquals(hh, decimal256.getHh());
             Assert.assertEquals(hl, decimal256.getHl());
             Assert.assertEquals(lh, decimal256.getLh());
@@ -60,7 +61,7 @@ public abstract class ArithmeticDecimalFunctionFactoryTest extends AbstractCairo
         args.add(right);
         try {
             try (Function func = getFactory().newInstance(-1, args, null, configuration, sqlExecutionContext)) {
-                DecimalUtil.load(decimal256, func, null);
+                DecimalUtil.load(decimal256, Misc.getThreadLocalDecimal128(), func, null);
                 Assert.fail();
             }
         } catch (CairoException e) {

@@ -47,7 +47,11 @@ class DecimalBindVariable extends DecimalFunction implements Mutable {
 
     @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
-        sink.ofRaw(value.getLh(), value.getLl());
+        if (value.isNull()) {
+            sink.ofRawNull();
+        } else {
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
     }
 
     @Override

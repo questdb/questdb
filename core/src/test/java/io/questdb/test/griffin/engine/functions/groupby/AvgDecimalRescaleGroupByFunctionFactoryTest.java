@@ -30,10 +30,57 @@ import org.junit.Test;
 public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testAvgDecimal256Rescale256ProducesCorrectAverage() throws Exception {
+        assertQuery(
+                "avg\n173456789012345678901234567890123456.1234\n",
+                "select avg(d, 4) avg from d256_values",
+                "create table d256_values as (" +
+                        "select case x " +
+                        "when 1 then cast('123456789012345678901234567890123456.1234' as decimal(70,4)) " +
+                        "else cast('223456789012345678901234567890123456.1234' as decimal(70,4)) end d " +
+                        "from long_sequence(2)" +
+                        ")",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAvgDecimal32Rescale256UsesCount() throws Exception {
+        assertQuery(
+                "avg\n3.000000000000000000000000000000\n",
+                "select avg(d, 30) avg from d32_values",
+                "create table d32_values as (" +
+                        "select cast(2 * x as decimal(7,1)) d " +
+                        "from long_sequence(2)" +
+                        ")",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testAvgDecimal64Rescale256UsesCount() throws Exception {
+        assertQuery(
+                "avg\n15.0000000000000000000000000\n",
+                "select avg(d, 25) avg from d64_values",
+                "create table d64_values as (" +
+                        "select cast(10 * x as decimal(15,2)) d " +
+                        "from long_sequence(2)" +
+                        ")",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testAvgDecimalAllNull() throws Exception {
         assertQuery(
-                "avg_decimal\n\n",
-                "select avg_decimal(x, 1) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                "avg\n\n",
+                "select avg(x, 1) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
                 null,
                 false,
                 true
@@ -43,9 +90,9 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalNegativeScale() throws Exception {
         assertException(
-                "select avg_decimal(d, -1) from x",
+                "select avg(d, -1) from x",
                 "create table x (d decimal(4,0))",
-                22,
+                14,
                 "non-negative scale required: -1"
         );
     }
@@ -59,8 +106,8 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
                         "2\t48\t499.5\t502127.0\t4963120473043.90\t9171745243146077598389913473.635\t31453177765311683962656058347834093327429020565452336159500533098.52220\n" +
                         "1\t50\t494.4\t504102.8\t4970590450825.09\t9218679827218681817113584004.012\t30821997753191027869449119701652787675399873875822051937682996696.05940\n" +
                         "0\t49\t502.0\t501313.0\t4839510335333.02\t9200353642033472407119323164.002\t31609444379365793148224424272849410604357248203045640530705472887.81686\n",
-                "select id%5 key, avg_decimal(d8,0) a8, avg_decimal(d16,0) a16, avg_decimal(d32,0) a32, " +
-                        "avg_decimal(d64,0) a64, avg_decimal(d128,0) a128, avg_decimal(d256,0) a256 " +
+                "select id%5 key, avg(d8,0) a8, avg(d16,1) a16, avg(d32,1) a32, " +
+                        "avg(d64,2) a64, avg(d128,3) a128, avg(d256,5) a256 " +
                         "from x " +
                         "order by key desc",
                 "create table x as (" +
@@ -84,22 +131,22 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalOverflow() throws Exception {
         assertException(
-                "select avg_decimal(d, 0) from x",
+                "select avg(d, 0) from x",
                 "create table x as (" +
                         "select cast('9999999999999999999999999999999999999999999999999999999999999999999999999999' as decimal(76,0)) d " +
                         "from long_sequence(10)" +
                         ")",
                 7,
-                "avg aggregation failed: Overflow in addition: result exceeds maximum precision"
+                "avg aggregation failed: Overflow in addition: result exceeds 256-bit capacity"
         );
     }
 
     @Test
     public void testAvgDecimalTooLargePrecision() throws Exception {
         assertException(
-                "select avg_decimal(d, 2) from x",
+                "select avg(d, 2) from x",
                 "create table x (d decimal(76,0))",
-                22,
+                14,
                 "rescaled decimal has precision that exceeds maximum of 76: 78"
         );
     }
@@ -107,9 +154,9 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testAvgDecimalTooLargeScale() throws Exception {
         assertException(
-                "select avg_decimal(d, 80) from x",
+                "select avg(d, 80) from x",
                 "create table x (d decimal(4,0))",
-                22,
+                14,
                 "scale exceeds maximum of 76: 80"
         );
     }
@@ -119,7 +166,7 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
         assertQuery(
                 "a8\ta16\ta32\ta64\ta128\ta256\n" +
                         "0.5\t1.00\t1.50\t4.500\t49.5000\t50.50000000\n",
-                "select avg_decimal(d8,1) a8, avg_decimal(d16,2) a16, avg_decimal(d32,2) a32, avg_decimal(d64,3) a64, avg_decimal(d128,4) a128, avg_decimal(d256,8) a256 from x",
+                "select avg(d8,1) a8, avg(d16,2) a16, avg(d32,2) a32, avg(d64,3) a64, avg(d128,4) a128, avg(d256,8) a256 from x",
                 "create table x as (" +
                         "select" +
                         " cast(x%2 as decimal(2,0)) d8, " +
@@ -146,8 +193,8 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
                         "2\t47.8\t499.47\t502126.96\t4963120473043.901\t9171745243146077598389913473.6346\t31453177765311683962656058347834093327429020565452336159500533098.52220347\n" +
                         "1\t49.9\t494.36\t504102.79\t4970590450825.094\t9218679827218681817113584004.0123\t30821997753191027869449119701652787675399873875822051937682996696.05940104\n" +
                         "0\t49.0\t502.00\t501313.01\t4839510335333.017\t9200353642033472407119323164.0022\t31609444379365793148224424272849410604357248203045640530705472887.81685772\n",
-                "select id%5 key, avg_decimal(d8,1) a8, avg_decimal(d16,2) a16, avg_decimal(d32,2) a32, " +
-                        "avg_decimal(d64,3) a64, avg_decimal(d128,4) a128, avg_decimal(d256,8) a256 " +
+                "select id%5 key, avg(d8,1) a8, avg(d16,2) a16, avg(d32,2) a32, " +
+                        "avg(d64,3) a64, avg(d128,4) a128, avg(d256,8) a256 " +
                         "from x " +
                         "order by key desc",
                 "create table x as (" +
@@ -164,53 +211,6 @@ public class AvgDecimalRescaleGroupByFunctionFactoryTest extends AbstractCairoTe
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                true
-        );
-    }
-
-    @Test
-    public void testAvgDecimal32Rescale256UsesCount() throws Exception {
-        assertQuery(
-                "avg\n3.000000000000000000000000000000\n",
-                "select avg_decimal(d, 30) avg from d32_values",
-                "create table d32_values as (" +
-                        "select cast(2 * x as decimal(7,1)) d " +
-                        "from long_sequence(2)" +
-                        ")",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testAvgDecimal64Rescale256UsesCount() throws Exception {
-        assertQuery(
-                "avg\n15.0000000000000000000000000\n",
-                "select avg_decimal(d, 25) avg from d64_values",
-                "create table d64_values as (" +
-                        "select cast(10 * x as decimal(15,2)) d " +
-                        "from long_sequence(2)" +
-                        ")",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testAvgDecimal256Rescale256ProducesCorrectAverage() throws Exception {
-        assertQuery(
-                "avg\n173456789012345678901234567890123456.1234\n",
-                "select avg_decimal(d, 4) avg from d256_values",
-                "create table d256_values as (" +
-                        "select case x " +
-                        "when 1 then cast('123456789012345678901234567890123456.1234' as decimal(70,4)) " +
-                        "else cast('223456789012345678901234567890123456.1234' as decimal(70,4)) end d " +
-                        "from long_sequence(2)" +
-                        ")",
-                null,
-                false,
                 true
         );
     }

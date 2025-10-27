@@ -622,7 +622,7 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal128 value, Record record) {
+        public boolean transform(Decimal128 value, Record record) {
             long lo = value.getLow();
             int scale = value.getScale();
             long factor = 1;
@@ -630,10 +630,11 @@ public class DecimalTransformerFactoryTest {
                 factor *= 10;
             }
             value.of(0, lo + factor, scale);
+            return true;
         }
 
         @Override
-        public void transform(Decimal256 value, Record record) {
+        public boolean transform(Decimal256 value, Record record) {
             long ll = value.getLl();
             int scale = value.getScale();
             long factor = 1;
@@ -641,10 +642,11 @@ public class DecimalTransformerFactoryTest {
                 factor *= 10;
             }
             value.ofLong(ll + factor, scale);
+            return true;
         }
 
         @Override
-        public void transform(Decimal64 value, Record record) {
+        public boolean transform(Decimal64 value, Record record) {
             long v = value.getValue();
             int scale = value.getScale();
             long factor = 1;
@@ -652,6 +654,7 @@ public class DecimalTransformerFactoryTest {
                 factor *= 10;
             }
             value.of(v + factor, scale);
+            return true;
         }
     }
 
@@ -663,23 +666,26 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal128 value, Record record) {
+        public boolean transform(Decimal128 value, Record record) {
             // For simplicity, we'll just double the low part
             long lo = value.getLow();
             value.of(0, lo * 2, value.getScale());
+            return true;
         }
 
         @Override
-        public void transform(Decimal256 value, Record record) {
+        public boolean transform(Decimal256 value, Record record) {
             // For simplicity, we'll just double the lowest part
             long ll = value.getLl();
             value.ofLong(ll * 2, value.getScale());
+            return true;
         }
 
         @Override
-        public void transform(Decimal64 value, Record record) {
+        public boolean transform(Decimal64 value, Record record) {
             long v = value.getValue();
             value.of(v * 2, value.getScale());
+            return true;
         }
     }
 }

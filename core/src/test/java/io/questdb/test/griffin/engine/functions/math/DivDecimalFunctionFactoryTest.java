@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.Decimal8Constant;
 import io.questdb.griffin.engine.functions.math.DivDecimalFunctionFactory;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
@@ -335,7 +336,7 @@ public class DivDecimalFunctionFactoryTest extends ArithmeticDecimalFunctionFact
             args.add(new Decimal128Constant(0, divisor, ColumnType.getDecimalType(21, scale)));
             try (Function func = factory.newInstance(-1, args, null, null, null)) {
                 Decimal256 value = new Decimal256();
-                DecimalUtil.load(value, func, null);
+                DecimalUtil.load(value, Misc.getThreadLocalDecimal128(), func, null);
                 // Just verify we got a non-null result
                 Assert.assertFalse(value.isNull());
                 Assert.assertEquals(ColumnType.getDecimalType(Decimals.MAX_PRECISION, scale * 2), func.getType());

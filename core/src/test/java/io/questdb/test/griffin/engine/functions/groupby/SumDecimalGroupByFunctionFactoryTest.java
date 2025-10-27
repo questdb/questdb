@@ -166,6 +166,28 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDecimal256AllNull() throws Exception {
+        assertQuery(
+                "sum\n\n",
+                "select sum(x) from (select cast(null as decimal(36,31)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testSumDecimal64AllNull() throws Exception {
+        assertQuery(
+                "sum\n\n",
+                "select sum(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testSumDecimal64AllOverflown() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 2);
@@ -195,28 +217,6 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSumDecimal256AllNull() throws Exception {
-        assertQuery(
-                "sum\n\n",
-                "select sum(x) from (select cast(null as decimal(36,31)) x from long_sequence(1000))",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testSumDecimal64AllNull() throws Exception {
-        assertQuery(
-                "sum\n\n",
-                "select sum(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
     public void testSumDecimal64SomeOverflown() throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -238,7 +238,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                             sink,
                             """
                                     sum
-                                    20000000000494999485
+                                    19000000000494999090
                                     """
                     ),
                     configuration,

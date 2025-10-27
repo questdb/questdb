@@ -418,7 +418,9 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rndDecimal128Hi++;
                     }
-                    sink.putDecimal128(rndDecimal128Hi, rndDecimal128Lo);
+                    var decimal128 = sink.getDecimal128();
+                    decimal128.ofRaw(rndDecimal128Hi, rndDecimal128Lo);
+                    sink.putDecimal128();
                     break;
                 case PUT_DECIMAL256:
                     long rndDecimal256HH = rnd.nextLong();
@@ -428,7 +430,9 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rndDecimal256HH++;
                     }
-                    sink.putDecimal256(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL);
+                    var decimal256 = sink.getDecimal256();
+                    decimal256.ofRaw(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL);
+                    sink.putDecimal256();
                     break;
                 default:
                     throw new UnsupportedOperationException();
