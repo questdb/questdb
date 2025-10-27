@@ -35,8 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -92,16 +90,6 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.valIPv4(constIPv4);
             if (negated) {
@@ -126,16 +114,6 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return Numbers.lessThanIPv4(constIPv4, ipv4Func.getIPv4(rec), negated);
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

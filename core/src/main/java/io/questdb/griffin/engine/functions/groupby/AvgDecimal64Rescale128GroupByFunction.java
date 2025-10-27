@@ -227,7 +227,7 @@ class AvgDecimal64Rescale128GroupByFunction extends Decimal128Function implement
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDecimal128(valueIndex + 1, 0, 0);
+        mapValue.putDecimal128(valueIndex + 1, Decimal128.ZERO);
         mapValue.putLong(valueIndex + 2, 0);
         mapValue.putBool(valueIndex + 3, false);
     }

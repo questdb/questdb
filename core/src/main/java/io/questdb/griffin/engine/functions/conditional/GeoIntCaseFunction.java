@@ -41,7 +41,7 @@ public class GeoIntCaseFunction extends GeoIntFunction implements MultiArgFuncti
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

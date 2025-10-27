@@ -28,49 +28,42 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal128LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
-import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
 
-abstract class ArithmeticDecimal128Function extends DecimalFunction implements BinaryFunction {
+abstract class ArithmeticDecimal128Function extends Decimal128Function implements BinaryFunction {
     protected final Decimal128 decimal = new Decimal128();
+    protected final Decimal128 decimalRight = new Decimal128();
     protected final Function left;
     protected final int precision;
     protected final Function right;
     protected final int scale;
+    private final int leftScale;
     private final int position;
     private final int rightScale;
-    private final int rightTag;
-    private boolean isNull;
 
     public ArithmeticDecimal128Function(Function left, Function right, int targetType, int position) {
         super(targetType);
-        this.left = left;
-        this.right = right;
+        this.left = Decimal128LoaderFunctionFactory.getInstance(left);
+        this.leftScale = ColumnType.getDecimalScale(left.getType());
+        this.right = Decimal128LoaderFunctionFactory.getInstance(right);
         this.position = position;
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightTag = ColumnType.tagOf(right.getType());
     }
 
     @Override
     public void getDecimal128(Record rec, Decimal128 sink) {
         if (!calc(rec)) {
-            sink.ofRaw(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+            sink.ofRawNull();
             return;
         }
         sink.copyRaw(decimal);
-    }
-
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -129,55 +122,20 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
      * @return whether the result is not null.
      */
     private boolean calc(Record rec) {
-        DecimalUtil.load(decimal, left, rec);
+        left.getDecimal128(rec, decimal);
         if (decimal.isNull()) {
             return false;
         }
+        decimal.setScale(leftScale);
 
-        final long rightHigh, rightLow;
-        switch (rightTag) {
-            case ColumnType.DECIMAL8:
-                rightLow = right.getDecimal8(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
-                if (rightLow == Decimals.DECIMAL8_NULL) {
-                    return false;
-                }
-                break;
-            case ColumnType.DECIMAL16:
-                rightLow = right.getDecimal16(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
-                if (rightLow == Decimals.DECIMAL16_NULL) {
-                    return false;
-                }
-                break;
-            case ColumnType.DECIMAL32:
-                rightLow = right.getDecimal32(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
-                if (rightLow == Decimals.DECIMAL32_NULL) {
-                    return false;
-                }
-                break;
-            case ColumnType.DECIMAL64:
-                rightLow = right.getDecimal64(rec);
-                rightHigh = rightLow < 0 ? -1L : 0L;
-                if (Decimal64.isNull(rightLow)) {
-                    return false;
-                }
-                break;
-            default: {
-                Decimal128 rightDec = new Decimal128();
-                right.getDecimal128(rec, rightDec);
-                if (rightDec.isNull()) {
-                    return false;
-                }
-                rightHigh = rightDec.getHigh();
-                rightLow = rightDec.getLow();
-                break;
-            }
+        right.getDecimal128(rec, decimalRight);
+        if (decimalRight.isNull()) {
+            return false;
         }
+        decimalRight.setScale(rightScale);
 
         try {
-            exec(rightHigh, rightLow, rightScale);
+            exec(decimalRight);
         } catch (NumericException e) {
             throw CairoException.nonCritical().position(position)
                     .put('\'').put(getName()).put("' operation failed: ").put(e.getFlyweightMessage());
@@ -189,5 +147,5 @@ abstract class ArithmeticDecimal128Function extends DecimalFunction implements B
      * The implementation must execute the operation against the decimal here.
      * The right-hand values are given as inputs to this method.
      */
-    protected abstract void exec(long rightHigh, long rightLow, int rightScale);
+    protected abstract void exec(Decimal128 right);
 }

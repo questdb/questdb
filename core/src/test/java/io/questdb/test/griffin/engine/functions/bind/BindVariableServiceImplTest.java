@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -442,12 +444,12 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(Decimals.DECIMAL16_NULL, function.getDecimal16(null));
             Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
             Assert.assertEquals(Decimals.DECIMAL64_NULL, function.getDecimal64(null));
-            Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, function.getDecimal128Hi(null));
-            Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, function.getDecimal128Lo(null));
-            Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, function.getDecimal256HH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, function.getDecimal256HL(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, function.getDecimal256LH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, function.getDecimal256LL(null));
+            var decimal128 = new Decimal128();
+            function.getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+            var decimal256 = new Decimal256();
+            function.getDecimal256(null, decimal256);
+            Assert.assertTrue(decimal256.isNull());
         });
     }
 
@@ -730,12 +732,12 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(Decimals.DECIMAL16_NULL, function.getDecimal16(null));
             Assert.assertEquals(Decimals.DECIMAL32_NULL, function.getDecimal32(null));
             Assert.assertEquals(Decimals.DECIMAL64_NULL, function.getDecimal64(null));
-            Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, function.getDecimal128Hi(null));
-            Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, function.getDecimal128Lo(null));
-            Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, function.getDecimal256HH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, function.getDecimal256HL(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, function.getDecimal256LH(null));
-            Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, function.getDecimal256LL(null));
+            var decimal128 = new Decimal128();
+            function.getDecimal128(null, decimal128);
+            Assert.assertTrue(decimal128.isNull());
+            var decimal256 = new Decimal256();
+            function.getDecimal256(null, decimal256);
+            Assert.assertTrue(decimal256.isNull());
         });
     }
 

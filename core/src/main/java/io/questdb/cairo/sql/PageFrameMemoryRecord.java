@@ -237,22 +237,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
     }
 
-    public long getDecimal128Hi(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal128Hi(0);
-    }
-
-    public long getDecimal128Lo(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal128Lo(0);
-    }
-
     @Override
     public short getDecimal16(int columnIndex) {
         long address = pageAddresses.getQuick(columnIndex);
@@ -266,43 +250,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     public void getDecimal256(int columnIndex, Decimal256 sink) {
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
-            address += (rowIndex << 5);
-            sink.ofRawAddress(address);
+            sink.ofRawAddress(address + (rowIndex << 5));
         } else {
             sink.ofRawNull();
         }
-    }
-
-    public long getDecimal256HH(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5));
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal256HH(0);
-    }
-
-    public long getDecimal256HL(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + Long.BYTES);
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal256HL(0);
-    }
-
-    public long getDecimal256LH(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + (Long.BYTES << 1));
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal256LH(0);
-    }
-
-    public long getDecimal256LL(int columnIndex) {
-        long address = pageAddresses.getQuick(columnIndex);
-        if (address != 0) {
-            return Unsafe.getUnsafe().getLong(address + (rowIndex << 5) + 3 * Long.BYTES);
-        }
-        return NullMemoryCMR.INSTANCE.getDecimal256LL(0);
     }
 
     @Override

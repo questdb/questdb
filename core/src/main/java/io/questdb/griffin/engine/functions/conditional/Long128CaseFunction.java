@@ -39,7 +39,7 @@ class Long128CaseFunction extends Long128Function implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

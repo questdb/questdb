@@ -25,6 +25,8 @@
 package io.questdb.test.griffin.engine.functions.constants;
 
 import io.questdb.griffin.engine.functions.constants.DecimalTypeConstant;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import org.junit.Assert;
 import org.junit.Test;
@@ -34,8 +36,9 @@ public class DecimalTypeConstantTest {
 
     @Test
     public void testConstantDecimal128() {
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, function.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, function.getDecimal128Lo(null));
+        Decimal128 decimal128 = new Decimal128();
+        function.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
     }
 
     @Test
@@ -45,10 +48,9 @@ public class DecimalTypeConstantTest {
 
     @Test
     public void testConstantDecimal256() {
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, function.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, function.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, function.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, function.getDecimal256LL(null));
+        Decimal256 decimal256 = new Decimal256();
+        function.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test

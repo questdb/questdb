@@ -241,12 +241,11 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDecimal128(MapValue mapValue, long high, long low) {
+        public void setDecimal128(MapValue mapValue, Decimal128 value) {
             // This method is used to define interpolated points and to init
             // an empty value, so it's ok to reset the row id field here.
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            decimal128.ofRaw(high, low);
-            mapValue.putDecimal128(valueIndex + 1, decimal128);
+            mapValue.putDecimal128(valueIndex + 1, value);
         }
 
         @Override
@@ -333,12 +332,11 @@ public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
-            decimal256.ofRaw(hh, hl, lh, ll);
+        public void setDecimal256(MapValue mapValue, Decimal256 value) {
             // This method is used to define interpolated points and to init
             // an empty value, so it's ok to reset the row id field here.
             mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-            mapValue.putDecimal256(valueIndex + 1, decimal256);
+            mapValue.putDecimal256(valueIndex + 1, value);
         }
 
         @Override

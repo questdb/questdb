@@ -112,13 +112,8 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Hi() {
-        functionA.getDecimal128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Lo() {
-        functionA.getDecimal128Lo(null);
+    public void testGetDecimal128() {
+        functionA.getDecimal128(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -127,23 +122,8 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HH() {
-        functionA.getDecimal256HH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HL() {
-        functionA.getDecimal256HL(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LH() {
-        functionA.getDecimal256LH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LL() {
-        functionA.getDecimal256LL(null);
+    public void testGetDecimal256() {
+        functionA.getDecimal256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

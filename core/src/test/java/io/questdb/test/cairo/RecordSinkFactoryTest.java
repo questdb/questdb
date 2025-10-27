@@ -38,6 +38,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -121,12 +123,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             TestFunction func = (TestFunction) keyFunctions.getQuick(i);
             switch (func.type) {
-                case ColumnType.DECIMAL256:
-                    Assert.assertEquals(4, func.callCount);
-                    break;
                 case ColumnType.LONG128:
                 case ColumnType.UUID:
-                case ColumnType.DECIMAL128:
                     Assert.assertEquals(2, func.callCount);
                     break;
                 default:
@@ -409,17 +407,9 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             Assert.assertEquals(ColumnType.DECIMAL128, type);
             callCount++;
-            return 1;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            Assert.assertEquals(ColumnType.DECIMAL128, type);
-            callCount++;
-            return 1;
         }
 
         @Override
@@ -430,31 +420,9 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             Assert.assertEquals(ColumnType.DECIMAL256, type);
             callCount++;
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            Assert.assertEquals(ColumnType.DECIMAL256, type);
-            callCount++;
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            Assert.assertEquals(ColumnType.DECIMAL256, type);
-            callCount++;
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            Assert.assertEquals(ColumnType.DECIMAL256, type);
-            callCount++;
-            return 1;
         }
 
         @Override
@@ -717,18 +685,9 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             return 1;
         }
 
-        @Override
-        public long getDecimal128Hi(int col) {
+        public void getDecimal128(int col, Decimal128 sink) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.DECIMAL128);
-            return 1;
-        }
-
-        @Override
-        public long getDecimal128Lo(int col) {
-            recordedIndexes.add(col);
-            recordedTypes.add(ColumnType.DECIMAL128);
-            return 1;
         }
 
         @Override
@@ -738,32 +697,9 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             return 1;
         }
 
-        @Override
-        public long getDecimal256HH(int col) {
+        public void getDecimal256(int col, Decimal256 sink) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.DECIMAL256);
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256HL(int col) {
-            recordedIndexes.add(col);
-            recordedTypes.add(ColumnType.DECIMAL256);
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256LH(int col) {
-            recordedIndexes.add(col);
-            recordedTypes.add(ColumnType.DECIMAL256);
-            return 1;
-        }
-
-        @Override
-        public long getDecimal256LL(int col) {
-            recordedIndexes.add(col);
-            recordedTypes.add(ColumnType.DECIMAL256);
-            return 1;
         }
 
         @Override
@@ -917,7 +853,21 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     private static class TestRecordSink implements RecordSinkSPI {
+        final Decimal128 decimal128 = new Decimal128();
+        final Decimal256 decimal256 = new Decimal256();
         final IntList recordedTypes = new IntList();
+
+        @Override
+        public Decimal128 getDecimal128() {
+            recordedTypes.add(ColumnType.DECIMAL128);
+            return decimal128;
+        }
+
+        @Override
+        public Decimal256 getDecimal256() {
+            recordedTypes.add(ColumnType.DECIMAL256);
+            return decimal256;
+        }
 
         @Override
         public void putArray(ArrayView view) {
@@ -950,13 +900,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void putDecimal128(long hi, long lo) {
-            recordedTypes.add(ColumnType.DECIMAL128);
+        public void putDecimal128() {
         }
 
         @Override
-        public void putDecimal256(long hh, long hl, long lh, long ll) {
-            recordedTypes.add(ColumnType.DECIMAL256);
+        public void putDecimal256() {
         }
 
         @Override

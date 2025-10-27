@@ -27,84 +27,33 @@ package io.questdb.griffin.engine.functions.lt;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal128LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
-import io.questdb.std.Decimals;
 
 public abstract class CompareDecimal128Function extends NegatableBooleanFunction implements BinaryFunction {
-    protected final Decimal128 decimal = new Decimal128();
+    protected final Decimal128 decimalLeft = new Decimal128();
+    protected final Decimal128 decimalRight = new Decimal128();
     protected final Function left;
+    protected final int leftScale;
     protected final Function right;
     private final int rightScale;
-    private final int rightStorageSizePow2;
 
     public CompareDecimal128Function(Function left, Function right) {
-        this.left = left;
-        this.right = right;
-        final int rightType = right.getType();
-        this.rightScale = ColumnType.getDecimalScale(rightType);
-        // We may receive a NullConstant, not only a valid Decimal
-        final int precision = ColumnType.isDecimal(rightType) ? ColumnType.getDecimalPrecision(rightType) : 1;
-        this.rightStorageSizePow2 = Decimals.getStorageSizePow2(precision);
+        this.left = Decimal128LoaderFunctionFactory.getInstance(left);
+        this.leftScale = ColumnType.getDecimalScale(this.left.getType());
+        this.right = Decimal128LoaderFunctionFactory.getInstance(right);
+        this.rightScale = ColumnType.getDecimalScale(this.right.getType());
     }
 
     @Override
     public boolean getBool(Record rec) {
-        DecimalUtil.load(decimal, left, rec);
-        final long rightHigh, rightLow;
-        switch (rightStorageSizePow2) {
-            case 0: {
-                byte value = right.getDecimal8(rec);
-                if (value == Decimals.DECIMAL8_NULL) {
-                    rightHigh = Decimals.DECIMAL128_HI_NULL;
-                    rightLow = Decimals.DECIMAL128_LO_NULL;
-                } else {
-                    rightLow = value;
-                    rightHigh = rightLow < 0 ? -1L : 0L;
-                }
-                break;
-            }
-            case 1: {
-                short value = right.getDecimal16(rec);
-                if (value == Decimals.DECIMAL16_NULL) {
-                    rightHigh = Decimals.DECIMAL128_HI_NULL;
-                    rightLow = Decimals.DECIMAL128_LO_NULL;
-                } else {
-                    rightLow = value;
-                    rightHigh = rightLow < 0 ? -1L : 0L;
-                }
-                break;
-            }
-            case 2: {
-                int value = right.getDecimal32(rec);
-                if (value == Decimals.DECIMAL32_NULL) {
-                    rightHigh = Decimals.DECIMAL128_HI_NULL;
-                    rightLow = Decimals.DECIMAL128_LO_NULL;
-                } else {
-                    rightLow = value;
-                    rightHigh = rightLow < 0 ? -1L : 0L;
-                }
-                break;
-            }
-            case 3: {
-                long value = right.getDecimal64(rec);
-                if (value == Decimals.DECIMAL64_NULL) {
-                    rightHigh = Decimals.DECIMAL128_HI_NULL;
-                    rightLow = Decimals.DECIMAL128_LO_NULL;
-                } else {
-                    rightLow = value;
-                    rightHigh = rightLow < 0 ? -1L : 0L;
-                }
-                break;
-            }
-            default:
-                rightHigh = right.getDecimal128Hi(rec);
-                rightLow = right.getDecimal128Lo(rec);
-                break;
-        }
-        return negated != exec(rightHigh, rightLow, rightScale);
+        left.getDecimal128(rec, decimalLeft);
+        decimalLeft.setScale(leftScale);
+        right.getDecimal128(rec, decimalRight);
+        decimalRight.setScale(rightScale);
+        return negated != exec();
     }
 
     @Override
@@ -125,5 +74,5 @@ public abstract class CompareDecimal128Function extends NegatableBooleanFunction
     /**
      * Should execute comparison against decimal holding left argument value and the right-arg inputs.
      */
-    protected abstract boolean exec(long rightHigh, long rightLow, int rightScale);
+    protected abstract boolean exec();
 }

@@ -150,12 +150,16 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextShort((short) 10000), value.getDecimal16(12));
                     Assert.assertEquals(rnd.nextInt(100000000), value.getDecimal32(13));
                     Assert.assertEquals(rnd.nextLong(1_000_000_000_000_000_000L), value.getDecimal64(14));
-                    Assert.assertEquals(rnd.nextLong(Decimal128.MAX_VALUE.getHigh()), value.getDecimal128Hi(15));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Lo(15));
-                    Assert.assertEquals(rnd.nextLong(Decimal256.MAX_VALUE.getHh()), value.getDecimal256HH(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HL(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LH(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LL(16));
+                    Decimal128 decimal128 = new Decimal128();
+                    value.getDecimal128(15, decimal128);
+                    Assert.assertEquals(rnd.nextLong(Decimal128.MAX_VALUE.getHigh()), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    Decimal256 decimal256 = new Decimal256();
+                    value.getDecimal256(16, decimal256);
+                    Assert.assertEquals(rnd.nextLong(Decimal256.MAX_VALUE.getHh()), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                 }
             }
         }

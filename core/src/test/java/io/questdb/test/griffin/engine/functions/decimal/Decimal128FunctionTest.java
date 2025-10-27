@@ -26,20 +26,15 @@ package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
+import io.questdb.std.Decimal128;
 import org.junit.Test;
 
 public class Decimal128FunctionTest {
     private static final DecimalFunction function = new Decimal128Function(ColumnType.getDecimalType(38, 0)) {
         @Override
-        public long getDecimal128Hi(Record record) {
-            return 0;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return 0;
+        public void getDecimal128(Record record, Decimal128 sink) {
         }
 
         @Override
@@ -54,23 +49,8 @@ public class Decimal128FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HH() {
-        function.getDecimal256HH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HL() {
-        function.getDecimal256HL(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LH() {
-        function.getDecimal256LH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LL() {
-        function.getDecimal256LL(null);
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

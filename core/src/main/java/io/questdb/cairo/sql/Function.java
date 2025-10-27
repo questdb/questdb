@@ -125,10 +125,16 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     long getDate(Record rec);
 
+    /**
+     * Sets the raw value of sink (the scale is caller saved)
+     */
     void getDecimal128(Record rec, Decimal128 sink);
 
     short getDecimal16(Record rec);
 
+    /**
+     * Sets the raw value of sink (the scale is caller saved)
+     */
     void getDecimal256(Record rec, Decimal256 sink);
 
     int getDecimal32(Record rec);

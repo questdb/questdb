@@ -147,28 +147,17 @@ public final class DecimalTransformerFactory {
     }
 
     private static class Decimal128To128Func extends DecimalTransformerFunction {
-        private final Decimal128 decimal128 = new Decimal128();
-
         private Decimal128To128Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
-                decimal128.ofNull();
-            } else {
-                decimal128.of(hi, lo, fromScale);
-                transformer.transform(decimal128);
+        public void getDecimal128(Record record, Decimal128 sink) {
+            value.getDecimal128(record, sink);
+            if (!sink.isNull()) {
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal128.getLow();
         }
     }
 
@@ -181,51 +170,33 @@ public final class DecimalTransformerFactory {
 
         @Override
         public short getDecimal16(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
+            value.getDecimal128(record, decimal128);
+            if (decimal128.isNull()) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal128.of(hi, lo, fromScale);
-            transformer.transform(decimal128);
+            decimal128.setScale(fromScale);
+            transformer.transform(decimal128, record);
             return (short) decimal128.getLow();
         }
     }
 
     private static class Decimal128To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
+        private final Decimal128 decimal128 = new Decimal128();
 
         private Decimal128To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
-                decimal256.ofNull();
+        public void getDecimal256(Record record, Decimal256 sink) {
+            value.getDecimal128(record, decimal128);
+            if (decimal128.isNull()) {
+                sink.ofRawNull();
             } else {
-                long s = hi < 0 ? -1 : 0;
-                decimal256.of(s, s, hi, lo, fromScale);
-                transformer.transform(decimal256);
+                sink.ofRaw(decimal128.getHigh(), decimal128.getLow());
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -238,13 +209,12 @@ public final class DecimalTransformerFactory {
 
         @Override
         public int getDecimal32(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
+            value.getDecimal128(record, decimal128);
+            if (decimal128.isNull()) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal128.of(hi, lo, fromScale);
-            transformer.transform(decimal128);
+            decimal128.setScale(fromScale);
+            transformer.transform(decimal128, record);
             return (int) decimal128.getLow();
         }
     }
@@ -258,13 +228,12 @@ public final class DecimalTransformerFactory {
 
         @Override
         public long getDecimal64(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
+            value.getDecimal128(record, decimal128);
+            if (decimal128.isNull()) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal128.of(hi, lo, fromScale);
-            transformer.transform(decimal128);
+            decimal128.setScale(fromScale);
+            transformer.transform(decimal128, record);
             return decimal128.getLow();
         }
     }
@@ -278,39 +247,31 @@ public final class DecimalTransformerFactory {
 
         @Override
         public byte getDecimal8(Record record) {
-            long hi = value.getDecimal128Hi(record);
-            long lo = value.getDecimal128Lo(record);
-            if (Decimal128.isNull(hi, lo)) {
+            value.getDecimal128(record, decimal128);
+            if (decimal128.isNull()) {
                 return Decimals.DECIMAL8_NULL;
             }
-            decimal128.of(hi, lo, fromScale);
-            transformer.transform(decimal128);
+            decimal128.setScale(fromScale);
+            transformer.transform(decimal128, record);
             return (byte) decimal128.getLow();
         }
     }
 
     private static class Decimal16To128Func extends DecimalTransformerFunction {
-        private final Decimal128 decimal128 = new Decimal128();
-
         private Decimal16To128Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
+        public void getDecimal128(Record record, Decimal128 sink) {
             short v = value.getDecimal16(record);
             if (v == Decimals.DECIMAL16_NULL) {
-                decimal128.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal128.of(0, v, fromScale);
-                transformer.transform(decimal128);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal128.getLow();
         }
     }
 
@@ -327,44 +288,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL16_NULL) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (short) decimal64.getValue();
         }
     }
 
     private static class Decimal16To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
-
         private Decimal16To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
+        public void getDecimal256(Record record, Decimal256 sink) {
             short v = value.getDecimal16(record);
             if (v == Decimals.DECIMAL16_NULL) {
-                decimal256.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal256.ofLong(v, fromScale);
-                transformer.transform(decimal256);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -381,8 +326,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL16_NULL) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (int) decimal64.getValue();
         }
     }
@@ -400,8 +346,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL16_NULL) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return decimal64.getValue();
         }
     }
@@ -419,8 +366,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL16_NULL) {
                 return Decimals.DECIMAL8_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (byte) decimal64.getValue();
         }
     }
@@ -433,23 +381,18 @@ public final class DecimalTransformerFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
-                decimal256.of(0, 0, Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, fromScale);
+        public void getDecimal128(Record record, Decimal128 sink) {
+            value.getDecimal256(record, decimal256);
+            if (decimal256.isNull()) {
+                sink.ofRawNull();
             } else {
-                decimal256.of(hh, hl, lh, ll, fromScale);
-                transformer.transform(decimal256);
+                decimal256.setScale(fromScale);
+                transformer.transform(decimal256, record);
+                sink.ofRaw(
+                        decimal256.getLh(),
+                        decimal256.getLl()
+                );
             }
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -462,54 +405,28 @@ public final class DecimalTransformerFactory {
 
         @Override
         public short getDecimal16(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            value.getDecimal256(record, decimal256);
+            if (decimal256.isNull()) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal256.of(hh, hl, lh, ll, fromScale);
-            transformer.transform(decimal256);
+            decimal256.setScale(fromScale);
+            transformer.transform(decimal256, record);
             return (short) decimal256.getLl();
         }
     }
 
     private static class Decimal256To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
-
         private Decimal256To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
-                decimal256.ofNull();
-            } else {
-                decimal256.of(hh, hl, lh, ll, fromScale);
-                transformer.transform(decimal256);
+        public void getDecimal256(Record record, Decimal256 sink) {
+            value.getDecimal256(record, sink);
+            if (!sink.isNull()) {
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -522,15 +439,12 @@ public final class DecimalTransformerFactory {
 
         @Override
         public int getDecimal32(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            value.getDecimal256(record, decimal256);
+            if (decimal256.isNull()) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal256.of(hh, hl, lh, ll, fromScale);
-            transformer.transform(decimal256);
+            decimal256.setScale(fromScale);
+            transformer.transform(decimal256, record);
             return (int) decimal256.getLl();
         }
     }
@@ -544,15 +458,12 @@ public final class DecimalTransformerFactory {
 
         @Override
         public long getDecimal64(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            value.getDecimal256(record, decimal256);
+            if (decimal256.isNull()) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal256.of(hh, hl, lh, ll, fromScale);
-            transformer.transform(decimal256);
+            decimal256.setScale(fromScale);
+            transformer.transform(decimal256, record);
             return decimal256.getLl();
         }
     }
@@ -566,41 +477,31 @@ public final class DecimalTransformerFactory {
 
         @Override
         public byte getDecimal8(Record record) {
-            long hh = value.getDecimal256HH(record);
-            long hl = value.getDecimal256HL(record);
-            long lh = value.getDecimal256LH(record);
-            long ll = value.getDecimal256LL(record);
-            if (Decimal256.isNull(hh, hl, lh, ll)) {
+            value.getDecimal256(record, decimal256);
+            if (decimal256.isNull()) {
                 return Decimals.DECIMAL8_NULL;
             }
-            decimal256.of(hh, hl, lh, ll, fromScale);
-            transformer.transform(decimal256);
+            decimal256.setScale(fromScale);
+            transformer.transform(decimal256, record);
             return (byte) decimal256.getLl();
         }
     }
 
     private static class Decimal32To128Func extends DecimalTransformerFunction {
-        private final Decimal128 decimal128 = new Decimal128();
-
         private Decimal32To128Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
+        public void getDecimal128(Record record, Decimal128 sink) {
             int v = value.getDecimal32(record);
             if (v == Decimals.DECIMAL32_NULL) {
-                decimal128.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal128.of(0, v, fromScale);
-                transformer.transform(decimal128);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal128.getLow();
         }
     }
 
@@ -617,44 +518,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL32_NULL) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (short) decimal64.getValue();
         }
     }
 
     private static class Decimal32To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
-
         private Decimal32To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
+        public void getDecimal256(Record record, Decimal256 sink) {
             int v = value.getDecimal32(record);
             if (v == Decimals.DECIMAL32_NULL) {
-                decimal256.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal256.ofLong(v, fromScale);
-                transformer.transform(decimal256);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -671,8 +556,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL32_NULL) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (int) decimal64.getValue();
         }
     }
@@ -690,8 +576,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL32_NULL) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return decimal64.getValue();
         }
     }
@@ -709,34 +596,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL32_NULL) {
                 return Decimals.DECIMAL8_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (byte) decimal64.getValue();
         }
     }
 
     private static class Decimal64To128Func extends DecimalTransformerFunction {
-        private final Decimal128 decimal128 = new Decimal128();
-
         private Decimal64To128Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
+        public void getDecimal128(Record record, Decimal128 sink) {
             long v = value.getDecimal64(record);
             if (v == Decimals.DECIMAL64_NULL) {
-                decimal128.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal128.of(0, v, fromScale);
-                transformer.transform(decimal128);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal128.getLow();
         }
     }
 
@@ -753,44 +634,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL64_NULL) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (short) decimal64.getValue();
         }
     }
 
     private static class Decimal64To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
-
         private Decimal64To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
+        public void getDecimal256(Record record, Decimal256 sink) {
             long v = value.getDecimal64(record);
             if (v == Decimals.DECIMAL64_NULL) {
-                decimal256.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal256.ofLong(v, fromScale);
-                transformer.transform(decimal256);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -807,8 +672,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL64_NULL) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (int) decimal64.getValue();
         }
     }
@@ -826,8 +692,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL64_NULL) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return decimal64.getValue();
         }
     }
@@ -845,34 +712,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL64_NULL) {
                 return Decimals.DECIMAL8_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (byte) decimal64.getValue();
         }
     }
 
     private static class Decimal8To128Func extends DecimalTransformerFunction {
-        private final Decimal128 decimal128 = new Decimal128();
-
         private Decimal8To128Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal128Hi(Record record) {
+        public void getDecimal128(Record record, Decimal128 sink) {
             byte v = value.getDecimal8(record);
             if (v == Decimals.DECIMAL8_NULL) {
-                decimal128.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal128.of(0, v, fromScale);
-                transformer.transform(decimal128);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal128.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record record) {
-            return decimal128.getLow();
         }
     }
 
@@ -889,44 +750,28 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL8_NULL) {
                 return Decimals.DECIMAL16_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (short) decimal64.getValue();
         }
     }
 
     private static class Decimal8To256Func extends DecimalTransformerFunction {
-        private final Decimal256 decimal256 = new Decimal256();
-
         private Decimal8To256Func(int targetType, Function value, DecimalTransformer transformer) {
             super(value, transformer, targetType);
         }
 
         @Override
-        public long getDecimal256HH(Record record) {
+        public void getDecimal256(Record record, Decimal256 sink) {
             byte v = value.getDecimal8(record);
             if (v == Decimals.DECIMAL8_NULL) {
-                decimal256.ofNull();
+                sink.ofRawNull();
             } else {
-                decimal256.ofLong(v, fromScale);
-                transformer.transform(decimal256);
+                sink.ofRaw(v);
+                sink.setScale(fromScale);
+                transformer.transform(sink, record);
             }
-            return decimal256.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record record) {
-            return decimal256.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record record) {
-            return decimal256.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record record) {
-            return decimal256.getLl();
         }
     }
 
@@ -943,8 +788,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL8_NULL) {
                 return Decimals.DECIMAL32_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (int) decimal64.getValue();
         }
     }
@@ -962,8 +808,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL8_NULL) {
                 return Decimals.DECIMAL64_NULL;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return decimal64.getValue();
         }
     }
@@ -981,8 +828,9 @@ public final class DecimalTransformerFactory {
             if (v == Decimals.DECIMAL8_NULL) {
                 return v;
             }
-            decimal64.of(v, fromScale);
-            transformer.transform(decimal64);
+            decimal64.ofRaw(v);
+            decimal64.setScale(fromScale);
+            transformer.transform(decimal64, record);
             return (byte) decimal64.getValue();
         }
     }
@@ -1005,12 +853,7 @@ public final class DecimalTransformerFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -1020,22 +863,7 @@ public final class DecimalTransformerFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             throw new UnsupportedOperationException();
         }
 

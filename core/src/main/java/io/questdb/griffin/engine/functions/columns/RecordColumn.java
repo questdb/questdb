@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.RecordFunction;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 
 public class RecordColumn extends RecordFunction implements FunctionExtension {
     private final int columnIndex;
@@ -59,16 +57,6 @@ public class RecordColumn extends RecordFunction implements FunctionExtension {
     @Override
     public Record getRecord(Record rec) {
         return rec.getRecord(columnIndex);
-    }
-
-    @Override
-    public void getDecimal128(Record rec, Decimal128 sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

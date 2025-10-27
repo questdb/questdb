@@ -54,6 +54,8 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongAscList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Interval;
@@ -78,7 +80,6 @@ import org.junit.Test;
 import java.util.HashMap;
 
 public class OrderedMapTest extends AbstractCairoTest {
-
     @Test
     public void testAllTypesFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -148,8 +149,20 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putShort(rnd.nextShort());
                     key.putInt(rnd.nextInt());
                     key.putLong(rnd.nextLong());
-                    key.putDecimal128(rnd.nextLong(), rnd.nextLong());
-                    key.putDecimal256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    var decimal128 = key.getDecimal128();
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    key.putDecimal128();
+                    var decimal256 = key.getDecimal256();
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    key.putDecimal256();
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -170,8 +183,18 @@ public class OrderedMapTest extends AbstractCairoTest {
                     value.putShort(13, rnd.nextShort());
                     value.putInt(14, rnd.nextInt());
                     value.putLong(15, rnd.nextLong());
-                    value.putDecimal128(16, rnd.nextLong(), rnd.nextLong());
-                    value.putDecimal256(17, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal128(16, decimal128);
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal256(17, decimal256);
                 }
 
                 rnd.reset();
@@ -198,8 +221,20 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putShort(rnd.nextShort());
                     key.putInt(rnd.nextInt());
                     key.putLong(rnd.nextLong());
-                    key.putDecimal128(rnd.nextLong(), rnd.nextLong());
-                    key.putDecimal256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    var decimal128 = key.getDecimal128();
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    key.putDecimal128();
+                    var decimal256 = key.getDecimal256();
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    key.putDecimal256();
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -220,12 +255,14 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextShort(), value.getDecimal16(13));
                     Assert.assertEquals(rnd.nextInt(), value.getDecimal32(14));
                     Assert.assertEquals(rnd.nextLong(), value.getDecimal64(15));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Hi(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Lo(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HH(17));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HL(17));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LH(17));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LL(17));
+                    value.getDecimal128(16, decimal128);
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    value.getDecimal256(17, decimal256);
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                 }
 
                 // RecordCursor is covered in testAllTypesVarSizeKey
@@ -304,8 +341,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 key.putShort((short) 17);
                 key.putInt(18);
                 key.putLong(19);
-                key.putDecimal128(20, 20);
-                key.putDecimal256(21, 21, 21, 21);
+                var decimal128 = key.getDecimal128();
+                decimal128.ofRaw(20, 20);
+                key.putDecimal128();
+                var decimal256 = key.getDecimal256();
+                decimal256.ofRaw(21, 21, 21, 21);
+                key.putDecimal256();
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -335,8 +376,10 @@ public class OrderedMapTest extends AbstractCairoTest {
                 value.putShort(13, (short) 14);
                 value.putInt(14, 15);
                 value.putLong(15, 16);
-                value.putDecimal128(16, 17, 17);
-                value.putDecimal256(17, 18, 18, 18, 18);
+                decimal128.ofRaw(17, 17);
+                value.putDecimal128(16, decimal128);
+                decimal256.ofRaw(18, 18, 18, 18);
+                value.putDecimal256(17, decimal256);
 
                 // assert that all values are good
 
@@ -361,19 +404,25 @@ public class OrderedMapTest extends AbstractCairoTest {
                 key.putShort((short) 17);
                 key.putInt(18);
                 key.putLong(19);
-                key.putDecimal128(20, 20);
-                key.putDecimal256(21, 21, 21, 21);
+                decimal128 = key.getDecimal128();
+                decimal128.ofRaw(20, 20);
+                key.putDecimal128();
+                decimal256 = key.getDecimal256();
+                decimal256.ofRaw(21, 21, 21, 21);
+                key.putDecimal256();
 
                 value = key.createValue();
                 Assert.assertFalse(value.isNew());
 
                 // access the value columns in reverse order
-                Assert.assertEquals(18, value.getDecimal256HH(17));
-                Assert.assertEquals(18, value.getDecimal256HL(17));
-                Assert.assertEquals(18, value.getDecimal256LH(17));
-                Assert.assertEquals(18, value.getDecimal256LL(17));
-                Assert.assertEquals(17, value.getDecimal128Hi(16));
-                Assert.assertEquals(17, value.getDecimal128Lo(16));
+                value.getDecimal256(17, decimal256);
+                Assert.assertEquals(18, decimal256.getHh());
+                Assert.assertEquals(18, decimal256.getHl());
+                Assert.assertEquals(18, decimal256.getLh());
+                Assert.assertEquals(18, decimal256.getLl());
+                value.getDecimal128(16, decimal128);
+                Assert.assertEquals(17, decimal128.getHigh());
+                Assert.assertEquals(17, decimal128.getLow());
                 Assert.assertEquals(16, value.getDecimal64(15));
                 Assert.assertEquals(15, value.getDecimal32(14));
                 Assert.assertEquals(14, value.getDecimal16(13));
@@ -2197,12 +2246,16 @@ public class OrderedMapTest extends AbstractCairoTest {
         final int values = 17;
         int col = keys + values;
         // key
-        Assert.assertEquals(21, record.getDecimal256HH(col));
-        Assert.assertEquals(21, record.getDecimal256HL(col));
-        Assert.assertEquals(21, record.getDecimal256LH(col));
-        Assert.assertEquals(21, record.getDecimal256LL(col--));
-        Assert.assertEquals(20, record.getDecimal128Hi(col));
-        Assert.assertEquals(20, record.getDecimal128Lo(col--));
+        var decimal256 = new Decimal256();
+        record.getDecimal256(col--, decimal256);
+        Assert.assertEquals(21, decimal256.getHh());
+        Assert.assertEquals(21, decimal256.getHl());
+        Assert.assertEquals(21, decimal256.getLh());
+        Assert.assertEquals(21, decimal256.getLl());
+        var decimal128 = new Decimal128();
+        record.getDecimal128(col--, decimal128);
+        Assert.assertEquals(20, decimal128.getHigh());
+        Assert.assertEquals(20, decimal128.getLow());
         Assert.assertEquals(19, record.getDecimal64(col--));
         Assert.assertEquals(18, record.getDecimal32(col--));
         Assert.assertEquals(17, record.getDecimal16(col--));
@@ -2227,12 +2280,14 @@ public class OrderedMapTest extends AbstractCairoTest {
         Assert.assertEquals(1, record.getByte(col--));
 
         // value
-        Assert.assertEquals(18, record.getDecimal256HH(col));
-        Assert.assertEquals(18, record.getDecimal256HL(col));
-        Assert.assertEquals(18, record.getDecimal256LH(col));
-        Assert.assertEquals(18, record.getDecimal256LL(col--));
-        Assert.assertEquals(17, record.getDecimal128Hi(col));
-        Assert.assertEquals(17, record.getDecimal128Lo(col--));
+        record.getDecimal256(col--, decimal256);
+        Assert.assertEquals(18, decimal256.getHh());
+        Assert.assertEquals(18, decimal256.getHl());
+        Assert.assertEquals(18, decimal256.getLh());
+        Assert.assertEquals(18, decimal256.getLl());
+        record.getDecimal128(col--, decimal128);
+        Assert.assertEquals(17, decimal128.getHigh());
+        Assert.assertEquals(17, decimal128.getLow());
         Assert.assertEquals(16, record.getDecimal64(col--));
         Assert.assertEquals(15, record.getDecimal32(col--));
         Assert.assertEquals(14, record.getDecimal16(col--));

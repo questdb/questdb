@@ -41,7 +41,7 @@ public final class ArrayCaseFunction extends ArrayFunction implements CaseFuncti
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

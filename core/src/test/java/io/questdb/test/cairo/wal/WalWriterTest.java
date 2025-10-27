@@ -69,6 +69,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Files;
@@ -2167,6 +2168,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Long256Impl long256 = new Long256Impl();
                 final StringSink stringSink = new StringSink();
                 final DirectBinarySequence binSeq = new DirectBinarySequence();
+                final Decimal128 decimal128 = new Decimal128();
                 final Decimal256 decimal256 = new Decimal256();
 
                 final String walName;
@@ -2349,12 +2351,14 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(i, record.getDecimal16(35));
                         assertEquals(i, record.getDecimal32(36));
                         assertEquals(i, record.getDecimal64(37));
-                        assertEquals(0, record.getDecimal128Hi(38));
-                        assertEquals(i, record.getDecimal128Lo(38));
-                        assertEquals(0, record.getDecimal256HH(39));
-                        assertEquals(0, record.getDecimal256HL(39));
-                        assertEquals(0, record.getDecimal256LH(39));
-                        assertEquals(i, record.getDecimal256LL(39));
+                        record.getDecimal128(38, decimal128);
+                        assertEquals(0, decimal128.getHigh());
+                        assertEquals(i, decimal128.getLow());
+                        record.getDecimal256(39, decimal256);
+                        assertEquals(0, decimal256.getHh());
+                        assertEquals(0, decimal256.getHl());
+                        assertEquals(0, decimal256.getLh());
+                        assertEquals(i, decimal256.getLl());
 
                         assertEquals(ts, record.getTimestamp(40));
                         assertEquals(i, record.getRowId());

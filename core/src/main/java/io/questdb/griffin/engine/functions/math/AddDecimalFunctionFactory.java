@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -100,8 +102,8 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void exec(long rightHigh, long rightLow, int rightScale) {
-            decimal.add(rightHigh, rightLow, rightScale);
+        protected void exec(Decimal128 right) {
+            decimal.add(right);
         }
     }
 
@@ -117,8 +119,8 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
-            decimal.add(rightHH, rightHL, rightLH, rightLL, rightScale);
+        protected void exec(Decimal256 right) {
+            decimal.add(right);
         }
     }
 

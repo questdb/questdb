@@ -41,7 +41,7 @@ class Long256CaseFunction extends Long256Function implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

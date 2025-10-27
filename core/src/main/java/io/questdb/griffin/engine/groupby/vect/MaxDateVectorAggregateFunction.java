@@ -28,8 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -94,16 +92,6 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     @Override
     public long getDate(Record rec) {
         return max.longValue();
-    }
-
-    @Override
-    public void getDecimal128(Record rec, Decimal128 sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

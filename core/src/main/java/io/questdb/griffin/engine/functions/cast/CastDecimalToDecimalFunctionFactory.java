@@ -99,7 +99,7 @@ public class CastDecimalToDecimalFunctionFactory implements FunctionFactory {
         final int fromScale = ColumnType.getDecimalScale(fromType);
 
         Decimal256 decimal = sqlExecutionContext.getDecimal256();
-        DecimalUtil.load(decimal, value, null);
+        DecimalUtil.load(decimal, sqlExecutionContext.getDecimal128(), value, null);
 
         if (decimal.isNull()) {
             return DecimalUtil.createNullDecimalConstant(targetPrecision, targetScale);

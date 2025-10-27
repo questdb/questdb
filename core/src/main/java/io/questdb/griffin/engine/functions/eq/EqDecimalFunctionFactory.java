@@ -83,28 +83,24 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
 
         final int leftType = left.getType();
         final int rightType = right.getType();
-        final int leftPrecision = ColumnType.getDecimalPrecision(leftType);
-        final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
+        final int leftTag = ColumnType.tagOf(leftType);
+        final int rightTag = ColumnType.tagOf(rightType);
         final int leftScale = ColumnType.getDecimalScale(leftType);
         final int rightScale = ColumnType.getDecimalScale(rightType);
 
-        if (leftPrecision == rightPrecision && leftScale == rightScale) {
-            switch (ColumnType.tagOf(leftType)) {
-                case ColumnType.DECIMAL8:
-                    return new UnscaledDecimal8Func(left, right);
-                case ColumnType.DECIMAL16:
-                    return new UnscaledDecimal16Func(left, right);
-                case ColumnType.DECIMAL32:
-                    return new UnscaledDecimal32Func(left, right);
-                case ColumnType.DECIMAL64:
-                    return new UnscaledDecimal64Func(left, right);
-                case ColumnType.DECIMAL128:
-                    return new UnscaledDecimal128Func(left, right);
-                default:
-                    return new UnscaledDecimal256Func(left, right);
-            }
+        if (leftTag == rightTag && leftScale == rightScale) {
+            return switch (leftTag) {
+                case ColumnType.DECIMAL8 -> new UnscaledDecimal8Func(left, right);
+                case ColumnType.DECIMAL16 -> new UnscaledDecimal16Func(left, right);
+                case ColumnType.DECIMAL32 -> new UnscaledDecimal32Func(left, right);
+                case ColumnType.DECIMAL64 -> new UnscaledDecimal64Func(left, right);
+                case ColumnType.DECIMAL128 -> new UnscaledDecimal128Func(left, right);
+                default -> new UnscaledDecimal256Func(left, right);
+            };
         }
 
+        final int leftPrecision = ColumnType.getDecimalPrecision(leftType);
+        final int rightPrecision = ColumnType.getDecimalPrecision(rightType);
         final int maxPrecision = Math.max(leftPrecision, rightPrecision);
         return switch (Decimals.getStorageSizePow2(maxPrecision)) {
             case 0, 1, 2, 3 -> new Decimal64Func(left, right);
@@ -129,8 +125,8 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightHigh, long rightLow, int rightScale) {
-            return decimal.compareTo(rightHigh, rightLow, rightScale) == 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) == 0;
         }
     }
 
@@ -150,8 +146,8 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
-            return decimal.compareTo(rightHH, rightHL, rightLH, rightLL, rightScale) == 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) == 0;
         }
     }
 
@@ -171,8 +167,8 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightValue, int rightScale) {
-            return decimal.compareTo(rightValue, rightScale) == 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) == 0;
         }
     }
 

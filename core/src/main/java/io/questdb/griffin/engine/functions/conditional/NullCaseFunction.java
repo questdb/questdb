@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -38,17 +40,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class NullCaseFunction implements CaseFunction {
-    private final ObjList<Function> args;
-
-    public NullCaseFunction(ObjList<Function> args) {
-        this.args = args;
-    }
-
-    @Override
-    public ObjList<Function> getArgs() {
-        return args;
-    }
+public record NullCaseFunction(ObjList<Function> args) implements CaseFunction {
 
     @Override
     public ArrayView getArray(Record rec) {
@@ -86,52 +78,32 @@ public class NullCaseFunction implements CaseFunction {
     }
 
     @Override
-    public final long getDecimal128Hi(Record rec) {
+    public void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDecimal128Lo(Record rec) {
+    public short getDecimal16(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final short getDecimal16(Record rec) {
+    public void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDecimal256HH(Record rec) {
+    public int getDecimal32(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDecimal256HL(Record rec) {
+    public long getDecimal64(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDecimal256LH(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal256LL(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final int getDecimal32(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getDecimal64(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final byte getDecimal8(Record rec) {
+    public byte getDecimal8(Record rec) {
         throw new UnsupportedOperationException();
     }
 

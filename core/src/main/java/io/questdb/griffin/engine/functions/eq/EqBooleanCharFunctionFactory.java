@@ -32,8 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -80,16 +78,6 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (left.getBool(rec) == right);
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

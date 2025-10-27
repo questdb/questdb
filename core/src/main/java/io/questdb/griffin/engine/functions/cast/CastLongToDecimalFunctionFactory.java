@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
@@ -172,11 +173,9 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
     private static class CastDecimal128UnscaledFunc extends Decimal128Function implements UnaryFunction {
         private final Function value;
-        private long lo;
 
         public CastDecimal128UnscaledFunc(int targetType, Function value) {
             super(targetType);
-            this.lo = 0;
             this.value = value;
         }
 
@@ -186,26 +185,15 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             final long value = this.value.getLong(rec);
             if (value == Numbers.LONG_NULL) {
-                lo = Decimals.DECIMAL128_LO_NULL;
-                return Decimals.DECIMAL128_HI_NULL;
+                sink.ofRawNull();
+            } else {
+                // No need for overflow check, if the precision was lower than
+                // 19 it wouldn't be a Decimal128, otherwise, any long can fit.
+                sink.ofRaw(value);
             }
-            // No need for overflow check, if the precision was lower than
-            // 19 it wouldn't be a Decimal128, otherwise, any long can fit.
-            lo = value;
-            return value < 0 ? -1 : 0;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return lo;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
 
         @Override
@@ -216,15 +204,9 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
 
     private static class CastDecimal256UnscaledFunc extends Decimal256Function implements UnaryFunction {
         private final Function value;
-        private long hl;
-        private long lh;
-        private long ll;
 
         public CastDecimal256UnscaledFunc(int targetType, Function value) {
             super(targetType);
-            this.ll = 0;
-            this.lh = 0;
-            this.hl = 0;
             this.value = value;
         }
 
@@ -234,39 +216,15 @@ public class CastLongToDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             final long value = this.value.getLong(rec);
             if (value == Numbers.LONG_NULL) {
-                ll = Decimals.DECIMAL256_LL_NULL;
-                lh = Decimals.DECIMAL256_LH_NULL;
-                hl = Decimals.DECIMAL256_HL_NULL;
-                return Decimals.DECIMAL256_HH_NULL;
+                sink.ofRawNull();
+            } else {
+                // No need for overflow check, if the precision was lower than
+                // 19 it wouldn't be a Decimal256, otherwise, any long can fit.
+                sink.ofRaw(value);
             }
-            // No need for overflow check, if the precision was lower than
-            // 19 it wouldn't be a Decimal256, otherwise, any long can fit.
-            ll = value;
-            hl = lh = value < 0 ? -1 : 0;
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return hl;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return ll;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
 
         @Override

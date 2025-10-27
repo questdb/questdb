@@ -97,12 +97,50 @@ public final class Decimals {
      * @param scale defines the place of the dot
      * @param sink  to write the value to
      */
+    public static void append(long hi, long lo, int precision, int scale, CharSink<?> sink) {
+        if (Decimal128.isNull(hi, lo)) {
+            sink.put("null");
+        } else {
+            appendNonNull(hi, lo, precision, scale, sink);
+        }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
     public static void append(Decimal256 decimal256, int precision, int scale, CharSink<?> sink) {
         if (decimal256.isNull()) {
             sink.put("null");
         } else {
             appendNonNull(decimal256, precision, scale, sink);
         }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void append(long hh, long hl, long lh, long ll, int precision, int scale, CharSink<?> sink) {
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            sink.put("null");
+        } else {
+            appendNonNull(hh, hl, lh, ll, precision, scale, sink);
+        }
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void appendNonNull(long hi, long lo, int precision, int scale, CharSink<?> sink) {
+        Decimal128.toSink(sink, hi, lo, scale, precision);
     }
 
     /**
@@ -118,6 +156,24 @@ public final class Decimals {
                 decimal256.getHl(),
                 decimal256.getLh(),
                 decimal256.getLl(),
+                scale,
+                precision
+        );
+    }
+
+    /**
+     * Prints the decimal to a sink
+     *
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void appendNonNull(long hh, long hl, long lh, long ll, int precision, int scale, CharSink<?> sink) {
+        Decimal256.toSink(
+                sink,
+                hh,
+                hl,
+                lh,
+                ll,
                 scale,
                 precision
         );

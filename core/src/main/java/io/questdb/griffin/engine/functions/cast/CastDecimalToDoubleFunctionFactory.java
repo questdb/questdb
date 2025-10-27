@@ -28,10 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -57,7 +57,7 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         return switch (ColumnType.tagOf(arg.getType())) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                    new Func64(arg);
+                    new Func64(Decimal64LoaderFunctionFactory.getInstance(arg));
             case ColumnType.DECIMAL128 -> new Func128(arg);
             default -> new Func(arg);
         };
@@ -65,21 +65,32 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
 
     private static class Func extends AbstractCastToDoubleFunction {
         private final Decimal256 decimal256 = new Decimal256();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final StringSink sink = new StringSink();
 
         public Func(Function value) {
             super(value);
-            fromType = value.getType();
+            int type = value.getType();
+            fromScale = ColumnType.getDecimalScale(type);
+            fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
         public double getDouble(Record rec) {
-            DecimalUtil.load(decimal256, arg, rec, fromType);
+            arg.getDecimal256(rec, decimal256);
             if (decimal256.isNull()) {
                 return Double.NaN;
             }
             sink.clear();
-            sink.put(decimal256);
+            Decimal256.toSink(
+                    sink,
+                    decimal256.getHh(),
+                    decimal256.getHl(),
+                    decimal256.getLh(),
+                    decimal256.getLl(),
+                    fromScale,
+                    fromPrecision
+            );
             return Numbers.parseDouble(sink);
         }
 
@@ -91,21 +102,24 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
 
     private static class Func128 extends AbstractCastToDoubleFunction {
         private final Decimal128 decimal128 = new Decimal128();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final StringSink sink = new StringSink();
 
         public Func128(Function value) {
             super(value);
-            fromType = value.getType();
+            int type = arg.getType();
+            this.fromScale = ColumnType.getDecimalScale(type);
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
         public double getDouble(Record rec) {
-            DecimalUtil.load(decimal128, arg, rec, fromType);
+            arg.getDecimal128(rec, decimal128);
             if (decimal128.isNull()) {
                 return Double.NaN;
             }
             sink.clear();
-            sink.put(decimal128);
+            Decimal128.toSink(sink, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
             return Numbers.parseDouble(sink);
         }
 
@@ -116,22 +130,24 @@ public class CastDecimalToDoubleFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDoubleFunction {
-        private final Decimal64 decimal64 = new Decimal64();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final StringSink sink = new StringSink();
 
         public Func64(Function value) {
             super(value);
-            fromType = value.getType();
+            int type = arg.getType();
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
+            this.fromScale = ColumnType.getDecimalScale(type);
         }
 
         public double getDouble(Record rec) {
-            DecimalUtil.load(decimal64, arg, rec, fromType);
-            if (decimal64.isNull()) {
+            long v = arg.getDecimal64(rec);
+            if (Decimal64.isNull(v)) {
                 return Double.NaN;
             }
             sink.clear();
-            sink.put(decimal64);
+            Decimal64.toSink(sink, v, fromScale, fromPrecision);
             return Numbers.parseDouble(sink);
         }
 

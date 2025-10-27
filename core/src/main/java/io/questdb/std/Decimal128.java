@@ -289,6 +289,14 @@ public class Decimal128 implements Sinkable, Decimal {
         return Long.compareUnsigned(aLo, bLo);
     }
 
+    public static int compare(Decimal128 a, Decimal128 b) {
+        int s = Long.compare(a.getHigh(), b.getHigh());
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(a.getLow(), b.getLow());
+    }
+
     public static int compareTo(long aHigh, long aLow, int aScale, long bHigh, long bLow, int bScale) {
         if (isNull(aHigh, aLow)) {
             if (isNull(bHigh, bLow)) {

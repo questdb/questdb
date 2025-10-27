@@ -111,14 +111,6 @@ public class Decimal64 implements Sinkable, Decimal {
         sink.add(b);
     }
 
-    public static long uncheckedAdd(long value1, long value2) {
-        try {
-            return Math.addExact(value1, value2);
-        } catch (Exception e) {
-            throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
-        }
-    }
-
     /**
      * Divide two Decimal64 numbers and store the result in sink (a / b -> sink)
      */
@@ -312,6 +304,14 @@ public class Decimal64 implements Sinkable, Decimal {
 
         if (!printed) {
             sink.put('0');
+        }
+    }
+
+    public static long uncheckedAdd(long value1, long value2) {
+        try {
+            return Math.addExact(value1, value2);
+        } catch (Exception e) {
+            throw NumericException.instance().put("Overflow in addition: result exceeds 64-bit capacity");
         }
     }
 
@@ -625,6 +625,14 @@ public class Decimal64 implements Sinkable, Decimal {
     public void ofNull() {
         value = Decimals.DECIMAL64_NULL;
         scale = 0;
+    }
+
+    public void ofRaw(long value) {
+        this.value = value;
+    }
+
+    public void ofRawNull() {
+        this.value = Decimals.DECIMAL64_NULL;
     }
 
     /**

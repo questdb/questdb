@@ -190,7 +190,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -209,7 +209,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class Decimal128CoalesceFunction extends Decimal128Function implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
-        private long lo = Decimals.DECIMAL128_LO_NULL;
 
         public Decimal128CoalesceFunction(int type, ObjList<Function> args, int size) {
             super(type);
@@ -218,27 +217,20 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             for (int i = 0; i < size; i++) {
                 final Function arg = args.getQuick(i);
-                long hi = arg.getDecimal128Hi(rec);
-                long lo = arg.getDecimal128Lo(rec);
-                if (!Decimal128.isNull(hi, lo)) {
-                    this.lo = lo;
-                    return hi;
+                arg.getDecimal128(rec, sink);
+                if (!sink.isNull()) {
+                    return;
                 }
             }
-            return Decimals.DECIMAL128_HI_NULL;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return lo;
+            sink.ofRawNull();
         }
     }
 
@@ -253,7 +245,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -272,9 +264,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class Decimal256CoalesceFunction extends Decimal256Function implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
-        private long hl = Decimals.DECIMAL256_HL_NULL;
-        private long lh = Decimals.DECIMAL256_LH_NULL;
-        private long ll = Decimals.DECIMAL256_LL_NULL;
 
         public Decimal256CoalesceFunction(int type, ObjList<Function> args, int size) {
             super(type);
@@ -283,41 +272,20 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             for (int i = 0; i < size; i++) {
                 final Function arg = args.getQuick(i);
-                long hh = arg.getDecimal256HH(rec);
-                long hl = arg.getDecimal256HL(rec);
-                long lh = arg.getDecimal256LH(rec);
-                long ll = arg.getDecimal256LL(rec);
-                if (!Decimal256.isNull(hh, hl, lh, ll)) {
-                    this.hl = hl;
-                    this.lh = lh;
-                    this.ll = ll;
-                    return hh;
+                arg.getDecimal256(rec, sink);
+                if (!sink.isNull()) {
+                    return;
                 }
             }
-            return Decimals.DECIMAL256_HH_NULL;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return hl;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return ll;
+            sink.ofRawNull();
         }
     }
 
@@ -332,7 +300,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -359,7 +327,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -386,7 +354,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -412,7 +380,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -438,7 +406,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -465,7 +433,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -492,7 +460,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -518,7 +486,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -568,7 +536,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -595,7 +563,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -636,7 +604,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -686,7 +654,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class TwoDecimal128CoalesceFunction extends Decimal128Function implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
-        private long lo = Decimals.DECIMAL128_LO_NULL;
 
         public TwoDecimal128CoalesceFunction(int type, ObjList<Function> args) {
             super(type);
@@ -696,21 +663,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            long hi = args0.getDecimal128Hi(rec);
-            long lo = args0.getDecimal128Lo(rec);
-            if (!Decimal128.isNull(hi, lo)) {
-                this.lo = lo;
-                return hi;
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            args0.getDecimal128(rec, sink);
+            if (!sink.isNull()) {
+                return;
             }
-            hi = args1.getDecimal128Hi(rec);
-            this.lo = args1.getDecimal128Lo(rec);
-            return hi;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return lo;
+            args1.getDecimal128(rec, sink);
         }
 
         @Override
@@ -721,11 +679,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
     }
 
@@ -763,9 +716,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     private static class TwoDecimal256CoalesceFunction extends Decimal256Function implements BinaryCoalesceFunction {
         private final Function args0;
         private final Function args1;
-        private long hl = Decimals.DECIMAL256_HL_NULL;
-        private long lh = Decimals.DECIMAL256_LH_NULL;
-        private long ll = Decimals.DECIMAL256_LL_NULL;
 
         public TwoDecimal256CoalesceFunction(int type, ObjList<Function> args) {
             super(type);
@@ -775,37 +725,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            long hh = args0.getDecimal256HH(rec);
-            long hl = args0.getDecimal256HL(rec);
-            long lh = args0.getDecimal256LH(rec);
-            long ll = args0.getDecimal256LL(rec);
-            if (!Decimal256.isNull(hh, hl, lh, ll)) {
-                this.hl = hl;
-                this.lh = lh;
-                this.ll = ll;
-                return hh;
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            args0.getDecimal256(rec, sink);
+            if (!sink.isNull()) {
+                return;
             }
-            hh = args1.getDecimal256HH(rec);
-            this.hl = args1.getDecimal256HL(rec);
-            this.lh = args1.getDecimal256LH(rec);
-            this.ll = args1.getDecimal256LL(rec);
-            return hh;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return hl;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return ll;
+            args1.getDecimal256(rec, sink);
         }
 
         @Override
@@ -816,11 +741,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
         }
     }
 
@@ -1369,7 +1289,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -1416,7 +1336,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

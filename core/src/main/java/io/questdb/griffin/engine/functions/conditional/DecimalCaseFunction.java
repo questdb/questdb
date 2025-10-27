@@ -42,7 +42,7 @@ class DecimalCaseFunction extends DecimalFunction implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

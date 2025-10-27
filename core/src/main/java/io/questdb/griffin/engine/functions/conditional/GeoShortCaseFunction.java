@@ -41,7 +41,7 @@ public class GeoShortCaseFunction extends GeoShortFunction implements MultiArgFu
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

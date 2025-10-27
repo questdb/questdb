@@ -104,6 +104,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final CairoEngine engine;
     private final StringSink errSink = new StringSink();
     private final int maxSqlRecompileAttempts;
@@ -289,12 +291,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 && (tok.byteAt(i) | 32) == 'p';
     }
 
-    private static void putDecimal128StringValue(HttpChunkedResponse response, long hi, long lo, int type) {
-        if (Decimal128.isNull(hi, lo)) {
+    private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type) {
+        if (decimal128.isNull()) {
             response.putAscii("null");
         } else {
             response.putAscii('\"');
-            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+            Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
         }
     }
@@ -307,12 +309,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
     }
 
-    private static void putDecimal256StringValue(HttpChunkedResponse response, long hh, long hl, long lh, long ll, int type) {
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
+    private static void putDecimal256StringValue(HttpChunkedResponse response, Decimal256 decimal256, int type) {
+        if (decimal256.isNull()) {
             response.putAscii("null");
         } else {
             response.putAscii('\"');
-            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+            Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
         }
     }
@@ -1154,12 +1156,12 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 putDecimal64StringValue(response, rec.getDecimal64(columnIndex), columnType);
                 break;
             case ColumnType.DECIMAL128:
-                putDecimal128StringValue(response, rec.getDecimal128Hi(columnIndex),
-                        rec.getDecimal128Lo(columnIndex), columnType);
+                rec.getDecimal128(columnIndex, decimal128);
+                putDecimal128StringValue(response, decimal128, columnType);
                 break;
             case ColumnType.DECIMAL256:
-                putDecimal256StringValue(response, rec.getDecimal256HH(columnIndex), rec.getDecimal256HL(columnIndex),
-                        rec.getDecimal256LH(columnIndex), rec.getDecimal256LL(columnIndex), columnType);
+                rec.getDecimal256(columnIndex, decimal256);
+                putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
                 assert false;

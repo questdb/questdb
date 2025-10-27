@@ -24,16 +24,17 @@
 
 package io.questdb.griffin.engine.functions.math;
 
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 
 public interface DecimalTransformer {
-    void transform(Decimal64 value);
-
-    void transform(Decimal128 value);
-
-    void transform(Decimal256 value);
-
     String getName();
+
+    void transform(Decimal128 value, Record record);
+
+    void transform(Decimal256 value, Record record);
+
+    void transform(Decimal64 value, Record record);
 }

@@ -34,8 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.DoubleAdder;
@@ -121,16 +119,6 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
             return sum.sum() / count;
         }
         return Double.NaN;
-    }
-
-    @Override
-    public void getDecimal128(Record rec, Decimal128 sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

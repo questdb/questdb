@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.decimal;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.decimal.Decimal16Function;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal16Function;
 import org.junit.Test;
 
 public class Decimal16FunctionTest {
@@ -44,33 +44,13 @@ public class Decimal16FunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Hi() {
-        function.getDecimal128Hi(null);
+    public void testGetDecimal128() {
+        function.getDecimal128(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Lo() {
-        function.getDecimal128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HH() {
-        function.getDecimal256HH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HL() {
-        function.getDecimal256HL(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LH() {
-        function.getDecimal256LH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LL() {
-        function.getDecimal256LL(null);
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

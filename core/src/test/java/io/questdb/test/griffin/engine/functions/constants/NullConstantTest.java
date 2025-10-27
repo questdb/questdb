@@ -43,6 +43,8 @@ import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -92,12 +94,12 @@ public class NullConstantTest {
         Assert.assertEquals(Decimals.DECIMAL16_NULL, constant.getDecimal16(null));
         Assert.assertEquals(Decimals.DECIMAL32_NULL, constant.getDecimal32(null));
         Assert.assertEquals(Decimals.DECIMAL64_NULL, constant.getDecimal64(null));
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, constant.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, constant.getDecimal128Lo(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, constant.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, constant.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, constant.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, constant.getDecimal256LL(null));
+        Decimal128 decimal128 = new Decimal128();
+        constant.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
+        Decimal256 decimal256 = new Decimal256();
+        constant.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
 
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);

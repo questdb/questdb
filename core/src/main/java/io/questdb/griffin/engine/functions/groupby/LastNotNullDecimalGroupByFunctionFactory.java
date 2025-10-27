@@ -71,6 +71,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
     }
 
     private static class Decimal128Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal128Func {
+        private final Decimal128 decimal128 = new Decimal128();
 
         public Decimal128Func(Function arg) {
             super(arg);
@@ -78,11 +79,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long high = arg.getDecimal128Hi(record);
-            final long low = arg.getDecimal128Lo(record);
-            if (!Decimal128.isNull(high, low)) {
+            arg.getDecimal128(record, decimal128);
+            if (!decimal128.isNull()) {
                 mapValue.putLong(valueIndex, rowId);
-                mapValue.putDecimal128(valueIndex + 1, high, low);
+                mapValue.putDecimal128(valueIndex + 1, decimal128);
             }
         }
 
@@ -93,14 +93,13 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHigh = srcValue.getDecimal128Hi(valueIndex + 1);
-            final long srcLow = srcValue.getDecimal128Lo(valueIndex + 1);
-            if (!Decimal128.isNull(srcHigh, srcLow)) {
+            srcValue.getDecimal128(valueIndex + 1, decimal128);
+            if (!decimal128.isNull()) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 if (srcRowId > destRowId) {
                     destValue.putLong(valueIndex, srcRowId);
-                    destValue.putDecimal128(valueIndex + 1, srcHigh, srcLow);
+                    destValue.putDecimal128(valueIndex + 1, decimal128);
                 }
             }
         }
@@ -141,6 +140,7 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
     }
 
     private static class Decimal256Func extends FirstDecimalGroupByFunctionFactory.FirstLastDecimal256Func {
+        private final Decimal256 decimal256 = new Decimal256();
 
         public Decimal256Func(Function arg) {
             super(arg);
@@ -148,13 +148,10 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final long hh = arg.getDecimal256HH(record);
-            final long hl = arg.getDecimal256HL(record);
-            final long lh = arg.getDecimal256LH(record);
-            final long ll = arg.getDecimal256LL(record);
-            if (!Decimal256.isNull(hh, hl, lh, ll)) {
+            arg.getDecimal256(record, decimal256);
+            if (!decimal256.isNull()) {
                 mapValue.putLong(valueIndex, rowId);
-                mapValue.putDecimal256(valueIndex + 1, hh, hl, lh, ll);
+                mapValue.putDecimal256(valueIndex + 1, decimal256);
             }
         }
 
@@ -165,16 +162,13 @@ public class LastNotNullDecimalGroupByFunctionFactory implements FunctionFactory
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            final long srcHH = srcValue.getDecimal256HH(valueIndex + 1);
-            final long srcHL = srcValue.getDecimal256HL(valueIndex + 1);
-            final long srcLH = srcValue.getDecimal256LH(valueIndex + 1);
-            final long srcLL = srcValue.getDecimal256LL(valueIndex + 1);
-            if (!Decimal256.isNull(srcHH, srcHL, srcLH, srcLL)) {
+            srcValue.getDecimal256(valueIndex + 1, decimal256);
+            if (!decimal256.isNull()) {
                 final long srcRowId = srcValue.getLong(valueIndex);
                 final long destRowId = destValue.getLong(valueIndex);
                 if (srcRowId > destRowId) {
                     destValue.putLong(valueIndex, srcRowId);
-                    destValue.putDecimal256(valueIndex + 1, srcHH, srcHL, srcLH, srcLL);
+                    destValue.putDecimal256(valueIndex + 1, decimal256);
                 }
             }
         }

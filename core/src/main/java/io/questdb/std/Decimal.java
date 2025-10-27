@@ -90,6 +90,11 @@ public interface Decimal {
     int getMaxScale();
 
     /**
+     * Returns true if this decimal represents the null value.
+     */
+    boolean isNull();
+
+    /**
      * Negates this decimal value in-place, changing its sign.
      * <p>
      * If the decimal is positive, it becomes negative; if negative, it becomes positive.

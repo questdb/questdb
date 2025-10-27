@@ -28,6 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 
 public class DecimalTypeConstant extends DecimalFunction implements TypeConstant {
@@ -36,13 +38,8 @@ public class DecimalTypeConstant extends DecimalFunction implements TypeConstant
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return Decimals.DECIMAL128_HI_NULL;
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return Decimals.DECIMAL128_LO_NULL;
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRawNull();
     }
 
     @Override
@@ -51,23 +48,8 @@ public class DecimalTypeConstant extends DecimalFunction implements TypeConstant
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
-        return Decimals.DECIMAL256_HH_NULL;
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return Decimals.DECIMAL256_HL_NULL;
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return Decimals.DECIMAL256_LH_NULL;
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return Decimals.DECIMAL256_LL_NULL;
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        sink.ofRawNull();
     }
 
     @Override

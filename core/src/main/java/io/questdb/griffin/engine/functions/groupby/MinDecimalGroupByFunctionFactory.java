@@ -230,9 +230,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDecimal128(MapValue mapValue, long high, long low) {
-            decimal128A.ofRaw(high, low);
-            mapValue.putDecimal128(valueIndex, decimal128A);
+        public void setDecimal128(MapValue mapValue, Decimal128 value) {
+            mapValue.putDecimal128(valueIndex, value);
         }
 
         @Override
@@ -352,9 +351,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
-            decimal256A.ofRaw(hh, hl, lh, ll);
-            mapValue.putDecimal256(valueIndex, decimal256A);
+        public void setDecimal256(MapValue mapValue, Decimal256 value) {
+            mapValue.putDecimal256(valueIndex, value);
         }
 
         @Override

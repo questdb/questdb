@@ -56,7 +56,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal256(record, decimal256A);
         if (decimal256A.isNull()) {
-            mapValue.putDecimal256(valueIndex, 0, 0, 0, 0);
+            mapValue.putDecimal256(valueIndex, Decimal256.ZERO);
             mapValue.putLong(valueIndex + 1, 0);
         } else {
             mapValue.putDecimal256(valueIndex, decimal256A);
@@ -165,7 +165,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putDecimal256(valueIndex, 0, 0, 0, 0);
+        mapValue.putDecimal256(valueIndex, Decimal256.ZERO);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

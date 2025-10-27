@@ -31,9 +31,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
@@ -58,7 +63,7 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
                     new Func64(value, targetType, position);
             case ColumnType.DECIMAL128 -> new Func128(value, targetType, position);
-            default -> new Func(value, targetType, position);
+            default -> new Func256(value, targetType, position);
         };
     }
 
@@ -98,41 +103,81 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
         return DecimalUtil.createDecimalConstant(decimal, targetPrecision, targetScale);
     }
 
-    private static class Func extends AbstractCastToDecimalFunction {
-        public Func(Function value, int targetType, int position) {
-            super(value, targetType, position);
+    private static class Func128 extends Decimal128Function implements UnaryFunction {
+        private final Function arg;
+        private final int position;
+        private final int precision;
+        private final int scale;
+
+        public Func128(Function value, int targetType, int position) {
+            super(targetType);
+            this.arg = value;
+            this.position = position;
+            this.precision = ColumnType.getDecimalPrecision(targetType);
+            this.scale = ColumnType.getDecimalScale(targetType);
         }
 
-        protected boolean cast(Record rec) {
-            Utf8Sequence sequence = this.arg.getVarcharA(rec);
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            var sequence = this.arg.getVarcharA(rec);
             if (sequence == null) {
-                return false;
+                sink.ofRawNull();
+                return;
             }
             try {
-                decimal.ofString(sequence.asAsciiCharSequence(), precision, scale);
+                sink.ofString(sequence.asAsciiCharSequence(), precision, scale);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
             }
-            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::").val(ColumnType.nameOf(type));
         }
     }
 
-    private static class Func128 extends AbstractCastToDecimal128Function {
-        public Func128(Function value, int targetType, int position) {
-            super(value, targetType, position);
+    private static class Func256 extends Decimal256Function implements UnaryFunction {
+        private final Function arg;
+        private final int position;
+        private final int precision;
+        private final int scale;
+
+        public Func256(Function value, int targetType, int position) {
+            super(targetType);
+            this.arg = value;
+            this.position = position;
+            this.precision = ColumnType.getDecimalPrecision(targetType);
+            this.scale = ColumnType.getDecimalScale(targetType);
         }
 
-        protected boolean cast(Record rec) {
-            Utf8Sequence sequence = this.arg.getVarcharA(rec);
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            var sequence = this.arg.getVarcharA(rec);
             if (sequence == null) {
-                return false;
+                sink.ofRawNull();
+                return;
             }
             try {
-                decimal.ofString(sequence.asAsciiCharSequence(), precision, scale);
+                sink.ofString(sequence.asAsciiCharSequence(), precision, scale);
             } catch (NumericException e) {
                 throw ImplicitCastException.inconvertibleValue(sequence, ColumnType.VARCHAR, type).position(position);
             }
-            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg).val("::").val(ColumnType.nameOf(type));
         }
     }
 

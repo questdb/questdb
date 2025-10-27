@@ -27,17 +27,19 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.Unordered2Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongAscList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Long256Impl;
@@ -55,6 +57,8 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 public class Unordered8MapTest extends AbstractCairoTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAllValueTypes() throws Exception {
@@ -117,8 +121,18 @@ public class Unordered8MapTest extends AbstractCairoTest {
                     value.putShort(14, rnd.nextShort());
                     value.putInt(15, rnd.nextInt());
                     value.putLong(16, rnd.nextLong());
-                    value.putDecimal128(17, rnd.nextLong(), rnd.nextLong());
-                    value.putDecimal256(18, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+                    decimal128.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal128(17, decimal128);
+                    decimal256.ofRaw(
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong(),
+                            rnd.nextLong()
+                    );
+                    value.putDecimal256(18, decimal256);
                 }
 
                 rnd.reset();
@@ -153,12 +167,14 @@ public class Unordered8MapTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextShort(), value.getDecimal16(14));
                     Assert.assertEquals(rnd.nextInt(), value.getDecimal32(15));
                     Assert.assertEquals(rnd.nextLong(), value.getDecimal64(16));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Hi(17));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal128Lo(17));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HH(18));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256HL(18));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LH(18));
-                    Assert.assertEquals(rnd.nextLong(), value.getDecimal256LL(18));
+                    value.getDecimal128(17, decimal128);
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                    Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
+                    value.getDecimal256(18, decimal256);
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                    Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                 }
 
                 try (RecordCursor cursor = map.getCursor()) {
@@ -221,12 +237,8 @@ public class Unordered8MapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextShort(), record.getDecimal16(col++));
                         Assert.assertEquals(rnd.nextInt(), record.getDecimal32(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getDecimal64(col++));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal128Hi(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal128Lo(col++));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256HH(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256HL(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256LH(col));
-                        Assert.assertEquals(rnd.nextLong(), record.getDecimal256LL(col));
+                        record.getDecimal128(col++, decimal128);
+                        record.getDecimal256(col, decimal256);
                     }
                 }
             }
@@ -277,12 +289,12 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testPutDecimal128Unsupported() throws Exception {
-        assertUnsupported(key -> key.putDecimal128(0, 0));
+        assertUnsupported(RecordSinkSPI::putDecimal128);
     }
 
     @Test
     public void testPutDecimal256Unsupported() throws Exception {
-        assertUnsupported(key -> key.putDecimal256(0, 0, 0, 0));
+        assertUnsupported(RecordSinkSPI::putDecimal256);
     }
 
     @Test

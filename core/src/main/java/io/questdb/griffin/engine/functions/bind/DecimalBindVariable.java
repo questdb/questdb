@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Mutable;
@@ -45,13 +46,8 @@ class DecimalBindVariable extends DecimalFunction implements Mutable {
     }
 
     @Override
-    public long getDecimal128Hi(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL128_HI_NULL : value.getLh();
-    }
-
-    @Override
-    public long getDecimal128Lo(Record rec) {
-        return value.isNull() ? Decimals.DECIMAL128_LO_NULL : value.getLl();
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        sink.ofRaw(value.getLh(), value.getLl());
     }
 
     @Override
@@ -60,23 +56,8 @@ class DecimalBindVariable extends DecimalFunction implements Mutable {
     }
 
     @Override
-    public long getDecimal256HH(Record rec) {
-        return value.getHh();
-    }
-
-    @Override
-    public long getDecimal256HL(Record rec) {
-        return value.getHl();
-    }
-
-    @Override
-    public long getDecimal256LH(Record rec) {
-        return value.getLh();
-    }
-
-    @Override
-    public long getDecimal256LL(Record rec) {
-        return value.getLl();
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        sink.copyRaw(value);
     }
 
     @Override

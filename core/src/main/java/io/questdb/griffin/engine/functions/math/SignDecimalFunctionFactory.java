@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.decimal.Decimal8Function;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -66,6 +68,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     // Function for DECIMAL128 input
     private static class Decimal128Func extends Decimal8Function implements UnaryFunction {
         final Function function;
+        private final Decimal128 decimal128 = new Decimal128();
 
         public Decimal128Func(Function function) {
             super(ColumnType.getDecimalType(1, 0));
@@ -79,18 +82,16 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getDecimal8(Record rec) {
-            long hi = function.getDecimal128Hi(rec);
-            long lo = function.getDecimal128Lo(rec);
+            function.getDecimal128(rec, decimal128);
 
-            // Check for NULL
-            if (hi == Decimals.DECIMAL128_HI_NULL && lo == Decimals.DECIMAL128_LO_NULL) {
+            if (decimal128.isNull()) {
                 return Decimals.DECIMAL8_NULL;
             }
 
             // Return sign: -1, 0, or 1
-            if (hi == 0 && lo == 0) {
+            if (decimal128.isZero()) {
                 return 0;
-            } else if (hi < 0) {
+            } else if (decimal128.isNegative()) {
                 return -1;
             } else {
                 return 1;
@@ -145,6 +146,7 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
     // Function for DECIMAL256 input
     private static class Decimal256Func extends Decimal8Function implements UnaryFunction {
         final Function function;
+        private final Decimal256 decimal256 = new Decimal256();
 
         public Decimal256Func(Function function) {
             super(ColumnType.getDecimalType(1, 0));
@@ -158,21 +160,15 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getDecimal8(Record rec) {
-            long hh = function.getDecimal256HH(rec);
-            long hl = function.getDecimal256HL(rec);
-            long lh = function.getDecimal256LH(rec);
-            long ll = function.getDecimal256LL(rec);
-
-            // Check for NULL
-            if (hh == Decimals.DECIMAL256_HH_NULL && hl == Decimals.DECIMAL256_HL_NULL &&
-                    lh == Decimals.DECIMAL256_LH_NULL && ll == Decimals.DECIMAL256_LL_NULL) {
+            function.getDecimal256(rec, decimal256);
+            if (decimal256.isNull()) {
                 return Decimals.DECIMAL8_NULL;
             }
 
             // Return sign: -1, 0, or 1
-            if (hh == 0 && hl == 0 && lh == 0 && ll == 0) {
+            if (decimal256.isZero()) {
                 return 0;
-            } else if (hh < 0) {
+            } else if (decimal256.isNegative()) {
                 return -1;
             } else {
                 return 1;
@@ -182,6 +178,11 @@ public class SignDecimalFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "sign";
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 

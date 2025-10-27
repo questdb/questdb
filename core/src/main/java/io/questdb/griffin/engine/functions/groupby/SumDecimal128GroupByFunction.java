@@ -218,8 +218,8 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
-    public void setDecimal256(MapValue mapValue, long hh, long hl, long lh, long ll) {
-        mapValue.putDecimal256(valueIndex, hh, hl, lh, ll);
+    public void setDecimal256(MapValue mapValue, Decimal256 value) {
+        mapValue.putDecimal256(valueIndex, value);
     }
 
     @Override

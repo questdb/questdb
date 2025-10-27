@@ -28,12 +28,14 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
-import io.questdb.std.Decimals;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
@@ -101,13 +103,8 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public long getDecimal128Hi(long offset) {
-        return Decimals.DECIMAL128_HI_NULL;
-    }
-
-    @Override
-    public long getDecimal128Lo(long offset) {
-        return Decimals.DECIMAL128_LO_NULL;
+    public void getDecimal128(long offset, Decimal128 sink) {
+        sink.ofRawNull();
     }
 
     @Override
@@ -116,23 +113,8 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public long getDecimal256HH(long offset) {
-        return Decimals.DECIMAL256_HH_NULL;
-    }
-
-    @Override
-    public long getDecimal256HL(long offset) {
-        return Decimals.DECIMAL256_HL_NULL;
-    }
-
-    @Override
-    public long getDecimal256LH(long offset) {
-        return Decimals.DECIMAL256_LH_NULL;
-    }
-
-    @Override
-    public long getDecimal256LL(long offset) {
-        return Decimals.DECIMAL256_LL_NULL;
+    public void getDecimal256(long offset, Decimal256 sink) {
+        sink.ofRawNull();
     }
 
     @Override

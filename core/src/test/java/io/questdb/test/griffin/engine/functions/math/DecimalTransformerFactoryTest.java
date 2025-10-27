@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.Decimal128Constant;
@@ -45,6 +46,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DecimalTransformerFactoryTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @Test
     public void testAddOneTransformerWithScale() {
@@ -105,14 +108,10 @@ public class DecimalTransformerFactoryTest {
                             result.getDecimal64(null);
                             break;
                         case ColumnType.DECIMAL128:
-                            result.getDecimal128Hi(null);
-                            result.getDecimal128Lo(null);
+                            result.getDecimal128(null, decimal128);
                             break;
                         case ColumnType.DECIMAL256:
-                            result.getDecimal256HH(null);
-                            result.getDecimal256HL(null);
-                            result.getDecimal256LH(null);
-                            result.getDecimal256LL(null);
+                            result.getDecimal256(null, decimal256);
                             break;
                     }
                 } catch (Exception e) {
@@ -140,11 +139,10 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new AddOneTransformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
 
-        long hi = result.getDecimal128Hi(null);
-        long lo = result.getDecimal128Lo(null);
-        Assert.assertEquals(0, hi);
+        result.getDecimal128(null, decimal128);
+        Assert.assertEquals(0, decimal128.getHigh());
         // Adding 1 with scale 5 means adding 100000
-        Assert.assertEquals(999 + 100000, lo);
+        Assert.assertEquals(999 + 100000, decimal128.getLow());
     }
 
     @Test
@@ -173,10 +171,9 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
 
-        long hi = result.getDecimal128Hi(null);
-        long lo = result.getDecimal128Lo(null);
-        Assert.assertEquals(0, hi);
-        Assert.assertEquals(15000, lo);
+        result.getDecimal128(null, decimal128);
+        Assert.assertEquals(0, decimal128.getHigh());
+        Assert.assertEquals(15000, decimal128.getLow());
     }
 
     @Test
@@ -185,14 +182,11 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
 
-        long hh = result.getDecimal256HH(null);
-        long hl = result.getDecimal256HL(null);
-        long lh = result.getDecimal256LH(null);
-        long ll = result.getDecimal256LL(null);
-        Assert.assertEquals(0, hh);
-        Assert.assertEquals(0, hl);
-        Assert.assertEquals(0, lh);
-        Assert.assertEquals(5000, ll);
+        result.getDecimal256(null, decimal256);
+        Assert.assertEquals(0, decimal256.getHh());
+        Assert.assertEquals(0, decimal256.getHl());
+        Assert.assertEquals(0, decimal256.getLh());
+        Assert.assertEquals(5000, decimal256.getLl());
     }
 
     @Test
@@ -221,10 +215,9 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
 
-        long hi = result.getDecimal128Hi(null);
-        long lo = result.getDecimal128Lo(null);
-        Assert.assertEquals(0, hi);
-        Assert.assertEquals(84, lo);
+        result.getDecimal128(null, decimal128);
+        Assert.assertEquals(0, decimal128.getHigh());
+        Assert.assertEquals(84, decimal128.getLow());
     }
 
     @Test
@@ -243,14 +236,11 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
 
-        long hh = result.getDecimal256HH(null);
-        long hl = result.getDecimal256HL(null);
-        long lh = result.getDecimal256LH(null);
-        long ll = result.getDecimal256LL(null);
-        Assert.assertEquals(0, hh);
-        Assert.assertEquals(0, hl);
-        Assert.assertEquals(0, lh);
-        Assert.assertEquals(84, ll);
+        result.getDecimal256(null, decimal256);
+        Assert.assertEquals(0, decimal256.getHh());
+        Assert.assertEquals(0, decimal256.getHl());
+        Assert.assertEquals(0, decimal256.getLh());
+        Assert.assertEquals(84, decimal256.getLl());
     }
 
     @Test
@@ -325,11 +315,9 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
 
-        long hi = result.getDecimal128Hi(null);
-        long lo = result.getDecimal128Lo(null);
-
-        Assert.assertEquals(0, hi);
-        Assert.assertEquals(1999999998L, lo); // 9.99999999 * 2 = 19.99999998
+        result.getDecimal128(null, decimal128);
+        Assert.assertEquals(0, decimal128.getHigh());
+        Assert.assertEquals(1999999998L, decimal128.getLow()); // 9.99999999 * 2 = 19.99999998
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -345,15 +333,11 @@ public class DecimalTransformerFactoryTest {
         DecimalTransformer transformer = new MultiplyBy2Transformer();
         DecimalFunction result = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
 
-        long hh = result.getDecimal256HH(null);
-        long hl = result.getDecimal256HL(null);
-        long lh = result.getDecimal256LH(null);
-        long ll = result.getDecimal256LL(null);
-
-        Assert.assertEquals(0, hh);
-        Assert.assertEquals(0, hl);
-        Assert.assertEquals(0, lh);
-        Assert.assertEquals(10000000000L, ll); // 5.000000000 * 2 = 10.000000000
+        result.getDecimal256(null, decimal256);
+        Assert.assertEquals(0, decimal256.getHh());
+        Assert.assertEquals(0, decimal256.getHl());
+        Assert.assertEquals(0, decimal256.getLh());
+        Assert.assertEquals(10000000000L, decimal256.getLl()); // 5.000000000 * 2 = 10.000000000
     }
 
     @Test
@@ -374,8 +358,9 @@ public class DecimalTransformerFactoryTest {
         // Scale 5 (five decimal places)
         Function scale5Source = new Decimal64Constant(4250000L, ColumnType.getDecimalType(10, 5)); // 42.50000
         DecimalFunction scale5Result = DecimalTransformerFactory.newInstance(scale5Source, ColumnType.DECIMAL128, multiplyTransformer);
-        Assert.assertEquals(0, scale5Result.getDecimal128Hi(null));
-        Assert.assertEquals(8500000L, scale5Result.getDecimal128Lo(null)); // 42.50000 * 2 = 85.00000
+        scale5Result.getDecimal128(null, decimal128);
+        Assert.assertEquals(0, decimal128.getHigh());
+        Assert.assertEquals(8500000L, decimal128.getLow()); // 42.50000 * 2 = 85.00000
     }
 
     @Test
@@ -423,15 +408,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal128 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal128 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -457,15 +440,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal16 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal16 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -493,15 +474,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal256 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal256 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -527,15 +506,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal32 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal32 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -561,15 +538,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal64 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal64 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -595,15 +570,13 @@ public class DecimalTransformerFactoryTest {
 
         // Test Decimal8 to Decimal128
         DecimalFunction result128 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL128, transformer);
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, result128.getDecimal128Hi(null));
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, result128.getDecimal128Lo(null));
+        result128.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
 
         // Test Decimal8 to Decimal256
         DecimalFunction result256 = DecimalTransformerFactory.newInstance(sourceFunc, ColumnType.DECIMAL256, transformer);
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, result256.getDecimal256HH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, result256.getDecimal256HL(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, result256.getDecimal256LH(null));
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, result256.getDecimal256LL(null));
+        result256.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test
@@ -649,7 +622,7 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal128 value) {
+        public void transform(Decimal128 value, Record record) {
             long lo = value.getLow();
             int scale = value.getScale();
             long factor = 1;
@@ -660,7 +633,7 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal256 value) {
+        public void transform(Decimal256 value, Record record) {
             long ll = value.getLl();
             int scale = value.getScale();
             long factor = 1;
@@ -671,7 +644,7 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal64 value) {
+        public void transform(Decimal64 value, Record record) {
             long v = value.getValue();
             int scale = value.getScale();
             long factor = 1;
@@ -690,21 +663,21 @@ public class DecimalTransformerFactoryTest {
         }
 
         @Override
-        public void transform(Decimal128 value) {
+        public void transform(Decimal128 value, Record record) {
             // For simplicity, we'll just double the low part
             long lo = value.getLow();
             value.of(0, lo * 2, value.getScale());
         }
 
         @Override
-        public void transform(Decimal256 value) {
+        public void transform(Decimal256 value, Record record) {
             // For simplicity, we'll just double the lowest part
             long ll = value.getLl();
             value.ofLong(ll * 2, value.getScale());
         }
 
         @Override
-        public void transform(Decimal64 value) {
+        public void transform(Decimal64 value, Record record) {
             long v = value.getValue();
             value.of(v * 2, value.getScale());
         }

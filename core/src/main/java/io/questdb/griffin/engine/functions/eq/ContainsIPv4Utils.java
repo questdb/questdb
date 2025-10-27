@@ -34,8 +34,6 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -115,16 +113,6 @@ public class ContainsIPv4Utils {
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg);
             sink.val("<<").val(subnet).val('\'');
@@ -151,16 +139,6 @@ public class ContainsIPv4Utils {
                 return false;
             }
             return (ipv4Func.getIPv4(rec) & netmask) == subnet;
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -236,16 +214,6 @@ public class ContainsIPv4Utils {
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public Function getLeft() {
             return ipv4Func;
         }
@@ -294,16 +262,6 @@ public class ContainsIPv4Utils {
                 return false;
             }
             return (ipv4Func.getIPv4(rec) & netmask) == subnet;
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -72,8 +73,8 @@ public class DivDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected void exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
-            decimal.divide(rightHH, rightHL, rightLH, rightLL, rightScale, scale, RoundingMode.HALF_EVEN);
+        protected void exec(Decimal256 right) {
+            decimal.divide(right, scale, RoundingMode.HALF_EVEN);
         }
     }
 }

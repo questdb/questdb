@@ -26,6 +26,8 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.NullMemoryCMR;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
@@ -65,13 +67,10 @@ public class NullMemoryCMRTest {
     }
 
     @Test
-    public void getDecimal128Hi() {
-        Assert.assertEquals(Decimals.DECIMAL128_HI_NULL, NullMemoryCMR.INSTANCE.getDecimal128Hi(1234));
-    }
-
-    @Test
-    public void getDecimal128Lo() {
-        Assert.assertEquals(Decimals.DECIMAL128_LO_NULL, NullMemoryCMR.INSTANCE.getDecimal128Lo(1234));
+    public void getDecimal128() {
+        var decimal128 = new Decimal128();
+        NullMemoryCMR.INSTANCE.getDecimal128(1234, decimal128);
+        Assert.assertTrue(decimal128.isNull());
     }
 
     @Test
@@ -80,23 +79,10 @@ public class NullMemoryCMRTest {
     }
 
     @Test
-    public void getDecimal256HH() {
-        Assert.assertEquals(Decimals.DECIMAL256_HH_NULL, NullMemoryCMR.INSTANCE.getDecimal256HH(1234));
-    }
-
-    @Test
-    public void getDecimal256HL() {
-        Assert.assertEquals(Decimals.DECIMAL256_HL_NULL, NullMemoryCMR.INSTANCE.getDecimal256HL(1234));
-    }
-
-    @Test
-    public void getDecimal256LH() {
-        Assert.assertEquals(Decimals.DECIMAL256_LH_NULL, NullMemoryCMR.INSTANCE.getDecimal256LH(1234));
-    }
-
-    @Test
-    public void getDecimal256LL() {
-        Assert.assertEquals(Decimals.DECIMAL256_LL_NULL, NullMemoryCMR.INSTANCE.getDecimal256LL(1234));
+    public void getDecimal256() {
+        var decimal256 = new Decimal256();
+        NullMemoryCMR.INSTANCE.getDecimal256(1234, decimal256);
+        Assert.assertTrue(decimal256.isNull());
     }
 
     @Test

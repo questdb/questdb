@@ -143,8 +143,8 @@ public final class ColumnType {
     public static final int INTERVAL_RAW = INTERVAL;
     public static final int INTERVAL_TIMESTAMP_MICRO = INTERVAL | 1 << 17;
     public static final int INTERVAL_TIMESTAMP_NANO = INTERVAL | 1 << 18;
-    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
     public static final int DECIMAL_DEFAULT_TYPE_TAG = DECIMAL64;
+    public static final int DECIMAL_DEFAULT_TYPE = getDecimalType(18, 3);
     public static final int TIMESTAMP_MICRO = TIMESTAMP;
     public static final int TIMESTAMP_NANO = 1 << 18 | TIMESTAMP;
     public static final int VARCHAR_AUX_SHL = 4;
@@ -320,6 +320,22 @@ public final class ColumnType {
         // Construct the type following the layout described earlier.
         // DECIMAL8-256 needs to be clustered together for this to work.
         return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | (DECIMAL8 + size);
+    }
+
+    /**
+     * Encode a decimal type from a given tag, precision and scale.
+     *
+     * @param tag       to be encoded in the decimal type
+     * @param precision to be encoded in the decimal type
+     * @param scale     to be encoded in the decimal type
+     * @return the generated type as an int
+     */
+    public static int getDecimalType(int tag, int precision, int scale) {
+        assert precision > 0 && precision <= Decimals.MAX_PRECISION;
+        assert scale >= 0 && scale <= Decimals.MAX_SCALE;
+        // Construct the type following the layout described earlier.
+        // DECIMAL8-256 needs to be clustered together for this to work.
+        return ((scale & 0xFF) << 18) | ((precision & 0xFF) << 8) | tag;
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {

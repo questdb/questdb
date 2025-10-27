@@ -31,8 +31,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -69,16 +67,6 @@ public class SinDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             return StrictMath.sin(angleRad.getDouble(rec));
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

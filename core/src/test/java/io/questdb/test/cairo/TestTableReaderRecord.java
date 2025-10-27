@@ -29,6 +29,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
@@ -101,18 +103,16 @@ public class TestTableReaderRecord implements Record, Sinkable {
         return reader.getColumn(absoluteColumnIndex).getChar(offset);
     }
 
-    @Override
-    public long getDecimal128Hi(int col) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
-        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL128_HI_NULL : reader.getColumn(absoluteColumnIndex).getDecimal128Hi(offset);
-    }
 
     @Override
-    public long getDecimal128Lo(int col) {
+    public void getDecimal128(int col, Decimal128 sink) {
         final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL128_LO_NULL : reader.getColumn(absoluteColumnIndex).getDecimal128Lo(offset);
+        if (offset < 0) {
+            sink.ofRawNull();
+        } else {
+            reader.getColumn(absoluteColumnIndex).getDecimal128(offset, sink);
+        }
     }
 
     @Override
@@ -123,31 +123,14 @@ public class TestTableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    public long getDecimal256HH(int col) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
+    public void getDecimal256(int col, Decimal256 sink) {
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL256_HH_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256HH(offset);
-    }
-
-    @Override
-    public long getDecimal256HL(int col) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
-        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL256_HL_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256HL(offset);
-    }
-
-    @Override
-    public long getDecimal256LH(int col) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
-        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL256_LH_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256LH(offset);
-    }
-
-    @Override
-    public long getDecimal256LL(int col) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
-        final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
-        return offset < 0 ? Decimals.DECIMAL256_LL_NULL : reader.getColumn(absoluteColumnIndex).getDecimal256LL(offset);
+        if (offset < 0) {
+            sink.ofRawNull();
+        } else {
+            reader.getColumn(absoluteColumnIndex).getDecimal256(offset, sink);
+        }
     }
 
     @Override

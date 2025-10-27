@@ -81,13 +81,8 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Hi() {
-        nullFunction.getDecimal128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal128Lo() {
-        nullFunction.getDecimal128Lo(null);
+    public void testGetDecimal128() {
+        nullFunction.getDecimal128(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -96,23 +91,8 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HH() {
-        nullFunction.getDecimal256HH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256HL() {
-        nullFunction.getDecimal256HL(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LH() {
-        nullFunction.getDecimal256LH(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDecimal256LL() {
-        nullFunction.getDecimal256LL(null);
+    public void testGetDecimal256() {
+        nullFunction.getDecimal256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

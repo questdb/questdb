@@ -33,6 +33,8 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
@@ -52,6 +54,8 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class MemoryCARWImplTest {
+    Decimal128 decimal128 = new Decimal128();
+    Decimal256 decimal256 = new Decimal256();
 
     @AfterClass
     public static void afterClass() {
@@ -295,8 +299,9 @@ public class MemoryCARWImplTest {
 
             o = 0;
             for (int i = 0; i < n; i++) {
-                assertEquals(i, mem.getDecimal128Hi(o));
-                assertEquals(-i, mem.getDecimal128Lo(o));
+                mem.getDecimal128(o, decimal128);
+                assertEquals(i, decimal128.getHigh());
+                assertEquals(-i, decimal128.getLow());
                 o += Long.BYTES << 1;
             }
         }
@@ -315,8 +320,9 @@ public class MemoryCARWImplTest {
 
             o = 0;
             for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getDecimal128Hi(o));
-                assertEquals(-i, mem.getDecimal128Lo(o));
+                mem.getDecimal128(o, decimal128);
+                assertEquals(i, decimal128.getHigh());
+                assertEquals(-i, decimal128.getLow());
                 o += Long.BYTES << 1;
             }
         }
@@ -336,10 +342,11 @@ public class MemoryCARWImplTest {
 
             o = 0;
             for (int i = 0; i < n; i++) {
-                assertEquals(i, mem.getDecimal256HH(o));
-                assertEquals(-i, mem.getDecimal256HL(o));
-                assertEquals(i + 1, mem.getDecimal256LH(o));
-                assertEquals(-i - 1, mem.getDecimal256LL(o));
+                mem.getDecimal256(o, decimal256);
+                assertEquals(i, decimal256.getHh());
+                assertEquals(-i, decimal256.getHl());
+                assertEquals(i + 1, decimal256.getLh());
+                assertEquals(-i - 1, decimal256.getLl());
                 o += Long.BYTES << 2;
             }
         }
@@ -358,10 +365,11 @@ public class MemoryCARWImplTest {
 
             o = 0;
             for (int i = n; i > 0; i--) {
-                assertEquals(i, mem.getDecimal256HH(o));
-                assertEquals(-i, mem.getDecimal256HL(o));
-                assertEquals(i + 1, mem.getDecimal256LH(o));
-                assertEquals(-i - 1, mem.getDecimal256LL(o));
+                mem.getDecimal256(o, decimal256);
+                assertEquals(i, decimal256.getHh());
+                assertEquals(-i, decimal256.getHl());
+                assertEquals(i + 1, decimal256.getLh());
+                assertEquals(-i - 1, decimal256.getLl());
                 o += Long.BYTES << 2;
             }
         }

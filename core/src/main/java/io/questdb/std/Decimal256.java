@@ -273,6 +273,22 @@ public class Decimal256 implements Sinkable, Decimal {
         return Long.compareUnsigned(aLL, bLL);
     }
 
+    public static int compare(Decimal256 a, Decimal256 b) {
+        int s = Long.compare(a.getHh(), b.getHh());
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(a.getHl(), b.getHl());
+        if (s != 0) {
+            return s;
+        }
+        s = Long.compareUnsigned(a.getLh(), b.getLh());
+        if (s != 0) {
+            return s;
+        }
+        return Long.compareUnsigned(a.getLl(), b.getLl());
+    }
+
     /**
      * Compare two Decimal256.
      *
@@ -1356,7 +1372,7 @@ public class Decimal256 implements Sinkable, Decimal {
         if (isNull()) {
             return;
         }
-        negate0();
+        negateNonNull();
     }
 
     /**
@@ -1444,6 +1460,19 @@ public class Decimal256 implements Sinkable, Decimal {
         this.hl = s;
         this.lh = high;
         this.ll = low;
+    }
+
+    /**
+     * Sets this Decimal256 to the specified 64-bit value, but does not change the scale.
+     *
+     * @param value the 64 bits (bits 0-63)
+     */
+    public void ofRaw(long value) {
+        long s = value < 0 ? -1L : 0L;
+        this.hh = s;
+        this.hl = s;
+        this.lh = s;
+        this.ll = value;
     }
 
     public void ofRawAddress(long addr) {
@@ -1552,7 +1581,7 @@ public class Decimal256 implements Sinkable, Decimal {
         if (this.scale < targetScale) {
             boolean isNegative = isNegative();
             if (isNegative) {
-                negate0();
+                negateNonNull();
             }
 
             // Need to increase scale (add trailing zeros)
@@ -1561,7 +1590,7 @@ public class Decimal256 implements Sinkable, Decimal {
             this.scale = targetScale;
 
             if (isNegative) {
-                negate0();
+                negateNonNull();
             }
             return;
         }
@@ -2743,7 +2772,7 @@ public class Decimal256 implements Sinkable, Decimal {
      * Negates this Decimal256 in-place using two's complement arithmetic.
      * Changes the sign of the decimal number (positive becomes negative and vice versa).
      */
-    private void negate0() {
+    public void negateNonNull() {
         ll = ~ll + 1;
         long c = ll == 0L ? 1L : 0L;
         lh = ~lh + c;
@@ -2763,14 +2792,14 @@ public class Decimal256 implements Sinkable, Decimal {
 
         boolean isNegative = isNegative();
         if (isNegative) {
-            negate0();
+            negateNonNull();
         }
 
         // Multiply by 10^scaleDiff
         multiplyByPowerOf10InPlace(scaleDiff);
 
         if (isNegative) {
-            negate0();
+            negateNonNull();
         }
 
         this.scale = newScale;

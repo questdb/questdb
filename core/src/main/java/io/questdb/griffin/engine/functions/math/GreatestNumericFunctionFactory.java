@@ -45,8 +45,11 @@ import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal128LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal256LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -200,46 +203,47 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
     }
 
     private static class GreatestDecimal128RecordFunction extends Decimal128Function implements MultiArgFunction {
+        private final int[] argScales;
         private final ObjList<Function> args;
         private final Decimal128 decimal128 = new Decimal128();
-        private final Decimal128 greatest = new Decimal128();
         private final int n;
         private final int scale;
 
         public GreatestDecimal128RecordFunction(int type, int scale, ObjList<Function> args) {
             super(type);
             this.scale = scale;
-            this.args = args;
             this.n = args.size();
+            this.args = new ObjList<>(n);
+            for (int i = 0; i < n; i++) {
+                this.args.setQuick(i, Decimal128LoaderFunctionFactory.getInstance(args.getQuick(i)));
+            }
+            this.argScales = new int[n];
+            for (int i = 0; i < n; i++) {
+                this.argScales[i] = ColumnType.getDecimalScale(args.getQuick(i).getType());
+            }
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            greatest.ofNull();
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.ofRawNull();
             for (int i = 0; i < n; i++) {
                 Function arg = args.getQuick(i);
-                // We need to cast everything to a decimal128 to be able to compare against the lowest value
-                DecimalUtil.load(decimal128, arg, rec);
+                arg.getDecimal128(rec, decimal128);
                 if (!decimal128.isNull()) {
-                    if (decimal128.getScale() != scale) {
+                    if (argScales[i] != scale) {
+                        decimal128.setScale(argScales[i]);
                         decimal128.rescale(scale);
                     }
-                    if (decimal128.compareTo(greatest) > 0) {
-                        greatest.copyFrom(decimal128);
+                    if (decimal128.compareTo(sink) > 0) {
+                        sink.copyFrom(decimal128);
                     }
                 }
             }
-            return greatest.getHigh();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return greatest.getLow();
         }
 
         @Override
@@ -255,62 +259,53 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     private static class GreatestDecimal256RecordFunction extends Decimal256Function implements MultiArgFunction {
         private final IntList argPositions;
+        private final int[] argScales;
         private final ObjList<Function> args;
         private final Decimal256 decimal256 = new Decimal256();
-        private final Decimal256 greatest = new Decimal256();
         private final int n;
         private final int scale;
 
         public GreatestDecimal256RecordFunction(int type, int scale, ObjList<Function> args, IntList argPositions) {
             super(type);
             this.scale = scale;
-            this.args = args;
             this.argPositions = argPositions;
             this.n = args.size();
+            this.args = new ObjList<>(n);
+            for (int i = 0; i < n; i++) {
+                this.args.setQuick(i, Decimal256LoaderFunctionFactory.getInstance(args.getQuick(i)));
+            }
+            this.argScales = new int[n];
+            for (int i = 0; i < n; i++) {
+                this.argScales[i] = ColumnType.getDecimalScale(args.getQuick(i).getType());
+            }
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            greatest.ofNull();
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.ofRawNull();
             for (int i = 0; i < n; i++) {
                 Function arg = args.getQuick(i);
-                // We need to cast everything to a decimal256 to be able to compare against the lowest value
-                DecimalUtil.load(decimal256, arg, rec);
+                arg.getDecimal256(rec, decimal256);
                 if (!decimal256.isNull()) {
-                    if (decimal256.getScale() != scale) {
+                    if (argScales[i] != scale) {
                         try {
+                            decimal256.setScale(argScales[i]);
                             decimal256.rescale(scale);
                         } catch (NumericException ex) {
                             throw ImplicitCastException.inconvertibleValue(decimal256, arg.getType(), type)
                                     .position(argPositions.getQuick(i));
                         }
                     }
-                    if (decimal256.compareTo(greatest) > 0) {
-                        greatest.copyFrom(decimal256);
+                    if (decimal256.compareTo(sink) > 0) {
+                        sink.copyFrom(decimal256);
                     }
                 }
             }
-            return greatest.getHh();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return greatest.getHl();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return greatest.getLh();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return greatest.getLl();
         }
 
         @Override
@@ -325,6 +320,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
     }
 
     private static class GreatestDecimal64RecordFunction extends Decimal64Function implements MultiArgFunction {
+        private final int[] argScales;
         private final ObjList<Function> args;
         private final Decimal64 decimal64 = new Decimal64();
         private final Decimal64 greatest = new Decimal64();
@@ -334,12 +330,19 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public GreatestDecimal64RecordFunction(int type, int scale, ObjList<Function> args) {
             super(type);
             this.scale = scale;
-            this.args = args;
             this.n = args.size();
+            this.args = new ObjList<>(n);
+            for (int i = 0; i < n; i++) {
+                this.args.setQuick(i, Decimal64LoaderFunctionFactory.getInstance(args.getQuick(i)));
+            }
+            this.argScales = new int[n];
+            for (int i = 0; i < n; i++) {
+                this.argScales[i] = ColumnType.getDecimalScale(args.getQuick(i).getType());
+            }
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -383,13 +386,13 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
          * @param rec Record use to load values from functions
          */
         private void compute(Record rec) {
-            greatest.ofNull();
+            greatest.ofRawNull();
             for (int i = 0; i < n; i++) {
                 Function arg = args.getQuick(i);
-                // We need to cast everything to a decimal64 to be able to compare against the lowest value
-                DecimalUtil.load(decimal64, arg, rec);
+                decimal64.ofRaw(arg.getDecimal64(rec));
                 if (!decimal64.isNull()) {
-                    if (decimal64.getScale() != scale) {
+                    if (argScales[i] != scale) {
+                        decimal64.setScale(argScales[i]);
                         decimal64.rescale(scale);
                     }
                     if (decimal64.compareTo(greatest) > 0) {
@@ -402,6 +405,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
+        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int n;
         private final StringSink sink = new StringSink();
@@ -412,7 +416,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -442,7 +446,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         private double load(Function arg, Record rec) {
             final int type = arg.getType();
             if (ColumnType.isDecimal(type)) {
-                DecimalUtil.load(decimal256, arg, rec, type);
+                DecimalUtil.load(decimal256, decimal128, arg, rec, type);
                 if (decimal256.isNull()) {
                     return Double.NEGATIVE_INFINITY;
                 }
@@ -464,7 +468,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 
@@ -500,7 +504,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

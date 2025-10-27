@@ -134,8 +134,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightHigh, long rightLow, int rightScale) {
-            return decimal.compareTo(rightHigh, rightLow, rightScale) < 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) < 0;
         }
     }
 
@@ -157,8 +157,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightHH, long rightHL, long rightLH, long rightLL, int rightScale) {
-            return decimal.compareTo(rightHH, rightHL, rightLH, rightLL, rightScale) < 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) < 0;
         }
     }
 
@@ -180,12 +180,14 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected boolean exec(long rightValue, int rightScale) {
-            return decimal.compareTo(rightValue, rightScale) < 0;
+        protected boolean exec() {
+            return decimalLeft.compareTo(decimalRight) < 0;
         }
     }
 
     private static class UnscaledDecimal128Func extends AbstractLtBinaryFunction {
+        private final Decimal128 decimalLeft = new Decimal128();
+        private final Decimal128 decimalRight = new Decimal128();
 
         public UnscaledDecimal128Func(Function left, Function right) {
             super(left, right);
@@ -193,18 +195,23 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long aHi = left.getDecimal128Hi(rec);
-            final long aLo = left.getDecimal128Lo(rec);
-            final long bHi = right.getDecimal128Hi(rec);
-            final long bLo = right.getDecimal128Lo(rec);
+            left.getDecimal128(rec, decimalLeft);
+            right.getDecimal128(rec, decimalRight);
 
-            if (Decimal128.isNull(aHi, aLo) || Decimal128.isNull(bHi, bLo)) {
+            if (decimalLeft.isNull() || decimalRight.isNull()) {
                 return false;
             }
+            long aHi = decimalLeft.getHigh();
+            long bHi = decimalRight.getHigh();
             if (aHi != bHi) {
                 return negated == (aHi > bHi);
             }
-            return negated == (Long.compareUnsigned(aLo, bLo) >= 0);
+            return negated == (Long.compareUnsigned(decimalLeft.getLow(), decimalRight.getLow()) >= 0);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
@@ -226,6 +233,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class UnscaledDecimal256Func extends AbstractLtBinaryFunction {
+        private final Decimal256 decimalLeft = new Decimal256();
+        private final Decimal256 decimalRight = new Decimal256();
 
         public UnscaledDecimal256Func(Function left, Function right) {
             super(left, right);
@@ -233,28 +242,35 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long aHH = left.getDecimal256HH(rec);
-            final long aHL = left.getDecimal256HL(rec);
-            final long aLH = left.getDecimal256LH(rec);
-            final long aLL = left.getDecimal256LL(rec);
-            final long bHH = right.getDecimal256HH(rec);
-            final long bHL = right.getDecimal256HL(rec);
-            final long bLH = right.getDecimal256LH(rec);
-            final long bLL = right.getDecimal256LL(rec);
+            left.getDecimal256(rec, decimalLeft);
+            right.getDecimal256(rec, decimalRight);
 
-            if (Decimal256.isNull(aHH, aHL, aLH, aLL) || Decimal256.isNull(bHH, bHL, bLH, bLL)) {
+            if (decimalLeft.isNull() || decimalRight.isNull()) {
                 return false;
             }
+            long aHH = decimalLeft.getHh();
+            long bHH = decimalRight.getHh();
             if (aHH != bHH) {
                 return negated == (aHH > bHH);
             }
+            final long aHL = decimalLeft.getHl();
+            final long bHL = decimalRight.getHl();
             if (aHL != bHL) {
                 return negated == (Long.compareUnsigned(aHL, bHL) > 0);
             }
+            final long aLH = decimalLeft.getLh();
+            final long bLH = decimalRight.getLh();
             if (aLH != bLH) {
                 return negated == (Long.compareUnsigned(aLH, bLH) > 0);
             }
+            final long aLL = decimalLeft.getLl();
+            final long bLL = decimalRight.getLl();
             return negated == (Long.compareUnsigned(aLL, bLL) >= 0);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 

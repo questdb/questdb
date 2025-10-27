@@ -100,39 +100,38 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static void sinkBin(Utf16Sink sink, Function function, Record record) {
+    private static void sinkBin(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put('[');
         sink.put(']');
     }
 
-    private static void sinkBool(Utf16Sink sink, Function function, Record record) {
+    private static void sinkBool(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getBool(record));
     }
 
-    private static void sinkByte(Utf16Sink sink, Function function, Record record) {
+    private static void sinkByte(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getByte(record));
     }
 
-    private static void sinkChar(Utf16Sink sink, Function function, Record record) {
+    private static void sinkChar(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getChar(record));
     }
 
-    private static void sinkDate(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDate(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getDate(record));
     }
 
-    private static void sinkDecimal128(Utf16Sink sink, Function function, Record record) {
-        long hi = function.getDecimal128Hi(record);
-        long lo = function.getDecimal128Lo(record);
-        if (Decimal128.isNull(hi, lo)) {
+    private static void sinkDecimal128(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
+        function.getDecimal128(record, decimal128);
+        if (decimal128.isNull()) {
             sink.putAscii("null");
         } else {
             final int type = function.getType();
-            Decimals.append(hi, lo, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+            Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void sinkDecimal16(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDecimal16(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         short value = function.getDecimal16(record);
         if (value == Decimals.DECIMAL16_NULL) {
             sink.putAscii("null");
@@ -141,20 +140,17 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static void sinkDecimal256(Utf16Sink sink, Function function, Record record) {
-        long hh = function.getDecimal256HH(record);
-        long hl = function.getDecimal256HL(record);
-        long lh = function.getDecimal256LH(record);
-        long ll = function.getDecimal256LL(record);
-        if (Decimal256.isNull(hh, hl, lh, ll)) {
+    private static void sinkDecimal256(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
+        function.getDecimal256(record, decimal256);
+        if (decimal256.isNull()) {
             sink.putAscii("null");
         } else {
             final int type = function.getType();
-            Decimals.append(hh, hl, lh, ll, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
+            Decimals.append(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
         }
     }
 
-    private static void sinkDecimal32(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDecimal32(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         int value = function.getDecimal32(record);
         if (value == Decimals.DECIMAL32_NULL) {
             sink.putAscii("null");
@@ -163,7 +159,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static void sinkDecimal64(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDecimal64(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         long value = function.getDecimal64(record);
         if (value == Decimals.DECIMAL64_NULL) {
             sink.putAscii("null");
@@ -172,7 +168,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static void sinkDecimal8(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDecimal8(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         byte value = function.getDecimal8(record);
         if (value == Decimals.DECIMAL8_NULL) {
             sink.putAscii("null");
@@ -185,68 +181,70 @@ public class ConcatFunctionFactory implements FunctionFactory {
         Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), sink);
     }
 
-    private static void sinkDouble(Utf16Sink sink, Function function, Record record) {
+    private static void sinkDouble(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getDouble(record));
     }
 
-    private static void sinkFloat(Utf16Sink sink, Function function, Record record) {
+    private static void sinkFloat(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getFloat(record));
     }
 
-    private static void sinkIPv4(Utf16Sink utf16Sink, Function function, Record record) {
+    private static void sinkIPv4(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink utf16Sink, Function function, Record record) {
         Numbers.intToIPv4Sink(utf16Sink, function.getIPv4(record));
     }
 
-    private static void sinkInt(Utf16Sink sink, Function function, Record record) {
+    private static void sinkInt(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getInt(record));
     }
 
-    private static void sinkLong(Utf16Sink sink, Function function, Record record) {
+    private static void sinkLong(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getLong(record));
     }
 
-    private static void sinkLong256(Utf16Sink sink, Function function, Record record) {
+    private static void sinkLong256(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         function.getLong256(record, sink);
     }
 
-    private static void sinkNull(Utf16Sink sink, Function function, Record record) {
+    private static void sinkNull(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         // ignore nulls
     }
 
-    private static void sinkShort(Utf16Sink sink, Function function, Record record) {
+    private static void sinkShort(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getShort(record));
     }
 
-    private static void sinkStr(Utf16Sink sink, Function function, Record record) {
+    private static void sinkStr(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getStrA(record));
     }
 
-    private static void sinkSymbol(Utf16Sink sink, Function function, Record record) {
+    private static void sinkSymbol(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         sink.put(function.getSymbol(record));
     }
 
-    private static void sinkTimestamp(Utf16Sink sink, Function function, Record record) {
+    private static void sinkTimestamp(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         ColumnType.getTimestampDriver(function.getType()).append(sink, function.getTimestamp(record));
     }
 
-    private static void sinkUuid(Utf16Sink sink, Function function, Record record) {
+    private static void sinkUuid(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record) {
         long lo = function.getLong128Lo(record);
         long hi = function.getLong128Hi(record);
         SqlUtil.implicitCastUuidAsStr(lo, hi, sink);
     }
 
-    private static void sinkVarchar(Utf16Sink utf16Sink, Function function, Record record) {
+    private static void sinkVarchar(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink utf16Sink, Function function, Record record) {
         utf16Sink.put(function.getStrA(record));
     }
 
     @FunctionalInterface
     private interface TypeAdapter {
-        void sink(Utf16Sink sink, Function function, Record record);
+        void sink(Decimal256 decimal256, Decimal128 decimal128, Utf16Sink sink, Function function, Record record);
     }
 
     private static class ConcatFunction extends StrFunction implements MultiArgFunction {
         private final ObjList<TypeAdapter> adapters;
         private final IntList argPositions;
+        private final Decimal128 decimal128 = new Decimal128();
+        private final Decimal256 decimal256 = new Decimal256();
         private final int functionCount;
         private final ObjList<Function> functions;
         private final StringSink sinkA = new StringSink();
@@ -260,7 +258,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return functions;
         }
 
@@ -296,7 +294,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
         private void getStr(Record rec, Utf16Sink utf16Sink) {
             for (int i = 0; i < functionCount; i++) {
-                adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
+                adapters.getQuick(i).sink(decimal256, decimal128, utf16Sink, functions.getQuick(i), rec);
             }
         }
     }
@@ -307,12 +305,14 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
         public ConstConcatFunction(ObjList<Function> functions, IntList argPositions) throws SqlException {
             this.functions = functions;
+            Decimal128 decimal128 = new Decimal128();
+            Decimal256 decimal256 = new Decimal256();
 
             final int functionCount = functions.size();
             final ObjList<TypeAdapter> adapters = new ObjList<>(functionCount);
             populateAdapters(adapters, functions, argPositions);
             for (int i = 0; i < functionCount; i++) {
-                adapters.getQuick(i).sink(sink, functions.getQuick(i), null);
+                adapters.getQuick(i).sink(decimal256, decimal128, sink, functions.getQuick(i), null);
             }
         }
 

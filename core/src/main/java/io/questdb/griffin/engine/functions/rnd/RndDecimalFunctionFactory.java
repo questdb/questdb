@@ -34,6 +34,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DecimalFunction;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -88,12 +90,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
+        public void getDecimal128(Record rec, Decimal128 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -103,22 +100,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
+        public void getDecimal256(Record rec, Decimal256 sink) {
             throw new UnsupportedOperationException();
         }
 
@@ -169,7 +151,6 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
     private static class Decimal128Func extends BaseFunc {
         private final long highRange;
-        private long low;
 
         public Decimal128Func(int type, int nanRate) {
             super(type, nanRate);
@@ -177,21 +158,15 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            long high;
+        public void getDecimal128(Record rec, Decimal128 sink) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                high = Decimals.DECIMAL128_HI_NULL;
-                low = Decimals.DECIMAL128_LO_NULL;
+                sink.ofRawNull();
             } else {
-                high = rnd.nextPositiveLong() % highRange;
-                low = rnd.nextLong();
+                sink.ofRaw(
+                        rnd.nextPositiveLong() % highRange,
+                        rnd.nextLong()
+                );
             }
-            return high;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return low;
         }
     }
 
@@ -215,9 +190,6 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
     private static class Decimal256Func extends BaseFunc {
         private final long hhRange;
         private final long hlRange;
-        private long hl;
-        private long lh;
-        private long ll;
 
         public Decimal256Func(int type, int nanRate) {
             super(type, nanRate);
@@ -228,35 +200,17 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            long hh;
+        public void getDecimal256(Record rec, Decimal256 sink) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                hh = Decimals.DECIMAL256_HH_NULL;
-                hl = Decimals.DECIMAL256_HL_NULL;
-                lh = Decimals.DECIMAL256_LH_NULL;
-                ll = Decimals.DECIMAL256_LL_NULL;
+                sink.ofRawNull();
             } else {
-                hh = rnd.nextPositiveLong() % hhRange;
-                hl = rnd.nextPositiveLong() % hlRange;
-                lh = rnd.nextLong();
-                ll = rnd.nextLong();
+                sink.ofRaw(
+                        rnd.nextPositiveLong() % hhRange,
+                        rnd.nextPositiveLong() % hlRange,
+                        rnd.nextLong(),
+                        rnd.nextLong()
+                );
             }
-            return hh;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return hl;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return ll;
         }
     }
 

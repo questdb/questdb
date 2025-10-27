@@ -41,7 +41,7 @@ public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

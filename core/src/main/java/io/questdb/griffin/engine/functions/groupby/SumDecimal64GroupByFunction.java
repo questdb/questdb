@@ -188,8 +188,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
     }
 
     @Override
-    public void setDecimal128(MapValue mapValue, long high, long low) {
-        mapValue.putDecimal128(valueIndex, high, low);
+    public void setDecimal128(MapValue mapValue, Decimal128 value) {
+        mapValue.putDecimal128(valueIndex, value);
         mapValue.putBool(valueIndex + 2, true);
     }
 

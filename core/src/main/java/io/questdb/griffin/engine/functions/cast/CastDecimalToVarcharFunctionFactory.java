@@ -32,14 +32,13 @@ import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -55,7 +54,8 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
         Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             Decimal256 d = sqlExecutionContext.getDecimal256();
-            DecimalUtil.load(d, arg, null);
+            Decimal128 decimal128 = sqlExecutionContext.getDecimal128();
+            DecimalUtil.load(d, decimal128, arg, null);
             if (d.isNull()) {
                 return VarcharConstant.NULL;
             }
@@ -65,7 +65,7 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
         }
         return switch (ColumnType.tagOf(arg.getType())) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                    new Func64(arg);
+                    new Func64(Decimal64LoaderFunctionFactory.getInstance(arg));
             case ColumnType.DECIMAL128 -> new Func128(arg);
             default -> new Func(arg);
         };
@@ -73,21 +73,32 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
     public static class Func extends AbstractCastToVarcharFunction {
         private final Decimal256 decimal256 = new Decimal256();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
             super(arg);
-            this.fromType = arg.getType();
+            int type = arg.getType();
+            this.fromScale = ColumnType.getDecimalScale(type);
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            DecimalUtil.load(decimal256, arg, rec, fromType);
+            arg.getDecimal256(rec, decimal256);
             if (!decimal256.isNull()) {
                 sinkA.clear();
-                sinkA.put(decimal256);
+                Decimal256.toSink(
+                        sinkA,
+                        decimal256.getHh(),
+                        decimal256.getHl(),
+                        decimal256.getLh(),
+                        decimal256.getLl(),
+                        fromScale,
+                        fromPrecision
+                );
                 return sinkA;
             }
             return null;
@@ -95,10 +106,18 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            DecimalUtil.load(decimal256, arg, rec, fromType);
+            arg.getDecimal256(rec, decimal256);
             if (!decimal256.isNull()) {
                 sinkB.clear();
-                sinkB.put(decimal256);
+                Decimal256.toSink(
+                        sinkB,
+                        decimal256.getHh(),
+                        decimal256.getHl(),
+                        decimal256.getLh(),
+                        decimal256.getLl(),
+                        fromScale,
+                        fromPrecision
+                );
                 return sinkB;
             }
             return null;
@@ -107,21 +126,24 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
     public static class Func128 extends AbstractCastToVarcharFunction {
         private final Decimal128 decimal128 = new Decimal128();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func128(Function arg) {
             super(arg);
-            this.fromType = arg.getType();
+            int type = arg.getType();
+            this.fromScale = ColumnType.getDecimalScale(type);
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            DecimalUtil.load(decimal128, arg, rec, fromType);
+            arg.getDecimal128(rec, decimal128);
             if (!decimal128.isNull()) {
                 sinkA.clear();
-                sinkA.put(decimal128);
+                Decimal128.toSink(sinkA, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
                 return sinkA;
             }
             return null;
@@ -129,10 +151,10 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            DecimalUtil.load(decimal128, arg, rec, fromType);
+            arg.getDecimal128(rec, decimal128);
             if (!decimal128.isNull()) {
                 sinkB.clear();
-                sinkB.put(decimal128);
+                Decimal128.toSink(sinkA, decimal128.getHigh(), decimal128.getLow(), fromScale, fromPrecision);
                 return sinkB;
             }
             return null;
@@ -140,22 +162,24 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
     }
 
     public static class Func64 extends AbstractCastToVarcharFunction {
-        private final Decimal64 decimal64 = new Decimal64();
-        private final int fromType;
+        private final int fromPrecision;
+        private final int fromScale;
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func64(Function arg) {
             super(arg);
-            this.fromType = arg.getType();
+            int type = arg.getType();
+            this.fromPrecision = ColumnType.getDecimalPrecision(type);
+            this.fromScale = ColumnType.getDecimalScale(type);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            DecimalUtil.load(decimal64, arg, rec, fromType);
-            if (!decimal64.isNull()) {
+            long v = arg.getDecimal64(rec);
+            if (!Decimal64.isNull(v)) {
                 sinkA.clear();
-                sinkA.put(decimal64);
+                Decimal64.toSink(sinkA, v, fromScale, fromPrecision);
                 return sinkA;
             }
             return null;
@@ -163,10 +187,10 @@ public class CastDecimalToVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            DecimalUtil.load(decimal64, arg, rec, fromType);
-            if (!decimal64.isNull()) {
+            long v = arg.getDecimal64(rec);
+            if (!Decimal64.isNull(v)) {
                 sinkB.clear();
-                sinkB.put(decimal64);
+                Decimal64.toSink(sinkB, v, fromScale, fromPrecision);
                 return sinkB;
             }
             return null;

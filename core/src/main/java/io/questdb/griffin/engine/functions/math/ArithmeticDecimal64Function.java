@@ -28,9 +28,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
+import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -41,19 +41,19 @@ abstract class ArithmeticDecimal64Function extends Decimal64Function implements 
     protected final int precision;
     protected final Function right;
     protected final int scale;
+    private final int leftScale;
     private final int position;
     private final int rightScale;
-    private final int rightTag;
 
     public ArithmeticDecimal64Function(Function left, Function right, int targetType, int position) {
         super(targetType);
-        this.left = left;
-        this.right = right;
+        this.left = Decimal64LoaderFunctionFactory.getInstance(left);
+        this.leftScale = ColumnType.getDecimalScale(left.getType());
+        this.right = Decimal64LoaderFunctionFactory.getInstance(right);
         this.position = position;
         this.precision = ColumnType.getDecimalPrecision(targetType);
         this.scale = ColumnType.getDecimalScale(targetType);
         this.rightScale = ColumnType.getDecimalScale(right.getType());
-        this.rightTag = ColumnType.tagOf(right.getType());
     }
 
     @Override
@@ -112,37 +112,14 @@ abstract class ArithmeticDecimal64Function extends Decimal64Function implements 
      * @return whether the result is not null.
      */
     private boolean calc(Record rec) {
-        DecimalUtil.load(decimal, left, rec);
+        decimal.ofRaw(left.getDecimal64(rec));
         if (decimal.isNull()) {
             return false;
         }
-
-        final long rightValue;
-        switch (rightTag) {
-            case ColumnType.DECIMAL8:
-                rightValue = right.getDecimal8(rec);
-                if (rightValue == Decimals.DECIMAL8_NULL) {
-                    return false;
-                }
-                break;
-            case ColumnType.DECIMAL16:
-                rightValue = right.getDecimal16(rec);
-                if (rightValue == Decimals.DECIMAL16_NULL) {
-                    return false;
-                }
-                break;
-            case ColumnType.DECIMAL32:
-                rightValue = right.getDecimal32(rec);
-                if (rightValue == Decimals.DECIMAL32_NULL) {
-                    return false;
-                }
-                break;
-            default:
-                rightValue = right.getDecimal64(rec);
-                if (Decimal64.isNull(rightValue)) {
-                    return false;
-                }
-                break;
+        decimal.setScale(leftScale);
+        long rightValue = right.getDecimal64(rec);
+        if (rightValue == Decimals.DECIMAL64_NULL) {
+            return false;
         }
 
         try {

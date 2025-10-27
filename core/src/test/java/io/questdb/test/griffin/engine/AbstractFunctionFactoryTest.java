@@ -567,21 +567,20 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
-            Assert.assertEquals(hh, function1.getDecimal256HH(record));
-            Assert.assertEquals(hl, function1.getDecimal256HL(record));
-            Assert.assertEquals(lh, function1.getDecimal256LH(record));
-            Assert.assertEquals(ll, function1.getDecimal256LL(record));
+            Decimal256 decimal256 = new Decimal256();
+            function1.getDecimal256(record, decimal256);
+            Assert.assertEquals(hh, decimal256.getHh());
+            Assert.assertEquals(hl, decimal256.getHl());
+            Assert.assertEquals(lh, decimal256.getLh());
+            Assert.assertEquals(ll, decimal256.getLl());
             Assert.assertEquals(scale, ColumnType.getDecimalScale(function1.getType()));
             cleanup();
         }
 
         public void andAssertDecimal256Null() {
-            Assert.assertTrue(Decimal256.isNull(
-                    function1.getDecimal256HH(record),
-                    function1.getDecimal256HL(record),
-                    function1.getDecimal256LH(record),
-                    function1.getDecimal256LL(record)
-            ));
+            Decimal256 decimal256 = new Decimal256();
+            function1.getDecimal256(record, decimal256);
+            Assert.assertTrue(decimal256.isNull());
             Assert.assertEquals(0, ColumnType.getDecimalScale(function1.getType()));
             cleanup();
         }
@@ -671,12 +670,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
-    private static class TestRecord implements Record, QuietCloseable {
-        private final Object[] args;
-
-        public TestRecord(Object[] args) {
-            this.args = args;
-        }
+    private record TestRecord(Object[] args) implements Record, QuietCloseable {
 
         @Override
         public void close() {

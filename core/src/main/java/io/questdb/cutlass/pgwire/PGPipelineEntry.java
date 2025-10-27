@@ -2615,8 +2615,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_DECIMAL64:
                     case BINARY_TYPE_DECIMAL128:
                     case BINARY_TYPE_DECIMAL256:
-                        Decimal256 decimal256 = sqlExecutionContext.getDecimal256();
-                        Decimal256 decimal128 = sqlExecutionContext.getDecimal128();
+                        var decimal256 = sqlExecutionContext.getDecimal256();
+                        var decimal128 = sqlExecutionContext.getDecimal128();
                         DecimalUtil.load(decimal256, decimal128, record, colIndex, columnType);
                         outColBinDecimal(utf8Sink, decimal256, columnType);
                         break;

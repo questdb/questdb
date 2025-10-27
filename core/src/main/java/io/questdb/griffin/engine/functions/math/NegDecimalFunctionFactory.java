@@ -76,7 +76,6 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
 
     private static class Decimal128Func extends Decimal128Function implements UnaryFunction {
         private final Function arg;
-        private long low;
 
         public Decimal128Func(Function arg) {
             super(arg.getType());
@@ -89,28 +88,9 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal128Hi(Record rec) {
-            final long argHigh = arg.getDecimal128Hi(rec);
-            final long argLow = arg.getDecimal128Lo(rec);
-            long high;
-            if (!Decimal128.isNull(argHigh, argLow)) {
-                low = ~argLow + 1;
-                high = ~argHigh + (low == 0 ? 1 : 0);
-            } else {
-                high = Decimals.DECIMAL128_HI_NULL;
-                low = Decimals.DECIMAL128_LO_NULL;
-            }
-            return high;
-        }
-
-        @Override
-        public long getDecimal128Lo(Record rec) {
-            return low;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            arg.getDecimal128(rec, sink);
+            sink.negate();
         }
 
         @Override
@@ -149,9 +129,6 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
 
     private static class Decimal256Func extends Decimal256Function implements UnaryFunction {
         private final Function arg;
-        private long hl;
-        private long lh;
-        private long ll;
 
         public Decimal256Func(Function arg) {
             super(arg.getType());
@@ -164,47 +141,9 @@ public class NegDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDecimal256HH(Record rec) {
-            final long argHh = arg.getDecimal256HH(rec);
-            final long argHl = arg.getDecimal256HL(rec);
-            final long argLh = arg.getDecimal256LH(rec);
-            final long argLl = arg.getDecimal256LL(rec);
-            long hh;
-            if (!Decimal256.isNull(argHh, argHl, argLh, argLl)) {
-                ll = ~argLl + 1;
-                long c = ll == 0L ? 1L : 0L;
-                lh = ~argLh + c;
-                c = (c == 1L && lh == 0L) ? 1L : 0L;
-                hl = ~argHl + c;
-                c = (c == 1L && hl == 0L) ? 1L : 0L;
-                hh = ~argHh + c;
-            } else {
-                hh = Decimals.DECIMAL256_HH_NULL;
-                hl = Decimals.DECIMAL256_HL_NULL;
-                lh = Decimals.DECIMAL256_LH_NULL;
-                ll = Decimals.DECIMAL256_LL_NULL;
-            }
-            return hh;
-        }
-
-        @Override
-        public long getDecimal256HL(Record rec) {
-            return hl;
-        }
-
-        @Override
-        public long getDecimal256LH(Record rec) {
-            return lh;
-        }
-
-        @Override
-        public long getDecimal256LL(Record rec) {
-            return ll;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            arg.getDecimal256(rec, sink);
+            sink.negate();
         }
 
         @Override
