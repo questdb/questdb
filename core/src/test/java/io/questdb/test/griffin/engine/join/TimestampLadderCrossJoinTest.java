@@ -27,40 +27,34 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-/**
- * Tests for the Timestamp Ladder Join optimization.
- * This optimization applies to queries that:
- * 1. Cross-join a table with an arithmetic sequence
- * 2. Add the sequence offset to a timestamp column
- * 3. Order by the resulting timestamp
- * <p>
- * The optimizer recognizes this pattern and emits rows directly in sorted order
- * without materializing the full cross-join result.
- */
 public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTimestampsInMaster() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
-            execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (2, '1970-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO orders VALUES (3, '1970-01-01T00:00:00.000000Z')");
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, 0::TIMESTAMP),
+                        (2, 0::TIMESTAMP),
+                        (3, 0::TIMESTAMP)
+                    """);
 
             String sql = """
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -89,11 +83,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
@@ -115,11 +109,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(0)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
@@ -145,11 +139,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(100)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             count
@@ -176,12 +170,12 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(2)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     WHERE id != 2
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -213,11 +207,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -253,11 +247,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(5)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -299,11 +293,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             id\tts
@@ -345,7 +339,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-3) usec_offs
                                 FROM long_sequence(5)
                             )
-                            SELECT id, order_ts + usec_offs AS ts
+                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -353,6 +347,34 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testOrderByAppliedInPlainCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE orders (
+                        id INT,
+                        ts TIMESTAMP,
+                        other_ts TIMESTAMP
+                    ) TIMESTAMP(ts)
+                    """);
+            execute("""
+                    INSERT INTO orders VALUES
+                        (1, '1970-01-01T00:00:01', '1970-01-01T00:00:03'),
+                        (2, '1970-01-01T00:00:02', '1970-01-01T00:00:02'),
+                        (3, '1970-01-01T00:00:03', '1970-01-01T00:00:01')""");
+            assertQueryNoLeakCheck("""
+                            id\tthe_ts
+                            3\t1970-01-01T00:00:01.000000Z
+                            2\t1970-01-01T00:00:02.000000Z
+                            1\t1970-01-01T00:00:03.000000Z
+                            """,
+                    "SELECT id, the_ts FROM (SELECT id, other_ts + 0 AS the_ts FROM orders ORDER BY other_ts + 0)",
+                    "the_ts",
+                    true,
+                    true);
         });
     }
 
@@ -377,11 +399,11 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT (x-1) * 10_000_000 AS usec_offs
                         FROM long_sequence(6)
                     )
-                    SELECT sensor_id, temperature, reading_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(sensor_readings time_offsets) */ sensor_id, temperature, reading_ts + usec_offs AS ts
                     FROM sensor_readings CROSS JOIN time_offsets
                     ORDER BY reading_ts + usec_offs
                     """;
-            assertTimestampLadderJoinUsed(sql);
+            assertHintUsedAndResultSameAsWithoutHint(sql);
             assertQueryNoLeakCheck(
                     """
                             sensor_id	temperature	ts
@@ -425,7 +447,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-601) AS usec_offs
                         FROM long_sequence(1201)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs
                     """;
@@ -447,7 +469,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT id, ts FROM (" + sql + ") LIMIT 1",
+                    "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
                     "ts",
                     false,
                     true
@@ -458,7 +480,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             id\tts
                             1\t1970-01-01T00:00:00.000000Z
                             """,
-                    "SELECT id, ts FROM (" + sql + ") LIMIT -1",
+                    "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
                     "ts",
                     false,
                     true
@@ -477,7 +499,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) AS usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -495,7 +517,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             );
 
             // Verify that Timestamp Ladder Join optimization is being used
-            assertTimestampLadderJoinUsed(query);
+            assertHintUsedAndResultSameAsWithoutHint(query);
         });
     }
 
@@ -519,13 +541,49 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(1)
                             )
-                            SELECT id, order_ts + usec_offs AS ts
+                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     "ts",
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testTimestampLadderDetection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT x AS offs, 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY order_ts + usec_offs
+                    """);
+            assertHintUsedAndResultSameAsWithoutHint("""
+                    WITH offsets AS (
+                        SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)
+                    )
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
+                    FROM orders CROSS JOIN offsets
+                    ORDER BY usec_offs + order_ts
+                    """);
         });
     }
 
@@ -541,7 +599,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                         SELECT 1_000_000 * (x-1) usec_offs
                         FROM long_sequence(3)
                     )
-                    SELECT id, order_ts + usec_offs AS ts
+                    SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN offsets
                     ORDER BY order_ts + usec_offs""";
 
@@ -586,7 +644,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(2)
                             )
-                            SELECT id, order_ts + usec_offs AS ts
+                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     "ts",
@@ -618,7 +676,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT 1_000_000 * (x-1) usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT id, customer, amount, order_ts + usec_offs AS ts
+                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
                     "ts",
@@ -650,7 +708,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                                 SELECT x-1 AS sec_offs, 1_000_000 * (x-1) AS usec_offs
                                 FROM long_sequence(3)
                             )
-                            SELECT id, sec_offs, order_ts + usec_offs AS ts
+                            SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, sec_offs, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
@@ -661,10 +719,15 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Asserts that the query plan contains "Timestamp Ladder Join",
-     * confirming the optimization is being applied.
-     */
+    private void assertHintUsedAndResultSameAsWithoutHint(String sqlWithHint) throws Exception {
+        assertTimestampLadderJoinUsed(sqlWithHint);
+        final StringSink resultWithHint = new StringSink();
+        final StringSink resultWithoutHint = new StringSink();
+        printSql(sqlWithHint, resultWithHint);
+        printSql(sqlWithHint.replace("TIMESTAMP_LADDER_JOIN", "XXX"), resultWithoutHint);
+        TestUtils.assertEquals(resultWithoutHint, resultWithHint);
+    }
+
     private void assertTimestampLadderJoinUsed(String query) throws Exception {
         // Get the execution plan
         try (RecordCursorFactory factory = select("EXPLAIN " + query)) {
