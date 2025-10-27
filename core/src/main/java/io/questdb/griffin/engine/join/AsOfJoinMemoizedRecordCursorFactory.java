@@ -176,8 +176,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
 
-        private StaticSymbolTable symbolTable;
-
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
@@ -202,14 +200,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         public void close() {
             super.close();
-            symbolTable = null;
             rememberedSymbols.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
             columnAccessHelper.of(slaveCursor);
