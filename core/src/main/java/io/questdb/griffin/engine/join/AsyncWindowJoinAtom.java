@@ -132,10 +132,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.perWorkerFilters = perWorkerFilters;
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
-            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(slaveFactory.newTimeFrameCursor());
+            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead());
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(slaveFactory.newTimeFrameCursor()));
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead()));
             }
 
             this.ownerJoinRecord = new JoinRecord(columnSplit);
@@ -445,19 +445,27 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     public static class TimeFrameHelper implements QuietCloseable, Mutable {
+        private final long lookahead;
         private final Record record;
         private final TimeFrame timeFrame;
         private final ConcurrentTimeFrameCursor timeFrameCursor;
+        private final int timestampIndex;
+        private int foundFrameIndex = -1;
+        private long foundRowId = Long.MIN_VALUE;
 
-        public TimeFrameHelper(ConcurrentTimeFrameCursor timeFrameCursor) {
+        public TimeFrameHelper(ConcurrentTimeFrameCursor timeFrameCursor, long lookahead) {
             this.timeFrameCursor = timeFrameCursor;
             this.record = timeFrameCursor.getRecord();
             this.timeFrame = timeFrameCursor.getTimeFrame();
+            this.lookahead = lookahead;
+            this.timestampIndex = timeFrameCursor.getTimestampIndex();
         }
 
         @Override
         public void clear() {
             timeFrameCursor.toTop();
+            foundFrameIndex = -1;
+            foundRowId = Long.MIN_VALUE;
         }
 
         @Override
@@ -467,21 +475,56 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
         // finds the first row id within the given interval
         public long findRowLo(long timestampLo, long timestampHi) {
-            // TODO(puzpuzpuz): !!! this implementation is awful, it only exists to be able to test the whole thing !!!
-            timeFrameCursor.toTop();
-            while (timeFrameCursor.next()) {
-                if (timeFrameCursor.open() == 0) {
-                    return Long.MIN_VALUE;
-                }
-                for (long r = timeFrame.getRowLo(); r < timeFrame.getRowHi(); r++) {
-                    recordAt(r);
-                    final long timestamp = record.getTimestamp(getTimestampIndex());
-                    if (timestamp >= timestampLo && timestamp < timestampHi) {
-                        return r;
+            long rowLo = Long.MIN_VALUE;
+            // let's start with the last found frame and row id
+            if (foundFrameIndex != -1) {
+                timeFrameCursor.jumpTo(foundFrameIndex);
+                timeFrameCursor.open();
+                rowLo = foundRowId;
+            }
+
+            for (; ; ) {
+                // find the frame to be scanned
+                if (rowLo == Long.MIN_VALUE) {
+                    while (timeFrameCursor.next()) {
+                        // carry on if the frame is to the left of the interval
+                        if (timeFrame.getTimestampEstimateHi() < timestampLo) {
+                            continue;
+                        }
+                        // check if the frame intersects with the interval, so it's of our interest
+                        if (timeFrame.getTimestampEstimateLo() < timestampHi) {
+                            if (timeFrameCursor.open() == 0) {
+                                continue;
+                            }
+                            // now we know the exact boundaries of the frame, let's check them
+                            if (timeFrame.getTimestampHi() < timestampLo) {
+                                // the frame is to the left of the interval, so carry on
+                                continue;
+                            }
+                            if (timeFrame.getTimestampLo() < timestampHi) {
+                                // yay, it's what we need!
+                                rowLo = timeFrame.getRowLo();
+                                break;
+                            }
+                        }
+                        return Long.MIN_VALUE;
                     }
                 }
+
+                // scan the found frame
+                // start with a brief linear scan
+                final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
+                if (scanResult >= 0) {
+                    // we've found the row
+                    return scanResult;
+                } else if (scanResult == Long.MIN_VALUE) {
+                    // there are no timestamps in the wanted interval
+                    return Long.MIN_VALUE;
+                }
+                // ok, the scan gave us nothing, do the binary search
+                rowLo = -scanResult - 1;
+                return binarySearch(timestampLo, timestampHi, rowLo);
             }
-            return Long.MIN_VALUE;
         }
 
         public Record getRecord() {
@@ -501,7 +544,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
 
         public int getTimestampIndex() {
-            return timeFrameCursor.getTimestampIndex();
+            return timestampIndex;
         }
 
         public boolean nextFrame(long timestampHi) {
@@ -534,6 +577,68 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
         public void recordAt(long rowId) {
             timeFrameCursor.recordAt(record, rowId);
+        }
+
+        // Finds the first (most-left) value in the given interval.
+        private long binarySearch(long timestampLo, long timestampHi, long rowLo) {
+            long low = rowLo;
+            long high = timeFrame.getRowHi() - 1;
+            while (high - low > 65) {
+                final long mid = (low + high) >>> 1;
+                recordAt(mid);
+                long midTimestamp = record.getTimestamp(timestampIndex);
+
+                if (midTimestamp < timestampLo) {
+                    low = mid;
+                } else if (midTimestamp > timestampLo) {
+                    high = mid - 1;
+                } else {
+                    // In case of multiple values equal to timestampLo, find the first one
+                    return binarySearchScrollUp(low, mid, timestampLo);
+                }
+            }
+
+            // scan up
+            for (long r = low; r < high + 1; r++) {
+                recordAt(r);
+                long timestamp = record.getTimestamp(timestampIndex);
+                if (timestamp >= timestampLo) {
+                    if (timestamp < timestampHi) {
+                        return r;
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+            return Long.MIN_VALUE;
+        }
+
+        private long binarySearchScrollUp(long low, long high, long timestampLo) {
+            long timestamp;
+            do {
+                if (high > low) {
+                    high--;
+                } else {
+                    return low;
+                }
+                recordAt(high);
+                timestamp = record.getTimestamp(timestampIndex);
+            } while (timestamp == timestampLo);
+            return high + 1;
+        }
+
+        private long linearScan(long timestampLo, long timestampHi, long rowLo) {
+            final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
+            for (long r = rowLo; r < scanHi; r++) {
+                recordAt(r);
+                final long timestamp = record.getTimestamp(timestampIndex);
+                if (timestamp >= timestampLo) {
+                    if (timestamp < timestampHi) {
+                        return r;
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+            return -rowLo - lookahead - 1;
         }
     }
 }
