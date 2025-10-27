@@ -124,7 +124,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         writer.rollbackConditionally(loRow);
 
         long lo = Math.max(loRow, columnTop);
-//        int bufferCount = lo < hiRow ? (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1) : 0;
         int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
         for (int i = 0; i < bufferCount; i++) {
             long fileOffset = (lo - columnTop) * 4;
