@@ -98,7 +98,7 @@ public class GroupByIntHashSet {
     }
 
     public long keyIndex(int key) {
-        long hashCode = Hash.hashInt64(key);
+        long hashCode = Hash.fastHashInt64(key);
         long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noKeyValue) {

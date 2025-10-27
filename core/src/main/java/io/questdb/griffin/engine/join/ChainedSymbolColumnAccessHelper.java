@@ -29,13 +29,8 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolColumnAccessHelper implements AsofJoinColumnAccessHelper {
-
-    private final AsofJoinColumnAccessHelper[] shortCircuits;
-
-    public ChainedSymbolColumnAccessHelper(AsofJoinColumnAccessHelper[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
-    }
+public record ChainedSymbolColumnAccessHelper(
+        AsofJoinColumnAccessHelper[] shortCircuits) implements AsofJoinColumnAccessHelper {
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {

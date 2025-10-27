@@ -176,8 +176,6 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         private long scannedRangeMinRowId = Long.MAX_VALUE;
         private long scannedRangeMinTimestamp = Long.MAX_VALUE;
 
-        private StaticSymbolTable symbolTable;
-
         public AsOfJoinMemoizedRecordCursor(
                 CairoConfiguration configuration,
                 int columnSplit,
@@ -202,14 +200,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
         @Override
         public void close() {
             super.close();
-            symbolTable = null;
             rememberedSymbols.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolTable = slaveTimeFrameCursor.getSymbolTable(slaveSymbolColumnIndex);
             rememberedSymbols.reopen();
             rememberedSymbols.clear();
             columnAccessHelper.of(slaveCursor);
@@ -319,15 +315,17 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                 // We must remember all the new data, same as when the symbol is new.
                 assert slaveTimestamp > value.getLong(SLOT_VALIDITY_PERIOD_END)
                         : "slaveTimestamp=" + slaveTimestamp + " <= periodEnd=" + value.getLong(SLOT_VALIDITY_PERIOD_END);
+            } else {
+                // create new entry
+                MapKey newKey = rememberedSymbols.withKey();
+                newKey.putInt(slaveSymbolKey);
+                value = newKey.createValue();
             }
 
-            // Store all three values in the map (creating new entry or updating existing)
-            MapKey storeKey = rememberedSymbols.withKey();
-            storeKey.putInt(slaveSymbolKey);
-            MapValue storeValue = storeKey.createValue();
-            storeValue.putLong(SLOT_REMEMBERED_ROWID, slaveRowId);
-            storeValue.putLong(SLOT_VALIDITY_PERIOD_START, slaveTimestamp);
-            storeValue.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
+            // Store all three values in the map
+            value.putLong(SLOT_REMEMBERED_ROWID, slaveRowId);
+            value.putLong(SLOT_VALIDITY_PERIOD_START, slaveTimestamp);
+            value.putLong(SLOT_VALIDITY_PERIOD_END, masterTimestamp);
         }
 
         @Override
@@ -401,7 +399,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     } else if (!didJumpOverScannedRange) {
                         // We're within the remembered scanned range. Since the symbol isn't remembered, we know
                         // it doesn't occur within this range because we memorize all the symbols we observe
-                        // while scanning for any symbol. Jump over the entire period and continue searching,
+                        // while scanning for any symbol. Jump back over the entire period and continue searching,
                         // unless the period to be skipped extends beyond the tolerance interval.
                         if (!isSlaveWithinToleranceInterval(masterTimestamp, validityPeriodStart)) {
                             record.hasSlave(false);

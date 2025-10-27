@@ -87,7 +87,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
-    private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
@@ -125,6 +124,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     ) {
         assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
         assert perWorkerKeyFunctions == null || perWorkerKeyFunctions.size() == workerCount;
+        assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
@@ -138,7 +138,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.perWorkerFilters = perWorkerFilters;
             this.ownerKeyFunctions = ownerKeyFunctions;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
-            this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -182,9 +181,17 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             }
 
             ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-            perWorkerAllocators = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerAllocators.extendAndSet(i, GroupByAllocatorFactory.createAllocator(configuration));
+            // Make sure to set worker-local allocator for the group by functions.
+            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
+            if (perWorkerGroupByFunctions != null) {
+                perWorkerAllocators = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    perWorkerAllocators.extendAndSet(i, workerAllocator);
+                    GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
+                }
+            } else {
+                perWorkerAllocators = null;
             }
         } catch (Throwable th) {
             close();
@@ -278,11 +285,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         if (slotId == -1 || perWorkerFunctionUpdaters == null) {
-            // Make sure to set worker-local allocator for the functions backed by the returned updater.
-            GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             return ownerFunctionUpdater;
         }
-        GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(slotId), perWorkerAllocators.getQuick(slotId));
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 

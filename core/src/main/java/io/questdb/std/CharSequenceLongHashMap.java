@@ -64,24 +64,10 @@ public class CharSequenceLongHashMap extends AbstractCharSequenceHashSet {
 
     public void inc(@NotNull CharSequence key) {
         int index = keyIndex(key);
-        long value = valueAt(index);
-        if (value != noEntryValue) {
+        if (index < 0) {
             values[-index - 1]++;
         } else {
             putAt(index, key, 1);
-        }
-    }
-
-    public void inc(int index) {
-        values[-index - 1]++;
-    }
-
-    public void increment(@NotNull CharSequence key) {
-        final int index = keyIndex(key);
-        if (index < 0) {
-            values[-index - 1] = values[-index - 1] + 1;
-        } else {
-            putAt0(index, Chars.toString(key), 0L);
         }
     }
 

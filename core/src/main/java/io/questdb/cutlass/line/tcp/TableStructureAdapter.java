@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
@@ -37,6 +36,10 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+
+import static io.questdb.cairo.ColumnType.*;
+import static io.questdb.std.datetime.CommonUtils.TIMESTAMP_UNIT_MICROS;
+import static io.questdb.std.datetime.CommonUtils.TIMESTAMP_UNIT_NANOS;
 
 public class TableStructureAdapter implements TableStructure {
     private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
@@ -49,6 +52,7 @@ public class TableStructureAdapter implements TableStructure {
     private final boolean walEnabledDefault;
     private CharSequence tableName;
     private int timestampIndex = -1;
+    private int timestampUnit = -1;
 
     public TableStructureAdapter(
             CairoConfiguration configuration,
@@ -92,11 +96,20 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getColumnType(int columnIndex) {
         if (columnIndex == getTimestampIndex()) {
-            return defaultColumnTypes.DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
+            int columnType = defaultColumnTypes.defaultColumnTypes[LineTcpParser.ENTITY_TYPE_TIMESTAMP];
+            if (columnType == TIMESTAMP && timestampUnit == TIMESTAMP_UNIT_NANOS) {
+                columnType = TIMESTAMP_NANO;
+            }
+            return columnType;
         }
-        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
-        if (columnType == ColumnType.ARRAY) {
-            columnType = entities.get(columnIndex).getArray().getType();
+
+        LineTcpParser.ProtoEntity entity = entities.get(columnIndex);
+        int columnType = defaultColumnTypes.defaultColumnTypes[entity.getType()];
+        if (columnType == ARRAY) {
+            columnType = entity.getArray().getType();
+        }
+        if (columnType == TIMESTAMP && entity.getUnit() == TIMESTAMP_UNIT_NANOS) {
+            columnType = TIMESTAMP_NANO;
         }
         return columnType;
     }
@@ -161,6 +174,9 @@ public class TableStructureAdapter implements TableStructure {
         entityNamesUtf16.clear();
         entities.clear();
         timestampIndex = -1;
+        timestampUnit = parser.hasTimestamp() ? parser.getTimestampUnit() : (
+                defaultColumnTypes.defaultTimestampColumnType == TIMESTAMP_NANO ? TIMESTAMP_UNIT_NANOS : TIMESTAMP_UNIT_MICROS
+        );
         for (int i = 0; i < parser.getEntityCount(); i++) {
             final LineTcpParser.ProtoEntity entity = parser.getEntity(i);
             final DirectUtf8Sequence colNameUtf8 = entity.getName();
