@@ -5205,9 +5205,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timestampColumn = null;
             }
 
-            // Check if the ORDER BY expression matches a computed column
+            // If cursor factory followed ORDER BY advice, check if ORDER BY expression matches a computed column
             ExpressionNode orderByExpr = null;
-            if (model.getOrderBy() != null && model.getOrderBy().size() > 0) {
+            if (factory.followedOrderByAdvice() && model.getOrderBy() != null && model.getOrderBy().size() > 0) {
                 ExpressionNode orderByNode = model.getOrderBy().getQuick(0);
                 // Resolve alias to actual expression if needed
                 if (orderByNode.type == ExpressionNode.LITERAL) {
