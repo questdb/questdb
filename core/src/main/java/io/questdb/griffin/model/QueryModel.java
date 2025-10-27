@@ -73,6 +73,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_MAX = JOIN_CROSS_FULL;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
+    public static final int JOIN_WINDOW = 7;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
     public static final int LATEST_BY_NONE = 0;
@@ -218,6 +219,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
+    private WindowJoinContext windowJoinContext = new WindowJoinContext();
 
     private QueryModel() {
         joinModels.add(this);
@@ -486,6 +488,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        windowJoinContext.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -1034,6 +1037,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<CharSequence> getWildcardColumnNames() {
         return wildcardColumnNames;
+    }
+
+    public WindowJoinContext getWindowJoinContext() {
+        return windowJoinContext;
     }
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
@@ -1793,6 +1800,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             case JOIN_LEFT_OUTER:
                                 sink.putAscii(" left join ");
                                 break;
+                            case JOIN_WINDOW:
+                                sink.putAscii(" window join ");
+                                break;
                             case JOIN_RIGHT_OUTER:
                                 sink.putAscii(" right join ");
                                 break;
@@ -1840,6 +1850,74 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                 jc.aNodes.getQuick(k).toSink(sink);
                                 sink.putAscii(" = ");
                                 jc.bNodes.getQuick(k).toSink(sink);
+                            }
+                        }
+
+                        WindowJoinContext wjc = model.getWindowJoinContext();
+                        if (!wjc.isNonWindowJoinDefault()) {
+                            assert model.joinType == JOIN_WINDOW;
+                            sink.put(" between ");
+                            if (wjc.getLoExpr() != null) {
+                                wjc.getLoExpr().toSink(sink);
+                                unitToSink(sink, wjc.getLoExprTimeUnit());
+                                switch (wjc.getLoKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii(" preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii(" following");
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            } else {
+                                switch (wjc.getLoKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii("unbounded preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii("unbounded following");
+                                        break;
+                                    default:
+                                        sink.putAscii("current row");
+                                        break;
+                                }
+                            }
+                            sink.putAscii(" and ");
+
+                            if (wjc.getHiExpr() != null) {
+                                wjc.getHiExpr().toSink(sink);
+                                unitToSink(sink, wjc.getHiExprTimeUnit());
+
+                                switch (wjc.getHiKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii(" preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii(" following");
+                                        break;
+                                    default:
+                                        assert false;
+                                        break;
+                                }
+                            } else {
+                                switch (wjc.getHiKind()) {
+                                    case WindowJoinContext.PRECEDING:
+                                        sink.putAscii("unbounded preceding");
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        sink.putAscii("unbounded following");
+                                        break;
+                                    default:
+                                        sink.put("current row");
+                                        break;
+                                }
+                            }
+
+                            if (wjc.isIncludePrevailing()) {
+                                sink.putAscii("including prevailing");
+                            } else {
+                                sink.putAscii("excluding prevailing");
                             }
                         }
 
