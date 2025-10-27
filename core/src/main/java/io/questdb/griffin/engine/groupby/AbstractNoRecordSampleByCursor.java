@@ -219,7 +219,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
                 from = sampleFromFunc.getTimestamp(null);
                 timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
             } else {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
+                timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }
         }
 

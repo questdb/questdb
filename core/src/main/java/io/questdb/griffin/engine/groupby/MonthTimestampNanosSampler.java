@@ -34,13 +34,8 @@ import static io.questdb.std.datetime.nanotime.Nanos.toNanos;
 
 public class MonthTimestampNanosSampler implements TimestampSampler {
     private final int stepMonths;
+    private long dayMod;
     private int startDay;
-    private int startHour;
-    private int startMicros;
-    private int startMillis;
-    private int startMin;
-    private int startNanos;
-    private int startSec;
 
     public MonthTimestampNanosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
@@ -55,7 +50,6 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     public int getTimestampType() {
         return ColumnType.TIMESTAMP_NANO;
     }
-
 
     @Override
     public long nextTimestamp(long timestamp) {
@@ -88,7 +82,12 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
-        return toNanos(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros, startNanos);
+        return toNanos(y, leap, nextMonth, d) + dayMod;
+    }
+
+    @Override
+    public void setOffset(long timestamp) {
+        this.dayMod = timestamp;
     }
 
     @Override
@@ -96,12 +95,11 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
         final int y = Nanos.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startDay = Nanos.getDayOfMonth(timestamp, y, Nanos.getMonthOfYear(timestamp, y, leap), leap);
-        this.startHour = Nanos.getWallHours(timestamp);
-        this.startMin = Nanos.getWallMinutes(timestamp);
-        this.startSec = Nanos.getWallSeconds(timestamp);
-        this.startMillis = Nanos.getWallMillis(timestamp);
-        this.startMicros = Nanos.getWallMicros(timestamp);
-        this.startNanos = Nanos.getWallNanos(timestamp);
+        long dayMod = timestamp % Nanos.DAY_NANOS;
+        if (dayMod < 0) {
+            dayMod += Nanos.DAY_NANOS;
+        }
+        this.dayMod = dayMod;
     }
 
     @Override
@@ -139,13 +137,6 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
                 _d = maxDay;
             }
         }
-        long result = Nanos.toNanos(_y, _m, _d);
-        result = Math.addExact(result, Math.multiplyExact(startHour, Nanos.HOUR_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMin, Nanos.MINUTE_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startSec, Nanos.SECOND_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMillis, Nanos.MILLI_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMicros, Nanos.MICRO_NANOS));
-        result = Math.addExact(result, startNanos);
-        return result;
+        return Nanos.toNanos(_y, _m, _d) + dayMod;
     }
 }
