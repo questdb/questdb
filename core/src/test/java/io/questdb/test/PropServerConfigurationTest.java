@@ -122,6 +122,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
         Assert.assertEquals(10_000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
         Assert.assertEquals(64448, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getRequestHeaderBufferSize());
+        Assert.assertEquals(1_800_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
         Assert.assertFalse(configuration.getHttpServerConfiguration().haltOnError());
         Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(-1, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
@@ -665,52 +666,52 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testDefaultAddColumnTypeForTimestamp() throws Exception {
+    public void testDefaultTimestampColumnType() throws Exception {
         Properties properties = new Properties();
 
         // default
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // empty
         properties.setProperty("line.timestamp.default.column.type", "");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // timestamp
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // timestamp_ns
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_NS");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // lowercase
         properties.setProperty("line.timestamp.default.column.type", "timestamp");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // camel case
         properties.setProperty("line.timestamp.default.column.type", "Timestamp_Ns");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // not allowed
         properties.setProperty("line.timestamp.default.column.type", "STRING");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // not allowed
         properties.setProperty("line.timestamp.default.column.type", "SHORT");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // nonexistent type
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_MS");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
     }
 
     @Test
@@ -796,6 +797,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.ilp.connection.limit", "4");
         env.put("QDB_HTTP_ILP_CONNECTION_LIMIT", "8");
 
+        properties.setProperty("http.session.timeout", "30m");
+        env.put("QDB_HTTP_SESSION_TIMEOUT", "15m");
+
         properties.setProperty("telemetry.db.size.estimate.timeout", "2000");
         env.put("QDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT", "3000");
 
@@ -809,6 +813,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
         Assert.assertEquals(8, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
         Assert.assertEquals(900, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartIdleSpinCount());
+        Assert.assertEquals(900_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
@@ -1326,6 +1331,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpServerConfiguration().haltOnError());
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
             Assert.assertEquals(2, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getIlpConnectionLimit());
+            Assert.assertEquals(1_200_000_000L, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout());
             Assert.assertEquals(SecurityContext.AUTH_TYPE_NONE, configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getRequiredAuthType());
             Assert.assertFalse(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
             Assert.assertTrue(configuration.getHttpServerConfiguration().isSettingsReadOnly());

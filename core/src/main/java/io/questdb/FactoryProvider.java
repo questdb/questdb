@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.DefaultRejectProcessorFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpHeaderParserFactory;
+import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.RejectProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
@@ -55,6 +56,9 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SocketFactory getHttpMinSocketFactory();
+
+    @NotNull
+    HttpSessionStore getHttpSessionStore();
 
     @NotNull
     SocketFactory getHttpSocketFactory();

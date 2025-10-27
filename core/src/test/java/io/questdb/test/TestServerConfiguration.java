@@ -44,8 +44,8 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -141,7 +141,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                     }
 
                     @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 }) {
