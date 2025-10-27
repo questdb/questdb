@@ -76,6 +76,7 @@ public class LineHttpSenderLoggingTest extends AbstractBootstrapTest {
         capture.stop();
         super.tearDown();
         LogFactory.disableGuaranteedLogging(guaranteedLoggers);
+        LogFactory.disableGuaranteedLogging();
     }
 
     @Test
