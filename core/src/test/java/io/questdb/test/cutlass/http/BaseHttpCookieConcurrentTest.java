@@ -22,11 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.test;
+package io.questdb.test.cutlass.http;
 
-import io.questdb.Bootstrap;
-import io.questdb.PropBootstrapConfiguration;
-import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpCookie;
@@ -39,14 +36,14 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractBootstrapTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
@@ -54,24 +51,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
-import static io.questdb.cutlass.http.HttpConstants.*;
+import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME_UTF8;
 import static io.questdb.test.tools.TestUtils.*;
 
-public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
-    private static final String PASSWORD = "quest";
-    private static final String USER = "admin";
+public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest {
+    protected static final String ADMIN_PWD = "quest";
+    protected static final String ADMIN_USER = "admin";
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
-    private volatile int numOfThreads;
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        unchecked(() -> createDummyConfiguration(
-                PropertyKey.HTTP_USER.getPropertyPath() + "=" + USER,
-                PropertyKey.HTTP_PASSWORD.getPropertyPath() + "=" + PASSWORD)
-        );
-        dbPath.parent().$();
-    }
+    protected volatile int numOfThreads;
 
     @Test
     public void testConcurrentMultipleSessionsMultipleClients() throws Exception {
@@ -79,7 +66,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             final int numOfIterations = 5 + rnd.nextInt(10);
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 for (int i = 0; i < numOfIterations; i++) {
-                    final String sessionId = createSession(httpClient, sessionStore);
+                    final String sessionId = createSession(httpClient, sessionStore, getUserName(rnd), getPassword());
                     runSuccessfulQuery(httpClient, sessionId, rnd);
                     runFailedQuery(httpClient, sessionId, rnd);
                     closeSession(httpClient, sessionId);
@@ -98,7 +85,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
 
             final String sessionId;
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                sessionId = createSession(httpClient, sessionStore);
+                sessionId = createSession(httpClient, sessionStore, getUserName(rnd), getPassword());
             } catch (Exception e) {
                 // although this thread failed, let other threads finish instead of making them wait for a long timeout
                 awaitAllBarriers(barriers, 0);
@@ -226,7 +213,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                         // let's recover by starting a new session
                         // at the end of the test we will assert that the original session has been closed
                         // and that the num of open sessions are less or equal to the num of threads
-                        sessionId = createSession(httpClient, sessionStore);
+                        sessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
                         sessionCount.incrementAndGet();
                     }
 
@@ -280,23 +267,12 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         assertEquals(expected, sink);
     }
 
-    private static String assertSessionCookie(HttpClient.ResponseHeaders responseHeaders) {
-        final HttpCookie sessionCookie = responseHeaders.getCookie(SESSION_COOKIE_NAME_UTF8);
-        Assert.assertNotNull(sessionCookie);
-        Assert.assertEquals(SESSION_COOKIE_NAME, sessionCookie.cookieName.toString());
-        Assert.assertTrue(sessionCookie.httpOnly);
-        Assert.assertEquals(-1L, sessionCookie.expires);
-        Assert.assertEquals(SESSION_COOKIE_MAX_AGE_SECONDS, sessionCookie.maxAge);
-        return sessionCookie.value.toString();
-    }
-
     private static void awaitAllBarriers(CyclicBarrier[] barriers, int from) throws Exception {
         for (int i = from; i < barriers.length; i++) {
             barriers[i].await();
         }
     }
 
-    // close the session
     private static void closeSession(HttpClient httpClient, String sessionId) {
         try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
                 .GET()
@@ -313,19 +289,19 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     }
 
     // authenticate with auth header and open the session with 'session=true'
-    private static @NotNull String createSession(HttpClient httpClient, HttpSessionStore sessionStore) {
+    private static @NotNull String createSession(HttpClient httpClient, HttpSessionStore sessionStore, String userName, String password) {
         final String sessionId;
         try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_PORT)
                 .GET()
                 .url("/exec")
                 .query("query", "select 1")
                 .query("session", "true")
-                .authBasic(USER, PASSWORD)
+                .authBasic(userName, password)
                 .send()
         ) {
             responseHeaders.await();
             assertEquals("200", responseHeaders.getStatusCode());
-            sessionId = assertSessionCookie(responseHeaders);
+            sessionId = HttpUtils.assertSessionCookie(responseHeaders, false);
             assertResponse(responseHeaders, "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
         }
 
@@ -338,20 +314,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         return sessionCookie != null ? sessionCookie.value.toString() : null;
     }
 
-    private static @NotNull Bootstrap getBootstrapWithMockClock(AtomicLong currentMicros) {
-        final MicrosecondClock testClock = currentMicros::get;
-        return new Bootstrap(
-                new PropBootstrapConfiguration() {
-                    @Override
-                    public MicrosecondClock getMicrosecondClock() {
-                        return testClock;
-                    }
-                },
-                getServerMainArgs()
-        );
-    }
-
-    // randomized usage of the `main` httpClient
+    // randomized usage of the `main` httpClient for failed queries
     private static void runFailedQuery(HttpClient httpClient, String sessionId, Rnd rnd) {
         if (rnd.nextBoolean()) {
             runFailedQuery(httpClient, sessionId);
@@ -377,7 +340,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
         }
     }
 
-    // randomized usage of the `main` httpClient
+    // randomized usage of the `main` httpClient for successful queries
     private static String runSuccessfulQuery(HttpClient httpClient, String sessionId, Rnd rnd) {
         if (rnd.nextBoolean()) {
             return runSuccessfulQuery(httpClient, sessionId);
@@ -406,11 +369,11 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
     private void runTest(boolean openSession, TestCode test, Predicate<Integer> assertSessions) throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
-
             final AtomicLong currentMicros = new AtomicLong(1761055200000000L);
-            final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
-            try (final ServerMain serverMain = new ServerMain(bootstrap)) {
+            try (final ServerMain serverMain = getServerMain(currentMicros)) {
                 serverMain.start();
+
+                initTest(rnd);
 
                 final HttpSessionStore sessionStore = serverMain.getConfiguration().getFactoryProvider().getHttpSessionStore();
                 final long sessionTimeout = serverMain.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
@@ -431,7 +394,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 final String sessionId;
                 if (openSession) {
                     try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                        sessionId = createSession(httpClient, sessionStore);
+                        sessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
                     }
                 } else {
                     sessionId = null;
@@ -452,7 +415,7 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
                 }
                 end.await();
 
-                final int numOfSessions = sessionStore.size(USER);
+                final int numOfSessions = getNumOfSessions(sessionStore);
                 if (!assertSessions.test(numOfSessions)) {
                     errors.put(-1, new AssertionError("Assert sessions failed"));
                 }
@@ -466,6 +429,16 @@ public class ServerMainHttpAuthConcurrentTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    protected abstract int getNumOfSessions(HttpSessionStore sessionStore);
+
+    protected abstract String getPassword();
+
+    protected abstract ServerMain getServerMain(AtomicLong currentMicros);
+
+    protected abstract String getUserName(Rnd rnd);
+
+    protected abstract void initTest(Rnd rnd) throws SQLException;
 
     private interface TestCode {
         void run(
