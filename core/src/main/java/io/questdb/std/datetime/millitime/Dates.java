@@ -41,8 +41,8 @@ public final class Dates {
 
     public static final long DAY_MILLIS = 86400000L;
     public static final long HOUR_MILLIS = 3600000L;
-    public static final long MINUTE_MILLIS = 60000;
-    public static final long SECOND_MILLIS = 1000;
+    public static final long MINUTE_MILLIS = 60000L;
+    public static final long SECOND_MILLIS = 1000L;
     public static final int STATE_DELIM = 4;
     public static final int STATE_END = 6;
     public static final int STATE_GMT = 2;

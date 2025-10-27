@@ -45,7 +45,6 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.SignatureException;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender {
@@ -302,8 +301,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     // doesn't do special char checks
     public AbstractLineSender putAsciiInternal(char c) {
-        put((byte) c);
-        return this;
+        return put((byte) c);
     }
 
     // doesn't do special char checks
@@ -434,16 +432,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
                     "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
-    }
-
-    protected static long unitToNanos(ChronoUnit unit) {
-        return switch (unit) {
-            case NANOS -> 1;
-            case MICROS -> 1_000;
-            case MILLIS -> 1_000_000;
-            case SECONDS -> 1_000_000_000;
-            default -> unit.getDuration().toNanos();
-        };
     }
 
     protected void send00() {
