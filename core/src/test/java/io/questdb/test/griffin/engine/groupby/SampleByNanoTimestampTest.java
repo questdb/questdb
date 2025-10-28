@@ -3125,6 +3125,40 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeOffsets() throws Exception {
+        assertMemoryLeak(() -> assertSql("""
+                        date\trow_count\ttotal_value
+                        2023-12-31T11:55:00.000000000Z\t1\t100.0
+                        2024-01-31T11:55:00.000000000Z\t1\t200.0
+                        2024-02-29T11:55:00.000000000Z\t1\t300.0
+                        2024-03-31T11:55:00.000000000Z\t1\t400.0
+                        2024-04-30T11:55:00.000000000Z\t1\t500.0
+                        2024-05-31T11:55:00.000000000Z\t1\t600.0
+                        """,
+                """
+                        SELECT\s
+                            date,
+                            COUNT(*) AS row_count,
+                            SUM(value) AS total_value
+                        FROM (
+                            SELECT cast('2024-01-15T12:00:00.000000Z' as timestamp_ns) as date, 100.0 as value FROM long_sequence(1)
+                            UNION ALL
+                            SELECT cast('2024-02-15T12:00:00.000000Z' as timestamp_ns), 200.0 FROM long_sequence(1)
+                            UNION ALL
+                            SELECT cast('2024-03-15T12:00:00.000000Z' as timestamp_ns), 300.0 FROM long_sequence(1)
+                            UNION ALL
+                            SELECT cast('2024-04-15T12:00:00.000000Z' as timestamp_ns), 400.0 FROM long_sequence(1)
+                            UNION ALL
+                            SELECT cast('2024-05-15T12:00:00.000000Z' as timestamp_ns), 500.0 FROM long_sequence(1)
+                            UNION ALL
+                            SELECT cast('2024-06-15T12:00:00.000000Z' as timestamp_ns), 600.0 FROM long_sequence(1)
+                            ORDER BY date
+                        )
+                        SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-12:05';"""
+        ));
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp_ns, d DOUBLE, s SYMBOL)" +

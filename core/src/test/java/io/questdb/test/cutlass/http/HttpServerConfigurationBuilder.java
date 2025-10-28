@@ -38,13 +38,14 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.std.TestFilesFacadeImpl;
 
 public class HttpServerConfigurationBuilder {
+    private final int rerunProcessingQueueSize = 4096;
     private boolean allowDeflateBeforeSend;
     private String baseDir;
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
@@ -53,13 +54,11 @@ public class HttpServerConfigurationBuilder {
     private byte httpHealthCheckAuthType = SecurityContext.AUTH_TYPE_NONE;
     private String httpProtocolVersion = "HTTP/1.1 ";
     private byte httpStaticContentAuthType = SecurityContext.AUTH_TYPE_NONE;
-    private long multipartIdleSpinCount = -1;
-    private Clock nanosecondClock = StationaryNanosClock.INSTANCE;
+    private NanosecondClock nanosecondClock = StationaryNanosClock.INSTANCE;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
     private int receiveBufferSize = 1024 * 1024;
-    private int rerunProcessingQueueSize = 4096;
     private int sendBufferSize = 1024 * 1024;
     private boolean serverKeepAlive = true;
     private int tcpSndBufSize;
@@ -71,6 +70,11 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public int getConnectionCheckFrequency() {
                     return 1_000_000;
+                }
+
+                @Override
+                public long getExportTimeout() {
+                    return 300_000;
                 }
 
                 @Override
@@ -99,7 +103,7 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public Clock getNanosecondClock() {
+                public NanosecondClock getNanosecondClock() {
                     return nanosecondClock;
                 }
             };
@@ -164,13 +168,7 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public long getMultipartIdleSpinCount() {
-                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
-                        return multipartIdleSpinCount;
-                    }
-
-                    @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return nanosecondClock;
                     }
 
@@ -298,12 +296,7 @@ public class HttpServerConfigurationBuilder {
         return this;
     }
 
-    public HttpServerConfigurationBuilder withMultipartIdleSpinCount(long multipartIdleSpinCount) {
-        this.multipartIdleSpinCount = multipartIdleSpinCount;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withNanosClock(Clock nanosecondClock) {
+    public HttpServerConfigurationBuilder withNanosClock(NanosecondClock nanosecondClock) {
         this.nanosecondClock = nanosecondClock;
         return this;
     }
@@ -325,11 +318,6 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withReceiveBufferSize(int receiveBufferSize) {
         this.receiveBufferSize = receiveBufferSize;
-        return this;
-    }
-
-    public HttpServerConfigurationBuilder withRerunProcessingQueueSize(int rerunProcessingQueueSize) {
-        this.rerunProcessingQueueSize = rerunProcessingQueueSize;
         return this;
     }
 

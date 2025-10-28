@@ -32,10 +32,12 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testConstant() throws Exception {
         assertQuery(
-                "a\tapprox_count_distinct\n" +
-                        "a\t1\n" +
-                        "b\t1\n" +
-                        "c\t1\n",
+                """
+                        a\tapprox_count_distinct
+                        a\t1
+                        b\t1
+                        c\t1
+                        """,
                 "select a, approx_count_distinct(42) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -49,8 +51,10 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
-            String expected = "count_distinct\n" +
-                    "631884\n";
+            String expected = """
+                    count_distinct
+                    631884
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select count_distinct(s) from x",
@@ -97,8 +101,10 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
             execute("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
             assertQueryNoLeakCheck(
-                    "count_distinct\n" +
-                            "6\n",
+                    """
+                            count_distinct
+                            6
+                            """,
                     "select count_distinct(s) from x",
                     null,
                     false,
@@ -124,10 +130,12 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testExpression() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "a\tapprox_count_distinct\n" +
-                    "a\t5\n" +
-                    "b\t4\n" +
-                    "c\t4\n";
+            final String expected = """
+                    a\tapprox_count_distinct
+                    a\t5
+                    b\t4
+                    c\t4
+                    """;
             assertQueryNoLeakCheck(
                     expected,
                     "select a, approx_count_distinct(s * 42) from x order by a",
@@ -149,26 +157,30 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
-                    "a\tcount_distinct\n" +
-                            "a\t80974\n" +
-                            "b\t81221\n" +
-                            "c\t81204\n" +
-                            "d\t81135\n" +
-                            "e\t81116\n" +
-                            "f\t81314\n",
+                    """
+                            a\tcount_distinct
+                            a\t80974
+                            b\t81221
+                            c\t81204
+                            d\t81135
+                            e\t81116
+                            f\t81314
+                            """,
                     "select a, count_distinct(s) from x order by a",
                     null,
                     true,
                     true
             );
             assertQueryNoLeakCheck(
-                    "a\tapprox_count_distinct\n" +
-                            "a\t80475\n" +
-                            "b\t81142\n" +
-                            "c\t80831\n" +
-                            "d\t80586\n" +
-                            "e\t80368\n" +
-                            "f\t81112\n",
+                    """
+                            a\tapprox_count_distinct
+                            a\t80475
+                            b\t81142
+                            c\t80831
+                            d\t80586
+                            e\t80368
+                            f\t81112
+                            """,
                     "select a, approx_count_distinct(s) from x order by a",
                     null,
                     true,
@@ -184,26 +196,30 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
-                    "a\tcount_distinct\n" +
-                            "a\t2\n" +
-                            "b\t1\n" +
-                            "c\t2\n" +
-                            "d\t4\n" +
-                            "e\t4\n" +
-                            "f\t4\n",
+                    """
+                            a\tcount_distinct
+                            a\t2
+                            b\t1
+                            c\t2
+                            d\t4
+                            e\t4
+                            f\t4
+                            """,
                     "select a, count_distinct(s) from x order by a",
                     null,
                     true,
                     true
             );
             assertQueryNoLeakCheck(
-                    "a\tapprox_count_distinct\n" +
-                            "a\t2\n" +
-                            "b\t1\n" +
-                            "c\t2\n" +
-                            "d\t4\n" +
-                            "e\t4\n" +
-                            "f\t4\n",
+                    """
+                            a\tapprox_count_distinct
+                            a\t2
+                            b\t1
+                            c\t2
+                            d\t4
+                            e\t4
+                            f\t4
+                            """,
                     "select a, approx_count_distinct(s) from x order by a",
                     null,
                     true,
@@ -217,16 +233,20 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
             assertQueryNoLeakCheck(
-                    "count_distinct\n" +
-                            "631884\n",
+                    """
+                            count_distinct
+                            631884
+                            """,
                     "select count_distinct(s) from x",
                     null,
                     false,
                     true
             );
             assertQueryNoLeakCheck(
-                    "approx_count_distinct\n" +
-                            "630138\n",
+                    """
+                            approx_count_distinct
+                            630138
+                            """,
                     "select approx_count_distinct(s) from x",
                     null,
                     false,
@@ -240,16 +260,20 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             execute("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             assertQueryNoLeakCheck(
-                    "count_distinct\n" +
-                            "6\n",
+                    """
+                            count_distinct
+                            6
+                            """,
                     "select count_distinct(s) from x",
                     null,
                     false,
                     true
             );
             assertQueryNoLeakCheck(
-                    "approx_count_distinct\n" +
-                            "6\n",
+                    """
+                            approx_count_distinct
+                            6
+                            """,
                     "select approx_count_distinct(s) from x",
                     null,
                     false,
@@ -264,10 +288,14 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
             execute("create table x as (" +
                     "select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
-            String expectedExact = "count_distinct\n" +
-                    "631884\n";
-            String expectedEstimated = "approx_count_distinct\n" +
-                    "630138\n";
+            String expectedExact = """
+                    count_distinct
+                    631884
+                    """;
+            String expectedEstimated = """
+                    approx_count_distinct
+                    630138
+                    """;
 
             assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
             assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
@@ -285,10 +313,14 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
             execute("create table x as (" +
                     "select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
-            String expectedExact = "count_distinct\n" +
-                    "6\n";
-            String expectedEstimated = "approx_count_distinct\n" +
-                    "6\n";
+            String expectedExact = """
+                    count_distinct
+                    6
+                    """;
+            String expectedEstimated = """
+                    approx_count_distinct
+                    6
+                    """;
 
             assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
             assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
@@ -303,9 +335,11 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testInterpolation() throws Exception {
         assertQuery(
-                "ts\tapprox_count_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t1\n" +
-                        "1970-01-01T00:00:01.000000Z\t1\n",
+                """
+                        ts\tapprox_count_distinct
+                        1970-01-01T00:00:00.000000Z\t1
+                        1970-01-01T00:00:01.000000Z\t1
+                        """,
                 "select ts, approx_count_distinct(s) from x sample by 1s fill(linear) limit 2",
                 "create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 60000000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
@@ -317,8 +351,10 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testNoValues() throws Exception {
         assertQuery(
-                "approx_count_distinct\n" +
-                        "0\n",
+                """
+                        approx_count_distinct
+                        0
+                        """,
                 "select approx_count_distinct(a) from x",
                 "create table x (a int)",
                 null,
@@ -330,10 +366,12 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testNullConstant() throws Exception {
         assertQuery(
-                "a\tapprox_count_distinct\n" +
-                        "a\t0\n" +
-                        "b\t0\n" +
-                        "c\t0\n",
+                """
+                        a\tapprox_count_distinct
+                        a\t0
+                        b\t0
+                        c\t0
+                        """,
                 "select a, approx_count_distinct(cast(null as INT)) from x order by a",
                 "create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))",
                 null,
@@ -351,17 +389,19 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery(
-                "ts\tapprox_count_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t8\n" +
-                        "1970-01-01T00:00:01.000000Z\t9\n" +
-                        "1970-01-01T00:00:02.000000Z\t9\n" +
-                        "1970-01-01T00:00:03.000000Z\t9\n" +
-                        "1970-01-01T00:00:04.000000Z\t8\n" +
-                        "1970-01-01T00:00:05.000000Z\t9\n" +
-                        "1970-01-01T00:00:06.000000Z\t10\n" +
-                        "1970-01-01T00:00:07.000000Z\t7\n" +
-                        "1970-01-01T00:00:08.000000Z\t8\n" +
-                        "1970-01-01T00:00:09.000000Z\t7\n",
+                """
+                        ts\tapprox_count_distinct
+                        1970-01-01T00:00:00.000000Z\t8
+                        1970-01-01T00:00:01.000000Z\t9
+                        1970-01-01T00:00:02.000000Z\t9
+                        1970-01-01T00:00:03.000000Z\t9
+                        1970-01-01T00:00:04.000000Z\t8
+                        1970-01-01T00:00:05.000000Z\t9
+                        1970-01-01T00:00:06.000000Z\t10
+                        1970-01-01T00:00:07.000000Z\t7
+                        1970-01-01T00:00:08.000000Z\t8
+                        1970-01-01T00:00:09.000000Z\t7
+                        """,
                 "select ts, approx_count_distinct(s) from x sample by 1s fill(linear)",
                 "create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
@@ -373,9 +413,11 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "ts\tapprox_count_distinct\n" +
-                        "1970-01-01T00:00:00.050000Z\t8\n" +
-                        "1970-01-01T00:00:02.050000Z\t8\n",
+                """
+                        ts\tapprox_count_distinct
+                        1970-01-01T00:00:00.050000Z\t8
+                        1970-01-01T00:00:02.050000Z\t8
+                        """,
                 "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
                         "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
         ));
@@ -384,17 +426,19 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testSampleFillValue() throws Exception {
         assertQuery(
-                "ts\tapprox_count_distinct\n" +
-                        "1970-01-01T00:00:00.000000Z\t8\n" +
-                        "1970-01-01T00:00:01.000000Z\t6\n" +
-                        "1970-01-01T00:00:02.000000Z\t7\n" +
-                        "1970-01-01T00:00:03.000000Z\t8\n" +
-                        "1970-01-01T00:00:04.000000Z\t6\n" +
-                        "1970-01-01T00:00:05.000000Z\t7\n" +
-                        "1970-01-01T00:00:06.000000Z\t7\n" +
-                        "1970-01-01T00:00:07.000000Z\t6\n" +
-                        "1970-01-01T00:00:08.000000Z\t7\n" +
-                        "1970-01-01T00:00:09.000000Z\t5\n",
+                """
+                        ts\tapprox_count_distinct
+                        1970-01-01T00:00:00.000000Z\t8
+                        1970-01-01T00:00:01.000000Z\t6
+                        1970-01-01T00:00:02.000000Z\t7
+                        1970-01-01T00:00:03.000000Z\t8
+                        1970-01-01T00:00:04.000000Z\t6
+                        1970-01-01T00:00:05.000000Z\t7
+                        1970-01-01T00:00:06.000000Z\t7
+                        1970-01-01T00:00:07.000000Z\t6
+                        1970-01-01T00:00:08.000000Z\t7
+                        1970-01-01T00:00:09.000000Z\t5
+                        """,
                 "select ts, approx_count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
@@ -405,19 +449,21 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testSampleKeyed() throws Exception {
         assertQuery(
-                "a\tapprox_count_distinct\tts\n" +
-                        "a\t5\t1970-01-01T00:00:00.000000Z\n" +
-                        "f\t8\t1970-01-01T00:00:00.000000Z\n" +
-                        "c\t9\t1970-01-01T00:00:00.000000Z\n" +
-                        "e\t6\t1970-01-01T00:00:00.000000Z\n" +
-                        "d\t7\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t5\t1970-01-01T00:00:00.000000Z\n" +
-                        "b\t6\t1970-01-01T00:00:05.000000Z\n" +
-                        "c\t5\t1970-01-01T00:00:05.000000Z\n" +
-                        "f\t6\t1970-01-01T00:00:05.000000Z\n" +
-                        "e\t8\t1970-01-01T00:00:05.000000Z\n" +
-                        "d\t7\t1970-01-01T00:00:05.000000Z\n" +
-                        "a\t4\t1970-01-01T00:00:05.000000Z\n",
+                """
+                        a\tapprox_count_distinct\tts
+                        a\t5\t1970-01-01T00:00:00.000000Z
+                        f\t8\t1970-01-01T00:00:00.000000Z
+                        c\t9\t1970-01-01T00:00:00.000000Z
+                        e\t6\t1970-01-01T00:00:00.000000Z
+                        d\t7\t1970-01-01T00:00:00.000000Z
+                        b\t5\t1970-01-01T00:00:00.000000Z
+                        b\t6\t1970-01-01T00:00:05.000000Z
+                        c\t5\t1970-01-01T00:00:05.000000Z
+                        f\t6\t1970-01-01T00:00:05.000000Z
+                        e\t8\t1970-01-01T00:00:05.000000Z
+                        d\t7\t1970-01-01T00:00:05.000000Z
+                        a\t4\t1970-01-01T00:00:05.000000Z
+                        """,
                 "select a, approx_count_distinct(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 12, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",

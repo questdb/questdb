@@ -71,7 +71,7 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     ) {
         super.of(sampler, intervals);
 
-        sampler.setStart(offset);
+        sampler.setOffset(offset);
         minTimestamp = sampler.round(minTs);
         maxTimestamp = sampler.nextTimestamp(sampler.round(maxTs));
 

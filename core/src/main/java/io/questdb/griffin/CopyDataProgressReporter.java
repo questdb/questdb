@@ -22,33 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import org.jetbrains.annotations.NotNull;
+@FunctionalInterface
+public interface CopyDataProgressReporter {
+    CopyDataProgressReporter NOOP = (stage, rows) -> {
+    };
 
-public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
-    public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+    void onProgress(Stage stage, long rows);
 
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        return false;
-    }
-
-    @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
-
+    enum Stage {
+        Start(),
+        Inserting(),
+        Finish(),
     }
 }
