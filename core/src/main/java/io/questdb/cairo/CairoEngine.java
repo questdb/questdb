@@ -627,7 +627,7 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeViewCreate();
         final TableToken viewToken = createTableOrViewOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, false, false);
-        getDdlListener(viewToken).onTableOrViewOrMatViewCreated(securityContext, viewToken);
+        getDdlListener(viewToken).onTableOrViewOrMatViewCreated(securityContext, viewToken, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final ViewDefinition viewDefinition = struct.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
