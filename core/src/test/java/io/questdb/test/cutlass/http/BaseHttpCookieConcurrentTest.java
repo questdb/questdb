@@ -98,14 +98,11 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 final int numOfIterations = Math.max(1, rnd.nextInt(10));
                 for (int i = 0; i < numOfIterations; i++) {
-                    final String newSessionId = runSuccessfulQuery(httpClient, sessionId, rnd);
-                    if (newSessionId != null) {
-                        sessionIds.add(newSessionId);
-                    }
-
                     // select a thread to move the clock over rotateAt
+                    // the 'i == numOfIterations-1' part of the condition guarantees that the clock
+                    // will be moved before any thread finishes
                     synchronized (this) {
-                        if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < rotateAt) {
+                        if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < rotateAt) {
                             LOG.info().$("clock moving from " + currentMicros.get())
                                     .$(" [threadId=").$(threadId)
                                     .$(", rotateAt=").$(rotateAt)
@@ -116,6 +113,11 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                                     .$(", rotateAt=").$(rotateAt)
                                     .$("]").$();
                         }
+                    }
+
+                    final String newSessionId = runSuccessfulQuery(httpClient, sessionId, rnd);
+                    if (newSessionId != null) {
+                        sessionIds.add(newSessionId);
                     }
                 }
             } catch (Exception e) {
@@ -163,13 +165,13 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             barriers[3].await();
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                final int numOfIterations = 10 + rnd.nextInt(10);
+                final int numOfIterations = Math.max(1, rnd.nextInt(10));
                 for (int i = 0; i < numOfIterations; i++) {
-                    Assert.assertNull(runSuccessfulQuery(httpClient, newSessionId, rnd));
-
                     // select a thread to move the clock over evictAt
+                    // the 'i == numOfIterations-1' part of the condition guarantees that the clock
+                    // will be moved before any thread finishes
                     synchronized (this) {
-                        if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < evictAt) {
+                        if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < evictAt) {
                             LOG.info().$("clock moving from " + currentMicros.get())
                                     .$(" [threadId=").$(threadId)
                                     .$(", evictAt=").$(evictAt)
@@ -181,6 +183,8 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                                     .$("]").$();
                         }
                     }
+
+                    Assert.assertNull(runSuccessfulQuery(httpClient, newSessionId, rnd));
                 }
             }
 
@@ -201,9 +205,19 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             // all threads have to initialize expiresAt before the clock is moved
             barriers[0].await();
 
-            final int numOfIterations = 20 + rnd.nextInt(30);
-            for (int i = 0; i < numOfIterations; i++) {
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                final int numOfIterations = Math.max(20, rnd.nextInt(40));
+                for (int i = 0; i < numOfIterations; i++) {
+                    // select a thread to move the clock over expiresAt
+                    // the 'i == numOfIterations-1' part of the condition guarantees that the clock
+                    // will be moved before any thread finishes
+                    synchronized (this) {
+                        if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < expiresAt) {
+                            currentMicros.addAndGet(timeIncrement);
+                            LOG.info().$("clock moved to " + currentMicros.get()).$();
+                        }
+                    }
+
                     try {
                         runSuccessfulQuery(httpClient, sessionId);
                     } catch (AssertionError e) {
@@ -215,14 +229,6 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                         // and that the num of open sessions are less or equal to the num of threads
                         sessionId = createSession(httpClient, sessionStore, ADMIN_USER, ADMIN_PWD);
                         sessionCount.incrementAndGet();
-                    }
-
-                    // select a thread to move the clock over expiresAt 
-                    synchronized (this) {
-                        if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < expiresAt) {
-                            currentMicros.addAndGet(timeIncrement);
-                            LOG.info().$("clock moved to " + currentMicros.get()).$();
-                        }
                     }
                 }
             }
@@ -238,18 +244,20 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             // all threads have to initialize rotateAt before the clock is moved
             barriers[0].await();
 
-            final int numOfIterations = 20 + rnd.nextInt(20);
-            for (int i = 0; i < numOfIterations; i++) {
-                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                    runSuccessfulQuery(httpClient, sessionId);
-
-                    // select a thread to move the clock over rotateAt 
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                final int numOfIterations = Math.max(20, rnd.nextInt(40));
+                for (int i = 0; i < numOfIterations; i++) {
+                    // select a thread to move the clock over rotateAt
+                    // the 'i == numOfIterations-1' part of the condition guarantees that the clock
+                    // will be moved before any thread finishes
                     synchronized (this) {
-                        if ((rnd.nextBoolean() || threadId == 0) && currentMicros.get() < rotateAt) {
+                        if ((rnd.nextBoolean() || i == numOfIterations - 1) && currentMicros.get() < rotateAt) {
                             currentMicros.addAndGet(timeIncrement);
                             LOG.info().$("clock moved to " + currentMicros.get()).$();
                         }
                     }
+
+                    runSuccessfulQuery(httpClient, sessionId);
                 }
             }
         }, numOfSessions -> numOfSessions == 2);
@@ -368,7 +376,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
 
     private void runTest(boolean openSession, TestCode test, Predicate<Integer> assertSessions) throws Exception {
         assertMemoryLeak(() -> {
-            final Rnd rnd = generateRandom(LOG, 104330084588208L, 1761610756636L);
+            final Rnd rnd = generateRandom(LOG);
             final AtomicLong currentMicros = new AtomicLong(1761055200000000L);
             try (final ServerMain serverMain = getServerMain(currentMicros)) {
                 serverMain.start();
