@@ -10562,7 +10562,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private record TestJsonQueryProcessorFactory(CairoEngine engine,
-            HttpFullFatServerConfiguration httpConfiguration,
+                                                 HttpFullFatServerConfiguration httpConfiguration,
                                                  int workerCount) implements HttpRequestHandlerFactory {
 
         @Override

@@ -34,7 +34,6 @@ import io.questdb.std.Decimal64;
  * <p>
  * Implementations apply mathematical or logical transformations to decimal values
  * of varying precisions (64-bit, 128-bit, or 256-bit storage).
- * </p>
  */
 public interface DecimalTransformer {
     /**
@@ -50,12 +49,11 @@ public interface DecimalTransformer {
      * <p>
      * The transformer should modify the provided {@code value} object directly.
      * The value's scale is expected to be set before this method is called.
-     * </p>
      *
      * @param value  the decimal value to transform, modified in place
      * @param record the current record context, may be used for additional data
      * @return {@code true} if the transformation succeeded and produced a valid result,
-     *         {@code false} if the transformation failed or the result should be NULL
+     * {@code false} if the transformation failed or the result should be NULL
      */
     boolean transform(Decimal128 value, Record record);
 
@@ -64,12 +62,11 @@ public interface DecimalTransformer {
      * <p>
      * The transformer should modify the provided {@code value} object directly.
      * The value's scale is expected to be set before this method is called.
-     * </p>
      *
      * @param value  the decimal value to transform, modified in place
      * @param record the current record context, may be used for additional data
      * @return {@code true} if the transformation succeeded and produced a valid result,
-     *         {@code false} if the transformation failed or the result should be NULL
+     * {@code false} if the transformation failed or the result should be NULL
      */
     boolean transform(Decimal256 value, Record record);
 
@@ -78,12 +75,11 @@ public interface DecimalTransformer {
      * <p>
      * The transformer should modify the provided {@code value} object directly.
      * The value's scale is expected to be set before this method is called.
-     * </p>
      *
      * @param value  the decimal value to transform, modified in place
      * @param record the current record context, may be used for additional data
      * @return {@code true} if the transformation succeeded and produced a valid result,
-     *         {@code false} if the transformation failed or the result should be NULL
+     * {@code false} if the transformation failed or the result should be NULL
      */
     boolean transform(Decimal64 value, Record record);
 }

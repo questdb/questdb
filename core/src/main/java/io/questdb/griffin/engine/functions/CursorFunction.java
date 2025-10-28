@@ -90,7 +90,7 @@ public class CursorFunction implements Function {
     public final void getDecimal128(Record rec, Decimal128 sink) {
         throw new UnsupportedOperationException();
     }
-    
+
     @Override
     public final short getDecimal16(Record rec) {
         throw new UnsupportedOperationException();
