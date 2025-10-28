@@ -58,9 +58,37 @@ import org.jetbrains.annotations.NotNull;
  * FROM orders CROSS JOIN offsets
  * ORDER BY order_ts + usec_offs
  * </pre>
- * <p>
  * Instead of emitting the cross-join results in the usual order, materializing all of
  * them, and then sorting them, this factory emits rows directly in the correct order.
+ *
+ * <h3>Detailed explanation of the algorithm</h3>
+ * <p>
+ * In this special-case cross-join, the slave table contains an integer column whose
+ * values form an arithmetic sequence (numbers advancing at a steady rate). These
+ * numbers represent time offsets that are added to the master row's timestamp. The
+ * output of the cross-join is sorted on (<code>master_row_timestamp + slave_time_offset</code>).
+ * <p>
+ * The algorithm deals with {@link TimestampLadderRecordCursor.SlaveRowIterator
+ * SlaveRowIterator} objects. Each iterator represents all the output rows that originate
+ * from a single master row. At any point in the algorithm, we deal with two things:
+ * <ol>
+ *     <li>the master cursor positioned at the master row that we haven't yet started using
+ *     <li>a circular list of active iterators, representing all the master rows that we are
+ *     currently using to emit the output
+ * </ol>
+ * The algorithm runs as follows:
+ * <p>
+ * Go through the circular list, and emit one row from each iterator in turn,
+ * round-robin fashion. Every time before taking a row from an iterator, inspect
+ * the next master row's timestamp, to see which timestamp is less. If the iterator's
+ * timestamp is less, take it and move on to the next iterator. If the master row's
+ * timestamp is less, <em>activate</em> it: create an iterator for it, insert it
+ * into the circular list, and emit its first row. Every time after taking a value from
+ * an iterator, check if it's exhausted, and if so, remove it from the list. Continue
+ * this until both the master cursor and all the iterators are fully exhausted.
+ * <p>
+ * One invocation of {@link TimestampLadderRecordCursor#hasNext() hasNext()}
+ * executes one step of the algorithm, resulting in a single output row.
  */
 public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final TimestampLadderRecordCursor cursor;
@@ -174,9 +202,6 @@ public class TimestampLadderRecordCursorFactory extends AbstractJoinRecordCursor
      * <p>
      * We materialize the slave cursor (arithmetic sequence) into a RecordArray
      * because we need random access to its rows.
-     * <p>
-     * The algorithm maintains a circular linked list of SlaveRowIterator
-     * objects (one per master row).
      */
     private static class TimestampLadderRecordCursor extends AbstractJoinCursor {
         private final CairoConfiguration configuration;
