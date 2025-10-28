@@ -1230,11 +1230,11 @@ public class RecordToRowCopierUtils {
                     // stack: [rowWriter, toColumnIndex, sqlExecutionContext]
                     asm.invokeInterface(sGetDecimal256, 0);
                     // Load both from and to column int to the stack
-                    // Stack: [rowWriter, toColumnIndex, decimal256]
+                    // stack: [rowWriter, toColumnIndex, decimal256]
                     asm.ldc(fromColumnType_0 + i * 2);
-                    // Stack: [rowWriter, toColumnIndex, decimal256, fromType]
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType]
                     asm.ldc(toColumnType_0 + i * 2);
-                    // Stack: [rowWriter, toColumnIndex, decimal256, fromType, toType]
+                    // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType]
                     asm.aload(2);
                     // stack: [rowWriter, toColumnIndex, decimal256, fromType, toType, record]
                     asm.iconst(i);

@@ -265,11 +265,12 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             if (fitInTargetType) {
                 throw e;
             }
-        } catch (AssertionError ignored) {
-            Assert.fail(String.format("Cast failed from (%s - p:%s - s:%s) to (%s - p:%s - s:%s) for %s",
+        } catch (AssertionError e) {
+            System.err.printf("Cast failed from (%s - p:%s - s:%s) to (%s - p:%s - s:%s) for '%s'\n",
                     ColumnType.nameOf(ColumnType.tagOf(fromType)), ColumnType.getDecimalPrecision(fromType), ColumnType.getDecimalScale(fromType),
                     ColumnType.nameOf(ColumnType.tagOf(toType)), ColumnType.getDecimalPrecision(toType), ColumnType.getDecimalScale(toType),
-                    value));
+                    value);
+            throw e;
         }
     }
 }

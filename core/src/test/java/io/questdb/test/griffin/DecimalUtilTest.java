@@ -68,10 +68,14 @@ public class DecimalUtilTest extends AbstractCairoTest {
             @Override
             public void getDecimal128(int col, Decimal128 decimal128) {
                 Assert.assertEquals(ColumnType.DECIMAL128, fromTag);
-                decimal128.ofRaw(
-                        value.getLh(),
-                        value.getLl()
-                );
+                if (value.isNull()) {
+                    decimal128.ofRawNull();
+                } else {
+                    decimal128.ofRaw(
+                            value.getLh(),
+                            value.getLl()
+                    );
+                }
             }
 
             @Override
