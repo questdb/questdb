@@ -1,11 +1,11 @@
 package io.questdb.cairo.security;
 
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 
 public interface PrincipalContext {
     byte getAuthType();
 
-    ObjList<CharSequence> getGroups();
+    ReadOnlyObjList<CharSequence> getGroups();
 
     CharSequence getPrincipal();
 }
