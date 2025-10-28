@@ -10183,7 +10183,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     auxMem.truncate();
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
+                if (metadata.isIndexed(i)) {
+                    // Reset indexer column top
+                    indexers.get(i).resetColumnTop();
+                }
             }
+
         }
     }
 

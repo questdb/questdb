@@ -58,6 +58,7 @@ import static io.questdb.cutlass.http.processors.LineHttpProcessorState.Status.M
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
