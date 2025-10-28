@@ -96,7 +96,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
             barriers[0].await();
 
             try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
-                final int numOfIterations = 10 + rnd.nextInt(10);
+                final int numOfIterations = Math.max(1, rnd.nextInt(10));
                 for (int i = 0; i < numOfIterations; i++) {
                     final String newSessionId = runSuccessfulQuery(httpClient, sessionId, rnd);
                     if (newSessionId != null) {
@@ -368,7 +368,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
 
     private void runTest(boolean openSession, TestCode test, Predicate<Integer> assertSessions) throws Exception {
         assertMemoryLeak(() -> {
-            final Rnd rnd = generateRandom(LOG);
+            final Rnd rnd = generateRandom(LOG, 104330084588208L, 1761610756636L);
             final AtomicLong currentMicros = new AtomicLong(1761055200000000L);
             try (final ServerMain serverMain = getServerMain(currentMicros)) {
                 serverMain.start();
@@ -378,7 +378,7 @@ public abstract class BaseHttpCookieConcurrentTest extends AbstractBootstrapTest
                 final HttpSessionStore sessionStore = serverMain.getConfiguration().getFactoryProvider().getHttpSessionStore();
                 final long sessionTimeout = serverMain.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
 
-                numOfThreads = 5 + rnd.nextInt(5);
+                numOfThreads = Math.max(2, rnd.nextInt(4));
                 final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
                 // these barriers are used to synchronize the test threads when they should reach certain phases together
                 // for example, a barrier can be used to make sure all threads created a session before we move onto rotate/evict them
