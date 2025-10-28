@@ -4033,27 +4033,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (orderBy != null && orderBy.size() > 0) {
                 lastSeenOrderByModel = model;
             }
+            RecordCursorFactory factory;
 
-            return generateLimit(
-                    generateOrderBy(
-                            generateLatestBy(
-                                    generateFilter(
-                                            generateSelect(
-                                                    model,
-                                                    executionContext,
-                                                    processJoins
-                                            ),
-                                            model,
-                                            executionContext
-                                    ),
-                                    model
-                            ),
-                            model,
-                            executionContext
-                    ),
-                    model,
-                    executionContext
-            );
+            factory = generateSelect(model, executionContext, processJoins);
+            factory = generateFilter(factory, model, executionContext);
+            factory = generateLatestBy(factory, model);
+            factory = generateOrderBy(factory, model, executionContext);
+            factory = generateLimit(factory, model, executionContext);
+
+            return factory;
         } finally {
             lastSeenOrderByModel = savedOrderByModel;
         }
