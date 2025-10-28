@@ -4025,8 +4025,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        // Remember the last model with non-empty ORDER BY as we descend through nested models
-        // This is needed for timestamp ladder optimization where ORDER BY may be several levels up
+        // Remember the last model with non-empty ORDER BY as we descend through nested models.
+        // We need the ORDER BY clause in the Timestamp Ladder Join optimization, but it's stored
+        // several levels up from the model that holds the join clause.
         final QueryModel savedOrderByModel = lastSeenOrderByModel;
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
