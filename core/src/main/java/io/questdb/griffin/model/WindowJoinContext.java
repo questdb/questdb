@@ -26,6 +26,8 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.Mutable;
 
+import java.util.Objects;
+
 public class WindowJoinContext implements Mutable {
     public static final int CURRENT = 3;
     public static final int FOLLOWING = 2;
@@ -43,6 +45,7 @@ public class WindowJoinContext implements Mutable {
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
     private int loKindPos = 0;
+    private QueryModel parentModel;
 
     @Override
     public void clear() {
@@ -59,6 +62,27 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = false;
+        parentModel = null;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        WindowJoinContext that = (WindowJoinContext) o;
+        return hi == that.hi &&
+                hiExprPos == that.hiExprPos &&
+                hiExprTimeUnit == that.hiExprTimeUnit &&
+                hiKind == that.hiKind &&
+                hiKindPos == that.hiKindPos &&
+                includePrevailing == that.includePrevailing &&
+                lo == that.lo &&
+                loExprPos == that.loExprPos &&
+                loExprTimeUnit == that.loExprTimeUnit &&
+                loKind == that.loKind &&
+                loKindPos == that.loKindPos &&
+                Objects.equals(hiExpr, that.hiExpr) &&
+                Objects.equals(loExpr, that.loExpr);
     }
 
     public long getHi() {
@@ -109,12 +133,18 @@ public class WindowJoinContext implements Mutable {
         return loKindPos;
     }
 
-    public boolean isIncludePrevailing() {
-        return includePrevailing;
+    public QueryModel getParentModel() {
+        return parentModel;
     }
 
-    public boolean isNonWindowJoinDefault() {
-        return loKind != PRECEDING || hiKind != CURRENT || hiExpr != null || loExpr != null || includePrevailing;
+    @Override
+    public int hashCode() {
+        return Objects.hash(hi, hiExpr, hiExprPos, hiExprTimeUnit, hiKind, hiKindPos,
+                includePrevailing, lo, loExpr, loExprPos, loExprTimeUnit, loKind, loKindPos);
+    }
+
+    public boolean isIncludePrevailing() {
+        return includePrevailing;
     }
 
     public void setHi(long hi) {
@@ -159,5 +189,9 @@ public class WindowJoinContext implements Mutable {
 
     public void setLoKindPos(int loKindPos) {
         this.loKindPos = loKindPos;
+    }
+
+    public void setParentModel(QueryModel parentModel) {
+        this.parentModel = parentModel;
     }
 }

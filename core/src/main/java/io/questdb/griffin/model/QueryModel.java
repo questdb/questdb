@@ -88,6 +88,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SELECT_MODEL_SHOW = 7;
     public static final int SELECT_MODEL_VIRTUAL = 2;
     public static final int SELECT_MODEL_WINDOW = 3;
+    public static final int SELECT_MODEL_WINDOW_JOIN = 8;
     public static final int SET_OPERATION_EXCEPT = 2;
     public static final int SET_OPERATION_EXCEPT_ALL = 3;
     public static final int SET_OPERATION_INTERSECT = 4;
@@ -148,6 +149,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
+    private final WindowJoinContext windowJoinContext = new WindowJoinContext();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
@@ -219,7 +221,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
-    private WindowJoinContext windowJoinContext = new WindowJoinContext();
 
     private QueryModel() {
         joinModels.add(this);
@@ -246,6 +247,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
             current = current.nestedModel;
         }
+    }
+
+    public static boolean isWindowJoin(QueryModel model) {
+        if (model == null) {
+            return false;
+        }
+        ObjList<QueryModel> ms = model.getJoinModels();
+        return ms.size() > 1 && ms.get(ms.size() - 1).getJoinType() == JOIN_WINDOW;
     }
 
     /**
@@ -708,7 +717,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && Objects.equals(decls, that.decls)
-                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance);
+                && Objects.equals(asOfJoinTolerance, that.asOfJoinTolerance)
+                && Objects.equals(windowJoinContext, that.windowJoinContext);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -1086,7 +1096,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls, windowJoinContext
         );
     }
 
@@ -1854,8 +1864,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         }
 
                         WindowJoinContext wjc = model.getWindowJoinContext();
-                        if (!wjc.isNonWindowJoinDefault()) {
-                            assert model.joinType == JOIN_WINDOW;
+                        if (model.joinType == JOIN_WINDOW) {
                             sink.put(" between ");
                             if (wjc.getLoExpr() != null) {
                                 wjc.getLoExpr().toSink(sink);
@@ -1868,6 +1877,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                         sink.putAscii(" following");
                                         break;
                                     default:
+                                        sink.putAscii("current row");
                                         break;
                                 }
                             } else {
@@ -1888,7 +1898,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             if (wjc.getHiExpr() != null) {
                                 wjc.getHiExpr().toSink(sink);
                                 unitToSink(sink, wjc.getHiExprTimeUnit());
-
                                 switch (wjc.getHiKind()) {
                                     case WindowJoinContext.PRECEDING:
                                         sink.putAscii(" preceding");
@@ -1897,7 +1906,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                         sink.putAscii(" following");
                                         break;
                                     default:
-                                        assert false;
+                                        sink.putAscii("current row");
                                         break;
                                 }
                             } else {
@@ -2175,5 +2184,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_DISTINCT, "select-distinct");
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
+        modelTypeName.extendAndSet(SELECT_MODEL_WINDOW_JOIN, "select-window-join");
     }
 }

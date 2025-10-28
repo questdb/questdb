@@ -4458,6 +4458,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateSelectVirtual(model, executionContext);
             case SELECT_MODEL_WINDOW:
                 return generateSelectWindow(model, executionContext);
+            case SELECT_MODEL_WINDOW_JOIN:
+                return generateSelectWindowJoin(model, executionContext);
             case SELECT_MODEL_DISTINCT:
                 return generateSelectDistinct(model, executionContext);
             case SELECT_MODEL_CURSOR:
@@ -5713,6 +5715,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(partitionByFunctions);
             throw th;
         }
+    }
+
+    private RecordCursorFactory generateSelectWindowJoin(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        QueryModel child = model.getNestedModel();
+        if (!QueryModel.isWindowJoin(child)) {
+            throw SqlException.$(0, "expected window join model");
+        }
+        ObjList<QueryModel> jms = child.getJoinModels();
+        jms.getQuick(jms.size() - 1).getWindowJoinContext().setParentModel(model);
+        return generate(child, executionContext);
     }
 
     /**
@@ -7128,6 +7140,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         joinsRequiringTimestamp[JOIN_ASOF] = true;
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
+        joinsRequiringTimestamp[JOIN_WINDOW] = true;
     }
 
     static {

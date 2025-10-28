@@ -2303,7 +2303,12 @@ public class SqlParser {
 
         // expect multiple [[inner | outer | cross] join]
         int joinType;
+        boolean hasWindowJoin = false;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
+            if (hasWindowJoin) {
+                throw SqlException.$((lexer.lastTokenPosition()), "window join must be the last join in the query");
+            }
+            hasWindowJoin = joinType == QueryModel.JOIN_WINDOW;
             model.addJoinModel(parseJoin(lexer, model, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
@@ -2819,7 +2824,8 @@ public class SqlParser {
         }
 
         tok = optTok(lexer);
-        if (joinType == QueryModel.JOIN_WINDOW) {
+        if (joinType == QueryModel.JOIN_WINDOW && tok != null && isRangeKeyword(tok)) {
+            tok = optTok(lexer);
             expectTok(lexer, tok, "between");
             tok = tok(lexer, "'unbounded', 'current' or expression");
             WindowJoinContext context = joinModel.getWindowJoinContext();
@@ -2850,6 +2856,7 @@ public class SqlParser {
                 }
             }
 
+            tok = optTok(lexer);
             expectTok(lexer, tok, "and");
             tok = tok(lexer, "'unbounded', 'current' or expression");
             // hi
@@ -2889,13 +2896,15 @@ public class SqlParser {
                 }
             }
 
-            tok = tok(lexer, "'including', 'excluding'");
-            if (isIncludingPrevailing(lexer, tok)) {
-                context.setIncludePrevailing(true);
-            } else if (isExcludingPrevailing(lexer, tok)) {
-                context.setIncludePrevailing(false);
-            } else {
-                lexer.unparseLast();
+            tok = optTok(lexer);
+            if (tok != null) {
+                if (isIncludingPrevailing(lexer, tok)) {
+                    context.setIncludePrevailing(true);
+                } else if (isExcludingPrevailing(lexer, tok)) {
+                    context.setIncludePrevailing(false);
+                } else {
+                    lexer.unparseLast();
+                }
             }
             return joinModel;
         }

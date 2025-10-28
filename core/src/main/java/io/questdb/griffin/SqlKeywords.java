@@ -1662,7 +1662,7 @@ public class SqlKeywords {
     }
 
     public static boolean isPrevailingKeyword(CharSequence tok) {
-        return tok.length() == 9
+        return tok.length() == 10
                 && (tok.charAt(0) | 32) == 'p'
                 && (tok.charAt(1) | 32) == 'r'
                 && (tok.charAt(2) | 32) == 'e'
