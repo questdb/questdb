@@ -61,7 +61,7 @@ import org.jetbrains.annotations.NotNull;
  * Instead of emitting the cross-join results in the usual order, materializing all of
  * them, and then sorting them, this factory emits rows directly in the correct order.
  *
- * <h3>Detailed explanation of the algorithm</h3>
+ * <h2>Detailed explanation of the algorithm</h2>
  * <p>
  * In this special-case cross-join, the slave table contains an integer column whose
  * values form an arithmetic sequence (numbers advancing at a steady rate). These
