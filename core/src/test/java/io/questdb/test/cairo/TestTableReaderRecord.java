@@ -124,7 +124,7 @@ public class TestTableReaderRecord implements Record, Sinkable {
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
-        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 1);
+        final long offset = getAdjustedRecordIndex(col) * (Long.BYTES << 2);
         final int absoluteColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, col);
         if (offset < 0) {
             sink.ofRawNull();

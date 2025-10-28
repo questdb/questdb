@@ -228,7 +228,13 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd.nextInt(), record.getDecimal32(col++));
                         Assert.assertEquals(rnd.nextLong(), record.getDecimal64(col++));
                         record.getDecimal128(col++, decimal128);
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getHigh());
+                        Assert.assertEquals(rnd.nextLong(), decimal128.getLow());
                         record.getDecimal256(col, decimal256);
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getHl());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLh());
+                        Assert.assertEquals(rnd.nextLong(), decimal256.getLl());
                     }
                 }
             }
