@@ -325,7 +325,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.copy.queue.capacity\tQDB_CAIRO_SQL_COPY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.copy.export.queue.capacity\tQDB_CAIRO_SQL_COPY_EXPORT_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.capacity\tQDB_CAIRO_SQL_COUNT_DISTINCT_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.count.distinct.load.factor\tQDB_CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR\t0.75\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.count.distinct.load.factor\tQDB_CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.key.capacity\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.load.factor\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
@@ -733,6 +733,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
+                                    "http.server.cookies.enabled\tQDB_HTTP_SERVER_COOKIES_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.session.timeout\tQDB_HTTP_SESSION_TIMEOUT\t1800000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.array.element.count\tQDB_CAIRO_MAX_ARRAY_ELEMENT_COUNT\t10000000\tdefault\tfalse\tfalse\n" +
                                     "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.write.back.off.timeout.on.mem.pressure\tQDB_CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE\t4000\tdefault\tfalse\tfalse\n" +

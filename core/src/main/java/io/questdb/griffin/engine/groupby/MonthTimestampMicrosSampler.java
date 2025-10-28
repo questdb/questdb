@@ -34,12 +34,8 @@ import static io.questdb.std.datetime.microtime.Micros.toMicros;
 
 public class MonthTimestampMicrosSampler implements TimestampSampler {
     private final int stepMonths;
+    private long dayMod;
     private int startDay;
-    private int startHour;
-    private int startMicros;
-    private int startMillis;
-    private int startMin;
-    private int startSec;
 
     public MonthTimestampMicrosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
@@ -82,7 +78,12 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         // target month
         int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
-        return toMicros(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
+        return toMicros(y, leap, nextMonth, d) + dayMod;
+    }
+
+    @Override
+    public void setOffset(long timestamp) {
+        this.dayMod = timestamp;
     }
 
     @Override
@@ -90,11 +91,11 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startDay = Micros.getDayOfMonth(timestamp, y, Micros.getMonthOfYear(timestamp, y, leap), leap);
-        this.startHour = Micros.getHourOfDay(timestamp);
-        this.startMin = Micros.getMinuteOfHour(timestamp);
-        this.startSec = Micros.getSecondOfMinute(timestamp);
-        this.startMillis = Micros.getMillisOfSecond(timestamp);
-        this.startMicros = Micros.getMicrosOfMilli(timestamp);
+        long dayMod = timestamp % Micros.DAY_MICROS;
+        if (dayMod < 0) {
+            dayMod += Micros.DAY_MICROS;
+        }
+        this.dayMod = dayMod;
     }
 
     @Override
@@ -132,11 +133,6 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
                 _d = maxDay;
             }
         }
-        return Micros.toMicros(_y, _m, _d)
-                + startHour * Micros.HOUR_MICROS
-                + startMin * Micros.MINUTE_MICROS
-                + startSec * Micros.SECOND_MICROS
-                + startMillis * Micros.MILLI_MICROS
-                + startMicros;
+        return Micros.toMicros(_y, _m, _d) + dayMod;
     }
 }

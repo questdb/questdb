@@ -167,27 +167,17 @@ public interface TimestampDriver {
      * @return the timestamp in the driver's native value, or 0 if unit is not recognized
      */
     default long from(long value, char unit) {
-        switch (unit) {
-            case 'n':
-                return fromNanos(value);
-            case 'u':
-            case 'U':
-                return fromMicros(value);
-            case 'T':
-                return fromMillis(value);
-            case 's':
-                return fromSeconds(value);
-            case 'm':
-                return fromMinutes((int) value);
-            case 'H':
-            case 'h':
-                return fromHours((int) value);
-            case 'd':
-                return fromDays((int) value);
-            case 'w':
-                return fromWeeks((int) value);
-        }
-        return 0;
+        return switch (unit) {
+            case 'n' -> fromNanos(value);
+            case 'u', 'U' -> fromMicros(value);
+            case 'T' -> fromMillis(value);
+            case 's' -> fromSeconds(value);
+            case 'm' -> fromMinutes((int) value);
+            case 'H', 'h' -> fromHours((int) value);
+            case 'd' -> fromDays((int) value);
+            case 'w' -> fromWeeks((int) value);
+            default -> 0;
+        };
     }
 
     /**
@@ -195,26 +185,11 @@ public interface TimestampDriver {
      *
      * @param ts   the timestamp value to convert
      * @param unit the time unit byte constant from CommonUtils.TIMESTAMP_UNIT_*
+     *             supported units: nanos, micros, millis, seconds, minutes, hours
      * @return the timestamp value
+     * @throws UnsupportedOperationException if the unit is not supported
      */
-    default long from(long ts, byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-                return fromNanos(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-                return fromMicros(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-                return fromMillis(ts);
-            case CommonUtils.TIMESTAMP_UNIT_SECONDS:
-                return fromSeconds(ts);
-            case CommonUtils.TIMESTAMP_UNIT_MINUTES:
-                return fromMinutes((int) ts);
-            case CommonUtils.TIMESTAMP_UNIT_HOURS:
-                return fromHours((int) ts);
-            default:
-                throw new UnsupportedOperationException();
-        }
-    }
+    long from(long ts, byte unit);
 
     long fromDate(long timestamp);
 

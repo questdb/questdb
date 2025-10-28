@@ -22,33 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import org.jetbrains.annotations.NotNull;
 
-public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
-    public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
-    }
+public class EqSymFunctionFactoryTest extends AbstractCairoTest {
 
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        return false;
-    }
-
-    @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
-
+    @Test
+    public void testSmoke() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");
+            assertQuery(
+                    """
+                            a\tb
+                            1\t1
+                            \t
+                            1\t1
+                            \t
+                            5\t5
+                            \t
+                            5\t5
+                            \t
+                            1\t1
+                            """,
+                    "select * from x where a = b",
+                    null,
+                    true,
+                    false
+            );
+        });
     }
 }
