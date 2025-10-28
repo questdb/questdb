@@ -75,7 +75,7 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
                 mapValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
@@ -183,7 +183,7 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
             } else {
                 destValue.getDecimal256(valueIndex, decimal256B);
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }

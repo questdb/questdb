@@ -73,7 +73,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
                 mapValue.putDecimal256(valueIndex, decimal256A);
             } else {
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
@@ -153,7 +153,7 @@ class AvgDecimal256GroupByFunction extends Decimal256Function implements GroupBy
             } else {
                 destValue.getDecimal256(valueIndex, decimal256B);
                 try {
-                    decimal256A.addSameScaleNoMaxValueCheck(decimal256B);
+                    decimal256A.uncheckedAdd(decimal256B);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }

@@ -39,8 +39,9 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Numbers;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
@@ -238,13 +239,13 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
-            return ColumnType.TIMESTAMP_MICRO;
+        public int getDefaultPartitionBy() {
+            return PartitionBy.DAY;
         }
 
         @Override
-        public int getDefaultPartitionBy() {
-            return PartitionBy.DAY;
+        public int getDefaultTimestampColumnType() {
+            return ColumnType.TIMESTAMP_MICRO;
         }
 
         @Override
@@ -258,7 +259,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public io.questdb.std.datetime.Clock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return MicrosecondClockImpl.INSTANCE;
         }
 
@@ -331,7 +332,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public Clock getNanosecondClock() {
+        public NanosecondClock getNanosecondClock() {
             return httpContextConfiguration.getNanosecondClock();
         }
     }

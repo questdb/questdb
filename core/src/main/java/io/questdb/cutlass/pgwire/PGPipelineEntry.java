@@ -2371,8 +2371,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 } else {
                     getErrorMessageSink().putAscii("no message provided (internal error)");
                 }
-                if (th instanceof AssertionError) {
-                    // assertion errors means either a questdb bug or data corruption ->
+                if (th instanceof AssertionError || th instanceof NullPointerException) {
+                    // an assertion error or an NPE mean either a questdb bug or data corruption ->
                     // we want to see a full stack trace in server logs and log it as critical
                     LOG.critical().$("error in pgwire execute, ex=").$(th).$();
                 }

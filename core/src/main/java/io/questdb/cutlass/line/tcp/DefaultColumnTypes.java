@@ -28,13 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 
 public class DefaultColumnTypes {
-    final int[] DEFAULT_COLUMN_TYPES = new int[LineTcpParser.N_ENTITY_TYPES];
-    final int[] MAPPED_COLUMN_TYPES = new int[LineTcpParser.N_MAPPED_ENTITY_TYPES];
+    final int[] defaultColumnTypes = new int[LineTcpParser.N_ENTITY_TYPES];
+    final int defaultTimestampColumnType;
+    final int[] mappedColumnTypes = new int[LineTcpParser.N_MAPPED_ENTITY_TYPES];
 
     public DefaultColumnTypes(LineTcpReceiverConfiguration configuration) {
         // if not set it defaults to ColumnType.UNDEFINED
         this(
-                configuration.getDefaultColumnTypeForTimestamp(),
+                configuration.getDefaultCreateTimestampColumnType(),
                 configuration.getDefaultColumnTypeForFloat(),
                 configuration.getDefaultColumnTypeForInteger(),
                 configuration.isUseLegacyStringDefault()
@@ -44,7 +45,7 @@ public class DefaultColumnTypes {
     public DefaultColumnTypes(LineHttpProcessorConfiguration configuration) {
         // if not set it defaults to ColumnType.UNDEFINED
         this(
-                configuration.getDefaultColumnTypeForTimestamp(),
+                configuration.getDefaultTimestampColumnType(),
                 configuration.getDefaultColumnTypeForFloat(),
                 configuration.getDefaultColumnTypeForInteger(),
                 configuration.isUseLegacyStringDefault()
@@ -52,51 +53,53 @@ public class DefaultColumnTypes {
     }
 
     private DefaultColumnTypes(
-            int defaultTimestampType,
+            int defaultTimestampColumnType,
             short defaultColumnTypeForFloat,
             short defaultColumnTypeForInteger,
             boolean useLegacyStringDefault
     ) {
+        this.defaultTimestampColumnType = defaultTimestampColumnType;
+
         // if not set it defaults to ColumnType.UNDEFINED
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = defaultColumnTypeForFloat;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = defaultColumnTypeForInteger;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] =
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_FLOAT] = defaultColumnTypeForFloat;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_INTEGER] = defaultColumnTypeForInteger;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_STRING] =
                 useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = defaultTimestampType;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_ARRAY] = ColumnType.ARRAY;
-        DEFAULT_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DECIMAL] = ColumnType.DECIMAL_DEFAULT_TYPE;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_ARRAY] = ColumnType.ARRAY;
+        defaultColumnTypes[LineTcpParser.ENTITY_TYPE_DECIMAL] = ColumnType.DECIMAL_DEFAULT_TYPE;
 
         // we could remove this mapping by sending the column type to the writer
         // currently we are passing the ILP entity type instead
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_FLOAT] = ColumnType.FLOAT;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DOUBLE] = ColumnType.DOUBLE;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BYTE] = ColumnType.BYTE;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SHORT] = ColumnType.SHORT;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_INTEGER] = ColumnType.INT;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG] = ColumnType.LONG;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_DATE] = ColumnType.DATE;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_CHAR] = ColumnType.CHAR;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_STRING] =
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_TAG] = ColumnType.SYMBOL;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_FLOAT] = ColumnType.FLOAT;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_DOUBLE] = ColumnType.DOUBLE;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_BYTE] = ColumnType.BYTE;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_SHORT] = ColumnType.SHORT;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_INTEGER] = ColumnType.INT;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_LONG] = ColumnType.LONG;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_DATE] = ColumnType.DATE;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_CHAR] = ColumnType.CHAR;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_STRING] =
                 useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR;
         //MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_SYMBOL] = ColumnType.SYMBOL;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = defaultTimestampType;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_ARRAY] = ColumnType.ARRAY;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_UUID] = ColumnType.UUID;
-        MAPPED_COLUMN_TYPES[LineTcpParser.ENTITY_TYPE_VARCHAR] = ColumnType.VARCHAR;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_BOOLEAN] = ColumnType.BOOLEAN;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_LONG256] = ColumnType.LONG256;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_GEOBYTE] = ColumnType.getGeoHashTypeWithBits(8);
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_GEOSHORT] = ColumnType.getGeoHashTypeWithBits(16);
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_GEOINT] = ColumnType.getGeoHashTypeWithBits(32);
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_GEOLONG] = ColumnType.getGeoHashTypeWithBits(60);
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_TIMESTAMP] = ColumnType.TIMESTAMP;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_ARRAY] = ColumnType.ARRAY;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_UUID] = ColumnType.UUID;
+        mappedColumnTypes[LineTcpParser.ENTITY_TYPE_VARCHAR] = ColumnType.VARCHAR;
     }
 }

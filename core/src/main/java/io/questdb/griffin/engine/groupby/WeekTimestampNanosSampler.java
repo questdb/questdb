@@ -83,6 +83,11 @@ public class WeekTimestampNanosSampler implements TimestampSampler {
     }
 
     @Override
+    public void setOffset(long timestamp) {
+        this.start = timestamp;
+    }
+
+    @Override
     public void setStart(long timestamp) {
         this.start = timestamp;
     }

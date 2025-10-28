@@ -908,8 +908,8 @@ public class Decimal256 implements Sinkable, Decimal {
      *
      * @throws NumericException if overflow occurs
      */
-    public void addSameScaleNoMaxValueCheck(Decimal256 other) {
-        addSameScaleNoMaxValueCheck(this, hh, hl, lh, ll, other.hh, other.hl, other.lh, other.ll);
+    public void uncheckedAdd(Decimal256 other) {
+        uncheckedAdd(this, hh, hl, lh, ll, other.hh, other.hl, other.lh, other.ll);
     }
 
     /**
@@ -1827,9 +1827,9 @@ public class Decimal256 implements Sinkable, Decimal {
         }
     }
 
-    private static void addSameScaleNoMaxValueCheck(Decimal256 result,
-                                                    long aHH, long aHL, long aLH, long aLL,
-                                                    long bHH, long bHL, long bLH, long bLL) {
+    private static void uncheckedAdd(Decimal256 result,
+                                     long aHH, long aHL, long aLH, long aLL,
+                                     long bHH, long bHL, long bLH, long bLL) {
 
         // Perform 256-bit addition
         long r = aLL + bLL;

@@ -26,6 +26,8 @@ package io.questdb.cutlass.line.http;
 
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.line.LineSenderException;
@@ -36,6 +38,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 public class LineHttpSenderV1 extends AbstractLineHttpSender {
 
@@ -121,6 +126,18 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     }
 
     @Override
+    public void at(long timestamp, ChronoUnit unit) {
+        request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
+        atNow();
+    }
+
+    @Override
+    public void at(Instant timestamp) {
+        request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
+        atNow();
+    }
+
+    @Override
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         throw new LineSenderException("current protocol version does not support double-array");
     }
@@ -165,5 +182,19 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
         throw new LineSenderException("current protocol version does not support long-array");
+    }
+
+    @Override
+    public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
+        // micros
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
+        return this;
+    }
+
+    @Override
+    public Sender timestampColumn(CharSequence name, Instant value) {
+        // micros
+        writeFieldName(name).put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
+        return this;
     }
 }
