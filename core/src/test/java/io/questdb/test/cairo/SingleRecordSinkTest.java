@@ -415,7 +415,7 @@ public class SingleRecordSinkTest extends AbstractTest {
                     }
                     break;
                 case PUT_DECIMAL128:
-                    long rndDecimal128Hi = rnd.nextLong();
+                    long rndDecimal128Hi = rnd.nextPositiveLong() % Decimal128.MAX_VALUE.getHigh();
                     long rndDecimal128Lo = rnd.nextLong();
                     if (badValue) {
                         rndDecimal128Hi++;
@@ -423,7 +423,7 @@ public class SingleRecordSinkTest extends AbstractTest {
                     sink.putDecimal128(new Decimal128(rndDecimal128Hi, rndDecimal128Lo, 0));
                     break;
                 case PUT_DECIMAL256:
-                    long rndDecimal256HH = rnd.nextLong();
+                    long rndDecimal256HH = rnd.nextPositiveLong() % Decimal256.MAX_VALUE.getHh();
                     long rndDecimal256HL = rnd.nextLong();
                     long rndDecimal256LH = rnd.nextLong();
                     long rndDecimal256LL = rnd.nextLong();
