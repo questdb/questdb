@@ -254,24 +254,10 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 case ColumnType.DECIMAL16:
                 case ColumnType.DECIMAL32:
                 case ColumnType.DECIMAL64:
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetTypes.add(ColumnType.tagOf(type));
-                    break;
                 case ColumnType.DECIMAL128:
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetTypes.add(ColumnType.DECIMAL128);
-                    expectedGetTypes.add(ColumnType.DECIMAL128);
-                    break;
                 case ColumnType.DECIMAL256:
                     expectedGetIndexes.add(i + indexSkew);
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetIndexes.add(i + indexSkew);
-                    expectedGetTypes.add(ColumnType.DECIMAL256);
-                    expectedGetTypes.add(ColumnType.DECIMAL256);
-                    expectedGetTypes.add(ColumnType.DECIMAL256);
-                    expectedGetTypes.add(ColumnType.DECIMAL256);
+                    expectedGetTypes.add(ColumnType.tagOf(type));
                     break;
                 default:
                     expectedGetIndexes.add(i + indexSkew);
