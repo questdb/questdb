@@ -839,21 +839,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     private static class TestRecordSink implements RecordSinkSPI {
-        final Decimal128 decimal128 = new Decimal128();
-        final Decimal256 decimal256 = new Decimal256();
         final IntList recordedTypes = new IntList();
-
-        @Override
-        public Decimal128 getDecimal128() {
-            recordedTypes.add(ColumnType.DECIMAL128);
-            return decimal128;
-        }
-
-        @Override
-        public Decimal256 getDecimal256() {
-            recordedTypes.add(ColumnType.DECIMAL256);
-            return decimal256;
-        }
 
         @Override
         public void putArray(ArrayView view) {
@@ -886,11 +872,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void putDecimal128() {
+        public void putDecimal128(Decimal128 decimal128) {
+            recordedTypes.add(ColumnType.DECIMAL128);
         }
 
         @Override
-        public void putDecimal256() {
+        public void putDecimal256(Decimal256 decimal256) {
+            recordedTypes.add(ColumnType.DECIMAL256);
         }
 
         @Override

@@ -533,16 +533,6 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
-        public Decimal128 getDecimal128() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Decimal256 getDecimal256() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public long hash() {
             return Hash.hashLong64(Unsafe.getUnsafe().getLong(keyMemStart));
         }
@@ -591,12 +581,12 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128() {
+        public void putDecimal128(Decimal128 decimal128) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public void putDecimal256() {
+        public void putDecimal256(Decimal256 decimal256) {
             throw new UnsupportedOperationException();
         }
 

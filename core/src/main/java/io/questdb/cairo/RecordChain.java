@@ -62,8 +62,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     protected final RecordSink recordSink;
     protected final long varOffset;
     private final long[] columnOffsets;
-    private final Decimal128 decimal128;
-    private final Decimal256 decimal256;
     protected long recordOffset;
     protected long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
@@ -98,8 +96,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             }
             this.varOffset = varOffset;
             this.fixOffset = fixOffset;
-            this.decimal128 = new Decimal128();
-            this.decimal256 = new Decimal256();
         } catch (Throwable th) {
             close();
             throw th;
@@ -150,16 +146,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public long getAddress(long recordOffset, int columnIndex) {
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
-    }
-
-    @Override
-    public Decimal128 getDecimal128() {
-        return decimal128;
-    }
-
-    @Override
-    public Decimal256 getDecimal256() {
-        return decimal256;
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
@@ -260,12 +246,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
-    public void putDecimal128() {
+    public void putDecimal128(Decimal128 decimal128) {
         mem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
     }
 
     @Override
-    public void putDecimal256() {
+    public void putDecimal256(Decimal256 decimal256) {
         mem.putDecimal256(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
     }
 

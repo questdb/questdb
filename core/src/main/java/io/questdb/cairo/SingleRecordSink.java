@@ -41,8 +41,6 @@ import io.questdb.std.str.Utf8Sequence;
 
 public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     private static final int INITIAL_CAPACITY_BYTES = 8;
-    private final Decimal128 decimal128 = new Decimal128();
-    private final Decimal256 decimal256 = new Decimal256();
     private final long maxHeapSize;
     private final int memoryTag;
     private long appendAddress;
@@ -66,16 +64,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
             appendAddress = 0;
             heapStart = 0;
         }
-    }
-
-    @Override
-    public Decimal128 getDecimal128() {
-        return decimal128;
-    }
-
-    @Override
-    public Decimal256 getDecimal256() {
-        return decimal256;
     }
 
     public boolean memeq(SingleRecordSink other) {
@@ -142,7 +130,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     }
 
     @Override
-    public void putDecimal128() {
+    public void putDecimal128(Decimal128 decimal128) {
         checkCapacity(16);
         Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
         Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
@@ -150,7 +138,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     }
 
     @Override
-    public void putDecimal256() {
+    public void putDecimal256(Decimal256 decimal256) {
         checkCapacity(32L);
         Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
         Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());

@@ -30,7 +30,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.ex.BytecodeException;
@@ -163,6 +166,69 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString
     ) {
         return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null, null);
+    }
+
+    /**
+     * void RecordSink()
+     * <p>
+     * sets up decimal128/decimal256 instances if required, equivalent to:
+     * void RecordSink() {
+     * decimal128 = new Decimal128();
+     * decimal256 = new Decimal256();
+     * }
+     */
+    private static void compileConstructor(
+            BytecodeAssembler asm,
+            int decimal128FieldIndex,
+            int decimal128ClassIndex,
+            int decimal128CtorIndex,
+            int decimal256FieldIndex,
+            int decimal256ClassIndex,
+            int decimal256CtorIndex
+    ) {
+        // constructor method entry
+        asm.startMethod(asm.getDefaultConstructorNameIndex(), asm.getDefaultConstructorDescIndex(), 3, 1);
+        // code
+        asm.aload(0);
+        asm.invokespecial(asm.getObjectInitMethodIndex());
+
+        // decimal128 = new Decimal128();
+        if (decimal128FieldIndex != -1) {
+            // stack: []
+            asm.aload(0);
+            // stack: [this]
+            asm.new_(decimal128ClassIndex);
+            // stack: [this, decimal128]
+            asm.dup();
+            // stack: [this, decimal128, decimal128]
+            asm.invokespecial(decimal128CtorIndex);
+            // stack: [this, decimal128]
+            asm.putfield(decimal128FieldIndex);
+            // stack: []
+        }
+
+        // decimal256 = new Decimal256();
+        if (decimal256FieldIndex != -1) {
+            // stack: []
+            asm.aload(0);
+            // stack: [this]
+            asm.new_(decimal256ClassIndex);
+            // stack: [this, decimal256]
+            asm.dup();
+            // stack: [this, decimal256, decimal256]
+            asm.invokespecial(decimal256CtorIndex);
+            // stack: [this, decimal256]
+            asm.putfield(decimal256FieldIndex);
+            // stack: []
+        }
+
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attribute count
+        asm.putShort(0);
+        asm.endMethod();
     }
 
     /**
@@ -301,10 +367,8 @@ public class RecordSinkFactory {
         final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
         final int wPutInterval = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInterval", "(Lio/questdb/std/Interval;)V");
         final int wPutArray = asm.poolInterfaceMethod(RecordSinkSPI.class, "putArray", "(Lio/questdb/cairo/arr/ArrayView;)V");
-        final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "()V");
-        final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "()V");
-        final int wGetDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "getDecimal128", "()Lio/questdb/std/Decimal128;");
-        final int wGetDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "getDecimal256", "()Lio/questdb/std/Decimal256;");
+        final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
+        final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
         final int constantLong1000 = asm.poolLongConst(1000L);
         final int copyNameIndex = asm.poolUtf8("copy");
@@ -330,16 +394,45 @@ public class RecordSinkFactory {
             }
         }
 
+        var r = poolDecimalFields(asm, thisClassIndex, columnFilter, columnTypes, keyFunctions);
+        int decimal128FieldIndex = Numbers.decodeLowInt(r);
+        int decimal128ClassIndex = -1;
+        int decimal128CtorIndex = -1;
+        if (decimal128FieldIndex >= 0) {
+            decimal128ClassIndex = asm.poolClass(Decimal128.class);
+            decimal128CtorIndex = asm.poolMethod(decimal128ClassIndex, asm.getDefaultConstructorSigIndex());
+        }
+
+        int decimal256FieldIndex = Numbers.decodeHighInt(r);
+        int decimal256ClassIndex = -1;
+        int decimal256CtorIndex = -1;
+        if (decimal256FieldIndex >= 0) {
+            decimal256ClassIndex = asm.poolClass(Decimal256.class);
+            decimal256CtorIndex = asm.poolMethod(decimal256ClassIndex, asm.getDefaultConstructorSigIndex());
+        }
+
         asm.finishPool();
         asm.defineClass(thisClassIndex);
         asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        asm.fieldCount(functionSize);
+
+        //#region fields
+        asm.fieldCount(functionSize + (decimal128FieldIndex >= 0 ? 1 : 0) + (decimal256FieldIndex >= 0 ? 1 : 0));
         for (int i = 0; i < functionSize; i++) {
             asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
         }
+        if (decimal128FieldIndex >= 0) {
+            // Utf8s are cached internally, the same index as the one generated previously will be reused
+            asm.defineField(asm.poolUtf8("decimal128"), asm.poolUtf8("Lio/questdb/std/Decimal128;"));
+        }
+        if (decimal256FieldIndex >= 0) {
+            // Utf8s are cached internally, the same index as the one generated previously will be reused
+            asm.defineField(asm.poolUtf8("decimal256"), asm.poolUtf8("Lio/questdb/std/Decimal256;"));
+        }
+        //#endregion fields
+
         asm.methodCount(3);
-        asm.defineDefaultConstructor();
+        compileConstructor(asm, decimal128FieldIndex, decimal128ClassIndex, decimal128CtorIndex, decimal256FieldIndex, decimal256ClassIndex, decimal256CtorIndex);
 
         asm.startMethod(copyNameIndex, copySigIndex, 7, 5);
 
@@ -600,13 +693,15 @@ public class RecordSinkFactory {
                     // stack: [recordSinkSpi, record]
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     // stack: [recordSinkSpi, record, index]
-                    asm.aload(2);
-                    // stack: [recordSinkSpi, record, index, recordSinkSpi]
-                    asm.invokeInterface(wGetDecimal128, 0);
+                    asm.aload(0);
+                    // stack: [recordSinkSpi, record, index, this]
+                    asm.getfield(decimal128FieldIndex);
                     // stack: [recordSinkSpi, record, index, decimal128]
+                    asm.dup_x2();
+                    // stack: [recordSinkSpi, decimal128, record, index, decimal128]
                     asm.invokeInterface(rGetDecimal128, 2);
-                    // stack: [recordSinkSpi]
-                    asm.invokeInterface(wPutDecimal128, 0);
+                    // stack: [recordSinkSpi, decimal128]
+                    asm.invokeInterface(wPutDecimal128, 1);
                     // stack: []
                     break;
                 case ColumnType.DECIMAL256:
@@ -617,13 +712,15 @@ public class RecordSinkFactory {
                     // stack: [recordSinkSpi, record]
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     // stack: [recordSinkSpi, record, index]
-                    asm.aload(2);
-                    // stack: [recordSinkSpi, record, index, recordSinkSpi]
-                    asm.invokeInterface(wGetDecimal256, 0);
+                    asm.aload(0);
+                    // stack: [recordSinkSpi, record, index, this]
+                    asm.getfield(decimal256FieldIndex);
                     // stack: [recordSinkSpi, record, index, decimal256]
+                    asm.dup_x2();
+                    // stack: [recordSinkSpi, decimal256, record, index, decimal256]
                     asm.invokeInterface(rGetDecimal256, 2);
-                    // stack: [recordSinkSpi]
-                    asm.invokeInterface(wPutDecimal256, 0);
+                    // stack: [recordSinkSpi, decimal256]
+                    asm.invokeInterface(wPutDecimal256, 1);
                     // stack: []
                     break;
                 case ColumnType.NULL:
@@ -890,6 +987,8 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutLong, 2);
                     break;
                 case ColumnType.DECIMAL128:
+                    // fX.getDecimal128(record, decimal128)
+                    // w.putDecimal128(decimal128)
                     // stack: []
                     asm.aload(2);
                     // stack: [recordSinkSpi]
@@ -899,13 +998,15 @@ public class RecordSinkFactory {
                     // stack: [recordSinkSpi, function]
                     asm.aload(1);
                     // stack: [recordSinkSpi, function, record]
-                    asm.aload(2);
-                    // stack: [recordSinkSpi, function, record, recordSink]
-                    asm.invokeInterface(wGetDecimal128, 0);
+                    asm.aload(0);
+                    // stack: [recordSinkSpi, function, record, this]
+                    asm.getfield(decimal128FieldIndex);
                     // stack: [recordSinkSpi, function, record, decimal128]
+                    asm.dup_x2();
+                    // stack: [recordSinkSpi, decimal128, function, record, decimal128]
                     asm.invokeInterface(fGetDecimal128, 2);
-                    // stack: [recordSinkSpi]
-                    asm.invokeInterface(wPutDecimal128, 0);
+                    // stack: [recordSinkSpi, decimal128]
+                    asm.invokeInterface(wPutDecimal128, 1);
                     // stack: []
                     break;
                 case ColumnType.DECIMAL256:
@@ -918,13 +1019,15 @@ public class RecordSinkFactory {
                     // stack: [recordSinkSpi, function]
                     asm.aload(1);
                     // stack: [recordSinkSpi, function, record]
-                    asm.aload(2);
-                    // stack: [recordSinkSpi, function, record, recordSink]
-                    asm.invokeInterface(wGetDecimal256, 0);
+                    asm.aload(0);
+                    // stack: [recordSinkSpi, function, record, this]
+                    asm.getfield(decimal256FieldIndex);
                     // stack: [recordSinkSpi, function, record, decimal256]
+                    asm.dup_x2();
+                    // stack: [recordSinkSpi, decimal256, function, record, decimal256]
                     asm.invokeInterface(fGetDecimal256, 2);
-                    // stack: [recordSinkSpi]
-                    asm.invokeInterface(wPutDecimal256, 0);
+                    // stack: [recordSinkSpi, decimal256]
+                    asm.invokeInterface(wPutDecimal256, 1);
                     // stack: []
                     break;
                 default:
@@ -959,5 +1062,67 @@ public class RecordSinkFactory {
             return src;
         }
         return skewIndex.getQuick(src);
+    }
+
+    /**
+     * Detects whether decimalFields are required and if so, defines them and return their respective indices.
+     *
+     * @return the indices of the Decimal128 and Decimal256 fields (low/high ints). Or -1 if they aren't required.
+     */
+    private static long poolDecimalFields(
+            BytecodeAssembler asm,
+            int thisClassIndex,
+            ColumnFilter columnFilter,
+            ColumnTypes columnTypes,
+            ObjList<Function> keyFunctions
+    ) {
+        boolean decimal128Required = false;
+        boolean decimal256Required = false;
+
+        for (int i = 0, n = columnFilter.getColumnCount(); i < n && (!decimal128Required || !decimal256Required); i++) {
+            int index = columnFilter.getColumnIndex(i);
+            final int factor = columnFilter.getIndexFactor(index);
+            index = (index * factor - 1);
+            final int type = columnTypes.getColumnType(index);
+
+            if (factor < 0) {
+                int size = ColumnType.sizeOf(type);
+
+                // skip n-bytes
+                if (size > 0) {
+                    continue;
+                }
+            }
+            final int tag = ColumnType.tagOf(type);
+            decimal128Required |= tag == ColumnType.DECIMAL128;
+            decimal256Required |= tag == ColumnType.DECIMAL256;
+        }
+
+        int functionSize = keyFunctions != null ? keyFunctions.size() : 0;
+        for (int i = 0; i < functionSize && (!decimal128Required || !decimal256Required); i++) {
+            final Function func = keyFunctions.getQuick(i);
+            final int type = func.getType();
+            final int tag = ColumnType.tagOf(type);
+            decimal128Required |= tag == ColumnType.DECIMAL128;
+            decimal256Required |= tag == ColumnType.DECIMAL256;
+        }
+
+        int decimal128FieldIndex = -1;
+        if (decimal128Required) {
+            decimal128FieldIndex = asm.poolField(
+                    thisClassIndex,
+                    asm.poolNameAndType(asm.poolUtf8("decimal128"), asm.poolUtf8("Lio/questdb/std/Decimal128;"))
+            );
+        }
+
+        int decimal256FieldIndex = -1;
+        if (decimal256Required) {
+            decimal256FieldIndex = asm.poolField(
+                    thisClassIndex,
+                    asm.poolNameAndType(asm.poolUtf8("decimal256"), asm.poolUtf8("Lio/questdb/std/Decimal256;"))
+            );
+        }
+
+        return Numbers.encodeLowHighInts(decimal128FieldIndex, decimal256FieldIndex);
     }
 }

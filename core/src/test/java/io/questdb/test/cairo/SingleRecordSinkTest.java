@@ -27,6 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -418,9 +420,7 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rndDecimal128Hi++;
                     }
-                    var decimal128 = sink.getDecimal128();
-                    decimal128.ofRaw(rndDecimal128Hi, rndDecimal128Lo);
-                    sink.putDecimal128();
+                    sink.putDecimal128(new Decimal128(rndDecimal128Hi, rndDecimal128Lo, 0));
                     break;
                 case PUT_DECIMAL256:
                     long rndDecimal256HH = rnd.nextLong();
@@ -430,9 +430,8 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rndDecimal256HH++;
                     }
-                    var decimal256 = sink.getDecimal256();
-                    decimal256.ofRaw(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL);
-                    sink.putDecimal256();
+                    var decimal256 = new Decimal256(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL, 0);
+                    sink.putDecimal256(decimal256);
                     break;
                 default:
                     throw new UnsupportedOperationException();

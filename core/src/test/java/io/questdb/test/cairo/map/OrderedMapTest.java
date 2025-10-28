@@ -83,6 +83,8 @@ public class OrderedMapTest extends AbstractCairoTest {
     @Test
     public void testAllTypesFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            Decimal128 decimal128 = new Decimal128();
+            Decimal256 decimal256 = new Decimal256();
             Rnd rnd = new Rnd();
 
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -149,20 +151,18 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putShort(rnd.nextShort());
                     key.putInt(rnd.nextInt());
                     key.putLong(rnd.nextLong());
-                    var decimal128 = key.getDecimal128();
                     decimal128.ofRaw(
                             rnd.nextLong(),
                             rnd.nextLong()
                     );
-                    key.putDecimal128();
-                    var decimal256 = key.getDecimal256();
+                    key.putDecimal128(decimal128);
                     decimal256.ofRaw(
                             rnd.nextLong(),
                             rnd.nextLong(),
                             rnd.nextLong(),
                             rnd.nextLong()
                     );
-                    key.putDecimal256();
+                    key.putDecimal256(decimal256);
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -221,20 +221,18 @@ public class OrderedMapTest extends AbstractCairoTest {
                     key.putShort(rnd.nextShort());
                     key.putInt(rnd.nextInt());
                     key.putLong(rnd.nextLong());
-                    var decimal128 = key.getDecimal128();
                     decimal128.ofRaw(
                             rnd.nextLong(),
                             rnd.nextLong()
                     );
-                    key.putDecimal128();
-                    var decimal256 = key.getDecimal256();
+                    key.putDecimal128(decimal128);
                     decimal256.ofRaw(
                             rnd.nextLong(),
                             rnd.nextLong(),
                             rnd.nextLong(),
                             rnd.nextLong()
                     );
-                    key.putDecimal256();
+                    key.putDecimal256(decimal256);
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -273,6 +271,9 @@ public class OrderedMapTest extends AbstractCairoTest {
     @Test
     public void testAllTypesReverseColumnAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            Decimal128 decimal128 = new Decimal128();
+            Decimal256 decimal256 = new Decimal256();
+
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.BYTE);
             keyTypes.add(ColumnType.SHORT);
@@ -341,12 +342,10 @@ public class OrderedMapTest extends AbstractCairoTest {
                 key.putShort((short) 17);
                 key.putInt(18);
                 key.putLong(19);
-                var decimal128 = key.getDecimal128();
                 decimal128.ofRaw(20, 20);
-                key.putDecimal128();
-                var decimal256 = key.getDecimal256();
+                key.putDecimal128(decimal128);
                 decimal256.ofRaw(21, 21, 21, 21);
-                key.putDecimal256();
+                key.putDecimal256(decimal256);
 
                 MapValue value = key.createValue();
                 Assert.assertTrue(value.isNew());
@@ -404,12 +403,10 @@ public class OrderedMapTest extends AbstractCairoTest {
                 key.putShort((short) 17);
                 key.putInt(18);
                 key.putLong(19);
-                decimal128 = key.getDecimal128();
                 decimal128.ofRaw(20, 20);
-                key.putDecimal128();
-                decimal256 = key.getDecimal256();
+                key.putDecimal128(decimal128);
                 decimal256.ofRaw(21, 21, 21, 21);
-                key.putDecimal256();
+                key.putDecimal256(decimal256);
 
                 value = key.createValue();
                 Assert.assertFalse(value.isNew());

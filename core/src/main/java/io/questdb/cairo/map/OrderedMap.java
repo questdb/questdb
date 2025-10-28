@@ -100,8 +100,6 @@ public class OrderedMap implements Map, Reopenable {
     private static final int MIN_KEY_CAPACITY = 16;
 
     private final OrderedMapCursor cursor;
-    private final Decimal128 decimal128 = new Decimal128();
-    private final Decimal256 decimal256 = new Decimal256();
     private final int heapMemoryTag;
     private final Key key;
     private final long keyOffset;
@@ -646,16 +644,6 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public Decimal128 getDecimal128() {
-            return decimal128;
-        }
-
-        @Override
-        public Decimal256 getDecimal256() {
-            return decimal256;
-        }
-
-        @Override
         public long hash() {
             return Hash.hashMem64(startAddress, keySize);
         }
@@ -700,14 +688,14 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128() {
+        public void putDecimal128(Decimal128 decimal128) {
             Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
             appendAddress += 16L;
         }
 
         @Override
-        public void putDecimal256() {
+        public void putDecimal256(Decimal256 decimal256) {
             Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
@@ -937,16 +925,6 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public Decimal128 getDecimal128() {
-            return decimal128;
-        }
-
-        @Override
-        public Decimal256 getDecimal256() {
-            return decimal256;
-        }
-
-        @Override
         public long hash() {
             return Hash.hashMem64(startAddress + keyOffset, len);
         }
@@ -1005,7 +983,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal128() {
+        public void putDecimal128(Decimal128 decimal128) {
             checkCapacity(16L);
             Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
@@ -1013,7 +991,7 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void putDecimal256() {
+        public void putDecimal256(Decimal256 decimal256) {
             checkCapacity(32L);
             Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());

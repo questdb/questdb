@@ -27,7 +27,6 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -295,12 +294,12 @@ public class Unordered8MapTest extends AbstractCairoTest {
 
     @Test
     public void testPutDecimal128Unsupported() throws Exception {
-        assertUnsupported(RecordSinkSPI::putDecimal128);
+        assertUnsupported(key -> key.putDecimal128(null));
     }
 
     @Test
     public void testPutDecimal256Unsupported() throws Exception {
-        assertUnsupported(RecordSinkSPI::putDecimal256);
+        assertUnsupported(key -> key.putDecimal256(null));
     }
 
     @Test

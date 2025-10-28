@@ -179,7 +179,7 @@ public class RecordComparatorCompiler {
     }
 
     /**
-     * RecordComparator()
+     * void RecordComparator()
      * <p>
      * sets up decimal128/decimal256 instances if required, equivalent to:
      * void RecordComparator() {

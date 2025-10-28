@@ -36,18 +36,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public interface RecordSinkSPI {
-    /**
-     * Returns an instance of a Decimal128 that can be filled to be later
-     * written by calling {@link this#putDecimal128()}
-     */
-    Decimal128 getDecimal128();
-
-    /**
-     * Returns an instance of a Decimal256 that can be filled to be later
-     * written by calling {@link this#putDecimal256()}
-     */
-    Decimal256 getDecimal256();
-
     void putArray(ArrayView view);
 
     void putBin(BinarySequence value);
@@ -60,15 +48,9 @@ public interface RecordSinkSPI {
 
     void putDate(long value);
 
-    /**
-     * Store the decimal128 that was previously returned by {@link this#getDecimal128()}
-     */
-    void putDecimal128();
+    void putDecimal128(Decimal128 value);
 
-    /**
-     * Store the decimal256 that was previously returned by {@link this#getDecimal256()}
-     */
-    void putDecimal256();
+    void putDecimal256(Decimal256 value);
 
     void putDouble(double value);
 
