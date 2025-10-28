@@ -819,13 +819,13 @@ public class HttpResponseSink implements Closeable, Mutable {
                 if (cookieNames != null) {
                     if (cookieValues == null) {
                         throw CairoException.critical(0)
-                                .put("Cookie values are missing [cookieNames=").put(cookieNames)
+                                .put("Cookie values are missing [namesCount=").put(cookieNames.size())
                                 .put(", cookieValues=null]");
                     }
                     if (cookieValues.size() != cookieNames.size()) {
                         throw CairoException.critical(0)
-                                .put("The number of cookie names and values are not matching [cookieNames=").put(cookieNames)
-                                .put(", cookieValues=").put(cookieValues)
+                                .put("The number of cookie names and values are not matching [namesCount=").put(cookieNames.size())
+                                .put(", valuesCount=").put(cookieValues.size())
                                 .put(']');
                     }
                     for (int i = 0, n = cookieNames.size(); i < n; i++) {
