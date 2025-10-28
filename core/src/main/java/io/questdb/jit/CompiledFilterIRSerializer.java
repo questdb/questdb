@@ -113,9 +113,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
-    private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
     private final StringSink sink = new StringSink();
+    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
@@ -202,7 +202,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
-        inPredicateTraverseAlgo.traverse(node, this);
+        traverseAlgo.traverse(node, this);
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
@@ -850,15 +850,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (args.size() < 3) {
-            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
             putOperator(EQ);
         }
 
         int orCount = -1;
         for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
-            inPredicateTraverseAlgo.traverse(args.get(i), this);
-            inPredicateTraverseAlgo.traverse(args.getLast(), this);
+            traverseAlgo.traverse(args.get(i), this);
+            traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
             orCount++;
         }
@@ -889,10 +889,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             long lo = IntervalUtils.decodeIntervalLo(intervals, i);
             long hi = IntervalUtils.decodeIntervalHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
-            inPredicateTraverseAlgo.traverse(lhs, this);
+            traverseAlgo.traverse(lhs, this);
             putOperator(GE);
             putOperand(IMM, I8_TYPE, hi);
-            inPredicateTraverseAlgo.traverse(lhs, this);
+            traverseAlgo.traverse(lhs, this);
             putOperator(LE);
             putOperator(AND);
             orCount++;
@@ -1405,6 +1405,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
+                if (symbolColumnIndex != -1 && symbolColumnIndex != columnIndex) {
+                    throw SqlException.position(node.position)
+                            .put("operators on different symbol columns are not supported by JIT: ")
+                            .put(node.token);
+                }
                 symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
