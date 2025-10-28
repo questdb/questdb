@@ -4525,7 +4525,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSelect(
             QueryModel model,
             SqlExecutionContext executionContext,
-            boolean processJoins
+            boolean shouldProcessJoins
     ) throws SqlException {
         return switch (model.getSelectModelType()) {
             case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
@@ -4535,12 +4535,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
             case SELECT_MODEL_SHOW -> model.getTableNameFunction();
-            default -> {
-                if (model.getJoinModels().size() > 1 && processJoins) {
-                    yield generateJoins(model, executionContext);
-                }
-                yield generateNoSelect(model, executionContext);
-            }
+            default -> shouldProcessJoins && model.getJoinModels().size() > 1
+                    ? generateJoins(model, executionContext)
+                    : generateNoSelect(model, executionContext);
+
         };
     }
 
