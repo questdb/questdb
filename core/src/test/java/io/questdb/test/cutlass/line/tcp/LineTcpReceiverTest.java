@@ -1860,14 +1860,13 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     Assert.assertEquals(2 * symbols, cursor.size());
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        symbolCounts.increment(record.getSymA(1));
+                        symbolCounts.inc(record.getSymA(1));
                     }
                 }
 
                 Assert.assertEquals(symbols, symbolCounts.size());
                 for (int i = 0; i < symbols; i++) {
-                    // increment() uses 0 as the first counter value, so we expect to see all 1s.
-                    Assert.assertEquals("count should be 2 for sym" + i + " symbol", 1, symbolCounts.get("sym" + i));
+                    Assert.assertEquals("count should be 2 for sym" + i + " symbol", 2, symbolCounts.get("sym" + i));
                 }
             });
         });

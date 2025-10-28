@@ -52,7 +52,7 @@ import java.util.List;
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private static final boolean RUN_ALL_PERMUTATIONS = false;
-    private static final int RUN_N_PERMUTATIONS = 10;
+    private static final int RUN_N_PERMUTATIONS = 50;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
 
@@ -99,7 +99,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch0(Rnd rnd, boolean symbolIndexCreated) {
+    private void assertResultSetsMatch0(Rnd rnd) {
         Object[][] allOpts = {
                 JoinType.values(),
                 NumIntervals.values(),
@@ -108,7 +108,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 ProjectionType.values(),
                 {true, false}, // apply outer projection
                 {-1L, 100_000L}, // max tolerance in seconds, -1 = no tolerance
-                {true, false}, // AVOID_BINARY_SEARCH hint
+                HintType.values(), // ASOF_*_SEARCH hint to apply
         };
 
         final Object[][] allPermutations = TestUtils.cartesianProduct(allOpts);
@@ -130,7 +130,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType = (ProjectionType) params[4];
             boolean applyOuterProjection = (boolean) params[5];
             long maxTolerance = (long) params[6];
-            boolean avoidBinarySearchHint = (boolean) params[7];
+            HintType hintType = (HintType) params[7];
 
             String paramsMsg = "joinType=" + joinType +
                     ", numIntervals=" + numIntervals +
@@ -139,12 +139,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ", projectionType=" + projectionType +
                     ", applyOuterProjection = " + applyOuterProjection +
                     ", maxTolerance=" + maxTolerance +
-                    ", avoidBinarySearchHint=" + avoidBinarySearchHint +
-                    ", useSymbolIndex=" + symbolIndexCreated;
+                    ", hintType=" + hintType;
             LOG.info().$("Testing with parameters: ").$(paramsMsg).$();
             try {
                 assertResultSetsMatch0(joinType, numIntervals, limitType, exerciseFilters, projectionType,
-                        applyOuterProjection, maxTolerance, avoidBinarySearchHint, symbolIndexCreated, rnd);
+                        applyOuterProjection, maxTolerance, hintType, rnd);
             } catch (Throwable e) {
                 throw new AssertionError("Failed with parameters: " + paramsMsg, e);
             }
@@ -159,8 +158,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             ProjectionType projectionType,
             boolean applyOuterProjection,
             long maxTolerance,
-            boolean avoidBinarySearchHint,
-            boolean symbolIndexCreated,
+            HintType hintType,
             Rnd rnd
     ) throws Exception {
         String join;
@@ -267,24 +265,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             slaveTimestampColumnName = null;
         }
 
-        String hint = "";
-        if (avoidBinarySearchHint) {
-            switch (joinType) {
-                case ASOF:
-                case ASOF_NONKEYED:
-                    hint = " /*+ AVOID_ASOF_BINARY_SEARCH(t1 t2) */ ";
-                    break;
-                case LT:
-                    // intentional fallthrough
-                case LT_NONKEYED:
-                    hint = " /*+ AVOID_LT_BINARY_SEARCH(t1 t2) */ ";
-                    break;
-                default:
-                    throw new IllegalArgumentException("Unexpected join type: " + joinType);
-            }
-        } else if (symbolIndexCreated) {
-            hint = " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
-        }
+        String hint = switch (hintType) {
+            case FAST_SEARCH -> " /*+ ASOF_FAST_SEARCH(t1 t2) */ ";
+            case INDEX_SEARCH -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
+            case LINEAR_SEARCH -> " /*+ ASOF_LINEAR_SEARCH(t1 t2) */ ";
+            default -> "";
+        };
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         int limit;
         switch (limitType) {
@@ -307,14 +293,20 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         sink.clear();
         printSql("EXPLAIN " + query, false);
-        if (avoidBinarySearchHint) {
+        if (hintType == HintType.LINEAR_SEARCH) {
             TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
+            TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
             TestUtils.assertNotContains(sink, "Lt Join Fast Scan");
         } else if (joinType == JoinType.ASOF_NONKEYED && numIntervalsOpt == NumIntervals.MANY) {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
-            TestUtils.assertContains(sink, "AsOf Join " + (symbolIndexCreated ? "Indexed" : "Fast") + " Scan");
+            String algo = switch (hintType) {
+                case INDEX_SEARCH -> "Indexed";
+                case FAST_SEARCH -> "Fast";
+                default -> "Memoized";
+            };
+            TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");
         }
 
         final StringSink actualSink = new StringSink();
@@ -370,10 +362,8 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             }
 
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
-            boolean useSymbolIndex = rnd.nextBoolean();
-            String index = useSymbolIndex ? " INDEX" : "";
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts) partition by day bypass wal",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX) timestamp(ts) partition by day bypass wal",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -385,7 +375,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd, useSymbolIndex);
+            assertResultSetsMatch0(rnd);
         });
     }
 
@@ -407,11 +397,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            boolean useSymbolIndex = rnd.nextBoolean();
-            String index = useSymbolIndex ? " INDEX" : "";
             final TimestampDriver rightTimestampDriver = rightTableTimestampType.getDriver();
             executeWithRewriteTimestamp(
-                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL" + index + ") timestamp(ts)",
+                    "CREATE TABLE t2 (ts #TIMESTAMP, i INT, s SYMBOL INDEX) timestamp(ts)",
                     rightTableTimestampType.getTypeName());
             ts = rightTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += rightTimestampDriver.fromHours((int) rnd.nextLong(48));
@@ -423,8 +411,15 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch0(rnd, useSymbolIndex);
+            assertResultSetsMatch0(rnd);
         });
+    }
+
+    private enum HintType {
+        NONE,
+        INDEX_SEARCH,
+        LINEAR_SEARCH,
+        FAST_SEARCH,
     }
 
     private enum JoinType {

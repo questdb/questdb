@@ -58,6 +58,8 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void releaseIndexWriter();
 
+    void resetColumnTop();
+
     void rollback(long maxRow);
 
     void sync(boolean async);
