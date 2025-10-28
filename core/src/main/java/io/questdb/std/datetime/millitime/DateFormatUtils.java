@@ -273,14 +273,17 @@ public class DateFormatUtils {
      * @throws NumericException if date cannot be parsed
      */
     public static long parseDate(CharSequence value) throws NumericException {
+        return parseDate(value, 0, value.length());
+    }
+
+    public static long parseDate(CharSequence value, int lo, int hi) throws NumericException {
         if (value == null) {
             return Numbers.LONG_NULL;
         }
 
-        final int hi = value.length();
         for (int i = 0; i < DATE_FORMATS_SIZE; i++) {
             try {
-                return DATE_FORMATS[i].parse(value, 0, hi, DateLocaleFactory.EN_LOCALE);
+                return DATE_FORMATS[i].parse(value, lo, hi, DateLocaleFactory.EN_LOCALE);
             } catch (NumericException ignore) {
             }
         }
@@ -303,6 +306,10 @@ public class DateFormatUtils {
         }
 
         return Numbers.encodeLowHighInts(year, len);
+    }
+
+    public static long tryParse(@NotNull CharSequence s, int lo, int lim) throws NumericException {
+        return parseDate(s, 0, lim);
     }
 
     public static void updateReferenceYear(long millis) {

@@ -70,6 +70,8 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
 
+    WorkerPoolConfiguration getExportPoolConfiguration();
+
     MemoryConfiguration getMemoryConfiguration();
 
     Metrics getMetrics();

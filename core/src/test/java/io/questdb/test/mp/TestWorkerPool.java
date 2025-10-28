@@ -63,6 +63,7 @@ public class TestWorkerPool extends WorkerPool {
                 return workerCount;
             }
         });
+        assert workerCount > 0;
     }
 
     public TestWorkerPool(WorkerPoolConfiguration configuration) {

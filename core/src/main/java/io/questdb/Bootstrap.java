@@ -83,6 +83,7 @@ public class Bootstrap {
     public static final String CONFIG_FILE = "/server.conf";
     public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
+    private static final String CONSOLE_CONFIG_PATH = "assets/console-configuration.json";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
@@ -174,6 +175,9 @@ public class Bootstrap {
             if (bootstrapConfiguration.useSite()) {
                 // site
                 extractSite();
+            } else {
+                // extract conf regardless
+                extractConfDir(buffer);
             }
 
             final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
@@ -526,7 +530,10 @@ public class Bootstrap {
                     while ((ze = zip.getNextEntry()) != null) {
                         final File dest = new File(publicDir, ze.getName());
                         if (!ze.isDirectory()) {
-                            copyInputStream(true, buffer, dest, zip, log);
+                            // we do not want to override a console config if it already exists,
+                            // otherwise users would lose their changes on upgrades!
+                            boolean force = !CONSOLE_CONFIG_PATH.equals(ze.getName());
+                            copyInputStream(force, buffer, dest, zip, log);
                         }
                         zip.closeEntry();
                     }

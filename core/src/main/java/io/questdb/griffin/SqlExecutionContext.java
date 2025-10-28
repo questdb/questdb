@@ -193,11 +193,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isCacheHit();
 
-    boolean isColumnPreTouchEnabled();
-
-    // Used to disable column pre-touch without affecting the explain plan
-    boolean isColumnPreTouchEnabledOverride();
-
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
@@ -241,11 +236,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCancelledFlag(AtomicBoolean cancelled);
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
-
-    void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
-
-    // Used to disable column pre-touch without affecting the explain plan
-    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
     void setIntervalFunctionType(int intervalType);
 

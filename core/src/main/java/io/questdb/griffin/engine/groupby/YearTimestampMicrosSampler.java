@@ -32,13 +32,9 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampMicrosSampler implements TimestampSampler {
     private final int stepYears;
+    private long dayMod;
     private int startDay;
-    private int startHour;
-    private int startMicros;
-    private int startMillis;
-    private int startMin;
     private int startMonth;
-    private int startSec;
 
     public YearTimestampMicrosSampler(int stepYears) {
         this.stepYears = stepYears;
@@ -77,17 +73,14 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
     public long round(long value) {
         int y = Micros.getYear(value);
         y = Micros.EPOCH_YEAR_0 + ((y - Micros.EPOCH_YEAR_0) / stepYears) * stepYears;
-        return Micros.toMicros(
-                y,
-                CommonUtils.isLeapYear(y),
-                startDay,
-                startMonth,
-                startHour,
-                startMin,
-                startSec,
-                startMillis,
-                startMicros
-        );
+        int month = startMonth > 0 ? startMonth : 1;
+        int day = startDay > 0 ? startDay : 1;
+        return Micros.toMicros(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+    }
+
+    @Override
+    public void setOffset(long timestamp) {
+        this.dayMod = timestamp;
     }
 
     @Override
@@ -96,11 +89,11 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startMonth = Micros.getMonthOfYear(timestamp, y, leap);
         this.startDay = Micros.getDayOfMonth(timestamp, y, startMonth, leap);
-        this.startHour = Micros.getHourOfDay(timestamp);
-        this.startMin = Micros.getMinuteOfHour(timestamp);
-        this.startSec = Micros.getSecondOfMinute(timestamp);
-        this.startMillis = Micros.getMillisOfSecond(timestamp);
-        this.startMicros = Micros.getMicrosOfMilli(timestamp);
+        long dayMod = timestamp % Micros.DAY_MICROS;
+        if (dayMod < 0) {
+            dayMod += Micros.DAY_MICROS;
+        }
+        this.dayMod = dayMod;
     }
 
     @Override
@@ -114,14 +107,9 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
         }
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y + numYears);
-        final int maxDay = Math.min(startDay, CommonUtils.getDaysPerMonth(startMonth, leap)) - 1;
-        return Micros.yearMicros(y + numYears, leap)
-                + Micros.monthOfYearMicros(startMonth, leap)
-                + maxDay * Micros.DAY_MICROS
-                + startHour * Micros.HOUR_MICROS
-                + startMin * Micros.MINUTE_MICROS
-                + startSec * Micros.SECOND_MICROS
-                + startMillis * Micros.MILLI_MICROS
-                + startMicros;
+        int month = startMonth > 0 ? startMonth : 1;
+        int day = startDay > 0 ? startDay : 1;
+        day = Math.min(CommonUtils.getDaysPerMonth(month, leap), day);
+        return Micros.toMicros(y + numYears, month, day) + dayMod;
     }
 }

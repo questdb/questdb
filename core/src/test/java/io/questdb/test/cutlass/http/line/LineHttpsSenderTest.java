@@ -87,8 +87,8 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                 long expectedSum = (count / 2) * (count + 1);
                 double expectedAvg = expectedSum / (double) count;
                 TestUtils.assertEventually(() -> serverMain.assertSql(
-                        "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                        "sum\tmax\tmin\tavg\n"
+                        "select sum(value), max(value), min(value), round(avg(value), 3) from " + tableName,
+                        "sum\tmax\tmin\tround\n"
                                 + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
                 ));
             }
@@ -204,6 +204,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         // expected message: Could not flush buffer: https://localhost:<ephemeral_port>/write?precision=n Connection Failed
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: https://localhost:");
                         TestUtils.assertContains(e.getMessage(), "/write?precision=n Connection Failed");
+                        sender.reset();
                     }
                 }
                 assertTableSizeEventually(serverMain.getEngine(), tableName, 1);
@@ -240,6 +241,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(e.getMessage(), "http-status=400");
                         TestUtils.assertContains(e.getMessage(), "error in line 1: table: testRecoveryAfterStructuralError, column: value; cast error from protocol type: STRING to column type: LONG");
                     }
+                    sender.reset();
 
                     // assert that we can still send new rows after a structural error
                     sender.table(tableName).longColumn("value", 42).atNow();
@@ -273,6 +275,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         fail("should fail, the server is not trusted");
                     } catch (LineSenderException ex) {
                         TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
+                        sender.reset();
                     }
                 }
             }

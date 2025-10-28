@@ -84,7 +84,6 @@ import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
-
     private static final int QUEUE_CAPACITY = 4;
 
     @BeforeClass
@@ -164,7 +163,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -510,7 +509,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -544,7 +543,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new AtomicBooleanCircuitBreaker()
+                }, new AtomicBooleanCircuitBreaker(engine)
         );
     }
 
@@ -588,8 +587,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimit() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new AtomicBooleanCircuitBreaker());
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new AtomicBooleanCircuitBreaker(engine));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -624,8 +623,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
         final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
-        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
-            wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(engine, configuration)) {
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine, configuration, MemoryTag.NATIVE_CB2));
             withPool(
                     (engine, compiler, sqlExecutionContext) -> {
                         execute(
@@ -651,14 +650,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPreTouchDisabled() throws Exception {
+    public void testPreTouchEnabled() throws Exception {
         withPool(
                 (engine, compiler, sqlExecutionContext) -> {
-                    node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
                     execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
-                    final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
+                    final String sql = "select /*+ ENABLE_PRE_TOUCH(x) */ 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
@@ -671,7 +669,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                     "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
                                     "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
                     );
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -728,7 +726,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     );
 
                     resetTaskCapacities();
-                }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
         );
     }
 
@@ -888,7 +886,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 sqlExecutionContext,
                                 false
                         );
-                    }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
+                    }, new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2)
             );
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
@@ -1234,16 +1232,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isColumnPreTouchEnabled() {
-            return sqlExecutionContext.isColumnPreTouchEnabled();
-        }
-
-        @Override
-        public boolean isColumnPreTouchEnabledOverride() {
-            return sqlExecutionContext.isColumnPreTouchEnabledOverride();
-        }
-
-        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1306,16 +1294,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setCloneSymbolTables(boolean cloneSymbolTables) {
             sqlExecutionContext.setCloneSymbolTables(cloneSymbolTables);
-        }
-
-        @Override
-        public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-            sqlExecutionContext.setColumnPreTouchEnabled(columnPreTouchEnabled);
-        }
-
-        @Override
-        public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
-            sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
         }
 
         @Override

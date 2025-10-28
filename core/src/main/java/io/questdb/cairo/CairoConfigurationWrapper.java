@@ -67,6 +67,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean autoScaleSymbolCapacity() {
+        return getDelegate().autoScaleSymbolCapacity();
+    }
+
+    @Override
+    public double autoScaleSymbolCapacityThreshold() {
+        return getDelegate().autoScaleSymbolCapacityThreshold();
+    }
+
+    @Override
+    public boolean cairoResourcePoolTracingEnabled() {
+        return getDelegate().cairoResourcePoolTracingEnabled();
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return getDelegate().enableTestFactories();
     }
@@ -472,6 +487,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return getDelegate().getMatViewMaxRefreshStepUs();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
@@ -627,6 +647,41 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return getDelegate().getParquetExportCopyReportFrequencyLines();
+    }
+
+    @Override
+    public int getParquetExportCompressionCodec() {
+        return getDelegate().getParquetExportCompressionCodec();
+    }
+
+    @Override
+    public int getParquetExportCompressionLevel() {
+        return getDelegate().getParquetExportCompressionLevel();
+    }
+
+    @Override
+    public int getParquetExportDataPageSize() {
+        return getDelegate().getParquetExportDataPageSize();
+    }
+
+    @Override
+    public int getParquetExportRowGroupSize() {
+        return getDelegate().getParquetExportRowGroupSize();
+    }
+
+    @Override
+    public int getParquetExportVersion() {
+        return getDelegate().getParquetExportVersion();
+    }
+
+    @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return getDelegate().getParquetExportTableNamePrefix();
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
         return getDelegate().getPartitionEncoderParquetCompressionCodec();
     }
@@ -769,6 +824,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return getDelegate().getSqlCopyBufferSize();
+    }
+
+    @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return getDelegate().getSqlCopyExportQueueCapacity();
+    }
+
+    @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return getDelegate().getSqlCopyExportRoot();
     }
 
     @Override
@@ -1037,8 +1102,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSymbolTableAppendPageSize() {
-        return getDelegate().getSymbolTableAppendPageSize();
+    public long getSymbolTableMaxAllocationPageSize() {
+        return getDelegate().getSymbolTableMaxAllocationPageSize();
+    }
+
+    @Override
+    public long getSymbolTableMinAllocationPageSize() {
+        return getDelegate().getSymbolTableMinAllocationPageSize();
     }
 
     @Override
@@ -1292,6 +1362,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isParquetExportRawArrayEncoding() {
+        return getDelegate().isParquetExportRawArrayEncoding();
+    }
+
+    @Override
+    public boolean isParquetExportStatisticsEnabled() {
+        return getDelegate().isParquetExportStatisticsEnabled();
+    }
+
+    @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
         return getDelegate().isPartitionEncoderParquetRawArrayEncoding();
     }
@@ -1329,11 +1409,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelFilterEnabled() {
         return getDelegate().isSqlParallelFilterEnabled();
-    }
-
-    @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
-        return getDelegate().isSqlParallelFilterPreTouchEnabled();
     }
 
     @Override
@@ -1397,11 +1472,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     public void setDelegate(CairoConfiguration delegate) {
         this.delegate.set(delegate);
-    }
-
-    @Override
-    public boolean useFastAsOfJoin() {
-        return getDelegate().useFastAsOfJoin();
     }
 
     @Override

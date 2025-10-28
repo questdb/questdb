@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -46,9 +45,11 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
+import static io.questdb.griffin.engine.join.AbstractHashOuterJoinRecordCursor.populateRecordHashMap;
+
 public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final HashJoinRecordCursor cursor;
-    private final RecordSink masterSink;
+    private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
 
     public HashJoinRecordCursorFactory(
@@ -57,8 +58,8 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
-            RecordSink masterSink,
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 LONGs, we store chain references in map
+            RecordSink masterKeySink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit,
@@ -69,8 +70,13 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         RecordChain slaveChain = null;
         try {
             joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
-            this.masterSink = masterSink;
+            slaveChain = new RecordChain(
+                    slaveFactory.getMetadata(),
+                    slaveChainSink,
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
+            this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
         } catch (Throwable th) {
@@ -88,8 +94,6 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         RecordCursor masterCursor = null;
         try {
@@ -196,11 +200,12 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
 
             while (masterCursor.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = joinKeyMap.withKey();
-                key.put(masterRecord, masterSink);
+                key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getInt(0));
+                    slaveChain.of(value.getLong(0));
                     // we know cursor has values
                     // advance to get first value
                     slaveChain.hasNext();
@@ -222,7 +227,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 return size;
             }
             buildMapOfSlaveRecords();
-            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
+            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
         }
 
         @Override
@@ -238,7 +243,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         private void buildMapOfSlaveRecords() {
             if (!isMapBuilt) {
-                TableUtils.populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
             }
         }

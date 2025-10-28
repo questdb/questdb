@@ -34,6 +34,7 @@ import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
@@ -59,7 +60,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @SuppressWarnings("ClassEscapesDefinedScope")
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
-    public static final Set<QuietCloseable> CLOSEABLES = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    public static final Set<QuietCloseable> CLOSEABLE = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
@@ -91,6 +92,7 @@ public class AbstractTest {
         LOG.info().$("Starting test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         Metrics.ENABLED.clear();
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     @After
@@ -98,6 +100,7 @@ public class AbstractTest {
         LOG.info().$("Finished test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
+        SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
     }
 
     protected static MatViewRefreshJob createMatViewRefreshJob(CairoEngine engine) {
@@ -166,8 +169,21 @@ public class AbstractTest {
         }
     }
 
-    protected static String[] getServerMainArgs() {
+    protected static HttpQueryTestBuilder getExportTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withCopyExportRoot(root + "/export");
+    }
+
+    protected static String[] getServerMainArgs(CharSequence root) {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static String[] getServerMainArgs() {
+        return getServerMainArgs(root);
     }
 
     protected static HttpQueryTestBuilder getSimpleTester() {

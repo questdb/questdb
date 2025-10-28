@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
 import io.questdb.cairo.vm.NullMemoryCMR;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -80,7 +79,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final int timestampType;
-    private final MemoryMR todoMem = Vm.getCMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
@@ -241,7 +239,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeBitmapIndexCache();
             Misc.free(metadata);
             Misc.free(txFile);
-            Misc.free(todoMem);
             freeColumns();
             freeParquetPartitions();
             freeTempMem();
@@ -266,16 +263,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
-        BitmapIndexReader reader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
-        if (reader != null) {
-            if (reader.isOpen()) {
-                assert reader.getPartitionTxn() == partitionTxn;
-                assert reader.getColumnTxn() == columnNameTxn;
-                reader.reloadConditionally();
-            } else {
+        BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null) {
+            if (
+                    !indexReader.isOpen()
+                            || indexReader.getColumnTxn() != columnNameTxn
+                            || indexReader.getPartitionTxn() != partitionTxn
+            ) {
                 int plen = path.size();
                 try {
-                    reader.of(
+                    indexReader.of(
                             configuration,
                             pathGenNativePartition(partitionIndex, partitionTxn),
                             metadata.getColumnName(columnIndex),
@@ -286,8 +283,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 } finally {
                     path.trimTo(plen);
                 }
+            } else {
+                indexReader.reloadConditionally();
             }
-            return reader;
+            return indexReader;
         }
         return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
@@ -1102,7 +1101,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 configuration,
                 path,
                 metadata.getColumnName(columnIndex),
-                columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(columnIndex)),
+                columnVersionReader.getSymbolTableNameTxn(metadata.getWriterIndex(columnIndex)),
                 txFile.getSymbolValueCount(symbolColumnIndex)
         );
     }
@@ -1465,9 +1464,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
                 if (symbolMapReader instanceof SymbolMapReaderImpl) {
                     final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-                    final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+                    final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
-                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), columnNameTxn, symbolCount);
+                    ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount);
                 }
             }
         }
@@ -1708,15 +1707,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void renewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
         if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
             final int writerColumnIndex = metadata.getWriterIndex(columnIndex);
-            final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerColumnIndex);
+            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
             String columnName = metadata.getColumnName(columnIndex);
-            if (!(reader instanceof SymbolMapReaderImpl)) {
-                reader = new SymbolMapReaderImpl(configuration, path, columnName, columnNameTxn, 0);
+            if (!(reader instanceof SymbolMapReaderImpl symbolMapReader)) {
+                reader = new SymbolMapReaderImpl(configuration, path, columnName, symbolTableNameTxn, 0);
             } else {
-                SymbolMapReaderImpl symbolMapReader = (SymbolMapReaderImpl) reader;
                 // Fully reopen the symbol map reader only when necessary
-                if (symbolMapReader.needsReopen(columnNameTxn)) {
-                    ((SymbolMapReaderImpl) reader).of(configuration, path, columnName, columnNameTxn, 0);
+                if (symbolMapReader.needsReopen(symbolTableNameTxn)) {
+                    symbolMapReader.of(configuration, path, columnName, symbolTableNameTxn, 0);
                 }
             }
         } else {

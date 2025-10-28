@@ -105,13 +105,18 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public boolean isThreadSafe() {
-        return UnaryFunction.super.isThreadSafe();
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

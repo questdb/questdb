@@ -277,7 +277,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 deferred,
                 baseTableTimestampType,
                 matViewToken,
-                Chars.toString(createTableOperation.getSelectText()),
+                createTableOperation.getSelectText(),
                 baseTableName,
                 samplingInterval,
                 samplingIntervalUnit,

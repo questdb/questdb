@@ -63,8 +63,8 @@ public class PGServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final PGCircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool sharedPoolNetwork;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGServer(
             PGConfiguration configuration,
@@ -184,6 +184,7 @@ public class PGServer implements Closeable {
             super(
                     () -> {
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                                engine,
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );

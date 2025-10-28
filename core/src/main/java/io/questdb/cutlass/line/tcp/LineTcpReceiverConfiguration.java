@@ -31,7 +31,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration {
@@ -56,7 +56,7 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     short getDefaultColumnTypeForInteger();
 
-    int getDefaultColumnTypeForTimestamp();
+    int getDefaultCreateTimestampColumnType();
 
     int getDefaultPartitionBy();
 
@@ -65,8 +65,6 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     /**
      * Interval in milliseconds to perform writer maintenance. Such maintenance can
@@ -84,11 +82,13 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     Metrics getMetrics();
 
-    Clock getMicrosecondClock();
+    MicrosecondClock getMicrosecondClock();
 
     MillisecondClock getMillisecondClock();
 
     NetworkFacade getNetworkFacade();
+
+    WorkerPoolConfiguration getNetworkWorkerPoolConfiguration();
 
     long getSymbolCacheWaitBeforeReload();
 

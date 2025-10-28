@@ -42,12 +42,14 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.compat.InfluxDBUtils.assertRequestErrorContains;
 
 public class InfluxDBClientTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
@@ -207,70 +209,57 @@ public class InfluxDBClientTest extends AbstractTest {
 
     @Test
     public void testInsertWithIlpHttp() throws Exception {
+        testInsertWithIlpHttp(false);
+    }
+
+    @Test
+    public void testInsertWithIlpHttpGzip() throws Exception {
+        testInsertWithIlpHttp(true);
+    }
+
+    @Test
+    public void testInsertWithIlpHttpGzipAndRawOverSameConnection() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
 
             String tableName = "h2o_feet";
-            int count = 9250;
+            int count = 1000;
 
-            sendIlp(tableName, count, serverMain);
+            try (InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.enableGzip();
+                sendIlp(tableName, count, influxDB);
 
-            serverMain.awaitTxn(tableName, 2);
-            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + count + "\n");
-            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
+                influxDB.disableGzip();
+                sendIlp(tableName, count, influxDB);
+            }
+
+            serverMain.awaitTxn(tableName, 4);
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + (2 * count) + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (2 * (count * (count - 1) / 2)) + "\n");
         }
     }
 
     @Test
     public void testInsertWithIlpHttpParallelManyTables() throws Exception {
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
-            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
-        }})) {
-            serverMain.start();
-
-            String tableName = "h2o_feet";
-            int count = 10_000;
-
-            int threads = 5;
-            ObjList<Thread> threadList = new ObjList<>();
-            AtomicReference<Throwable> error = new AtomicReference<>();
-
-            for (int i = 0; i < threads; i++) {
-                final int threadNo = i;
-                threadList.add(new Thread(() -> {
-                    try {
-                        sendIlp(tableName + threadNo, count, serverMain);
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        error.set(e);
-                    }
-                }));
-                threadList.getLast().start();
-            }
-
-            for (int i = 0; i < threads; i++) {
-                threadList.getQuick(i).join();
-            }
-
-            LOG.info().$("== all threads finished ==").$();
-
-            if (error.get() != null) {
-                throw new RuntimeException(error.get());
-            }
-
-            for (int i = 0; i < threads; i++) {
-                String tn = "h2o_feet" + i;
-                serverMain.awaitTxn(tn, 2);
-                assertSql(serverMain.getEngine(), "SELECT count() FROM " + tn, "count()\n" + count + "\n");
-                assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tn, "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
-            }
-        }
+        testInsertWithIlpHttpParallelManyTables(4, (threadNo) -> false);
     }
 
     @Test
-    public void testInsertWithIlpHttpParallelOneTables() throws Exception {
+    public void testInsertWithIlpHttpParallelManyTablesGzip() throws Exception {
+        // All connections have gzip enabled.
+        testInsertWithIlpHttpParallelManyTables(6, (threadNo) -> true);
+    }
+
+    @Test
+    public void testInsertWithIlpHttpParallelManyTablesGzipMixed() throws Exception {
+        // Some connections have gzip enabled, some send uncompressed data.
+        testInsertWithIlpHttpParallelManyTables(6, (threadNo) -> threadNo % 2 == 0);
+    }
+
+    @Test
+    public void testInsertWithIlpHttpParallelOneTable() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
@@ -285,8 +274,8 @@ public class InfluxDBClientTest extends AbstractTest {
 
             for (int i = 0; i < threads; i++) {
                 threadList.add(new Thread(() -> {
-                    try {
-                        sendIlp(tableName, count, serverMain);
+                    try (InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                        sendIlp(tableName, count, influxDB);
                     } catch (Throwable e) {
                         e.printStackTrace();
                         error.set(e);
@@ -322,7 +311,9 @@ public class InfluxDBClientTest extends AbstractTest {
             String tableName = "h2o_feet";
             int count = 9250;
 
-            sendIlp(tableName, count, serverMain);
+            try (InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                sendIlp(tableName, count, influxDB);
+            }
 
             serverMain.awaitTxn(tableName, 2);
             assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + count + "\n");
@@ -730,46 +721,122 @@ public class InfluxDBClientTest extends AbstractTest {
         }
     }
 
-    private static void sendIlp(String tableName, int count, ServerMain serverMain) throws NumericException {
+    private static void sendIlp(String tableName, int count, InfluxDB influxDB) throws NumericException {
         long timestamp = MicrosTimestampDriver.floor("2023-11-27T18:53:24.834Z");
         int i = 0;
 
-        try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-            BatchPoints batchPoints = BatchPoints
-                    .database("test_db")
-                    .tag("async", "true")
-                    .build();
+        BatchPoints batchPoints = BatchPoints
+                .database("test_db")
+                .tag("async", "true")
+                .build();
 
-            String tableNameUpper = tableName.toUpperCase();
+        String tableNameUpper = tableName.toUpperCase();
 
-            if (count / 2 > 0) {
-                for (; i < count / 2; i++) {
-                    String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                    batchPoints.point(Point.measurement(tn)
-                            .time(timestamp, TimeUnit.MICROSECONDS)
-                            .tag("location", "santa_monica")
-                            .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
-                            .addField("water_level", i)
-                            .build());
-                }
-                influxDB.write(batchPoints);
-            }
-
-            BatchPoints batchPoints2 = BatchPoints
-                    .database("test_db")
-                    .tag("async", "true")
-                    .build();
-            for (; i < count; i++) {
+        if (count / 2 > 0) {
+            for (; i < count / 2; i++) {
                 String tn = i % 2 == 0 ? tableName : tableNameUpper;
-                batchPoints2.point(Point.measurement(tn)
+                batchPoints.point(Point.measurement(tn)
                         .time(timestamp, TimeUnit.MICROSECONDS)
                         .tag("location", "santa_monica")
                         .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
                         .addField("water_level", i)
                         .build());
             }
-
-            influxDB.write(batchPoints2);
+            influxDB.write(batchPoints);
         }
+
+        BatchPoints batchPoints2 = BatchPoints
+                .database("test_db")
+                .tag("async", "true")
+                .build();
+        for (; i < count; i++) {
+            String tn = i % 2 == 0 ? tableName : tableNameUpper;
+            batchPoints2.point(Point.measurement(tn)
+                    .time(timestamp, TimeUnit.MICROSECONDS)
+                    .tag("location", "santa_monica")
+                    .addField("level description", "below 3 feet asd fasd fasfd asdf asdf asdfasdf asdf asdfasdfas dfads".substring(0, i % 68))
+                    .addField("water_level", i)
+                    .build());
+        }
+
+        influxDB.write(batchPoints2);
+    }
+
+    private void testInsertWithIlpHttp(boolean enableGzip) throws Exception {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+        }})) {
+            serverMain.start();
+
+            String tableName = "h2o_feet";
+            int count = 9250;
+
+            try (InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                if (enableGzip) {
+                    influxDB.enableGzip();
+                }
+                sendIlp(tableName, count, influxDB);
+            }
+
+            serverMain.awaitTxn(tableName, 2);
+            assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count()\n" + count + "\n");
+            assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
+        }
+    }
+
+    private void testInsertWithIlpHttpParallelManyTables(int threads, EnableGzipFunction enableGzipFunction) throws Exception {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+        }})) {
+            serverMain.start();
+
+            final String tableName = "h2o_feet";
+            final int count = 10_000;
+
+            final ObjList<Thread> threadList = new ObjList<>();
+            final CyclicBarrier startBarrier = new CyclicBarrier(threads);
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            for (int i = 0; i < threads; i++) {
+                final int threadNo = i;
+                threadList.add(new Thread(() -> {
+                    try {
+                        startBarrier.await();
+                        try (InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                            if (enableGzipFunction.enableGzip(threadNo)) {
+                                influxDB.enableGzip();
+                            }
+                            sendIlp(tableName + threadNo, count, influxDB);
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        error.set(e);
+                    }
+                }));
+                threadList.getLast().start();
+            }
+
+            for (int i = 0; i < threads; i++) {
+                threadList.getQuick(i).join();
+            }
+
+            LOG.info().$("== all threads finished ==").$();
+
+            if (error.get() != null) {
+                throw new RuntimeException(error.get());
+            }
+
+            for (int i = 0; i < threads; i++) {
+                String tn = "h2o_feet" + i;
+                serverMain.awaitTxn(tn, 2);
+                assertSql(serverMain.getEngine(), "SELECT count() FROM " + tn, "count()\n" + count + "\n");
+                assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM " + tn, "sum(water_level)\n" + (count * (count - 1) / 2) + "\n");
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface EnableGzipFunction {
+        boolean enableGzip(int threadNo);
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.std.QuietCloseable;
 
@@ -32,6 +33,17 @@ import io.questdb.std.QuietCloseable;
  * and random row access.
  */
 public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource {
+
+    /**
+     * Gets the bitmap index reader for the specified column in the current frame (partition).
+     * This method enables efficient symbol-based lookups in ASOF JOIN operations.
+     *
+     * @param columnIndex the column index to get the bitmap index for
+     * @param direction   the direction for index traversal (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
+     * @return BitmapIndexReader for the specified column, or null if the column is not indexed
+     * or if this cursor doesn't support indexed access
+     */
+    BitmapIndexReader getIndexReaderForCurrentFrame(int columnIndex, int direction);
 
     /**
      * @return record at current position
@@ -55,7 +67,7 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
     TimeFrame getTimeFrame();
 
     /**
-     * Rewinds cursor to a beginning of the given frame. The frame must have been previously opened.
+     * Rewinds cursor to the beginning of the given frame. The frame must have been previously opened.
      *
      * @param frameIndex index of the frame to rewind to
      */

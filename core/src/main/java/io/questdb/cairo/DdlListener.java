@@ -30,7 +30,18 @@ public interface DdlListener {
 
     void onColumnRenamed(SecurityContext securityContext, TableToken tableToken, CharSequence oldColumnName, CharSequence newColumnName);
 
-    void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken);
+    /**
+     * Called when a table, view or materialized view is created.
+     *
+     * @param securityContext the security context
+     * @param tableToken      the table token
+     * @param tableKind       the kind of table being created. See {@link TableUtils#TABLE_KIND_REGULAR_TABLE} for regular data tables
+     *                        and {@link TableUtils#TABLE_KIND_TEMP_PARQUET_EXPORT} for parquet export tables. The parquet export
+     *                        table kind is primarily used to allow table creation in read-only mode for parquet exports.
+     *                        This table kind will be removed in the future when parquet export uses pure in-memory mode
+     *                        instead of temporary tables.
+     */
+    void onTableOrViewOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind);
 
     void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken);
 }

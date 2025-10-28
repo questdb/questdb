@@ -92,7 +92,7 @@ public class TableSequencerImpl implements TableSequencer {
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
+            metadata = new SequencerMetadata(configuration);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = IDGeneratorFactory.newIDGenerator(
                     configuration,

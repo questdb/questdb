@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -226,7 +227,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
                 assertReader(engine, x);
 
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 Assert.assertNotNull(job);
 
                 Assert.assertTrue(job.run(0));
@@ -549,7 +550,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                         .col("a", ColumnType.BYTE)
                         .col("b", ColumnType.STRING)
                         .timestamp("ts");
-                Job job = engine.getEngineMaintenanceJob();
+                Job job = new ServerMain.EngineMaintenanceJob(engine);
                 workerPool.assign(job);
                 workerPool.start();
 

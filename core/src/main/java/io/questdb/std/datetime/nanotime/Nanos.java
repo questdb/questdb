@@ -46,11 +46,11 @@ public final class Nanos {
     public static final long DAY_NANOS = 86_400_000_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_NANOS = (long) (365.2425 * DAY_NANOS);
     public static final long HOUR_NANOS = 3_600_000_000_000L;
-    public static final long MICRO_NANOS = 1000;
-    public static final long MILLI_NANOS = 1_000_000;
+    public static final long MICRO_NANOS = 1000L;
+    public static final long MILLI_NANOS = 1_000_000L;
     public static final long MINUTE_NANOS = 60_000_000_000L;
     public static final long MONTH_NANOS_APPROX = 30 * DAY_NANOS;
-    public static final long SECOND_NANOS = 1_000_000_000;
+    public static final long SECOND_NANOS = 1_000_000_000L;
     public static final long WEEK_NANOS = 7 * DAY_NANOS;
     public static final long YEAR_NANOS_NONLEAP = 365 * DAY_NANOS;
     private static final int DAYS_0000_TO_1970 = 719527;
@@ -116,30 +116,19 @@ public final class Nanos {
     }
 
     public static long addPeriod(long nanos, char type, int period) {
-        switch (type) {
-            case 'u':
-                return Nanos.addMicros(nanos, period);
-            case 'T':
-                return Nanos.addMillis(nanos, period);
-            case 's':
-                return Nanos.addSeconds(nanos, period);
-            case 'm':
-                return Nanos.addMinutes(nanos, period);
-            case 'h':
-                return Nanos.addHours(nanos, period);
-            case 'd':
-                return Nanos.addDays(nanos, period);
-            case 'w':
-                return Nanos.addWeeks(nanos, period);
-            case 'M':
-                return Nanos.addMonths(nanos, period);
-            case 'y':
-                return Nanos.addYears(nanos, period);
-            case 'n':
-                return Nanos.addNanos(nanos, period);
-            default:
-                return Numbers.LONG_NULL;
-        }
+        return switch (type) {
+            case 'u' -> Nanos.addMicros(nanos, period);
+            case 'T' -> Nanos.addMillis(nanos, period);
+            case 's' -> Nanos.addSeconds(nanos, period);
+            case 'm' -> Nanos.addMinutes(nanos, period);
+            case 'h' -> Nanos.addHours(nanos, period);
+            case 'd' -> Nanos.addDays(nanos, period);
+            case 'w' -> Nanos.addWeeks(nanos, period);
+            case 'M' -> Nanos.addMonths(nanos, period);
+            case 'y' -> Nanos.addYears(nanos, period);
+            case 'n' -> Nanos.addNanos(nanos, period);
+            default -> Numbers.LONG_NULL;
+        };
     }
 
     public static long addSeconds(long nanos, int seconds) {
@@ -745,30 +734,19 @@ public final class Nanos {
     }
 
     public static long getPeriodBetween(char type, long start, long end) {
-        switch (type) {
-            case 'n':
-                return Nanos.getNanosBetween(start, end);
-            case 'u':
-                return Nanos.getMicrosBetween(start, end);
-            case 'T':
-                return Nanos.getMillisBetween(start, end);
-            case 's':
-                return Nanos.getSecondsBetween(start, end);
-            case 'm':
-                return Nanos.getMinutesBetween(start, end);
-            case 'h':
-                return Nanos.getHoursBetween(start, end);
-            case 'd':
-                return Nanos.getDaysBetween(start, end);
-            case 'w':
-                return Nanos.getWeeksBetween(start, end);
-            case 'M':
-                return Nanos.getMonthsBetween(start, end);
-            case 'y':
-                return Nanos.getYearsBetween(start, end);
-            default:
-                return Numbers.LONG_NULL;
-        }
+        return switch (type) {
+            case 'n' -> Nanos.getNanosBetween(start, end);
+            case 'u' -> Nanos.getMicrosBetween(start, end);
+            case 'T' -> Nanos.getMillisBetween(start, end);
+            case 's' -> Nanos.getSecondsBetween(start, end);
+            case 'm' -> Nanos.getMinutesBetween(start, end);
+            case 'h' -> Nanos.getHoursBetween(start, end);
+            case 'd' -> Nanos.getDaysBetween(start, end);
+            case 'w' -> Nanos.getWeeksBetween(start, end);
+            case 'M' -> Nanos.getMonthsBetween(start, end);
+            case 'y' -> Nanos.getYearsBetween(start, end);
+            default -> Numbers.LONG_NULL;
+        };
     }
 
     // The quarter of the year (1–4) that the date is in
@@ -782,22 +760,12 @@ public final class Nanos {
     }
 
     public static char getStrideUnit(CharSequence str) throws SqlException {
-        assert str.length() > 0;
+        assert !str.isEmpty();
         final char unit = str.charAt(str.length() - 1);
-        switch (unit) {
-            case 'M':
-            case 'y':
-            case 'w':
-            case 'd':
-            case 'h':
-            case 'm':
-            case 's':
-            case 'T':
-            case 'U':
-                return unit;
-            default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
-        }
+        return switch (unit) {
+            case 'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U' -> unit;
+            default -> throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+        };
     }
 
     public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {
@@ -1058,6 +1026,16 @@ public final class Nanos {
 
     public static long toNanos(int y, boolean leap, int m, int d, int h, int mi) {
         return yearNanos(y, leap) + monthOfYearNanos(m, leap) + (d - 1) * DAY_NANOS + h * HOUR_NANOS + mi * MINUTE_NANOS;
+    }
+
+    public static long toNanos(
+            int y,
+            boolean leap,
+            int month,
+            int day
+    ) {
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        return yearNanos(y, leap) + monthOfYearNanos(month, leap) + maxDay * DAY_NANOS;
     }
 
     public static long toNanos(

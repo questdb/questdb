@@ -54,19 +54,37 @@ else
 fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'rust'* ]]; then
-  echo "starting rust tests"
-  cd compat/src/test/rust/scenarios || exit
+  echo "starting rust-tokio tests"
+  cd compat/src/test/rust-tokio || exit
   # use well-known versions of dependencies
   cp ./Cargo.unlocked ./Cargo.lock
   cargo build --release
-  ./target/release/questrun_rust ../../resources/test_cases.yaml
+  ./target/release/questrun_rust ../resources/test_cases.yaml
   if [ $? -ne 0 ]; then
-      echo "rust tests failed"
+      echo "rust-tokio tests failed"
       exit 1
   fi
-  echo "rust tests finished"
+  cd "$base_dir" || exit
+  echo "rust-tokio tests finished"
 else
-  echo "skipping rust tests"
+  echo "skipping rust-tokio tests"
+fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'sqlx'* ]]; then
+  echo "starting rust-sqlx tests"
+  cd compat/src/test/rust-sqlx || exit
+  # use well-known versions of dependencies
+  cp ./Cargo.unlocked ./Cargo.lock
+  cargo build --release
+  ./target/release/questrun_sqlx ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "rust-sqlx tests failed"
+      exit 1
+  fi
+  cd "$base_dir" || exit
+  echo "rust-sqlx tests finished"
+else
+  echo "skipping rust-sqlx tests"
 fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then

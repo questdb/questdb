@@ -222,6 +222,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public WorkerPoolConfiguration getExportPoolConfiguration() {
+                return () -> workerCount;
+            }
+
+            @Override
             public FactoryProvider getFactoryProvider() {
                 return DefaultFactoryProvider.INSTANCE;
             }
@@ -277,16 +282,6 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
-                return null;
-            }
-
-            @Override
-            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-                return null;
-            }
-
-            @Override
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
                 return () -> workerCount;
             }
@@ -299,6 +294,11 @@ public class WorkerPoolManagerTest {
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
                 return () -> workerCount;
+            }
+
+            @Override
+            public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+                return null;
             }
         };
     }

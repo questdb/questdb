@@ -59,7 +59,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 2 LONGs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store row ids in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -67,12 +67,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        Map joinKeyMap = null;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
             this.toleranceInterval = toleranceInterval;
 
-            Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
             this.cursor = new AsOfLightJoinRecordCursor(
                     columnSplit,
                     joinKeyMap,
@@ -83,6 +84,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
+            Misc.free(joinKeyMap);
             close();
             throw th;
         }
@@ -95,8 +97,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Forcefully disable column pre-touch for nested filter queries.
-        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {

@@ -66,6 +66,29 @@ public interface CairoConfiguration {
 
     boolean attachPartitionCopy();
 
+    /**
+     * Flag to enable or disable symbol capacity auto-scaling. Auto-scaling means resizing
+     * symbol table data structures as the number of symbols in the table grows. Optimal sizing of
+     * these data structures ensures optimal ingres performance.
+     * <p>
+     * By default, the auto-scaling is enabled. This is optimal. You may want to disable auto-scaling in case
+     * something goes wrong.
+     *
+     * @return true - auto-scaling is enabled and false - otherwise.
+     */
+    boolean autoScaleSymbolCapacity();
+
+    /**
+     * No-zero positive value. It is used as percentage of symbol counts in
+     * the symbol table relative to the table capacity, after which table is resized. For example 0.8 would indicate
+     * that as soon as symbol count goes over 80% of the capacity, the symbol table is resized.
+     *
+     * @return resize threshold
+     */
+    double autoScaleSymbolCapacityThreshold();
+
+    boolean cairoResourcePoolTracingEnabled();
+
     default boolean disableColumnPurgeJob() {
         return false;
     }
@@ -121,6 +144,12 @@ public interface CairoConfiguration {
 
     @NotNull
     BuildInformation getBuildInformation();
+
+    default boolean getBypassWalFdCache() {
+        // If wal fd re-usage is not allowed it means fd cache should not be used for wal and sequencer files.
+        // This typically means that those files be renamed/replaced outside QuestDB java code.
+        return getWalMaxSegmentFileDescriptorsCache() < 1;
+    }
 
     boolean getCairoSqlLegacyOperatorPrecedence();
 
@@ -290,6 +319,8 @@ public interface CairoConfiguration {
 
     int getMatViewMaxRefreshRetries();
 
+    long getMatViewMaxRefreshStepUs();
+
     long getMatViewRefreshIntervalsUpdatePeriod();
 
     long getMatViewRefreshOomRetryTimeout();
@@ -382,6 +413,20 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getParquetExportCopyReportFrequencyLines();
+
+    int getParquetExportCompressionCodec();
+
+    int getParquetExportCompressionLevel();
+
+    int getParquetExportDataPageSize();
+
+    int getParquetExportRowGroupSize();
+
+    int getParquetExportVersion();
+
+    CharSequence getParquetExportTableNamePrefix();
+
     int getPartitionEncoderParquetCompressionCodec();
 
     int getPartitionEncoderParquetCompressionLevel();
@@ -466,10 +511,13 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null or empty input root disables "copy" SQL
-    CharSequence getSqlCopyInputRoot();
+    int getSqlCopyExportQueueCapacity();
 
-    CharSequence getSqlCopyInputWorkRoot();
+    @Nullable CharSequence getSqlCopyExportRoot();
+
+    @Nullable CharSequence getSqlCopyInputRoot();
+
+    @Nullable CharSequence getSqlCopyInputWorkRoot();
 
     int getSqlCopyLogRetentionDays();
 
@@ -578,7 +626,9 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
-    long getSymbolTableAppendPageSize();
+    long getSymbolTableMaxAllocationPageSize();
+
+    long getSymbolTableMinAllocationPageSize();
 
     long getSystemDataAppendPageSize();
 
@@ -708,6 +758,10 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isParquetExportRawArrayEncoding();
+
+    boolean isParquetExportStatisticsEnabled();
+
     boolean isPartitionEncoderParquetRawArrayEncoding();
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
@@ -723,8 +777,6 @@ public interface CairoConfiguration {
     boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
-
-    boolean isSqlParallelFilterPreTouchEnabled();
 
     boolean isSqlParallelGroupByEnabled();
 
@@ -779,8 +831,6 @@ public interface CairoConfiguration {
     boolean mangleTableDirNames();
 
     int maxArrayElementCount();
-
-    boolean useFastAsOfJoin();
 
     boolean useWithinLatestByOptimisation();
 }

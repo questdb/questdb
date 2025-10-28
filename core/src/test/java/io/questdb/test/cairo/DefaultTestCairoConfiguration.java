@@ -99,6 +99,11 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isColumnAliasExpressionEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return true;
     }
@@ -106,10 +111,5 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return true;
-    }
-
-    @Override
-    public boolean isColumnAliasExpressionEnabled() {
-        return false;
     }
 }

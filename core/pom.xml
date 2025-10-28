@@ -32,11 +32,11 @@
         <maven.javadoc.skip>false</maven.javadoc.skip>
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
-        <javac.target>11</javac.target>
+        <javac.target>17</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.1.2</web.console.version>
+        <web.console.version>1.1.4</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>9.0.4-SNAPSHOT</version>
+    <version>9.1.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -79,7 +79,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.8.1</version>
+                <version>3.11.0</version>
                 <configuration>
                     <compilerArgs>
                         <arg>${compilerArg1}</arg>
@@ -615,10 +615,10 @@
             </build>
         </profile>
         <profile>
-            <id>java11+</id>
+            <id>java17+</id>
             <properties>
-                <jdk.version>11</jdk.version>
-                <java.enforce.version>11</java.enforce.version>
+                <jdk.version>17</jdk.version>
+                <java.enforce.version>17</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
                 <compilerArg1>--add-exports</compilerArg1>
                 <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
@@ -628,7 +628,7 @@
                 <javac.compile.target>${javac.target}</javac.compile.target>
             </properties>
             <activation>
-                <jdk>(1.8,)</jdk>
+                <jdk>(16,)</jdk>
             </activation>
             <dependencies>
                 <dependency>

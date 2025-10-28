@@ -277,6 +277,14 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareMultiDeclares() throws Exception {
+        assertException(
+                "DECLARE @from_time := dateadd('h',-1,now()), DECLARE @to_time := now() WITH t as ( select now() as ts ) select * from t where ts between @from_time and @to_time;",
+                45,
+                "unexpected token [DECLARE] - Multiple DECLARE statements are not allowed. Use single DECLARE block: DECLARE @a := 1, @b := 1, @c := 1");
+    }
+
+    @Test
     public void testDeclareReuseVariable() throws Exception {
         assertSql("interval\n('2025-07-02T13:00:00.000Z', '2025-07-02T13:00:00.000Z')\n",
                 "declare " +
@@ -907,7 +915,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareWorksWithJit() throws Exception {
         assertMemoryLeak(() -> {
             String plan = "Async{JIT}Filter workers: 1\n" +
-                    "  filter: id<4 [pre-touch]\n" +
+                    "  filter: id<4\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: x\n";

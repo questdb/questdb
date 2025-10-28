@@ -110,7 +110,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor = new OperationExecutor(engine, sharedQueryWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
-        walEventReader = new WalEventReader(configuration.getFilesFacade());
+        walEventReader = new WalEventReader(configuration);
         metrics = engine.getMetrics().walMetrics();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Micros.DAY_MICROS;
         config = engine.getConfiguration();
@@ -331,6 +331,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     // Re-read the sequencer files to get the metadata change cursor.
                                     structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
                                     hasNext = structuralChangeCursor.hasNext();
+                                    if (!hasNext) {
+                                        // In very rare cases, when sequencer files are changed externally, we need to reload them here
+                                        // to re-read max structure version.
+                                        // We cannot do it in the previous call because we need to have sequencer writer lock to reload it.
+                                        Misc.free(structuralChangeCursor);
+                                        tableSequencerAPI.reload(tableToken);
+                                        structuralChangeCursor = tableSequencerAPI.getMetadataChangeLogSlow(tableToken, newStructureVersion - 1);
+                                        hasNext = structuralChangeCursor.hasNext();
+                                    }
                                 }
 
                                 if (hasNext) {

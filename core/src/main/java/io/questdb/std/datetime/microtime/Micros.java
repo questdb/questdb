@@ -42,18 +42,17 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 public final class Micros {
     public static final long DAY_MICROS = 86_400_000_000L; // 24 * 60 * 60 * 1000 * 1000L
     public static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
-    public static final long DAY_SECONDS = 86400;
+    public static final long DAY_SECONDS = 86400L;
     public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final long HOUR_MICROS = 3600000000L;
-    public static final long HOUR_SECONDS = 3600;
-    public static final long MICRO_NANOS = 1000;
-    public static final long MILLI_MICROS = 1000;
-    public static final long MINUTE_MICROS = 60000000;
-    public static final long MINUTE_SECONDS = 60;
+    public static final long HOUR_SECONDS = 3600L;
+    public static final long MICRO_NANOS = 1000L;
+    public static final long MILLI_MICROS = 1000L;
+    public static final long MINUTE_MICROS = 60000000L;
+    public static final long MINUTE_SECONDS = 60L;
     public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
-    public static final long SECOND_MICROS = 1000000;
+    public static final long SECOND_MICROS = 1000000L;
     public static final int SECOND_MILLIS = 1000;
-    public static final long SECOND_NANOS = 1000000000;
     public static final long STARTUP_TIMESTAMP;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 7 * DAY_MICROS;
@@ -124,30 +123,19 @@ public final class Micros {
     }
 
     public static long addPeriod(long lo, char type, int period) {
-        switch (type) {
-            case 'u':
-                return Micros.addMicros(lo, period);
-            case 'T':
-                return Micros.addMillis(lo, period);
-            case 's':
-                return Micros.addSeconds(lo, period);
-            case 'm':
-                return Micros.addMinutes(lo, period);
-            case 'h':
-                return Micros.addHours(lo, period);
-            case 'd':
-                return Micros.addDays(lo, period);
-            case 'w':
-                return Micros.addWeeks(lo, period);
-            case 'M':
-                return Micros.addMonths(lo, period);
-            case 'y':
-                return Micros.addYears(lo, period);
-            case 'n':
-                return Micros.addNanos(lo, period);
-            default:
-                return Numbers.LONG_NULL;
-        }
+        return switch (type) {
+            case 'u' -> Micros.addMicros(lo, period);
+            case 'T' -> Micros.addMillis(lo, period);
+            case 's' -> Micros.addSeconds(lo, period);
+            case 'm' -> Micros.addMinutes(lo, period);
+            case 'h' -> Micros.addHours(lo, period);
+            case 'd' -> Micros.addDays(lo, period);
+            case 'w' -> Micros.addWeeks(lo, period);
+            case 'M' -> Micros.addMonths(lo, period);
+            case 'y' -> Micros.addYears(lo, period);
+            case 'n' -> Micros.addNanos(lo, period);
+            default -> Numbers.LONG_NULL;
+        };
     }
 
     public static long addSeconds(long micros, int seconds) {
@@ -761,31 +749,28 @@ public final class Micros {
         return Math.abs(a - b) * MICRO_NANOS;
     }
 
-    public static long getPeriodBetween(char type, long start, long end) {
-        switch (type) {
-            case 'n':
-                return Micros.getNanosBetween(start, end);
-            case 'u':
-                return Micros.getMicrosBetween(start, end);
-            case 'T':
-                return Micros.getMillisBetween(start, end);
-            case 's':
-                return Micros.getSecondsBetween(start, end);
-            case 'm':
-                return Micros.getMinutesBetween(start, end);
-            case 'h':
-                return Micros.getHoursBetween(start, end);
-            case 'd':
-                return Micros.getDaysBetween(start, end);
-            case 'w':
-                return Micros.getWeeksBetween(start, end);
-            case 'M':
-                return Micros.getMonthsBetween(start, end);
-            case 'y':
-                return Micros.getYearsBetween(start, end);
-            default:
-                return Numbers.LONG_NULL;
+    public static int getNanosOfSecond(long micros) {
+        if (micros > -1) {
+            return (int) ((micros % SECOND_MICROS) * MICRO_NANOS);
+        } else {
+            return (int) ((SECOND_MICROS - 1 + ((micros + 1) % SECOND_MICROS)) * MICRO_NANOS);
         }
+    }
+
+    public static long getPeriodBetween(char type, long start, long end) {
+        return switch (type) {
+            case 'n' -> Micros.getNanosBetween(start, end);
+            case 'u' -> Micros.getMicrosBetween(start, end);
+            case 'T' -> Micros.getMillisBetween(start, end);
+            case 's' -> Micros.getSecondsBetween(start, end);
+            case 'm' -> Micros.getMinutesBetween(start, end);
+            case 'h' -> Micros.getHoursBetween(start, end);
+            case 'd' -> Micros.getDaysBetween(start, end);
+            case 'w' -> Micros.getWeeksBetween(start, end);
+            case 'M' -> Micros.getMonthsBetween(start, end);
+            case 'y' -> Micros.getYearsBetween(start, end);
+            default -> Numbers.LONG_NULL;
+        };
     }
 
     // The quarter of the year (1–4) that the date is in
@@ -988,15 +973,25 @@ public final class Micros {
             int millis,
             int micros
     ) {
-        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        int minDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
         return yearMicros(y, leap)
                 + monthOfYearMicros(month, leap)
-                + maxDay * DAY_MICROS
+                + minDay * DAY_MICROS
                 + hour * HOUR_MICROS
                 + min * MINUTE_MICROS
                 + sec * SECOND_MICROS
                 + millis * MILLI_MICROS
                 + micros;
+    }
+
+    public static long toMicros(
+            int y,
+            boolean leap,
+            int month,
+            int day
+    ) {
+        int maxDay = Math.min(day, CommonUtils.getDaysPerMonth(month, leap)) - 1;
+        return yearMicros(y, leap) + monthOfYearMicros(month, leap) + maxDay * DAY_MICROS;
     }
 
     public static long toMicros(int y, int m, int d) {

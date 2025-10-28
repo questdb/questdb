@@ -93,7 +93,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine,
                 new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
                     public boolean checkConnection() {
@@ -238,7 +238,7 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringToIpv4() throws Exception {
+    public void testStringToIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "create table up as" +

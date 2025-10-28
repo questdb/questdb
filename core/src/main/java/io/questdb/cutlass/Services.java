@@ -29,9 +29,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpCookieHandler;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
-import io.questdb.cutlass.http.HttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
@@ -97,14 +95,10 @@ public class Services {
             return null;
         }
 
-        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
         final HttpServer server = new HttpServer(
                 httpServerConfiguration,
                 networkSharedPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
-                cookieHandler,
-                headerParserFactory
+                httpServerConfiguration.getFactoryProvider().getHttpSocketFactory()
         );
         HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),
@@ -114,9 +108,7 @@ public class Services {
 
         HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
                 cairoEngine,
-                httpServerConfiguration.getRecvBufferSize(),
-                httpServerConfiguration.getSendBufferSize(),
-                httpServerConfiguration.getLineHttpProcessorConfiguration()
+                httpServerConfiguration
         );
 
         HttpServer.addDefaultEndpoints(
@@ -204,7 +196,11 @@ public class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
+        final HttpServer server = new HttpServer(
+                configuration,
+                workerPool,
+                configuration.getFactoryProvider().getHttpMinSocketFactory()
+        );
         Metrics metrics = configuration.getHttpContextConfiguration().getMetrics();
         server.bind(
                 new HttpRequestHandlerFactory() {

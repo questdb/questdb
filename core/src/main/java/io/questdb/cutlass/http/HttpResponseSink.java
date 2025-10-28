@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zip;
@@ -59,9 +60,13 @@ import static io.questdb.std.Chars.isBlank;
 import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
+    public static final int HTTP_MISDIRECTED_REQUEST = 421;
+    public static final int HTTP_TOO_MANY_REQUESTS = 429;
+    private static final Utf8String EMPTY_JSON = new Utf8String("{}");
     private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
     private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
+    private static final IntObjHashMap<Utf8Sequence> httpJsonStatusMap = new IntObjHashMap<>();
     private static final IntObjHashMap<Utf8Sequence> httpStatusMap = new IntObjHashMap<>();
     private final ChunkUtf8Sink buffer;
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
@@ -691,38 +696,28 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
-        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, null, null, null, null, -1L, true);
+            final Utf8Sequence message = httpJsonStatusMap.get(code);
+            sendStatusJsonContent(code, message != null ? message : EMPTY_JSON, true);
         }
 
         public void sendStatusJsonContent(
                 int code,
-                @Nullable Utf8Sequence message
+                @NotNull Utf8Sequence message
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusJsonContent(code, message, true);
         }
 
         public void sendStatusJsonContent(
                 int code,
-                @Nullable Utf8Sequence message,
+                @NotNull Utf8Sequence message,
                 boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusJsonContent(code, message, null, null, null, message != null ? message.size() : -1L, appendEOL);
-        }
-
-        public void sendStatusJsonContent(
-                int code,
-                @Nullable Utf8Sequence message,
-                @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue,
-                long contentLength,
-                boolean appendEOL
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, contentLength, appendEOL);
+            final long contentLength = message.size();
+            assert contentLength > 0 : "json content is missing";
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, null, null, null, contentLength, appendEOL);
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -757,11 +752,11 @@ public class HttpResponseSink implements Closeable, Mutable {
          * Sends "text/plain" content type response with customised message and
          * optional additional header and cookie.
          *
-         * @param code        response code, has to be compatible with "text" response type
-         * @param message     optional message, if not provided, a standard message for the response code will be used
-         * @param header      optional header
-         * @param cookieName  optional cookie name, when name is not null the value must be not-null too
-         * @param cookieValue optional cookie value
+         * @param code         response code, has to be compatible with "text" response type
+         * @param message      optional message, if not provided, a standard message for the response code will be used
+         * @param header       optional header
+         * @param cookieNames  optional cookie names, cookie names and values must be provided in pairs
+         * @param cookieValues optional cookie values
          * @throws PeerDisconnectedException exception if HTTP client disconnects during us sending
          * @throws PeerIsSlowToReadException exception if HTTP client does not keep up with us sending
          */
@@ -769,10 +764,10 @@ public class HttpResponseSink implements Closeable, Mutable {
                 int code,
                 @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1L, true);
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieNames, cookieValues, -1L, true);
         }
 
         public void sendStatusTextContent(
@@ -791,8 +786,13 @@ public class HttpResponseSink implements Closeable, Mutable {
             sendStatusTextContent(code, null, header);
         }
 
-        public void sendStatusWithCookie(int code, Utf8Sequence message, CharSequence cookieName, CharSequence cookieValue) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusTextContent(code, message, null, cookieName, cookieValue);
+        public void sendStatusWithCookie(
+                int code,
+                Utf8Sequence message,
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusTextContent(code, message, null, cookieNames, cookieValues);
         }
 
         public void shutdownWrite() {
@@ -804,8 +804,8 @@ public class HttpResponseSink implements Closeable, Mutable {
                 int code,
                 @Nullable Utf8Sequence message,
                 @Nullable CharSequence header,
-                @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue,
+                @Nullable ObjList<CharSequence> cookieNames,
+                @Nullable ObjList<CharSequence> cookieValues,
                 long contentLength,
                 boolean appendEOL
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -815,8 +815,12 @@ public class HttpResponseSink implements Closeable, Mutable {
                 if (header != null) {
                     headerImpl.put(header).put(Misc.EOL);
                 }
-                if (cookieName != null) {
-                    setCookie(cookieName, cookieValue);
+                if (cookieNames != null) {
+                    assert cookieValues != null;
+                    assert cookieNames.size() == cookieValues.size();
+                    for (int i = 0, n = cookieNames.size(); i < n; i++) {
+                        setCookie(cookieNames.getQuick(i), cookieValues.getQuick(i));
+                    }
                 }
                 prepareHeaderSink();
                 headerSent = true;
@@ -863,5 +867,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, new Utf8String("Request range not satisfiable"));
         httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, new Utf8String("Headers too large"));
         httpStatusMap.put(HTTP_INTERNAL_ERROR, new Utf8String("Internal server error"));
+        httpStatusMap.put(HTTP_MISDIRECTED_REQUEST, new Utf8String("Misdirected Request"));
+        httpStatusMap.put(HTTP_TOO_MANY_REQUESTS, new Utf8String("Too Many Requests"));
+    }
+
+    static {
+        httpJsonStatusMap.put(HTTP_OK, new Utf8String("{\"status\":\"OK\"}"));
+        httpJsonStatusMap.put(HTTP_UNAUTHORIZED, new Utf8String("{\"status\":\"Unauthorized\"}"));
+        httpJsonStatusMap.put(HTTP_FORBIDDEN, new Utf8String("{\"status\":\"Forbidden\"}"));
     }
 }

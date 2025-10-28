@@ -74,6 +74,8 @@ public interface CompiledQuery {
     short EMPTY = COMPILE_VIEW + 1;
     short TYPES_COUNT = EMPTY;
 
+    void closeAllButSelect();
+
     /**
      * Executes the query.
      * If execution is done in sync returns an instance of OperationFuture where isDone() is true.

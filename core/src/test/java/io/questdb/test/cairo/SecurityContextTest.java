@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
@@ -69,6 +70,8 @@ public class SecurityContextTest {
                             method.invoke(sc, sc);
                         } else if (name.equals("authorizeTableBackup")) {
                             method.invoke(sc, new ObjHashSet<CharSequence>());
+                        } else if (name.equals("authorizeTableCreate")) {
+                            method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                         } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                             final ViewDefinition viewDefinition = new ViewDefinition();
                             viewDefinition.init(userTableToken, tableName);
@@ -111,6 +114,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
                                 viewDefinition.init(userTableToken, tableName);
@@ -164,6 +169,8 @@ public class SecurityContextTest {
                                 method.invoke(sc, sc);
                             } else if (name.equals("authorizeTableBackup")) {
                                 method.invoke(sc, new ObjHashSet<CharSequence>());
+                            } else if (name.equals("authorizeTableCreate")) {
+                                method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
                                 viewDefinition.init(userTableToken, tableName);

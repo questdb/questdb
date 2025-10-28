@@ -48,7 +48,9 @@ public class IDGeneratorFactory {
         protected final String uniqueIdFileName;
         protected final long uniqueIdMemSize;
         protected long uniqueIdFd = -1;
-        protected long uniqueIdMem = 0;
+        // the current ID is consumed by other threads, and we need to make sure
+        // memory address is visible to them
+        protected volatile long uniqueIdMem = 0;
 
         public AbstractIDGenerator(CairoConfiguration configuration, String uniqueIdFileName) {
             this.configuration = configuration;

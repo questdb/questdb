@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpConstants;
@@ -159,7 +160,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.sqlExecutionContext = sqlExecutionContext;
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
             this.metrics = engine.getMetrics();
             this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
             this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();
@@ -265,6 +266,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
+    public String getName() {
+        return ActiveConnectionTracker.PROCESSOR_JSON;
+    }
+
+    @Override
     public HttpRequestProcessor getProcessor(HttpRequestHeader requestHeader) {
         return this;
     }
@@ -316,8 +322,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     @Override
-    public boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) {
-        return context.getCookieHandler().processCookies(context, securityContext);
+    public boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) {
+        return context.getCookieHandler().processServiceAccountCookie(context, securityContext);
+    }
+
+    @Override
+    public boolean reservedOneAdminConnection() {
+        return true;
     }
 
     @Override
@@ -379,10 +390,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             JsonQueryProcessorState state,
             Metrics metrics
     ) {
-        if (e instanceof CairoException) {
-            CairoException ce = (CairoException) e;
+        if (e instanceof CairoException ce) {
             if (ce.isInterruption()) {
-                state.info().$("query cancelled [reason=`").$safe(((CairoException) e).getFlyweightMessage())
+                state.info().$("query cancelled [reason=`").$safe(ce.getFlyweightMessage())
                         .$("`, q=`").$safe(state.getQueryOrHidden())
                         .$("`]").$();
             } else if (ce.isCritical()) {
@@ -879,7 +889,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(statusCode, HttpConstants.CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(keepAliveHeader);
-        context.getCookieHandler().setCookie(response.headers(), context.getSecurityContext());
+        context.getCookieHandler().setServiceAccountCookie(response.headers(), context.getSecurityContext());
+        final CharSequence sessionId = context.getSessionIdSink();
+        if (!sessionId.isEmpty()) {
+            context.getCookieHandler().setSessionCookie(response.headers(), sessionId);
+        }
         response.sendHeader();
     }
 

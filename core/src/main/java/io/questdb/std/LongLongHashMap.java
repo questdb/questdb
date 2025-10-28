@@ -38,7 +38,7 @@ public class LongLongHashMap extends AbstractLongHashSet {
         this(initialCapacity, 0.5f);
     }
 
-    private LongLongHashMap(int initialCapacity, double loadFactor) {
+    public LongLongHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         values = new long[keys.length];
         clear();
