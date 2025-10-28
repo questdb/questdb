@@ -24,21 +24,21 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.IntLongHashMap;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntLongHashMapTest {
+public class IntIntHashMapTest {
 
     @Test
     public void testAll() {
         Rnd rnd = new Rnd();
         // populate map
-        IntLongHashMap map = new IntLongHashMap();
+        IntIntHashMap map = new IntIntHashMap();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
-            long value = i + 1;
+            int value = i + 1;
             map.put(i, value);
         }
         Assert.assertEquals(N, map.size());
@@ -86,7 +86,7 @@ public class IntLongHashMapTest {
                 Assert.assertEquals(i + 1, map.valueAt(index));
 
                 // update value
-                map.putAt(index, value, rnd3.nextLong());
+                map.putAt(index, value, rnd3.nextInt());
             }
         }
 
@@ -102,7 +102,7 @@ public class IntLongHashMapTest {
                 Assert.assertTrue(map.excludes(i));
             } else {
                 Assert.assertFalse(map.excludes(i));
-                Assert.assertEquals(rnd3.nextLong(), map.get(i));
+                Assert.assertEquals(rnd3.nextInt(), map.get(i));
             }
         }
     }

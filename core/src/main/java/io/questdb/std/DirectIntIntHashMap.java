@@ -37,37 +37,21 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
     private int free;
     private long mask;
     private long ptr;
+    private int size;
 
     public DirectIntIntHashMap(int initialCapacity, double loadFactor, int noKeyValue, int memoryTag) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
         this.noKeyValue = noKeyValue;
-        this.initialCapacity = Numbers.ceilPow2((int) (Math.max(initialCapacity, MIN_INITIAL_CAPACITY) / loadFactor));
         this.loadFactor = loadFactor;
         this.memoryTag = memoryTag;
-    }
-
-    /**
-     * Adds key to hash set preserving key uniqueness.
-     *
-     * @param key key to be added.
-     * @return false if key is already in the set and true otherwise.
-     */
-    public boolean add(int key) {
-        long index = keyIndex(key);
-        if (index < 0) {
-            return false;
-        }
-        addAt(index, key);
-        return true;
-    }
-
-    public void addAt(long index, int key, int value) {
-        putAt(index, key, value);
-        if (--free == 0) {
-            rehash(capacity() << 1, sizeLimit << 1);
-        }
+        this.initialCapacity = this.capacity = Numbers.ceilPow2((int) (Math.max(initialCapacity, MIN_INITIAL_CAPACITY) / loadFactor));
+        this.size = 0;
+        this.free = (int) (capacity * loadFactor);
+        this.mask = capacity - 1;
+        this.ptr = Unsafe.malloc(8L * capacity, memoryTag);
+        zero();
     }
 
     public int capacity() {
@@ -76,12 +60,27 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
-        // TODO
+        free = (int) (capacity * loadFactor);
+        size = 0;
+        zero();
     }
 
     @Override
     public void close() {
-        // TODO
+        if (ptr != 0) {
+            ptr = Unsafe.free(ptr, 8L * capacity, memoryTag);
+            capacity = 0;
+            free = 0;
+            size = 0;
+        }
+    }
+
+    public boolean excludes(int key) {
+        return keyIndex(key) > -1;
+    }
+
+    public int get(int key) {
+        return valueAt(keyIndex(key));
     }
 
     public int keyAt(long index) {
@@ -101,26 +100,43 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
         return probe(key, index);
     }
 
-    public void of(long ptr) {
-        if (ptr == 0) {
-            this.ptr = Unsafe.malloc(8L * initialCapacity, memoryTag);
-            zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
-            mask = initialCapacity - 1;
+    public void put(int key, int value) {
+        putAt(keyIndex(key), key, value);
+    }
+
+    public void putAt(long index, int key, int value) {
+        if (index < 0) {
+            Unsafe.getUnsafe().putInt(ptr + ((-index - 1) << 3) + 4, value);
         } else {
-            this.ptr = ptr;
-            mask = capacity() - 1;
+            putAt0(index, key, value);
+            size++;
+            if (--free == 0) {
+                rehash(capacity() << 1);
+            }
         }
     }
 
     public void restoreInitialCapacity() {
-        // TODO
+        if (ptr == 0 || capacity != initialCapacity) {
+            final long oldCapacity = capacity;
+            capacity = initialCapacity;
+            mask = capacity - 1;
+            if (ptr == 0) {
+                ptr = Unsafe.malloc(8L * capacity, memoryTag);
+            } else {
+                ptr = Unsafe.realloc(ptr, 8L * oldCapacity, 8L * capacity, memoryTag);
+            }
+        }
+
+        clear();
     }
 
     public int size() {
-        return capacity - free;
+        return size;
+    }
+
+    public int valueAt(long index) {
+        return index < 0 ? Unsafe.getUnsafe().getInt(ptr + ((-index - 1) << 3) + 4) : noKeyValue;
     }
 
     private long probe(int key, long index) {
@@ -139,46 +155,45 @@ public class DirectIntIntHashMap implements Mutable, QuietCloseable {
         throw CairoException.critical(0).put("corrupt int hash set");
     }
 
-    private void putAt(long index, int key, int value) {
+    private void putAt0(long index, int key, int value) {
         final long p = ptr + (index << 3);
         Unsafe.getUnsafe().putInt(p, key);
         Unsafe.getUnsafe().putInt(p + 4, value);
     }
 
-    private void rehash(int newCapacity, int newSizeLimit) {
+    private void rehash(int newCapacity) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("int hash set capacity overflow");
+            throw CairoException.nonCritical().put("int-int hash table capacity overflow");
         }
 
-        final int oldSize = size();
-        final int oldCapacity = capacity();
+        final int oldCapacity = capacity;
 
+        capacity = newCapacity;
+        mask = newCapacity - 1;
+        free += (int) ((newCapacity - oldCapacity) * loadFactor);
         long oldPtr = ptr;
         ptr = Unsafe.malloc(8L * newCapacity, memoryTag);
-        zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
-        mask = newCapacity - 1;
+        zero();
 
         for (long p = oldPtr, lim = oldPtr + 8L * oldCapacity; p < lim; p += 8L) {
             int key = Unsafe.getUnsafe().getInt(p);
             if (key != noKeyValue) {
                 long index = keyIndex(key);
-                putAt(index, key);
+                int value = Unsafe.getUnsafe().getInt(p + 4);
+                putAt0(index, key, value);
             }
         }
 
-        Unsafe.free(oldPtr, HEADER_SIZE + 4L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 8L * oldCapacity, memoryTag);
     }
 
-    private void zero(long ptr, int cap) {
+    private void zero() {
         if (noKeyValue == 0) {
             // Vectorized fast path for zero default value.
-            Vect.memset(ptr, 8L * cap, 0);
+            Vect.memset(ptr, 8L * capacity, 0);
         } else {
             // Otherwise, clean up only keys.
-            for (long p = ptr, lim = ptr + 8L * cap; p < lim; p += 8L) {
+            for (long p = ptr, lim = ptr + 8L * capacity; p < lim; p += 8L) {
                 Unsafe.getUnsafe().putInt(p, noKeyValue);
             }
         }
