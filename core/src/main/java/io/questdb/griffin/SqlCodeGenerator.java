@@ -5181,29 +5181,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 timestampColumn = null;
             }
 
-            // If cursor factory followed ORDER BY advice, check if ORDER BY expression matches a computed column
-            ExpressionNode orderByExpr = null;
-            if (factory.followedOrderByAdvice() && model.getOrderBy() != null && model.getOrderBy().size() > 0) {
-                ExpressionNode orderByNode = model.getOrderBy().getQuick(0);
-                // Resolve alias to actual expression if needed
-                if (orderByNode.type == ExpressionNode.LITERAL) {
-                    QueryColumn queryColumn = model.getAliasToColumnMap().get(orderByNode.token);
-                    if (queryColumn != null) {
-                        orderByExpr = queryColumn.getAst();
-                    }
-                } else {
-                    orderByExpr = orderByNode;
-                }
-            }
+//            // If cursor factory followed ORDER BY advice, check if ORDER BY expression matches a computed column
+//            ExpressionNode orderByExpr = null;
+//            if (factory.followedOrderByAdvice() && model.getOrderBy() != null && model.getOrderBy().size() > 0) {
+//                ExpressionNode orderByNode = model.getOrderBy().getQuick(0);
+//                // Resolve alias to actual expression if needed
+//                if (orderByNode.type == ExpressionNode.LITERAL) {
+//                    QueryColumn queryColumn = model.getAliasToColumnMap().get(orderByNode.token);
+//                    if (queryColumn != null) {
+//                        orderByExpr = queryColumn.getAst();
+//                    }
+//                } else {
+//                    orderByExpr = orderByNode;
+//                }
+//            }
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
                 if (node.type == LITERAL && Chars.equalsNc(node.token, timestampColumn)) {
                     virtualMetadata.setTimestampIndex(i);
-                } else if (orderByExpr != null && ExpressionNode.compareNodesExact(node, orderByExpr)) {
-                    // This column matches the ORDER BY expression - designate it as timestamp
-                    virtualMetadata.setTimestampIndex(i);
+//                } else if (orderByExpr != null && ExpressionNode.compareNodesExact(node, orderByExpr)) {
+//                    // This column matches the ORDER BY expression - designate it as timestamp
+//                    virtualMetadata.setTimestampIndex(i);
                 }
 
                 Function function = functionParser.parseFunction(

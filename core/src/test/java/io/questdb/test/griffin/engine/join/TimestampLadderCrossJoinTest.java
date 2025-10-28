@@ -34,6 +34,10 @@ import org.junit.Test;
 
 public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
 
+    // Used to easily switch to "ts" while making changes in SqlCodeGenerator
+    // Safe to remove when code is stabilized
+    private static final String EXPECTED_TS = null;
+
     @Test
     public void testAggregation() throws Exception {
         assertMemoryLeak(() -> {
@@ -89,7 +93,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             2	5.333333333333333
                             """,
                     sql,
-                    null,
+                    EXPECTED_TS,
                     true,
                     true
             );
@@ -161,7 +165,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:01.000000Z
                             """,
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -186,7 +190,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -209,7 +213,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "id\tts\n",
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -244,7 +248,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:11.000000Z
                             """,
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     false
             );
@@ -285,7 +289,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:02.200000Z
                             """,
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -331,7 +335,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:00:06.000000Z
                             """,
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -371,7 +375,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             3\t1970-01-01T00:02:02.000000Z
                             """,
                     sql,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -402,7 +406,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -464,9 +468,9 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                     """;
 
             // Execute multiple times to test any cursor reuse
-            assertQueryNoLeakCheck(expected, sql, null, "ts", false, true);
-            assertQueryNoLeakCheck(expected, sql, null, "ts", false, true);
-            assertQueryNoLeakCheck(expected, sql, null, "ts", false, true);
+            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, EXPECTED_TS, false, true);
         });
     }
 
@@ -520,7 +524,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             """,
                     sql,
                     null,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -562,7 +566,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:00.000000Z
                             """,
                     "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT 1",
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -573,7 +577,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:00.000000Z
                             """,
                     "SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, ts FROM (" + sql + ") LIMIT -1",
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -603,7 +607,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             1\t1970-01-01T00:00:02.000000Z
                             """,
                     query,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -636,7 +640,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -706,7 +710,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -738,7 +742,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             SELECT /*+ TIMESTAMP_LADDER_JOIN(orders offsets) */ id, customer, amount, order_ts + usec_offs AS ts
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs""",
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
@@ -771,7 +775,7 @@ public class TimestampLadderCrossJoinTest extends AbstractCairoTest {
                             FROM orders CROSS JOIN offsets
                             ORDER BY order_ts + usec_offs
                             """,
-                    "ts",
+                    EXPECTED_TS,
                     false,
                     true
             );
