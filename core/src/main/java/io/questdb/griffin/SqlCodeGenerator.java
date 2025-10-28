@@ -1611,8 +1611,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * 1. A cross-join between a table with a designated timestamp and an arithmetic sequence
      * 2. An ORDER BY clause on the sum of the timestamp and the sequence element
      * <p>
-     * Detection isn't foolproof and can result in false positives. This is why we must
-     * guard it with the query hint.
+     * Detection isn't foolproof and can result in false positives. We do not attempt it unless
+     * the hint {@value SqlHints#TIMESTAMP_LADDER_JOIN_HINT} is present in the query.
      *
      * @param masterAlias        alias for the master LHS of the join
      * @param masterModel        QueryModel for the LHS of the join
