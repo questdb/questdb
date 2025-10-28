@@ -29,26 +29,39 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import org.jetbrains.annotations.NotNull;
 
-public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
-    public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+public final class SingleStringColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    private final int masterStringIndex;
+    private final int slaveSymbolIndex;
+    private StaticSymbolTable slaveSymbolTable;
+
+    public SingleStringColumnAccessHelper(int masterStringIndex, int slaveSymbolIndex) {
+        this.masterStringIndex = masterStringIndex;
+        this.slaveSymbolIndex = slaveSymbolIndex;
+    }
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
+        return masterRecord.getStrA(masterStringIndex);
+    }
+
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        CharSequence masterStr = masterRecord.getStrA(masterStringIndex);
+        if (masterStr == null) {
+            return slaveSymbolTable.containsNullValue()
+                    ? StaticSymbolTable.VALUE_IS_NULL
+                    : StaticSymbolTable.VALUE_NOT_FOUND;
+        }
+        return slaveSymbolTable.keyOf(masterStr);
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        return false;
+        return slaveSymbolTable;
     }
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-
+        this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
     }
 }
