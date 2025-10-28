@@ -29,20 +29,24 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import org.jetbrains.annotations.NotNull;
 
-public class DisabledSymbolShortCircuit implements SymbolShortCircuit {
-    public static final DisabledSymbolShortCircuit INSTANCE = new DisabledSymbolShortCircuit();
+public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    public static final NoopColumnAccessHelper INSTANCE = new NoopColumnAccessHelper();
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit can't return the master value");
+        throw new UnsupportedOperationException("NoopColumnAccessHelper can't return the master value");
+    }
+
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("DisabledSymbolShortCircuit doesn't have a symbol table");
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
-    @Override
     public boolean isShortCircuit(Record masterRecord) {
         return false;
     }

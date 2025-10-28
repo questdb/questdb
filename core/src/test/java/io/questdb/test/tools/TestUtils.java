@@ -140,6 +140,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.test.AbstractTest.CLOSEABLE;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
@@ -2200,8 +2201,8 @@ public final class TestUtils {
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
-                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        expected.getDouble(expectedFlatIndex + i * expected.getStride(dim)),
+                        actual.getDouble(actualFlatIndex + i * actual.getStride(dim)),
                         Numbers.TOLERANCE
                 );
             }
@@ -2473,6 +2474,7 @@ public final class TestUtils {
 
         public LeakCheck() {
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             mem = Unsafe.getMemUsed();
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
@@ -2498,6 +2500,7 @@ public final class TestUtils {
             }
 
             Path.clearThreadLocals();
+            CLOSEABLE.forEach(Misc::free);
             if (cachedFileCount != Files.getOpenCachedFileCount() || fileCount != Files.getOpenFileCount()) {
                 Assert.fail(
                         "expected: cached file descriptors: " + cachedFileCount +

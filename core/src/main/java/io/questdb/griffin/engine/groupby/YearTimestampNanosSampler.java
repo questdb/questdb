@@ -33,14 +33,9 @@ import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampNanosSampler implements TimestampSampler {
     private final int stepYears;
+    private long dayMod;
     private int startDay;
-    private int startHour;
-    private int startMicros;
-    private int startMillis;
-    private int startMin;
     private int startMonth;
-    private int startNanos;
-    private int startSec;
 
     public YearTimestampNanosSampler(int stepYears) {
         this.stepYears = stepYears;
@@ -83,18 +78,14 @@ public class YearTimestampNanosSampler implements TimestampSampler {
     public long round(long value) {
         int y = Nanos.getYear(value);
         y = Nanos.EPOCH_YEAR_0 + ((y - Nanos.EPOCH_YEAR_0) / stepYears) * stepYears;
-        return Nanos.toNanos(
-                y,
-                CommonUtils.isLeapYear(y),
-                startDay,
-                startMonth,
-                startHour,
-                startMin,
-                startSec,
-                startMillis,
-                startMicros,
-                startNanos
-        );
+        int month = startMonth > 0 ? startMonth : 1;
+        int day = startDay > 0 ? startDay : 1;
+        return Nanos.toNanos(y, CommonUtils.isLeapYear(y), month, day) + dayMod;
+    }
+
+    @Override
+    public void setOffset(long timestamp) {
+        this.dayMod = timestamp;
     }
 
     @Override
@@ -103,12 +94,11 @@ public class YearTimestampNanosSampler implements TimestampSampler {
         final boolean leap = CommonUtils.isLeapYear(y);
         this.startMonth = Nanos.getMonthOfYear(timestamp, y, leap);
         this.startDay = Nanos.getDayOfMonth(timestamp, y, startMonth, leap);
-        this.startHour = Nanos.getWallHours(timestamp);
-        this.startMin = Nanos.getWallMinutes(timestamp);
-        this.startSec = Nanos.getWallSeconds(timestamp);
-        this.startMillis = Nanos.getWallMillis(timestamp);
-        this.startMicros = Nanos.getWallMicros(timestamp);
-        this.startNanos = Nanos.getWallNanos(timestamp);
+        long dayMod = timestamp % Nanos.DAY_NANOS;
+        if (dayMod < 0) {
+            dayMod += Nanos.DAY_NANOS;
+        }
+        this.dayMod = dayMod;
     }
 
     @Override
@@ -123,16 +113,9 @@ public class YearTimestampNanosSampler implements TimestampSampler {
         final int y = Nanos.getYear(timestamp);
         final int newYear = Math.min(y + numYears, NanosTimestampDriver.MAX_NANO_YEAR + 1);
         final boolean leap = CommonUtils.isLeapYear(newYear);
-        final int maxDay = Math.min(startDay, CommonUtils.getDaysPerMonth(startMonth, leap)) - 1;
-        long result = Nanos.yearNanos(newYear, leap);
-        result = Math.addExact(result, Nanos.monthOfYearNanos(startMonth, leap));
-        result = Math.addExact(result, Math.multiplyExact(maxDay, Nanos.DAY_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startHour, Nanos.HOUR_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMin, Nanos.MINUTE_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startSec, Nanos.SECOND_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMillis, Nanos.MILLI_NANOS));
-        result = Math.addExact(result, Math.multiplyExact(startMicros, Nanos.MICRO_NANOS));
-        result = Math.addExact(result, startNanos);
-        return result;
+        int month = startMonth > 0 ? startMonth : 1;
+        int day = startDay > 0 ? startDay : 1;
+        day = Math.min(CommonUtils.getDaysPerMonth(month, leap), day);
+        return Nanos.toNanos(newYear, month, day) + dayMod;
     }
 }

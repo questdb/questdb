@@ -27,40 +27,36 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public final class ChainedSymbolShortCircuit implements SymbolShortCircuit {
+/**
+ * When joining on a single symbol column, detects when the slave column doesn't have
+ * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
+ * in that case.
+ */
+public interface AsofJoinColumnAccessHelper {
+    @Transient
+    CharSequence getMasterValue(Record masterRecord);
 
-    private final SymbolShortCircuit[] shortCircuits;
+    /**
+     * Used when joining on a single symbol column, returns the symbol key in the slave
+     * column corresponding to the symbol key in the master column. If it returns
+     * {@link StaticSymbolTable#VALUE_NOT_FOUND}, the slave column doesn't have the symbol.
+     */
+    int getSlaveKey(Record masterRecord);
 
-    public ChainedSymbolShortCircuit(SymbolShortCircuit[] shortCircuits) {
-        this.shortCircuits = shortCircuits;
+    @NotNull
+    StaticSymbolTable getSlaveSymbolTable();
+
+    /**
+     * Used when joining on a single symbol column, detects when the slave column doesn't
+     * have the symbol at all (by inspecting its int-to-symbol mapping). This allows the
+     * record cursor to skip any searching for the matching slave row.
+     */
+    default boolean isShortCircuit(Record masterRecord) {
+        return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
-    @Override
-    public CharSequence getMasterValue(Record masterRecord) {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit can't be used to return the master value");
-    }
-
-    @Override
-    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
-        throw new UnsupportedOperationException("ChainedSymbolShortCircuit doesn't have a symbol table");
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            if (shortCircuits[i].isShortCircuit(masterRecord)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public void of(TimeFrameCursor slaveCursor) {
-        for (int i = 0, n = shortCircuits.length; i < n; i++) {
-            shortCircuits[i].of(slaveCursor);
-        }
-    }
+    void of(TimeFrameCursor slaveCursor);
 }

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -38,8 +37,6 @@ import io.questdb.std.Rows;
  * shared between different keyed ASOF JOIN implementations.
  */
 public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-    protected final SingleRecordSink masterSinkTarget;
-    protected final SingleRecordSink slaveSinkTarget;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean origHasSlave;
     protected int origSlaveFrameIndex = -1;
@@ -50,22 +47,11 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
             Record nullRecord,
             int masterTimestampIndex,
             int masterTimestampType,
-            SingleRecordSink masterSinkTarget,
             int slaveTimestampIndex,
             int slaveTimestampType,
-            SingleRecordSink slaveSinkTarget,
             int lookahead
     ) {
         super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
-        this.masterSinkTarget = masterSinkTarget;
-        this.slaveSinkTarget = slaveSinkTarget;
-    }
-
-    @Override
-    public void close() {
-        super.close();
-        masterSinkTarget.close();
-        slaveSinkTarget.close();
     }
 
     @Override
@@ -125,8 +111,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
 
     public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
         super.of(masterCursor, slaveCursor);
-        masterSinkTarget.reopen();
-        slaveSinkTarget.reopen();
         this.circuitBreaker = circuitBreaker;
     }
 

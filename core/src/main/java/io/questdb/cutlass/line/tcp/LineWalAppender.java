@@ -47,6 +47,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.line.LineUtils.from;
 import static io.questdb.cutlass.line.tcp.LineProtocolException.*;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.COLUMN_NOT_FOUND;
 import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.DUPLICATED_COLUMN;
@@ -115,7 +116,7 @@ public class LineWalAppender {
             if (timestamp < 0) {
                 throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
             }
-            timestamp = tud.getTimestampDriver().from(timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
+            timestamp = from(tud.getTimestampDriver(), timestamp, getOverloadTimestampUnit(parser.getTimestampUnit()));
             if (timestamp > CommonUtils.MAX_TIMESTAMP) {
                 throw LineProtocolException.designatedTimestampValueOverflow(tud.getTableNameUtf16(), timestamp);
             }
@@ -133,7 +134,7 @@ public class LineWalAppender {
                     final int columnType = metadata.getColumnType(columnWriterIndex);
                     if (columnType > -1) {
                         if (columnWriterIndex == tud.getTimestampIndex()) {
-                            timestamp = tud.getTimestampDriver().from(ent.getLongValue(), ent.getUnit());
+                            timestamp = from(tud.getTimestampDriver(), ent.getLongValue(), ent.getUnit());
                             ld.addColumnType(DUPLICATED_COLUMN, ColumnType.UNDEFINED);
                         } else {
                             ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
@@ -422,12 +423,12 @@ public class LineWalAppender {
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
                         switch (ColumnType.tagOf(colType)) {
                             case ColumnType.TIMESTAMP:
-                                long timestampValue = ColumnType.getTimestampDriver(colType).from(ent.getLongValue(), ent.getUnit());
+                                long timestampValue = from(ColumnType.getTimestampDriver(colType), ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, timestampValue);
                                 break;
                             case ColumnType.DATE:
                                 TimestampDriver driver = MicrosTimestampDriver.INSTANCE;
-                                long dateValue = driver.toDate(driver.from(ent.getLongValue(), ent.getUnit()));
+                                long dateValue = driver.toDate(from(driver, ent.getLongValue(), ent.getUnit()));
                                 r.putTimestamp(columnIndex, dateValue);
                                 break;
                             case ColumnType.SYMBOL:
@@ -481,12 +482,11 @@ public class LineWalAppender {
     }
 
     private byte getOverloadTimestampUnit(byte unit) {
-        switch (unit) {
-            case CommonUtils.TIMESTAMP_UNIT_NANOS:
-            case CommonUtils.TIMESTAMP_UNIT_MILLIS:
-            case CommonUtils.TIMESTAMP_UNIT_MICROS:
-                return unit;
-        }
-        return timestampUnit;
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS,
+                 CommonUtils.TIMESTAMP_UNIT_MILLIS,
+                 CommonUtils.TIMESTAMP_UNIT_MICROS -> unit;
+            default -> timestampUnit;
+        };
     }
 }

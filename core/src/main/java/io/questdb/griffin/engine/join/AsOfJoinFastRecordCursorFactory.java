@@ -43,10 +43,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final AsofJoinColumnAccessHelper columnAccessHelper;
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
-    private final SymbolShortCircuit symbolShortCircuit;
     private final long toleranceInterval;
 
     public AsOfJoinFastRecordCursorFactory(
@@ -57,7 +57,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
             int columnSplit,
-            SymbolShortCircuit symbolShortCircuit,
+            AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
@@ -77,7 +77,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.symbolShortCircuit = symbolShortCircuit;
+        this.columnAccessHelper = columnAccessHelper;
         this.toleranceInterval = toleranceInterval;
     }
 
@@ -128,6 +128,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
 
+        private final SingleRecordSink masterSinkTarget;
+        private final SingleRecordSink slaveSinkTarget;
+
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
@@ -139,18 +142,29 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            this.masterSinkTarget = masterSinkTarget;
+            this.slaveSinkTarget = slaveSinkTarget;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            masterSinkTarget.close();
+            slaveSinkTarget.close();
         }
 
         @Override
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor, circuitBreaker);
-            symbolShortCircuit.of(slaveCursor);
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
+            columnAccessHelper.of(slaveCursor);
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            if (symbolShortCircuit.isShortCircuit(masterRecord)) {
+            if (columnAccessHelper.isShortCircuit(masterRecord)) {
                 // the master record's symbol does not match any symbol in the slave table, so we can skip the key matching part
                 // and report no match.
                 record.hasSlave(false);
