@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByArraySink;
 import io.questdb.std.Misc;
@@ -56,9 +57,14 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     }
 
     @Override
+    public void clear() {
+        sink.of(0);
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        sink.clear();
+        sink.of(0);
         sink.put(arg.getArray(record));
         mapValue.putLong(valueIndex + 1, sink.ptr());
     }
@@ -75,8 +81,13 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public ArrayView getArray(Record rec) {
-        final long ptr = rec.getLong(valueIndex + 1);
-        return sink.of(ptr).getArray();
+        long ptr = rec.getLong(valueIndex + 1);
+        sink.of(ptr);
+        ArrayView array = sink.getArray();
+        if (array == null) {
+            return ArrayConstant.NULL;
+        }
+        return array;
     }
 
     @Override
@@ -139,6 +150,6 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 }
