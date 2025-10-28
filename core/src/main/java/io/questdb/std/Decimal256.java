@@ -296,6 +296,13 @@ public class Decimal256 implements Sinkable, Decimal {
         );
     }
 
+    public static int compare(long aHH, long aHL, long aLH, long aLL, Decimal256 b) {
+        return compare(
+                aHH, aHL, aLH, aLL,
+                b.getHh(), b.getHl(), b.getLh(), b.getLl()
+        );
+    }
+
     /**
      * Compare two Decimal256.
      *

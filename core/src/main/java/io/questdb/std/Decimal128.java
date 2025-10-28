@@ -301,6 +301,10 @@ public class Decimal128 implements Sinkable, Decimal {
         return compare(a.getHigh(), a.getLow(), bHi, bLo);
     }
 
+    public static int compare(long aHi, long aLo, Decimal128 b) {
+        return compare(aHi, aLo, b.getHigh(), b.getLow());
+    }
+
     public static int compareTo(long aHigh, long aLow, int aScale, long bHigh, long bLow, int bScale) {
         if (isNull(aHigh, aLow)) {
             if (isNull(bHigh, bLow)) {

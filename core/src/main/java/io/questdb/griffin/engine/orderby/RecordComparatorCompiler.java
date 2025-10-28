@@ -61,7 +61,7 @@ public class RecordComparatorCompiler {
     // records that are stored (left) and those that are directly used in comparison (right).
     // This is mandatory for accessors that relies on objects to give a representation of their
     // values (for example, `getStrA` and `getStrB`).
-    // As there can be multiple indices for a single methods (if we need to pull multiple
+    // As there can be multiple indices for a single method (if we need to pull multiple
     // values for a single column), we store the number of accessors in a separate list and the indices in the
     // order they will be called.
     //
@@ -80,6 +80,7 @@ public class RecordComparatorCompiler {
     private final IntList fieldTypeIndices = new IntList();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
+    private int decimal128ClassIndex = -1;
     private int decimal128CtorIndex = -1;
     // Decimal128 and Decimal256 are retrieved by passing an instance of them to the Record.
     // To accommodate for this, we may need to add an instance of each to be used in the right path, while we
@@ -89,6 +90,7 @@ public class RecordComparatorCompiler {
     private int decimal128GetterIndex = -1;
     // getDecimal128(...)
     private int decimal128RecordGetterIndex = -1;
+    private int decimal256ClassIndex = -1;
     private int decimal256CtorIndex = -1;
     private int decimal256FieldIndex = -1;
     // getHh, ..., getLl
@@ -171,7 +173,7 @@ public class RecordComparatorCompiler {
         try {
             return clazz.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
-            LOG.critical().$("could not create an instance of GroupByFunctionsUpdater, cause: ").$(e).$();
+            LOG.critical().$("could not create an instance of RecordComparator, cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
     }
@@ -187,7 +189,7 @@ public class RecordComparatorCompiler {
      */
     private void compileConstructor() {
         // constructor method entry
-        asm.startMethod(asm.getDefaultConstructorNameIndex(), asm.getDefaultConstructorDescIndex(), 1, 1);
+        asm.startMethod(asm.getDefaultConstructorNameIndex(), asm.getDefaultConstructorDescIndex(), 3, 1);
         // code
         asm.aload(0);
         asm.invokespecial(asm.getObjectInitMethodIndex());
@@ -197,7 +199,7 @@ public class RecordComparatorCompiler {
             // stack: []
             asm.aload(0);
             // stack: [this]
-            asm.new_(typeMap.get("Lio/questdb/std/Decimal128;")); // it must have been written before if used
+            asm.new_(decimal128ClassIndex);
             // stack: [this, decimal128]
             asm.dup();
             // stack: [this, decimal128, decimal128]
@@ -212,7 +214,7 @@ public class RecordComparatorCompiler {
             // stack: []
             asm.aload(0);
             // stack: [this]
-            asm.new_(typeMap.get("Lio/questdb/std/Decimal256;")); // it must have been written before if used
+            asm.new_(decimal256ClassIndex);
             // stack: [this, decimal256]
             asm.dup();
             // stack: [this, decimal256, decimal256]
@@ -256,14 +258,49 @@ public class RecordComparatorCompiler {
             int index = keyColumns.getQuick(i);
             int columnIndex = (index > 0 ? index : -index) - 1;
 
-            // Loads right side of comparator
-            for (int j = 0; j < accessorCount; j++) {
-                asm.aload(1);
-                asm.iconst(columnIndex);
-                asm.invokeInterface(fieldRecordAccessorIndicesRight.getQuick(accessorIndex++), 1);
+            int recordType = fieldRecordTypes.getQuick(i);
+            // Big Decimals are a bit special, they need to send an object to be filled with the
+            // value instead of returning the value directly.
+            switch (recordType) {
+                case RECORD_TYPE_DECIMAL128 -> {
+                    // stack: [...fields]
+                    asm.aload(1);
+                    // stack: [...fields, record]
+                    asm.iconst(columnIndex);
+                    // stack: [...fields, record, columnIndex]
+                    asm.aload(0);
+                    // stack: [...fields, record, columnIndex, this]
+                    asm.getfield(decimal128FieldIndex);
+                    // stack: [...fields, record, columnIndex, decimal128]
+                    asm.dup_x2();
+                    // stack: [...fields, decimal128, record, columnIndex, decimal128]
+                    asm.invokeInterface(decimal128RecordGetterIndex, 2);
+                    // stack: [...fields, decimal128]
+                }
+                case RECORD_TYPE_DECIMAL256 -> {
+                    // stack: [...fields]
+                    asm.aload(1);
+                    // stack: [...fields, record]
+                    asm.iconst(columnIndex);
+                    // stack: [...fields, record, columnIndex]
+                    asm.aload(0);
+                    // stack: [...fields, record, columnIndex, this]
+                    asm.getfield(decimal256FieldIndex);
+                    // stack: [...fields, record, columnIndex, decimal256]
+                    asm.dup_x2();
+                    // stack: [...fields, decimal256, record, columnIndex, decimal256]
+                    asm.invokeInterface(decimal256RecordGetterIndex, 2);
+                    // stack: [...fields, decimal256]
+                }
+                default -> {
+                    // Loads right side of comparator
+                    for (int j = 0; j < accessorCount; j++) {
+                        asm.aload(1);
+                        asm.iconst(columnIndex);
+                        asm.invokeInterface(fieldRecordAccessorIndicesRight.getQuick(accessorIndex++), 1);
+                    }
+                }
             }
-
-            // TODO: handle Decimal128 and Decimal256
 
             asm.invokeStatic(comparatorAccessorIndices.getQuick(i));
             if (index < 0) {
@@ -382,6 +419,8 @@ public class RecordComparatorCompiler {
             // stack: [Record]
             asm.iconst(colIndex);
             // stack: [Record, columnIndex]
+            asm.aload(0);
+            // stack: [Record, columnIndex, this]
             asm.getfield(decimal128FieldIndex);
             // stack: [Record, columnIndex, decimal128]
             asm.invokeInterface(decimal128RecordGetterIndex, 2);
@@ -391,9 +430,11 @@ public class RecordComparatorCompiler {
             // fx_i = decimal128.getX();
             asm.aload(0);
             // stack: [RecordComparator]
+            asm.dup();
+            // stack: [RecordComparator, RecordComparator]
             asm.getfield(decimal128FieldIndex);
             // stack: [RecordComparator, decimal128]
-            asm.invokeInterface(decimal128GetterIndex + i);
+            asm.invokeVirtual(decimal128GetterIndex + i);
             // stack: [RecordComparator, field]
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
             // stack: []
@@ -404,10 +445,10 @@ public class RecordComparatorCompiler {
     /**
      * Emit the bytecode to retrieve the value of a decimal256 from a record and set it in the reserved fields:
      * record.getDecimal256(colIndex, decimal256);
-     * fX_0 = decimal128.getHh();
-     * fX_1 = decimal128.getHl();
-     * fX_2 = decimal128.getLh();
-     * fX_3 = decimal128.getLl();
+     * fX_0 = decimal256.getHh();
+     * fX_1 = decimal256.getHl();
+     * fX_2 = decimal256.getLh();
+     * fX_3 = decimal256.getLl();
      */
     private int instrumentSetLeftMethodDecimal256(int colIndex, int fieldIndex) {
         // stack: []
@@ -417,6 +458,8 @@ public class RecordComparatorCompiler {
             // stack: [Record]
             asm.iconst(colIndex);
             // stack: [Record, columnIndex]
+            asm.aload(0);
+            // stack: [Record, columnIndex, this]
             asm.getfield(decimal256FieldIndex);
             // stack: [Record, columnIndex, decimal256]
             asm.invokeInterface(decimal256RecordGetterIndex, 2);
@@ -426,9 +469,11 @@ public class RecordComparatorCompiler {
             // fx_i = decimal256.getXx();
             asm.aload(0);
             // stack: [RecordComparator]
+            asm.dup();
+            // stack: [RecordComparator, RecordComparator]
             asm.getfield(decimal256FieldIndex);
             // stack: [RecordComparator, decimal256]
-            asm.invokeInterface(decimal256GetterIndex + i);
+            asm.invokeVirtual(decimal256GetterIndex + i);
             // stack: [RecordComparator, field]
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
             // stack: []
@@ -438,31 +483,29 @@ public class RecordComparatorCompiler {
 
     private void poolDecimals() {
         if (decimal128FieldIndex != -1) {
-            int typeIndex = typeMap.get("Lio/questdb/std/Decimal128;");
-            decimal128CtorIndex = asm.poolMethod(typeIndex, asm.getDefaultConstructorSigIndex());
+            decimal128ClassIndex = asm.poolClass(Decimal128.class);
+            decimal128CtorIndex = asm.poolMethod(decimal128ClassIndex, asm.getDefaultConstructorSigIndex());
             int sigIndex = asm.poolUtf8("()J");
             int getHighIndex = asm.poolNameAndType(asm.poolUtf8("getHigh"), sigIndex);
             int getLowIndex = asm.poolNameAndType(asm.poolUtf8("getLow"), sigIndex);
-            int decimal128ClassIndex = asm.poolClass(Decimal128.class);
-            decimal128GetterIndex = asm.poolInterfaceMethod(decimal128ClassIndex, getHighIndex);
-            asm.poolInterfaceMethod(decimal128ClassIndex, getLowIndex);
+            decimal128GetterIndex = asm.poolMethod(decimal128ClassIndex, getHighIndex);
+            asm.poolMethod(decimal128ClassIndex, getLowIndex);
 
             decimal128RecordGetterIndex = asm.poolInterfaceMethod(asm.poolClass(Record.class), "getDecimal128", "(ILio/questdb/std/Decimal128;)V");
         }
 
         if (decimal256FieldIndex != -1) {
-            int typeIndex = typeMap.get("Lio/questdb/std/Decimal256;");
-            decimal256CtorIndex = asm.poolMethod(typeIndex, asm.getDefaultConstructorSigIndex());
+            decimal256ClassIndex = asm.poolClass(Decimal256.class);
+            decimal256CtorIndex = asm.poolMethod(decimal256ClassIndex, asm.getDefaultConstructorSigIndex());
             int sigIndex = asm.poolUtf8("()J");
             int getHhIndex = asm.poolNameAndType(asm.poolUtf8("getHh"), sigIndex);
             int getHlIndex = asm.poolNameAndType(asm.poolUtf8("getHl"), sigIndex);
             int getLhIndex = asm.poolNameAndType(asm.poolUtf8("getLh"), sigIndex);
             int getLlIndex = asm.poolNameAndType(asm.poolUtf8("getLl"), sigIndex);
-            int decimal256ClassIndex = asm.poolClass(Decimal256.class);
-            decimal256GetterIndex = asm.poolInterfaceMethod(decimal256ClassIndex, getHhIndex);
-            asm.poolInterfaceMethod(decimal256ClassIndex, getHlIndex);
-            asm.poolInterfaceMethod(decimal256ClassIndex, getLhIndex);
-            asm.poolInterfaceMethod(decimal256ClassIndex, getLlIndex);
+            decimal256GetterIndex = asm.poolMethod(decimal256ClassIndex, getHhIndex);
+            asm.poolMethod(decimal256ClassIndex, getHlIndex);
+            asm.poolMethod(decimal256ClassIndex, getLhIndex);
+            asm.poolMethod(decimal256ClassIndex, getLlIndex);
 
             decimal256RecordGetterIndex = asm.poolInterfaceMethod(asm.poolClass(Record.class), "getDecimal256", "(ILio/questdb/std/Decimal256;)V");
         }
@@ -491,9 +534,9 @@ public class RecordComparatorCompiler {
 
         // define names and types
         for (int i = 0, n = keyColumnIndices.size(); i < n; i++) {
-            String fieldType;
+            CharSequence fieldType;
             @SuppressWarnings("rawtypes") Class comparatorClass;
-            String comparatorDesc = null;
+            CharSequence comparatorDesc = null;
             int index = keyColumnIndices.getQuick(i);
 
             if (index < 0) {
@@ -503,7 +546,7 @@ public class RecordComparatorCompiler {
             // decrement to get real column index
             index--;
 
-            int accessorCount = fieldRecordAccessorIndicesLeft.size();
+            int fieldCount = 1;
 
             int columnType = columnTypes.getColumnType(index);
             int getterSigIndex;
@@ -601,6 +644,7 @@ public class RecordComparatorCompiler {
                     poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Hi");
                     poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Lo");
                     fieldType = "J";
+                    fieldCount = 2;
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Uuid.class;
                     break;
@@ -609,6 +653,7 @@ public class RecordComparatorCompiler {
                     poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Hi");
                     poolFieldRecordAccessor(recordClassIndex, getterSigIndex, "getLong128Lo");
                     fieldType = "J";
+                    fieldCount = 2;
                     comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128.class;
                     break;
@@ -639,16 +684,32 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.DECIMAL128:
-                    fieldType = "Lio/questdb/std/Decimal128;";
+                    fieldType = "J";
+                    fieldCount = 2;
                     comparatorClass = Decimal128.class;
                     comparatorDesc = "(JJLio/questdb/std/Decimal128;)I";
                     fieldRecordType = RECORD_TYPE_DECIMAL128;
+                    if (decimal128FieldIndex == -1) {
+                        int typeIndex = registerType("Lio/questdb/std/Decimal128;");
+                        int fieldNameIndex = asm.poolUtf8("decimal128");
+                        fieldTypeIndices.add(typeIndex);
+                        fieldNameIndices.add(fieldNameIndex);
+                        decimal128FieldIndex = asm.poolField(thisClassIndex, asm.poolNameAndType(fieldNameIndex, typeIndex));
+                    }
                     break;
                 case ColumnType.DECIMAL256:
-                    fieldType = "Lio/questdb/std/Decimal256;";
+                    fieldType = "J";
+                    fieldCount = 4;
                     comparatorClass = Decimal256.class;
                     comparatorDesc = "(JJJJLio/questdb/std/Decimal256;)I";
                     fieldRecordType = RECORD_TYPE_DECIMAL256;
+                    if (decimal256FieldIndex == -1) {
+                        int typeIndex = registerType("Lio/questdb/std/Decimal256;");
+                        int fieldNameIndex = asm.poolUtf8("decimal256");
+                        fieldTypeIndices.add(typeIndex);
+                        fieldNameIndices.add(fieldNameIndex);
+                        decimal256FieldIndex = asm.poolField(thisClassIndex, asm.poolNameAndType(fieldNameIndex, typeIndex));
+                    }
                     break;
                 case ColumnType.SYMBOL:
                     // SYMBOL
@@ -663,38 +724,21 @@ public class RecordComparatorCompiler {
             }
             fieldRecordTypes.add(fieldRecordType);
 
-            int keyIndex;
             int nameIndex;
-            int typeIndex;
+            int typeIndex = registerType(fieldType);
 
-            keyIndex = typeMap.keyIndex(fieldType);
-            if (keyIndex > -1) {
-                typeMap.putAt(keyIndex, fieldType, typeIndex = asm.poolUtf8(fieldType));
-            } else {
-                typeIndex = typeMap.valueAt(keyIndex);
-            }
-
-            if (fieldRecordType == RECORD_TYPE_DECIMAL128 && decimal128FieldIndex == -1) {
-                int fieldNameIndex = asm.poolUtf8("decimal128");
-                decimal128FieldIndex = asm.poolField(thisClassIndex, asm.poolNameAndType(fieldNameIndex, typeIndex));
-            } else if (fieldRecordType == RECORD_TYPE_DECIMAL256 && decimal256FieldIndex == -1) {
-                int fieldNameIndex = asm.poolUtf8("decimal256");
-                decimal256FieldIndex = asm.poolField(thisClassIndex, asm.poolNameAndType(fieldNameIndex, typeIndex));
-            }
-
-            accessorCount = fieldRecordAccessorIndicesLeft.size() - accessorCount;
-            fieldRecordAccessorCount.add(accessorCount);
+            fieldRecordAccessorCount.add(fieldCount);
 
             // We assume that if the type needs multiple accessors to retrieve its values, all these accessor will return
             // the same type. For example, Long128 returns longs for getLong128Hi and getLong128Lo.
-            for (int j = 0; j < accessorCount; j++) {
+            for (int j = 0; j < fieldCount; j++) {
                 fieldTypeIndices.add(typeIndex);
                 fieldNameIndices.add(nameIndex = asm.poolUtf8().putAscii('f').put(i).putAscii('_').put(j).$());
                 fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
             }
 
             // Longs counts for twice the size of other fields
-            final int columnSize = accessorCount * (Chars.equals(fieldType, 'J') ? 2 : 1);
+            final int columnSize = fieldCount * (Chars.equals(fieldType, 'J') ? 2 : 1);
             maxColumnSize = Math.max(maxColumnSize, columnSize);
 
             comparatorAccessorIndices.add(
@@ -729,5 +773,16 @@ public class RecordComparatorCompiler {
         methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex);
         methodMap.putIfAbsent(getterName, methodIndex);
         fieldRecordAccessorIndicesRight.add(methodIndex);
+    }
+
+    private int registerType(CharSequence typeName) {
+        int typeIndex;
+        int keyIndex = typeMap.keyIndex(typeName);
+        if (keyIndex > -1) {
+            typeMap.putAt(keyIndex, typeName, typeIndex = asm.poolUtf8(typeName));
+        } else {
+            typeIndex = typeMap.valueAt(keyIndex);
+        }
+        return typeIndex;
     }
 }
