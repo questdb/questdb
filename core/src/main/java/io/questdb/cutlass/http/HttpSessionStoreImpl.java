@@ -62,7 +62,7 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     private final long rotationPeriod;
     private final long sessionTimeout;
     private final ConcurrentHashMap<SessionInfo> sessionsById = new ConcurrentHashMap<>();
-    private long nextEvictionCheckAt;
+    private volatile long nextEvictionCheckAt;
     private TokenGenerator tokenGenerator = new TokenGeneratorImpl(SESSION_ID_PREFIX, SESSION_ID_SIZE_BYTES);
 
     public HttpSessionStoreImpl(ServerConfiguration serverConfiguration) {
