@@ -85,6 +85,10 @@ public class DirectIntIntHashMapTest {
                 Assert.assertFalse(map.excludes(i));
                 Assert.assertEquals(rnd3.nextInt(), map.get(i));
             }
+
+            map.restoreInitialCapacity();
+            Assert.assertEquals(0, map.size());
+            Assert.assertEquals(8, map.capacity());
         }
     }
 }
