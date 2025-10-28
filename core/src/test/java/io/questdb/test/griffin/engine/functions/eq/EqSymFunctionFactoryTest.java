@@ -33,12 +33,20 @@ public class EqSymFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(100))");
+            execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");
             assertQuery(
-                    "a\n" +
-                            "3\n" +
-                            "3\n" +
-                            "3\n",
+                    """
+                            a\tb
+                            1\t1
+                            \t
+                            1\t1
+                            \t
+                            5\t5
+                            \t
+                            5\t5
+                            \t
+                            1\t1
+                            """,
                     "select * from x where a = b",
                     null,
                     true,
