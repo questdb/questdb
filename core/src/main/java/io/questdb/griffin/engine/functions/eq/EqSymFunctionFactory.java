@@ -33,7 +33,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -64,7 +63,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         final Function leftFunc = args.getQuick(0);
         final Function rightFunc = args.getQuick(1);
         if (isSymbolTableStatic(leftFunc) && isSymbolTableStatic(rightFunc)) {
-            return new Func(configuration, leftFunc, rightFunc);
+            return new Func(leftFunc, rightFunc);
         }
         // SYMBOL cannot be constant, so we can't use any of the half-constant functions
         return new EqSymStrFunctionFactory.Func(leftFunc, rightFunc);
@@ -79,14 +78,10 @@ public class EqSymFunctionFactory implements FunctionFactory {
         private StaticSymbolTable leftTable;
         private StaticSymbolTable rightTable;
 
-        public Func(CairoConfiguration configuration, Function left, Function right) {
+        public Func(Function left, Function right) {
             super(left, right);
-            this.lookupCache = new DirectIntIntHashMap(
-                    configuration.getSqlSmallMapKeyCapacity(),
-                    configuration.getSqlFastMapLoadFactor(),
-                    0,
-                    MemoryTag.NATIVE_UNORDERED_MAP
-            );
+            // use zero as the no-key value to speed up zeroing the hash table
+            this.lookupCache = new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP);
         }
 
         @Override
@@ -106,13 +101,27 @@ public class EqSymFunctionFactory implements FunctionFactory {
             // important to compare A and B strings in case
             // these are columns of the same record
             // records have re-usable character sequences
-            final CharSequence a = left.getSymbol(rec);
-            final CharSequence b = right.getStrA(rec);
+            final int leftKey = left.getInt(rec);
+            final int rightKey = right.getInt(rec);
 
-            if (a == null) {
-                return negated != (b == null);
+            // take the key + 1, so that zero is not possible
+            final long index = lookupCache.keyIndex(leftKey + 1);
+            final int matchingRightKey;
+            if (index < 0) {
+                matchingRightKey = lookupCache.valueAt(index);
+            } else {
+                if (leftKey != StaticSymbolTable.VALUE_IS_NULL) {
+                    final CharSequence leftSym = leftTable.valueOf(leftKey);
+                    matchingRightKey = rightTable.keyOf(leftSym);
+                } else {
+                    matchingRightKey = rightTable.containsNullValue()
+                            ? StaticSymbolTable.VALUE_IS_NULL
+                            : StaticSymbolTable.VALUE_NOT_FOUND;
+                }
+                lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }
-            return negated != Chars.equalsNc(a, b);
+
+            return negated != (rightKey == matchingRightKey);
         }
 
         @Override
@@ -120,6 +129,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
             super.init(symbolTableSource, executionContext);
             this.leftTable = ((SymbolFunction) left).getStaticSymbolTable();
             this.rightTable = ((SymbolFunction) right).getStaticSymbolTable();
+            lookupCache.restoreInitialCapacity();
         }
 
         @Override

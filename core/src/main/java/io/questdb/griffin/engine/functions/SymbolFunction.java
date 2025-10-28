@@ -45,7 +45,7 @@ import org.jetbrains.annotations.Nullable;
  * Symbol API allows record cursor consumers to store "int" value of symbol function
  * and then retrieve CharSequence values via SymbolTable. Symbol Table is typically
  * populated by function dynamically, in that values that have not yet been returned via
- * getInt() are not cached.*
+ * getInt() are not cached.
  */
 public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
