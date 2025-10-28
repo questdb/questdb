@@ -2270,36 +2270,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!loFunc.isConstant()) {
-                Misc.free(loFunc);
-                throw SqlException.$(expr.position, "constant expression expected");
-            }
-
-            try {
-                long value;
-                if (!(loFunc instanceof CharConstant)) {
-                    value = loFunc.getLong(null);
-                } else {
-                    long tmp = (byte) (loFunc.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
-                }
-
-                if (value < 0) {
-                    throw SqlException.$(expr.position, "non-negative integer expression expected");
-                }
-                return value;
-            } catch (UnsupportedOperationException | ImplicitCastException e) {
-                throw SqlException.$(expr.position, "integer expression expected");
-            } finally {
-                Misc.free(loFunc);
-            }
-        }
-        return Long.MAX_VALUE;
-    }
-
     private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
         for (int i = 0, max = groupByNodes.size(); i < max; i++) {
             ExpressionNode n = groupByNodes.getQuick(i);
@@ -3502,6 +3472,10 @@ public class SqlOptimiser implements Mutable {
             QueryModel joinModel,
             int joinIndex
     ) throws SqlException {
+        if (joinModel.getJoinType() == JOIN_WINDOW) {
+            addOuterJoinExpression(parent, joinModel, joinIndex, node);
+            return;
+        }
         ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
@@ -7101,8 +7075,8 @@ public class SqlOptimiser implements Mutable {
                 if (qc.isWindowColumn()) {
                     final WindowColumn ac = (WindowColumn) qc;
                     // preceding and following accept non-negative values only
-                    long rowsLo = evalNonNegativeLongConstantOrDie(ac.getRowsLoExpr(), sqlExecutionContext);
-                    long rowsHi = evalNonNegativeLongConstantOrDie(ac.getRowsHiExpr(), sqlExecutionContext);
+                    long rowsLo = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsLoExpr(), sqlExecutionContext);
+                    long rowsHi = evalNonNegativeLongConstantOrDie(functionParser, ac.getRowsHiExpr(), sqlExecutionContext);
 
                     switch (ac.getRowsLoKind()) {
                         case WindowColumn.PRECEDING:
@@ -7190,6 +7164,36 @@ public class SqlOptimiser implements Mutable {
         final QueryModel outerModel = createWrapperModel(model);
         outerModel.addBottomUpColumn(nextColumn("*"));
         return outerModel;
+    }
+
+    static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!loFunc.isConstant()) {
+                Misc.free(loFunc);
+                throw SqlException.$(expr.position, "constant expression expected");
+            }
+
+            try {
+                long value;
+                if (!(loFunc instanceof CharConstant)) {
+                    value = loFunc.getLong(null);
+                } else {
+                    long tmp = (byte) (loFunc.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(loFunc);
+            }
+        }
+        return Long.MAX_VALUE;
     }
 
     @SuppressWarnings("unused")

@@ -279,6 +279,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.jit.JitUtil;
@@ -312,6 +313,7 @@ import java.util.ArrayDeque;
 import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -3201,8 +3203,88 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                if (!master.supportsPageFrameCursor() || !slave.supportsPageFrameCursor()) {
+                                    throw SqlException.$(0, "both sides of WINDOW join must support page frame cursor");
+                                }
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                break;
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
+                                WindowJoinContext context = slaveModel.getWindowJoinContext();
+                                QueryModel aggModel = context.getParentModel();
+                                // assemble groupBy function
+                                ObjList<QueryColumn> columns = aggModel.getColumns();
+                                keyTypes.clear();
+                                valueTypes.clear();
+                                listColumnFilterA.clear();
+                                final int columnCount = columns.size();
+                                final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+                                tempInnerProjectionFunctions.clear();
+                                tempOuterProjectionFunctions.clear();
+                                final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
+                                final PriorityMetadata priorityMetadata = new PriorityMetadata(columnCount, joinMetadata);
+                                final IntList projectionFunctionFlags = new IntList(columnCount);
+                                GroupByUtils.assembleGroupByFunctions(
+                                        functionParser,
+                                        sqlNodeStack,
+                                        aggModel,
+                                        executionContext,
+                                        joinMetadata,
+                                        masterMetadata.getTimestampIndex(),
+                                        true,
+                                        groupByFunctions,
+                                        groupByFunctionPositions,
+                                        tempOuterProjectionFunctions,
+                                        tempInnerProjectionFunctions,
+                                        recordFunctionPositions,
+                                        projectionFunctionFlags,
+                                        outerProjectionMetadata,
+                                        priorityMetadata,
+                                        valueTypes,
+                                        keyTypes,
+                                        listColumnFilterA,
+                                        null,
+                                        validateSampleByFillType
+                                );
+                                ObjList<Function> perWorkerJoinFilters = null;
+                                if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
+                                    for (int j = 0, k = executionContext.getSharedQueryWorkerCount(); j < k; j++) {
+                                        perWorkerJoinFilters.add(compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext));
+                                    }
+                                }
+                                long lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
+                                long hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
+                                TimestampDriver timestampDriver = ColumnType.getTimestampDriver(masterMetadata.getTimestampType());
+                                if (context.getLoExprTimeUnit() != 0) {
+                                    lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
+                                }
+                                if (context.getHiExprTimeUnit() != 0) {
+                                    hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
+                                }
+
+                                return new AsyncWindowJoinRecordCursorFactory(
+                                        executionContext.getCairoEngine(),
+                                        asm,
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        outerProjectionMetadata,
+                                        master,
+                                        slave,
+                                        filter,
+                                        perWorkerJoinFilters,
+                                        lo,
+                                        hi,
+                                        valueTypes,
+                                        groupByFunctions,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        reduceTaskFactory,
+                                        executionContext.getSharedQueryWorkerCount()
+                                );
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());

@@ -427,7 +427,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             if (columnIndex < columnSplit) {
                 return masterSource.getSymbolTable(columnIndex);
             }
-            return slaveSource.getSymbolTable(columnSplit - columnIndex);
+            return slaveSource.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override
@@ -435,7 +435,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             if (columnIndex < columnSplit) {
                 return masterSource.newSymbolTable(columnIndex);
             }
-            return slaveSource.newSymbolTable(columnSplit - columnIndex);
+            return slaveSource.newSymbolTable(columnIndex - columnSplit);
         }
 
         public void of(SymbolTableSource masterSource, SymbolTableSource slaveSource) {
