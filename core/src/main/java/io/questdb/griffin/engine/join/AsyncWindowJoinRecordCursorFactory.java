@@ -56,6 +56,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -237,11 +238,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         joinRecord.of(record, slaveRecord);
 
         try {
-            record.setRowIndex(0);
-            final long baseRowId = record.getRowId();
-
-            // TODO: we could clear once per query, at the cursor.of(), since we're moving forward in time
-            slaveTimeFrameHelper.clear();
+            final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
@@ -260,31 +257,29 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Now we need to find slave rowid interval to scan.
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowId != Long.MIN_VALUE) {
+                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAt(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimeFrameHelper.getTimestampIndex()) > slaveTimestampHi) {
+                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
                             break;
                         }
                         if (joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
-                                functionUpdater.updateNew(value, joinRecord, baseRowId + r);
+                                functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
                                 value.setNew(false);
                             } else {
-                                functionUpdater.updateExisting(value, joinRecord, baseRowId + r);
+                                functionUpdater.updateExisting(value, joinRecord, baseSlaveRowId + slaveRowId);
                             }
                         }
-                        if (slaveRowId < slaveTimeFrameHelper.getTimeFrameRowHi() - 1) {
-                            slaveRowId++;
-                        } else {
+                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                                 break;
                             }
                             slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
-
-                // TODO: consider resetting slave cursor to the initial frame & rowid here
             }
         } finally {
             atom.release(slotId);
@@ -339,11 +334,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
 
-            record.setRowIndex(0);
-            final long baseRowId = record.getRowId();
-
-            // TODO: we could clear once per query, at the cursor.of(), since we're moving forward in time
-            slaveTimeFrameHelper.clear();
+            final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
             for (long p = 0; p < filteredRowCount; p++) {
                 long r = rows.get(p);
@@ -363,31 +354,29 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 // Now we need to find slave rowid interval to scan.
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
                 if (slaveRowId != Long.MIN_VALUE) {
+                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAt(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimeFrameHelper.getTimestampIndex()) > slaveTimestampHi) {
+                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
                             break;
                         }
                         if (joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
-                                functionUpdater.updateNew(value, joinRecord, baseRowId + r);
+                                functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
                                 value.setNew(false);
                             } else {
-                                functionUpdater.updateExisting(value, joinRecord, baseRowId + r);
+                                functionUpdater.updateExisting(value, joinRecord, baseSlaveRowId + slaveRowId);
                             }
                         }
-                        if (slaveRowId < slaveTimeFrameHelper.getTimeFrameRowHi() - 1) {
-                            slaveRowId++;
-                        } else {
+                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
                                 break;
                             }
                             slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                         }
                     }
                 }
-
-                // TODO: consider resetting slave cursor to the initial frame & rowid here
             }
         } finally {
             atom.release(slotId);

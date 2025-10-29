@@ -509,6 +509,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                         }
                         return Long.MIN_VALUE;
                     }
+                    if (rowLo == Long.MIN_VALUE) {
+                        return Long.MIN_VALUE;
+                    }
                 }
 
                 // scan the found frame
@@ -516,6 +519,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
                 if (scanResult >= 0) {
                     // we've found the row
+                    foundFrameIndex = timeFrame.getFrameIndex();
+                    foundRowId = scanResult;
                     return scanResult;
                 } else if (scanResult == Long.MIN_VALUE) {
                     // there are no timestamps in the wanted interval
@@ -523,7 +528,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 }
                 // ok, the scan gave us nothing, do the binary search
                 rowLo = -scanResult - 1;
-                return binarySearch(timestampLo, timestampHi, rowLo);
+                final long searchResult = binarySearch(timestampLo, timestampHi, rowLo);
+                if (searchResult == Long.MIN_VALUE) {
+                    // there are no timestamps in the wanted interval
+                    return Long.MIN_VALUE;
+                }
+                foundFrameIndex = timeFrame.getFrameIndex();
+                foundRowId = searchResult;
+                return searchResult;
             }
         }
 
@@ -535,12 +547,16 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             return timeFrameCursor;
         }
 
+        public int getTimeFrameIndex() {
+            return timeFrame.getFrameIndex();
+        }
+
         public long getTimeFrameRowHi() {
-            return timeFrameCursor.getTimeFrame().getRowHi();
+            return timeFrame.getRowHi();
         }
 
         public long getTimeFrameRowLo() {
-            return timeFrameCursor.getTimeFrame().getRowLo();
+            return timeFrame.getRowLo();
         }
 
         public int getTimestampIndex() {
