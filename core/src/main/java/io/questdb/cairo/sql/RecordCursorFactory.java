@@ -32,6 +32,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
@@ -182,6 +183,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default int getScanDirection() {
         return SCAN_DIRECTION_FORWARD;
+    }
+
+    /**
+     * Returns the original filter expression that can be stolen by parent factories.
+     * When {@link #supportsFilterStealing()} returns true, this method should return
+     * the original expression of the stolen filter.
+     *
+     * @return the original filter expression that can be stolen, or null if
+     * filter stealing is not supported
+     */
+    default ExpressionNode getStealFilterExpr() {
+        return null;
     }
 
     /**

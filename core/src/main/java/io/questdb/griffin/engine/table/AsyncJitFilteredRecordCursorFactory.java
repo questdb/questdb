@@ -48,6 +48,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
@@ -70,6 +71,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
+    private final ExpressionNode filterExpr;
     private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -88,6 +90,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int sharedQueryWorkerCount,
@@ -98,6 +101,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
         this.compiledFilter = compiledFilter;
+        this.filterExpr = filterExpr;
         this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
@@ -229,6 +233,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public ExpressionNode getStealFilterExpr() {
+        return filterExpr;
     }
 
     @Override

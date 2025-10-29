@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -60,6 +61,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
+    private final ExpressionNode filterExpr;
     private final PageFrameSequence<AsyncFilterAtom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
@@ -76,6 +78,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @NotNull Function filter,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull ExpressionNode filterExpr,
             @Nullable Function limitLoFunction,
             int limitLoPos,
             int workerCount,
@@ -86,6 +89,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.base = base;
         this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+        this.filterExpr = filterExpr;
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         final int columnCount = base.getMetadata().getColumnCount();
         final IntList columnTypes = new IntList(columnCount);
@@ -175,6 +179,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public ExpressionNode getStealFilterExpr() {
+        return filterExpr;
     }
 
     @Override

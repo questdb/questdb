@@ -313,8 +313,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -2524,6 +2524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     filterExpr,
                                     factory.getMetadata()
                             ),
+                            deepClone(expressionNodePool, filterExpr),
                             limitLoFunction,
                             limitLoPos,
                             executionContext.getSharedQueryWorkerCount(),
@@ -2568,6 +2569,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filterExpr,
                                 factory.getMetadata()
                         ),
+                        deepClone(expressionNodePool, filterExpr),
                         limitLoFunction,
                         limitLoPos,
                         executionContext.getSharedQueryWorkerCount(),
@@ -3152,6 +3154,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 MemoryCARW bindVarMemory = null;
                                 ObjList<Function> bindVarFunctions = null;
                                 Function masterFilter = null;
+                                ExpressionNode masterFilterExpr = null;
                                 if (master.supportsFilterStealing()) {
                                     RecordCursorFactory filterFactory = master;
                                     master = master.getBaseFactory();
@@ -3159,6 +3162,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     bindVarMemory = filterFactory.getBindVarMemory();
                                     bindVarFunctions = filterFactory.getBindVarFunctions();
                                     masterFilter = filterFactory.getFilter();
+                                    masterFilterExpr = filterFactory.getStealFilterExpr();
                                     filterFactory.halfClose();
                                 }
                                 if (!slave.supportsTimeFrameCursor()) {
@@ -3252,7 +3256,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 executionContext,
                                                 masterFilter,
                                                 executionContext.getSharedQueryWorkerCount(),
-                                                locatePotentiallyFurtherNestedWhereClause(model.getNestedModel()),
+                                                masterFilterExpr,
                                                 master.getMetadata()
                                         ),
                                         reduceTaskFactory,
@@ -3332,6 +3336,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterExpr,
                                         master.getMetadata()
                                 ),
+                                deepClone(expressionNodePool, filterExpr),
                                 null,
                                 0,
                                 executionContext.getSharedQueryWorkerCount(),
@@ -3384,6 +3389,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         constFilterExpr,
                                         master.getMetadata()
                                 ),
+                                deepClone(expressionNodePool, constFilterExpr),
                                 null,
                                 0,
                                 executionContext.getSharedQueryWorkerCount(),
@@ -3898,12 +3904,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     MemoryCARW bindVarMemory = null;
                                     ObjList<Function> bindVarFunctions = null;
                                     Function filter = null;
+                                    ExpressionNode filterExpr = null;
                                     if (recordCursorFactory.supportsFilterStealing()) {
                                         baseFactory = recordCursorFactory.getBaseFactory();
                                         compiledFilter = recordCursorFactory.getCompiledFilter();
                                         bindVarMemory = recordCursorFactory.getBindVarMemory();
                                         bindVarFunctions = recordCursorFactory.getBindVarFunctions();
                                         filter = recordCursorFactory.getFilter();
+                                        filterExpr = recordCursorFactory.getStealFilterExpr();
                                         recordCursorFactory.halfClose();
                                     }
 
@@ -3922,7 +3930,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     executionContext,
                                                     filter,
                                                     executionContext.getSharedQueryWorkerCount(),
-                                                    locatePotentiallyFurtherNestedWhereClause(nested),
+                                                    filterExpr,
                                                     baseFactory.getMetadata()
                                             ),
                                             compiledFilter,
@@ -4994,6 +5002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
                 Function filter = null;
+                ExpressionNode filterExpr = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
@@ -5005,6 +5014,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     bindVarFunctions = filterFactory.getBindVarFunctions();
                     filter = filterFactory.getFilter();
                     supportsParallelism = true;
+                    filterExpr = filterFactory.getStealFilterExpr();
                     filterFactory.halfClose();
                 }
 
@@ -5045,7 +5055,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         filter,
                                         executionContext.getSharedQueryWorkerCount(),
-                                        locatePotentiallyFurtherNestedWhereClause(nested),
+                                        filterExpr,
                                         factory.getMetadata()
                                 ),
                                 executionContext.getSharedQueryWorkerCount()
@@ -5097,7 +5107,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext,
                                             filter,
                                             executionContext.getSharedQueryWorkerCount(),
-                                            locatePotentiallyFurtherNestedWhereClause(nested),
+                                            filterExpr,
                                             factory.getMetadata()
                                     ),
                                     reduceTaskFactory,
@@ -6824,26 +6834,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSingleSymbolJoinWithIndex(RecordMetadata slaveMetadata) {
         return isSingleSymbolJoin(slaveMetadata, true);
-    }
-
-    // skips skipped models until finding a WHERE clause
-    private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
-        if (model == null) {
-            return null;
-        }
-        QueryModel curr = model;
-        ExpressionNode expr = curr.getWhereClause();
-
-        while (curr.isSkipped() && expr == null) {
-            expr = curr.getWhereClause();
-            curr = curr.getNestedModel();
-        }
-
-        if (expr == null) {
-            expr = curr.getWhereClause();
-        }
-
-        return expr;
     }
 
     private void lookupColumnIndexes(
