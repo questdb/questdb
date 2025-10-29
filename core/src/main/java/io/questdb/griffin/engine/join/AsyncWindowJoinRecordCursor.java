@@ -104,6 +104,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        buildSlaveTimeFrameCacheConditionally();
+
         if (isMasterFiltered) {
             calculateSizeFiltered(circuitBreaker, counter);
         } else {

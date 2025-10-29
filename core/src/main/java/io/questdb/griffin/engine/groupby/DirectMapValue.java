@@ -237,7 +237,6 @@ public class DirectMapValue implements MapValue {
 
     public void of(long ptr) {
         this.ptr = ptr;
-        this.isNew = true;
     }
 
     @Override

@@ -191,12 +191,13 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
+        // TODO(puzpuzpuz): toPlan is currently broken
+        // TODO(puzpuzpuz): add window lo/hi
         sink.type("Async Window Join");
         sink.meta("workers").val(workerCount);
         sink.val(frameSequence.getAtom());
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
-        // TODO(puzpuzpuz): add window lo/hi
     }
 
     private static void aggregate(
@@ -243,9 +244,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
+                value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
-                value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 // TODO(puzpuzpuz): rescale master timestamp to slave unit
@@ -340,9 +341,9 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
                 rows.ensureCapacity(valueSizeInLongs);
                 value.of(rows.getAppendAddress());
+                value.setNew(true);
                 rows.skip(valueSizeInLongs);
                 functionUpdater.updateEmpty(value);
-                value.setNew(true);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
                 // TODO(puzpuzpuz): rescale master timestamp to slave unit
