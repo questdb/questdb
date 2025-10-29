@@ -1061,7 +1061,7 @@ public class CopyExportTest extends AbstractCairoTest {
             CopyExportRunnable test = () ->
                     assertEventually(() -> {
                         assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                                exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                                exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
                                 // Verify only filtered data was exported
                         assertSql("""
                                 id\tvalue
