@@ -73,7 +73,7 @@ public final class Decimals {
         if (value == Decimals.DECIMAL64_NULL) {
             sink.put("null");
         } else {
-            Decimal64.toSink(sink, value, scale, precision);
+            appendNonNull(value, precision, scale, sink);
         }
     }
 
@@ -131,6 +131,17 @@ public final class Decimals {
         } else {
             appendNonNull(hh, hl, lh, ll, precision, scale, sink);
         }
+    }
+
+    /**
+     * Prints the long decimal to a sink
+     *
+     * @param value to print
+     * @param scale defines the place of the dot
+     * @param sink  to write the value to
+     */
+    public static void appendNonNull(long value, int precision, int scale, CharSink<?> sink) {
+        Decimal64.toSink(sink, value, scale, precision);
     }
 
     /**

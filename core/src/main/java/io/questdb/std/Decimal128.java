@@ -1125,6 +1125,39 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     /**
+     * Subtracts a specific multiplier of a power of ten from the current 128-bit value.
+     * This method modifies the value in-place by subtracting (multiplier * 10^pow).
+     * <p>
+     * Used in conjunction with getDigitAtPowerOfTen to extract individual digits:
+     * 1. Call getDigitAtPowerOfTen to get the digit at a specific power
+     * 2. Call this method to subtract that digit's contribution
+     * 3. Repeat for the next lower power
+     *
+     * @param pow        the power of ten position
+     * @param multiplier the digit to subtract (1-9, or 0 for no-op)
+     */
+    public void subtractPowerOfTenMultiple(int pow, int multiplier) {
+        if (multiplier == 0 || multiplier > 9) {
+            return;
+        }
+
+        // Get the value to subtract from POWERS_TEN_TABLE
+        // Each power has 9 entries (for multipliers 1-9), each entry has 2 longs
+        int offset = (multiplier - 1) * 2;
+
+        // Perform 256-bit subtraction using two's complement
+        // First, negate the value to subtract (two's complement)
+        long bLow = ~POWERS_TEN_TABLE[pow][offset + 1] + 1;
+        long c = bLow == 0L ? 1L : 0L;
+        long r = low + bLow;
+        long carry = hasCarry(low, r) ? 1L : 0L;
+        low = r;
+
+        long bHigh = ~POWERS_TEN_TABLE[pow][offset] + c;
+        high = high + carry + bHigh;
+    }
+
+    /**
      * Convert to BigDecimal with full precision
      *
      * @return BigDecimal representation of this Decimal128
