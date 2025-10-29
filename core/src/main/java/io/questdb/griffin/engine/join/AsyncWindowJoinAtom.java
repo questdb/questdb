@@ -55,7 +55,6 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -400,9 +399,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     }
 
     public void toTop() {
-        ownerSlaveTimeFrameHelper.clear();
+        ownerSlaveTimeFrameHelper.toTop();
         for (int i = 0, n = perWorkerSlaveTimeFrameHelpers.size(); i < n; i++) {
-            perWorkerSlaveTimeFrameHelpers.getQuick(i).clear();
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).toTop();
         }
 
         GroupByUtils.toTop(ownerGroupByFunctions);
@@ -444,7 +443,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    public static class TimeFrameHelper implements QuietCloseable, Mutable {
+    public static class TimeFrameHelper implements QuietCloseable {
         private final long lookahead;
         private final Record record;
         private final TimeFrame timeFrame;
@@ -459,13 +458,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.timeFrame = timeFrameCursor.getTimeFrame();
             this.lookahead = lookahead;
             this.timestampIndex = timeFrameCursor.getTimestampIndex();
-        }
-
-        @Override
-        public void clear() {
-            timeFrameCursor.toTop();
-            foundFrameIndex = -1;
-            foundRowId = Long.MIN_VALUE;
         }
 
         @Override
@@ -589,10 +581,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     partitionTimestamps,
                     frameCount
             );
+            toTop();
         }
 
         public void recordAt(long rowId) {
             timeFrameCursor.recordAt(record, rowId);
+        }
+
+        public void toTop() {
+            timeFrameCursor.toTop();
+            foundFrameIndex = -1;
+            foundRowId = Long.MIN_VALUE;
         }
 
         // Finds the first (most-left) value in the given interval.
