@@ -290,7 +290,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender decimalColumnText(CharSequence name, Decimal256 value);
+    Sender decimalColumn(CharSequence name, CharSequence value);
 
     /**
      * Add a column with a floating point value.

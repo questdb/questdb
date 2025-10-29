@@ -26,20 +26,16 @@ package io.questdb.cutlass.line.http;
 
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.client.HttpClient;
-import io.questdb.cutlass.line.array.ArrayDataAppender;
-import io.questdb.cutlass.line.array.ArrayShapeAppender;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.FlattenArrayUtils;
-import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LineHttpSenderV3 extends LineHttpSenderV2 {
@@ -144,13 +140,15 @@ public class LineHttpSenderV3 extends LineHttpSenderV2 {
     }
 
     @Override
-    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
-        var request = writeFieldName(name);
-        if (value.isNull()) {
-            request.put("NaNd");
-        } else {
-            request.put(value).putAscii('d');
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
+        try {
+            // Validate that the value is properly formatted
+            Numbers.parseDouble(value);
+        } catch (NumericException e) {
+            throw new LineSenderException("Failed to parse sent decimal value: " + value, e);
         }
+        var request = writeFieldName(name);
+        request.put(value).putAscii('d');
         return this;
     }
 

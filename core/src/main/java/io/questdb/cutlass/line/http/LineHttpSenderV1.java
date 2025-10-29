@@ -116,16 +116,6 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     }
 
     @Override
-    public Sender decimalColumn(CharSequence name, Decimal256 value) {
-        throw new LineSenderException("current protocol version does not support decimal");
-    }
-
-    @Override
-    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
-        throw new LineSenderException("current protocol version does not support decimal");
-    }
-
-    @Override
     public void at(long timestamp, ChronoUnit unit) {
         request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
         atNow();
@@ -135,6 +125,16 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     public void at(Instant timestamp) {
         request.putAscii(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
         atNow();
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

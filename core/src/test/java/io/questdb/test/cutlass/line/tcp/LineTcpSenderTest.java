@@ -54,7 +54,6 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
@@ -365,7 +364,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 TestUtils.assertReader("""
                         int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
                         42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
-                        """, reader, new StringSink());
+                        """, reader, sink);
             }
         });
     }
@@ -483,12 +482,12 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         TestUtils.assertReader("""
                                 negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
                                 null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000Z
-                                """, reader, new StringSink());
+                                """, reader, sink);
                     } else {
                         TestUtils.assertReader("""
                                 negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
                                 null\tnull\tnull\t1.7976931348623157E308\t4.9E-324\t2022-02-25T00:00:00.000000000Z
-                                """, reader, new StringSink());
+                                """, reader, sink);
                     }
                 }
             }
@@ -601,7 +600,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         x\ty\ta1\ttimestamp
                         9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
                         10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z
-                        """, reader, new StringSink());
+                        """, reader, sink);
             }
 
         });
@@ -632,7 +631,406 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
             try (TableReader reader = getReader("decimal_test")) {
                 TestUtils.assertReader("a\ttimestamp\n" +
-                        "123.450\t1970-01-02T03:46:40.000000Z\n", reader, new StringSink());
+                        "123.450\t1970-01-02T03:46:40.000000Z\n", reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatBasic() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_basic";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("price", ColumnType.getDecimalType(10, 2))
+                    .col("quantity", ColumnType.getDecimalType(15, 4))
+                    .col("rate", ColumnType.getDecimalType(8, 5));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Basic positive decimal
+                sender.table(tableName)
+                        .decimalColumn("price", "123.45")
+                        .decimalColumn("quantity", "100.0000")
+                        .decimalColumn("rate", "0.12345")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Negative decimal
+                sender.table(tableName)
+                        .decimalColumn("price", "-45.67")
+                        .decimalColumn("quantity", "-10.5000")
+                        .decimalColumn("rate", "-0.00001")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Small values
+                sender.table(tableName)
+                        .decimalColumn("price", "0.01")
+                        .decimalColumn("quantity", "0.0001")
+                        .decimalColumn("rate", "0.00000")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Integer strings (no decimal point)
+                sender.table(tableName)
+                        .decimalColumn("price", "999")
+                        .decimalColumn("quantity", "42")
+                        .decimalColumn("rate", "1")
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("price\tquantity\trate\ttimestamp\n" +
+                        "123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000" + suffix +
+                        "-45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002" + suffix +
+                        "999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatEdgeCases() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_edge_cases";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("value", ColumnType.getDecimalType(20, 10));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Explicit positive sign
+                sender.table(tableName)
+                        .decimalColumn("value", "+123.456")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Leading zeros
+                sender.table(tableName)
+                        .decimalColumn("value", "000123.450000")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Very small value
+                sender.table(tableName)
+                        .decimalColumn("value", "0.0000000001")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                // Zero with decimal point
+                sender.table(tableName)
+                        .decimalColumn("value", "0.0")
+                        .at(100000000003L, ChronoUnit.MICROS);
+
+                // Just zero
+                sender.table(tableName)
+                        .decimalColumn("value", "0")
+                        .at(100000000004L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("value\ttimestamp\n" +
+                        "123.4560000000\t1970-01-02T03:46:40.000000" + suffix +
+                        "123.4500000000\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.0000000001\t1970-01-02T03:46:40.000002" + suffix +
+                        "0.0000000000\t1970-01-02T03:46:40.000003" + suffix +
+                        "0.0000000000\t1970-01-02T03:46:40.000004" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatEquivalence() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_equivalence";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("text_format", ColumnType.getDecimalType(10, 3))
+                    .col("binary_format", ColumnType.getDecimalType(10, 3));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Test various values sent via both text and binary formats
+                sender.table(tableName)
+                        .decimalColumn("text_format", "123.450")
+                        .decimalColumn("binary_format", Decimal256.fromLong(123450, 3))
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("text_format", "-45.670")
+                        .decimalColumn("binary_format", Decimal256.fromLong(-45670, 3))
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("text_format", "0.001")
+                        .decimalColumn("binary_format", Decimal256.fromLong(1, 3))
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("text_format\tbinary_format\ttimestamp\n" +
+                        "123.450\t123.450\t1970-01-02T03:46:40.000000" + suffix +
+                        "-45.670\t-45.670\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.001\t0.001\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatInvalid() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                sender.table("test");
+                // Test invalid characters
+                try {
+                    sender.decimalColumn("value", "abc");
+                    Assert.fail("Letters should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test multiple dots
+                try {
+                    sender.decimalColumn("value", "12.34.56");
+                    Assert.fail("Multiple dots should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test multiple signs
+                try {
+                    sender.decimalColumn("value", "+-123");
+                    Assert.fail("Multiple signs should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test special characters
+                try {
+                    sender.decimalColumn("value", "12$34");
+                    Assert.fail("Special characters should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test empty decimal
+                try {
+                    sender.decimalColumn("value", "");
+                    Assert.fail("Empty string should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test invalid exponent
+                try {
+                    sender.decimalColumn("value", "1.23eABC");
+                    Assert.fail("Invalid exponent should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+
+                // Test incomplete exponent
+                try {
+                    sender.decimalColumn("value", "1.23e");
+                    Assert.fail("Incomplete exponent should throw exception");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "Failed to parse sent decimal value");
+                }
+            }
+        });
+    }
+
+
+    @Test
+    public void testInsertDecimalTextFormatPrecisionOverflow() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_precision_overflow";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("x", ColumnType.getDecimalType(6, 3));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Value that exceeds column precision (6 digits total, 3 after decimal)
+                // 1000.000 has 7 digits precision, should be rejected
+                sender.table(tableName)
+                        .decimalColumn("x", "1000.000")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Another value that exceeds precision
+                sender.table(tableName)
+                        .decimalColumn("x", "12345.678")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                TestUtils.assertReader("x\ttimestamp\n", reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatScientificNotation() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_scientific_notation";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("large", ColumnType.getDecimalType(15, 2))
+                    .col("small", ColumnType.getDecimalType(20, 15));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Scientific notation with positive exponent
+                sender.table(tableName)
+                        .decimalColumn("large", "1.23e5")
+                        .decimalColumn("small", "1.23e-10")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                // Scientific notation with uppercase E
+                sender.table(tableName)
+                        .decimalColumn("large", "4.56E3")
+                        .decimalColumn("small", "4.56E-8")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                // Negative value with scientific notation
+                sender.table(tableName)
+                        .decimalColumn("large", "-9.99e2")
+                        .decimalColumn("small", "-1.5e-12")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("large\tsmall\ttimestamp\n" +
+                        "123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000" + suffix +
+                        "4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001" + suffix +
+                        "-999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertDecimalTextFormatTrailingZeros() throws Exception {
+        runInContext(r -> {
+            String tableName = "decimal_text_format_trailing_zeros";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("value1", ColumnType.getDecimalType(10, 3))
+                    .col("value2", ColumnType.getDecimalType(12, 5));
+            if (ColumnType.isTimestampMicro(timestampType.getTimestampType())) {
+                model.timestamp();
+            } else {
+                model.timestampNs();
+            }
+            AbstractCairoTest.create(model);
+
+            CountDownLatch released = createTableCommitNotifier(tableName);
+
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .protocolVersion(PROTOCOL_VERSION_V3)
+                    .build()
+            ) {
+                // Trailing zeros should be preserved in scale
+                sender.table(tableName)
+                        .decimalColumn("value1", "100.000")
+                        .decimalColumn("value2", "50.00000")
+                        .at(100000000000L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("value1", "1.200")
+                        .decimalColumn("value2", "0.12300")
+                        .at(100000000001L, ChronoUnit.MICROS);
+
+                sender.table(tableName)
+                        .decimalColumn("value1", "0.100")
+                        .decimalColumn("value2", "0.00100")
+                        .at(100000000002L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+            waitTableWriterFinish(released);
+
+            try (TableReader reader = getReader(tableName)) {
+                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
+                TestUtils.assertReader("value1\tvalue2\ttimestamp\n" +
+                        "100.000\t50.00000\t1970-01-02T03:46:40.000000" + suffix +
+                        "1.200\t0.12300\t1970-01-02T03:46:40.000001" + suffix +
+                        "0.100\t0.00100\t1970-01-02T03:46:40.000002" + suffix, reader, sink);
             }
         });
     }
@@ -712,7 +1110,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         "42\t42.123\t1970-01-02T03:46:40.000003" + suffix +
                         "42\t42.100\t1970-01-02T03:46:40.000004" + suffix +
                         "42\t42.100\t1970-01-02T03:46:40.000005" + suffix +
-                        "\t\t1970-01-02T03:46:40.000006" + suffix, reader, new StringSink());
+                        "\t\t1970-01-02T03:46:40.000006" + suffix, reader, sink);
             }
         });
     }
@@ -782,7 +1180,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             waitTableWriterFinish(released);
 
             try (TableReader reader = getReader(tableName)) {
-                TestUtils.assertReader("x\ty\ttimestamp\n", reader, new StringSink());
+                TestUtils.assertReader("x\ty\ttimestamp\n", reader, sink);
             }
         });
     }
@@ -854,7 +1252,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         s\tu\ttimestamp
                         non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -908,7 +1306,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         u1\tu2\tu3\ttimestamp
                         11111111-1111-1111-1111-111111111111\t\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -950,7 +1348,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         ts_col\ttimestamp
                         2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1018,7 +1416,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
                         ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1051,7 +1449,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         ts\ttimestamp
                         2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1095,7 +1493,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         unit\tts\ttimestamp
                         ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568901Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1553,7 +1951,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
                         42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000000Z\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1590,7 +1988,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         max\tmin\ttimestamp
                         9223372036854775807\tnull\t2023-02-22T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }
@@ -1860,7 +2258,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         u1\ttimestamp
                         11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000000Z
                         """;
-                TestUtils.assertReader(expected, reader, new StringSink());
+                TestUtils.assertReader(expected, reader, sink);
             }
         });
     }

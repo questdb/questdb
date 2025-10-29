@@ -93,7 +93,7 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements ArrayBuffe
     }
 
     @Override
-    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
         throw new LineSenderException("current protocol version does not support decimal");
     }
 

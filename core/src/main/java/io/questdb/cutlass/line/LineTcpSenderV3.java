@@ -30,6 +30,8 @@ import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 
 public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppender {
     public LineTcpSenderV3(LineChannel channel, int bufferCapacity, int maxNameLength) {
@@ -79,13 +81,15 @@ public class LineTcpSenderV3 extends LineTcpSenderV2 implements ArrayBufferAppen
     }
 
     @Override
-    public Sender decimalColumnText(CharSequence name, Decimal256 value) {
-        writeFieldName(name);
-        if (value.isNull()) {
-            put("NaNd");
-        } else {
-            put(value).putAscii('d');
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
+        try {
+            // Validate that the value is properly formatted
+            Numbers.parseDouble(value);
+        } catch (NumericException e) {
+            throw new LineSenderException("Failed to parse sent decimal value: " + value, e);
         }
+        writeFieldName(name);
+        put(value).putAscii('d');
         return this;
     }
 }
