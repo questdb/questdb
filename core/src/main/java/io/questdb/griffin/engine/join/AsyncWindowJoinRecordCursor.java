@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
@@ -54,7 +55,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 
-// TODO(puzpuzpuz): implement calculateSize using the filter only
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
     private final int columnSplit;
@@ -100,6 +100,15 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         groupByRecord = new VirtualRecord(groupByFunctions);
         record = new JoinRecord(columnSplit);
         record.of(masterRecord, groupByRecord);
+    }
+
+    @Override
+    public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (isMasterFiltered) {
+            calculateSizeFiltered(circuitBreaker, counter);
+        } else {
+            calculateSizeNoFilter(counter);
+        }
     }
 
     @Override
@@ -220,6 +229,67 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                 throw CairoException.nonCritical().put(e.getFlyweightMessage());
             }
             isSlaveTimeFrameCacheBuilt = true;
+        }
+    }
+
+    // TODO(puzpuzpuz): skip aggregation here
+    private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
+        if (frameIndex == -1) {
+            fetchNextFrame();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+
+        // We have rows in the current frame we still need to dispatch
+        if (frameRowIndex < frameRowCount) {
+            counter.add(frameRowCount - frameRowIndex);
+            frameRowIndex = frameRowCount;
+        }
+
+        // Release the previous queue item.
+        // There is no identity check here because this check
+        // had been done when 'cursor' was assigned.
+        collectCursor(false);
+
+        while (frameIndex < frameLimit) {
+            fetchNextFrame();
+            if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
+                counter.add(frameRowCount - frameRowIndex);
+                frameRowIndex = frameRowCount;
+                collectCursor(false);
+            }
+
+            if (!allFramesActive) {
+                throwTimeoutException();
+            }
+
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        }
+    }
+
+    private void calculateSizeNoFilter(RecordCursor.Counter counter) {
+        if (frameLimit == -1) {
+            // Count page frame sizes and call it a day.
+            masterFrameSequence.prepareForDispatch();
+            frameLimit = masterFrameSequence.getFrameCount() - 1;
+            for (int i = 0, n = masterFrameSequence.getFrameCount(); i < n; i++) {
+                counter.add(masterFrameSequence.getFrameRowCount(i));
+            }
+        } else {
+            // cursor.hasNext() was called previously.
+            // Check if we have something left in the current frame.
+            if (frameRowIndex < frameRowCount) {
+                counter.add(frameRowCount - frameRowIndex);
+                frameRowIndex = frameRowCount;
+            }
+
+            // Count sizes of remaining page frames.
+            for (int i = frameIndex + 1, n = masterFrameSequence.getFrameCount(); i < n; i++) {
+                counter.add(masterFrameSequence.getFrameRowCount(i));
+            }
+
+            // Discard what was published.
+            collectCursor(true);
+            masterFrameSequence.await();
         }
     }
 
