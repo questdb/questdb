@@ -5854,18 +5854,18 @@ public class SqlOptimiser implements Mutable {
                 );
                 return rewriteStatus;
             }
-        }
 
-        addFunction(
-                qc,
-                baseModel,
-                isWindowJoin ? windowJoinModel : translatingModel,
-                innerVirtualModel,
-                windowModel,
-                groupByModel,
-                outerVirtualModel,
-                distinctModel
-        );
+            addFunction(
+                    qc,
+                    baseModel,
+                    isWindowJoin ? windowJoinModel : translatingModel,
+                    innerVirtualModel,
+                    windowModel,
+                    groupByModel,
+                    outerVirtualModel,
+                    distinctModel
+            );
+        }
         return rewriteStatus;
     }
 
