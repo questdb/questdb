@@ -546,8 +546,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel windowModel,
             QueryModel groupByModel,
             QueryModel outerVirtualModel,
-            QueryModel distinctModel,
-            QueryModel windowJoinModel
+            QueryModel distinctModel
     ) throws SqlException {
         // Adds what intended to be a function (rather than a literal) to the
         // inner virtual model. It is possible that the function will have
@@ -572,7 +571,6 @@ public class SqlOptimiser implements Mutable {
         windowModel.addBottomUpColumn(innerColumn);
         outerVirtualModel.addBottomUpColumn(innerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
-        windowJoinModel.addBottomUpColumn(innerColumn);
     }
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
@@ -5636,8 +5634,8 @@ public class SqlOptimiser implements Mutable {
             ref.setIncludeIntoWildcard(qc.isIncludeIntoWildcard());
             outerVirtualModel.addBottomUpColumn(ref);
             distinctModel.addBottomUpColumn(ref);
-            // sample-by implementation requires innerVirtualModel
             if (!isWindowJoin) {
+                // sample-by implementation requires innerVirtualModel
                 emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, sampleBy != null, baseModel, false);
             }
             return null;
@@ -5649,7 +5647,7 @@ public class SqlOptimiser implements Mutable {
                     qc.getAlias(),
                     cursorModel,
                     innerVirtualModel,
-                    translatingModel,
+                    isWindowJoin ? windowJoinModel : translatingModel,
                     baseModel,
                     sqlExecutionContext,
                     sqlParserCallback
@@ -5817,32 +5815,43 @@ public class SqlOptimiser implements Mutable {
             }
 
             // sample-by queries will still require innerVirtualModel
-            if ((((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && sampleBy == null) || ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0)) {
+            if ((((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && sampleBy == null)) {
                 qc = ensureAliasUniqueness(groupByModel, qc);
                 groupByModel.addBottomUpColumn(qc);
-                windowJoinModel.addBottomUpColumn(qc);
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
                 // select sum(a)+sum(b) ...
                 QueryColumn ref = nextColumn(qc.getAlias());
                 outerVirtualModel.addBottomUpColumn(ref);
                 distinctModel.addBottomUpColumn(ref);
-                if ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) == 0) {
-                    emitLiterals(
-                            qc.getAst(),
-                            translatingModel,
-                            innerVirtualModel,
-                            false,
-                            baseModel,
-                            false
-                    );
-                    // this model won't be used in group-by case; this is because
-                    // group-by can process virtual functions by itself. However,
-                    // we need innerVirtualModel complete to do the projection validation
-                    // We add column after literal emission/validation to avoid allowing expression
-                    // self-referencing and passing validation
-                    innerVirtualModel.addBottomUpColumn(qc);
-                }
+                emitLiterals(
+                        qc.getAst(),
+                        translatingModel,
+                        innerVirtualModel,
+                        false,
+                        baseModel,
+                        false
+                );
+                // this model won't be used in group-by case; this is because
+                // group-by can process virtual functions by itself. However,
+                // we need innerVirtualModel complete to do the projection validation
+                // We add column after literal emission/validation to avoid allowing expression
+                // self-referencing and passing validation
+                innerVirtualModel.addBottomUpColumn(qc);
+                return rewriteStatus;
+            } else if ((rewriteStatus & REWRITE_STATUS_USE_WINDOWS_JOIN_MODE) != 0) {
+                qc = ensureAliasUniqueness(outerVirtualModel, qc);
+                outerVirtualModel.addBottomUpColumn(qc);
+                QueryColumn ref = nextColumn(qc.getAlias());
+                distinctModel.addBottomUpColumn(ref);
+                emitLiterals(
+                        qc.getAst(),
+                        windowJoinModel,
+                        innerVirtualModel,
+                        false,
+                        baseModel,
+                        false
+                );
                 return rewriteStatus;
             }
         }
@@ -5850,13 +5859,12 @@ public class SqlOptimiser implements Mutable {
         addFunction(
                 qc,
                 baseModel,
-                translatingModel,
+                isWindowJoin ? windowJoinModel : translatingModel,
                 innerVirtualModel,
                 windowModel,
                 groupByModel,
                 outerVirtualModel,
-                distinctModel,
-                windowJoinModel
+                distinctModel
         );
         return rewriteStatus;
     }
@@ -6013,6 +6021,9 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
                 }
+                if (isWindowJoin) {
+                    rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+                }
 
                 if (checkForChildAggregates(qc.getAst())) {
                     if (!isWindowJoin) {
@@ -6142,7 +6153,7 @@ public class SqlOptimiser implements Mutable {
                                 qc,
                                 hasJoins,
                                 baseModel,
-                                translatingModel,
+                                isWindowJoin ? windowJoinModel : translatingModel,
                                 innerVirtualModel,
                                 windowModel,
                                 groupByModel,
@@ -6193,13 +6204,12 @@ public class SqlOptimiser implements Mutable {
                                 addFunction(
                                         qc,
                                         baseModel,
-                                        translatingModel,
+                                        isWindowJoin ? windowJoinModel : translatingModel,
                                         innerVirtualModel,
                                         windowModel,
                                         groupByModel,
                                         outerVirtualModel,
-                                        distinctModel,
-                                        windowJoinModel
+                                        distinctModel
                                 );
                                 rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                                 rewriteStatus |= REWRITE_STATUS_FORCE_INNER_MODEL;
@@ -6209,7 +6219,7 @@ public class SqlOptimiser implements Mutable {
                                         qc.getAst(),
                                         false,
                                         baseModel,
-                                        translatingModel,
+                                        isWindowJoin ? windowJoinModel : translatingModel,
                                         innerVirtualModel,
                                         windowModel,
                                         groupByModel,
@@ -6231,13 +6241,12 @@ public class SqlOptimiser implements Mutable {
                         addFunction(
                                 qc,
                                 baseModel,
-                                translatingModel,
+                                isWindowJoin ? windowJoinModel : translatingModel,
                                 innerVirtualModel,
                                 windowModel,
                                 groupByModel,
                                 outerVirtualModel,
-                                distinctModel,
-                                windowJoinModel
+                                distinctModel
                         );
                         rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                     }
