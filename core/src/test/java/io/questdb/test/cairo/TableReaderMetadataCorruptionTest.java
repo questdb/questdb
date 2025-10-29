@@ -165,7 +165,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 23,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 
@@ -179,7 +179,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 -2,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 

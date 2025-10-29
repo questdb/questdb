@@ -698,18 +698,24 @@ public final class TableUtils {
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
     }
 
-    public static int getColumnCount(MemoryMR metaMem, long offset) {
+    public static int getColumnCount(Utf8Sequence metaPath, MemoryMR metaMem, long offset) {
         final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {
-            throw validationException().put("Incorrect columnCount: ").put(columnCount);
+            throw validationException().put("incorrect columnCount [path=")
+                    .put(metaPath)
+                    .put(", columnCount=").put(columnCount)
+                    .put(']');
         }
         return columnCount;
     }
 
-    public static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+    public static CharSequence getColumnName(Utf8Sequence metaPath, MemoryMR metaMem, long memSize, long offset, int columnIndex) {
         final int strLength = getInt(metaMem, memSize, offset);
         if (strLength == TableUtils.NULL_LEN) {
-            throw validationException().put("NULL column name at [").put(columnIndex).put(']');
+            throw validationException()
+                    .put("NULL column name [path=").put(metaPath)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(']');
         }
         return getCharSequence(metaMem, memSize, offset, strLength);
     }
@@ -722,12 +728,16 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
-    public static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
-        final int type = getInt(metaMem, memSize, offset);
-        if (type >= 0 && ColumnType.sizeOf(type) == -1) {
-            throw validationException().put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
+    public static int getColumnType(Utf8Sequence metaPath, MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int columnType = getInt(metaMem, memSize, offset);
+        if (columnType >= 0 && ColumnType.sizeOf(columnType) == -1) {
+            throw validationException()
+                    .put("invalid column type [path=").put(metaPath)
+                    .put(", columnType=").put(columnType)
+                    .put(", columnIndex=").put(columnIndex)
+                    .put(']');
         }
-        return type;
+        return columnType;
     }
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
@@ -839,10 +849,14 @@ public final class TableUtils {
         return Chars.toString(privateName).substring(0, suffixIndex);
     }
 
-    public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+    public static int getTimestampIndex(Utf8Sequence metaPath, MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
-            throw validationException().put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
+            throw validationException()
+                    .put("timestamp index is outside of range, [path=").put(metaPath)
+                    .put("timestampIndex=").put(timestampIndex)
+                    .put("columnCount=").put(columnCount)
+                    .put(']');
         }
         return timestampIndex;
     }
@@ -1710,8 +1724,8 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
             if (memSize < offset) {
@@ -1722,7 +1736,7 @@ public final class TableUtils {
             }
 
             // validate designated timestamp column
-            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            final int timestampIndex = getTimestampIndex(metaPath, metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
             if (timestampIndex != -1) {
                 final int timestampType = getColumnType(metaMem, timestampIndex);
                 if (!ColumnType.isTimestamp(timestampType)) {
@@ -1768,7 +1782,7 @@ public final class TableUtils {
             int denseCount = 0;
             if (nameIndex != null) {
                 for (int i = 0; i < columnCount; i++) {
-                    final CharSequence columnName = getColumnName(metaMem, memSize, offset, i);
+                    final CharSequence columnName = getColumnName(metaPath, metaMem, memSize, offset, i);
                     if (getColumnType(metaMem, i) < 0 || nameIndex.put(columnName, denseCount++)) {
                         offset += Vm.getStorageLength(columnName);
                     } else {
@@ -1788,12 +1802,13 @@ public final class TableUtils {
         }
     }
 
-    public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
             throw validationException()
-                    .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
-                    .put(", actual=").put(metaVersion)
+                    .put("metadata version does not match runtime version [path=").put(metaPath)
+                    .put(", expectedVersion=").put(expectedVersion)
+                    .put(", actualVersion=").put(metaVersion)
                     .put(']');
         }
     }
