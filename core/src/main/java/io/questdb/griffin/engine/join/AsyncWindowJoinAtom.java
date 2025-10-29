@@ -481,7 +481,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 if (rowLo == Long.MIN_VALUE) {
                     while (timeFrameCursor.next()) {
                         // carry on if the frame is to the left of the interval
-                        if (timeFrame.getTimestampEstimateHi() < timestampLo) {
+                        if (timeFrame.getTimestampEstimateHi() <= timestampLo) {
+                            // bookmark the frame, so that next time we search we start with it
+                            bookmarkedFrameIndex = timeFrame.getFrameIndex();
+                            bookmarkedRowId = 0;
                             continue;
                         }
                         // check if the frame intersects with the interval, so it's of our interest
@@ -490,14 +493,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                                 continue;
                             }
                             // now we know the exact boundaries of the frame, let's check them
-                            if (timeFrame.getTimestampHi() < timestampLo) {
+                            if (timeFrame.getTimestampHi() <= timestampLo) {
                                 // the frame is to the left of the interval, so carry on
+                                // bookmark the frame
+                                bookmarkedFrameIndex = timeFrame.getFrameIndex();
+                                bookmarkedRowId = 0;
                                 continue;
                             }
                             if (timeFrame.getTimestampLo() < timestampHi) {
                                 // yay, it's what we need!
                                 if (timeFrame.getTimestampLo() <= timestampLo) {
-                                    // the very first row of the frame is what we need
+                                    // we can start with the first row
                                     return timeFrame.getRowLo();
                                 }
                                 // we need to find the first row in the intersection
@@ -512,10 +518,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     }
                 }
 
-                // bookmark the first intersecting frame, so that next time we search we start with it
+                // bookmark the first intersecting frame
                 if (!bookmarked) {
                     bookmarkedFrameIndex = timeFrame.getFrameIndex();
-                    bookmarkedRowId = rowLo;
+                    bookmarkedRowId = 0;
                     bookmarked = true;
                 }
 
