@@ -449,8 +449,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         private final TimeFrame timeFrame;
         private final ConcurrentTimeFrameCursor timeFrameCursor;
         private final int timestampIndex;
-        private int foundFrameIndex = -1;
-        private long foundRowId = Long.MIN_VALUE;
+        private int bookmarkedFrameIndex = -1;
+        private long bookmarkedRowId = Long.MIN_VALUE;
 
         public TimeFrameHelper(ConcurrentTimeFrameCursor timeFrameCursor, long lookahead) {
             this.timeFrameCursor = timeFrameCursor;
@@ -469,12 +469,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         public long findRowLo(long timestampLo, long timestampHi) {
             long rowLo = Long.MIN_VALUE;
             // let's start with the last found frame and row id
-            if (foundFrameIndex != -1) {
-                timeFrameCursor.jumpTo(foundFrameIndex);
+            if (bookmarkedFrameIndex != -1) {
+                timeFrameCursor.jumpTo(bookmarkedFrameIndex);
                 timeFrameCursor.open();
-                rowLo = foundRowId;
+                rowLo = bookmarkedRowId;
             }
 
+            boolean bookmarked = false;
             for (; ; ) {
                 // find the frame to be scanned
                 if (rowLo == Long.MIN_VALUE) {
@@ -495,6 +496,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                             }
                             if (timeFrame.getTimestampLo() < timestampHi) {
                                 // yay, it's what we need!
+                                if (timeFrame.getTimestampLo() <= timestampLo) {
+                                    // the very first row of the frame is what we need
+                                    return timeFrame.getRowLo();
+                                }
+                                // we need to find the first row in the intersection
                                 rowLo = timeFrame.getRowLo();
                                 break;
                             }
@@ -506,27 +512,34 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     }
                 }
 
+                // bookmark the first intersecting frame, so that next time we search we start with it
+                if (!bookmarked) {
+                    bookmarkedFrameIndex = timeFrame.getFrameIndex();
+                    bookmarkedRowId = rowLo;
+                    bookmarked = true;
+                }
+
                 // scan the found frame
                 // start with a brief linear scan
                 final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
                 if (scanResult >= 0) {
                     // we've found the row
-                    foundFrameIndex = timeFrame.getFrameIndex();
-                    foundRowId = scanResult;
+                    bookmarkedRowId = scanResult;
                     return scanResult;
                 } else if (scanResult == Long.MIN_VALUE) {
-                    // there are no timestamps in the wanted interval
-                    return Long.MIN_VALUE;
+                    // there are no timestamps in the wanted interval, try next frame
+                    rowLo = Long.MIN_VALUE;
+                    continue;
                 }
                 // ok, the scan gave us nothing, do the binary search
                 rowLo = -scanResult - 1;
                 final long searchResult = binarySearch(timestampLo, timestampHi, rowLo);
                 if (searchResult == Long.MIN_VALUE) {
-                    // there are no timestamps in the wanted interval
-                    return Long.MIN_VALUE;
+                    // there are no timestamps in the wanted interval, try next frame
+                    rowLo = Long.MIN_VALUE;
+                    continue;
                 }
-                foundFrameIndex = timeFrame.getFrameIndex();
-                foundRowId = searchResult;
+                bookmarkedRowId = searchResult;
                 return searchResult;
             }
         }
@@ -590,8 +603,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
         public void toTop() {
             timeFrameCursor.toTop();
-            foundFrameIndex = -1;
-            foundRowId = Long.MIN_VALUE;
+            bookmarkedFrameIndex = -1;
+            bookmarkedRowId = Long.MIN_VALUE;
         }
 
         // Finds the first (most-left) value in the given interval.
