@@ -1059,15 +1059,16 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy (select id, value from source_table where id > 1) to 'output3' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                    assertEventually(
+                            () -> {
+                                assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n", "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
                                 // Verify only filtered data was exported
-                        assertSql("""
-                                id\tvalue
-                                2\t2.5
-                                3\t3.5
-                                """, "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
+                                assertSql("""
+                                        id\tvalue
+                                        2\t2.5
+                                        3\t3.5
+                                        """, "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
                             }
                     );
 
