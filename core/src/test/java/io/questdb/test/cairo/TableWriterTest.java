@@ -754,7 +754,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid index value block capacity");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
                 }
 
                 for (int i = 0; i < N; i++) {
