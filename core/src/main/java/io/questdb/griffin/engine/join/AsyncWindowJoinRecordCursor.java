@@ -232,7 +232,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    // TODO(puzpuzpuz): skip aggregation here
+    // TODO(puzpuzpuz): skip aggregation for all new tasks we publish here
     private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame();

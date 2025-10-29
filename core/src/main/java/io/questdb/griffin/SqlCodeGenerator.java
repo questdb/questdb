@@ -137,7 +137,6 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -302,7 +301,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
-import io.questdb.std.datetime.microtime.Micros;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -315,8 +313,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -1412,9 +1410,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER) {
                 valueTypes.add(BOOLEAN);
             }
-
-            boolean isHack = Chars.equals(master.getTableToken().getTableName(), "trades") && Chars.equals(slave.getTableToken().getTableName(), "prices");
-            if (filter != null && !isHack) {
+            if (filter != null) {
                 return new HashOuterJoinFilteredLightRecordCursorFactory(
                         configuration,
                         metadata,
@@ -1428,57 +1424,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter,
                         context,
                         joinType
-                );
-            }
-
-            // TODO(puzpuzpuz): remove this ugly hack and implement proper WINDOW JOIN support in SQL engine
-            if (isHack) {
-                OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
-                ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
-                node.paramCount = 2;
-                node.lhs = expressionNodePool.next().of(LITERAL, "t.sym", 0, 0);
-                node.rhs = expressionNodePool.next().of(LITERAL, "p.sym", 0, 0);
-                filter = compileJoinFilter(node, metadata, executionContext);
-                ObjList<Function> perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
-                for (int i = 0, n = executionContext.getSharedQueryWorkerCount(); i < n; i++) {
-                    perWorkerJoinFilters.add(compileJoinFilter(node, metadata, executionContext));
-                }
-                GenericRecordMetadata windowJoinMetadata = GenericRecordMetadata.deepCopyOf(masterMetadata);
-                // one more column for avg(price)
-                windowJoinMetadata.add(new TableColumnMetadata(
-                        "avg_price",
-                        DOUBLE,
-                        false,
-                        0,
-                        false,
-                        null
-                ));
-                final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(1);
-                groupByFunctions.add(new AvgDoubleGroupByFunction(DoubleColumn.newInstance(4)));
-                ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-                groupByFunctions.getQuick(0).initValueTypes(valueTypes);
-                return new AsyncWindowJoinRecordCursorFactory(
-                        executionContext.getCairoEngine(),
-                        asm,
-                        configuration,
-                        executionContext.getMessageBus(),
-                        windowJoinMetadata,
-                        master,
-                        slave,
-                        filter,
-                        perWorkerJoinFilters,
-                        Micros.SECOND_MICROS,
-                        Micros.SECOND_MICROS,
-                        valueTypes,
-                        groupByFunctions,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null,
-                        reduceTaskFactory,
-                        executionContext.getSharedQueryWorkerCount()
                 );
             }
 
