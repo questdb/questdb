@@ -345,7 +345,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             if (timestampIndex != -1) {
                 final int timestampType = columnMetadata.getQuick(timestampIndex).getColumnType();
                 if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                    throw validationException().put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
 
