@@ -74,5 +74,5 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException;
 }
