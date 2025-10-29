@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -445,7 +446,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     public static class TimeFrameHelper implements QuietCloseable {
         private final long lookahead;
-        private final Record record;
+        private final PageFrameMemoryRecord record;
         private final TimeFrame timeFrame;
         private final ConcurrentTimeFrameCursor timeFrameCursor;
         private final int timestampIndex;
@@ -475,7 +476,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 rowLo = bookmarkedRowId;
             }
 
-            boolean bookmarked = false;
             for (; ; ) {
                 // find the frame to be scanned
                 if (rowLo == Long.MIN_VALUE) {
@@ -483,8 +483,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                         // carry on if the frame is to the left of the interval
                         if (timeFrame.getTimestampEstimateHi() <= timestampLo) {
                             // bookmark the frame, so that next time we search we start with it
-                            bookmarkedFrameIndex = timeFrame.getFrameIndex();
-                            bookmarkedRowId = 0;
+                            bookmarkCurrentFrame(0);
                             continue;
                         }
                         // check if the frame intersects with the interval, so it's of our interest
@@ -495,15 +494,14 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                             // now we know the exact boundaries of the frame, let's check them
                             if (timeFrame.getTimestampHi() <= timestampLo) {
                                 // the frame is to the left of the interval, so carry on
-                                // bookmark the frame
-                                bookmarkedFrameIndex = timeFrame.getFrameIndex();
-                                bookmarkedRowId = 0;
+                                bookmarkCurrentFrame(0);
                                 continue;
                             }
                             if (timeFrame.getTimestampLo() < timestampHi) {
                                 // yay, it's what we need!
-                                if (timeFrame.getTimestampLo() <= timestampLo) {
+                                if (timeFrame.getTimestampLo() >= timestampLo) {
                                     // we can start with the first row
+                                    bookmarkCurrentFrame(timeFrame.getRowLo());
                                     return timeFrame.getRowLo();
                                 }
                                 // we need to find the first row in the intersection
@@ -518,22 +516,23 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                     }
                 }
 
-                // bookmark the first intersecting frame
-                if (!bookmarked) {
-                    bookmarkedFrameIndex = timeFrame.getFrameIndex();
-                    bookmarkedRowId = 0;
-                    bookmarked = true;
-                }
+                // bookmark the frame
+                bookmarkCurrentFrame(rowLo);
 
                 // scan the found frame
                 // start with a brief linear scan
                 final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
                 if (scanResult >= 0) {
                     // we've found the row
-                    bookmarkedRowId = scanResult;
+                    bookmarkCurrentFrame(scanResult);
                     return scanResult;
                 } else if (scanResult == Long.MIN_VALUE) {
-                    // there are no timestamps in the wanted interval, try next frame
+                    // there are no timestamps in the wanted interval
+                    if (timeFrame.getTimestampHi() > timestampHi) {
+                        // the interval is contained in the frame, no need to try the next one
+                        return Long.MIN_VALUE;
+                    }
+                    // the next frame may have an intersection with the interval, try it
                     rowLo = Long.MIN_VALUE;
                     continue;
                 }
@@ -541,11 +540,17 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 rowLo = -scanResult - 1;
                 final long searchResult = binarySearch(timestampLo, timestampHi, rowLo);
                 if (searchResult == Long.MIN_VALUE) {
-                    // there are no timestamps in the wanted interval, try next frame
+                    // there are no timestamps in the wanted interval
+                    if (timeFrame.getTimestampHi() > timestampHi) {
+                        // the interval is contained in the frame, no need to try the next one
+                        return Long.MIN_VALUE;
+                    }
+                    // the next frame may have an intersection with the interval, try it
                     rowLo = Long.MIN_VALUE;
                     continue;
                 }
-                bookmarkedRowId = searchResult;
+                // we've found the row
+                bookmarkCurrentFrame(searchResult);
                 return searchResult;
             }
         }
@@ -603,12 +608,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             toTop();
         }
 
-        public void recordAt(long rowId) {
-            timeFrameCursor.recordAt(record, rowId);
+        public void recordAtRowIndex(long rowId) {
+            timeFrameCursor.recordAtRowIndex(record, rowId);
         }
 
         public void toTop() {
             timeFrameCursor.toTop();
+            record.clear();
             bookmarkedFrameIndex = -1;
             bookmarkedRowId = Long.MIN_VALUE;
         }
@@ -619,7 +625,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             long high = timeFrame.getRowHi() - 1;
             while (high - low > 65) {
                 final long mid = (low + high) >>> 1;
-                recordAt(mid);
+                recordAtRowIndex(mid);
                 long midTimestamp = record.getTimestamp(timestampIndex);
 
                 if (midTimestamp < timestampLo) {
@@ -634,7 +640,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
             // scan up
             for (long r = low; r < high + 1; r++) {
-                recordAt(r);
+                recordAtRowIndex(r);
                 long timestamp = record.getTimestamp(timestampIndex);
                 if (timestamp >= timestampLo) {
                     if (timestamp < timestampHi) {
@@ -654,16 +660,21 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 } else {
                     return low;
                 }
-                recordAt(high);
+                recordAtRowIndex(high);
                 timestamp = record.getTimestamp(timestampIndex);
             } while (timestamp == timestampLo);
             return high + 1;
         }
 
+        private void bookmarkCurrentFrame(long rowId) {
+            bookmarkedFrameIndex = timeFrame.getFrameIndex();
+            bookmarkedRowId = rowId;
+        }
+
         private long linearScan(long timestampLo, long timestampHi, long rowLo) {
             final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
             for (long r = rowLo; r < scanHi; r++) {
-                recordAt(r);
+                recordAtRowIndex(r);
                 final long timestamp = record.getTimestamp(timestampIndex);
                 if (timestamp >= timestampLo) {
                     if (timestamp < timestampHi) {

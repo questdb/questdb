@@ -32,7 +32,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
@@ -45,7 +44,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.table.TimeFrameCursorImpl.estimatePartitionHi;
@@ -86,7 +84,7 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
     }
 
     @Override
-    public Record getRecord() {
+    public PageFrameMemoryRecord getRecord() {
         return record;
     }
 
@@ -170,11 +168,14 @@ public final class ConcurrentTimeFrameCursor implements TimeFrameCursor {
         }
         final long rowCount = frameRowCounts.getQuick(frameIndex);
         if (rowCount > 0) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
+            frameMemoryPool.navigateTo(frameIndex, record);
+            record.setRowIndex(0);
+            final long timestampLo = record.getTimestamp(metadata.getTimestampIndex());
+            record.setRowIndex(rowCount - 1);
+            final long timestampHi = record.getTimestamp(metadata.getTimestampIndex());
             timeFrame.ofOpen(
-                    Unsafe.getUnsafe().getLong(timestampAddress),
-                    Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1,
+                    timestampLo,
+                    timestampHi + 1,
                     0,
                     rowCount
             );

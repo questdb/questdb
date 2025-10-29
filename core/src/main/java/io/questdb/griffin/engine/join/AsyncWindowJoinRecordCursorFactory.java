@@ -258,7 +258,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowId != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        slaveTimeFrameHelper.recordAt(slaveRowId);
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
                         if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
                             break;
                         }
@@ -355,7 +355,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveRowId != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
-                        slaveTimeFrameHelper.recordAt(slaveRowId);
+                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
                         if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
                             break;
                         }
