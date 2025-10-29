@@ -631,9 +631,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
 
             try (TableReader reader = getReader("decimal_test")) {
-                CharSequence suffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "Z\n" : "000Z\n";
                 TestUtils.assertReader("a\ttimestamp\n" +
-                        "123.450\t1970-01-02T03:46:40.000000" + suffix, reader, new StringSink());
+                        "123.450\t1970-01-02T03:46:40.000000Z\n", reader, new StringSink());
             }
         });
     }
