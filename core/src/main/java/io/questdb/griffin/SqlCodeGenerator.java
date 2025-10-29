@@ -3150,6 +3150,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
+                                WindowJoinContext context = slaveModel.getWindowJoinContext();
+                                QueryModel aggModel = context.getParentModel();
+                                // todo @victor
+                                /* ObjList<QueryColumn> cols = aggModel.getColumns();
+                                for (int j = 0, m = cols.size(); j < m; j++) {
+                                    CharSequence col = cols.get(j).getAst().token;
+                                    if (!functionParser.getFunctionFactoryCache().isGroupBy(col) && masterMetadata.getColumnIndexQuiet(col) < 0) {
+                                         throw InvalidColumnException.INSTANCE;
+                                    }
+                                }*/
+
+                                // steal master filter
                                 CompiledFilter compiledFilter = null;
                                 MemoryCARW bindVarMemory = null;
                                 ObjList<Function> bindVarFunctions = null;
@@ -3170,17 +3182,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
-                                ObjList<Function> perWorkerJoinFilters = null;
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                    perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
-                                    for (int j = 0, k = executionContext.getSharedQueryWorkerCount(); j < k; j++) {
-                                        perWorkerJoinFilters.add(compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext));
-                                    }
                                 }
 
-                                WindowJoinContext context = slaveModel.getWindowJoinContext();
-                                QueryModel aggModel = context.getParentModel();
                                 // assemble groupBy function
                                 ObjList<QueryColumn> columns = aggModel.getColumns();
                                 keyTypes.clear();
@@ -3236,7 +3241,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         master,
                                         slave,
                                         filter,
-                                        perWorkerJoinFilters,
+                                        compileWorkerFilterConditionally(
+                                                executionContext,
+                                                filter,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                slaveModel.getOuterJoinExpressionClause(),
+                                                joinMetadata
+                                        ),
                                         lo,
                                         hi,
                                         valueTypes,
@@ -3252,7 +3263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         bindVarMemory,
                                         bindVarFunctions,
                                         masterFilter,
-                                        masterFilter == null ? null : compileWorkerFilterConditionally(
+                                        compileWorkerFilterConditionally(
                                                 executionContext,
                                                 masterFilter,
                                                 executionContext.getSharedQueryWorkerCount(),
@@ -3262,6 +3273,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         reduceTaskFactory,
                                         executionContext.getSharedQueryWorkerCount()
                                 );
+                                joinMetadata = Misc.free(joinMetadata);
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
