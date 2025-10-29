@@ -358,7 +358,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                         if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
                             break;
                         }
-                        if (joinFilter.getBool(joinRecord)) {
+                        if (joinFilter == null || joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
                                 functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
                                 value.setNew(false);

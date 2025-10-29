@@ -3148,11 +3148,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             case JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
-                                if (!master.supportsPageFrameCursor() || !slave.supportsPageFrameCursor()) {
-                                    throw SqlException.$(0, "both sides of WINDOW join must support page frame cursor");
+                                CompiledFilter compiledFilter = null;
+                                MemoryCARW bindVarMemory = null;
+                                ObjList<Function> bindVarFunctions = null;
+                                Function masterFilter = null;
+                                if (master.supportsFilterStealing()) {
+                                    RecordCursorFactory filterFactory = master;
+                                    master = master.getBaseFactory();
+                                    compiledFilter = filterFactory.getCompiledFilter();
+                                    bindVarMemory = filterFactory.getBindVarMemory();
+                                    bindVarFunctions = filterFactory.getBindVarFunctions();
+                                    masterFilter = filterFactory.getFilter();
+                                    filterFactory.halfClose();
+                                }
+                                if (!slave.supportsTimeFrameCursor()) {
+                                    throw SqlException.$(slaveModel.getJoinKeywordPosition(), "slave table does not support time frame cursor for WINDOW join");
                                 }
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
+                                ObjList<Function> perWorkerJoinFilters = null;
+                                if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                    perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
+                                    for (int j = 0, k = executionContext.getSharedQueryWorkerCount(); j < k; j++) {
+                                        perWorkerJoinFilters.add(compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext));
+                                    }
+                                }
+
                                 WindowJoinContext context = slaveModel.getWindowJoinContext();
                                 QueryModel aggModel = context.getParentModel();
                                 // assemble groupBy function
@@ -3189,14 +3211,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         validateSampleByFillType
                                 );
-                                ObjList<Function> perWorkerJoinFilters = null;
-                                if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                    perWorkerJoinFilters = new ObjList<>(executionContext.getSharedQueryWorkerCount());
-                                    for (int j = 0, k = executionContext.getSharedQueryWorkerCount(); j < k; j++) {
-                                        perWorkerJoinFilters.add(compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext));
-                                    }
-                                }
+
+                                // temp only support long constant
                                 long lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
                                 long hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
                                 TimestampDriver timestampDriver = ColumnType.getTimestampDriver(masterMetadata.getTimestampType());
@@ -3207,7 +3223,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
                                 }
 
-                                return new AsyncWindowJoinRecordCursorFactory(
+                                master = new AsyncWindowJoinRecordCursorFactory(
                                         executionContext.getCairoEngine(),
                                         asm,
                                         configuration,
@@ -3221,15 +3237,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         hi,
                                         valueTypes,
                                         groupByFunctions,
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        null,
+                                        compileWorkerGroupByFunctionsConditionally(
+                                                executionContext,
+                                                aggModel,
+                                                groupByFunctions,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                joinMetadata
+                                        ),
+                                        compiledFilter,
+                                        bindVarMemory,
+                                        bindVarFunctions,
+                                        masterFilter,
+                                        masterFilter == null ? null : compileWorkerFilterConditionally(
+                                                executionContext,
+                                                masterFilter,
+                                                executionContext.getSharedQueryWorkerCount(),
+                                                locatePotentiallyFurtherNestedWhereClause(model.getNestedModel()),
+                                                master.getMetadata()
+                                        ),
                                         reduceTaskFactory,
                                         executionContext.getSharedQueryWorkerCount()
                                 );
+                                break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_RIGHT_OUTER || joinType == JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
@@ -6799,6 +6828,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // skips skipped models until finding a WHERE clause
     private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
+        if (model == null) {
+            return null;
+        }
         QueryModel curr = model;
         ExpressionNode expr = curr.getWhereClause();
 
