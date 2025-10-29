@@ -854,8 +854,8 @@ public final class TableUtils {
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
             throw validationException()
                     .put("timestamp index is outside of range, [path=").put(metaPath)
-                    .put("timestampIndex=").put(timestampIndex)
-                    .put("columnCount=").put(columnCount)
+                    .put(", timestampIndex=").put(timestampIndex)
+                    .put(", columnCount=").put(columnCount)
                     .put(']');
         }
         return timestampIndex;
