@@ -75,7 +75,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
@@ -110,7 +109,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.groupByFunctions = groupByFunctions;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
         this.cursor = new AsyncWindowJoinRecordCursor(
                 configuration,
