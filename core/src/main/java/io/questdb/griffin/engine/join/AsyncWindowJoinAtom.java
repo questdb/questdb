@@ -67,13 +67,12 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
-    private final CompiledFilter compiledFilter;
+    private final CompiledFilter compiledMasterFilter;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
     private final int masterTimestampIndex;
     private final GroupByAllocator ownerAllocator;
-    private final Function ownerFilter;
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
@@ -81,15 +80,16 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final DirectMapValue ownerGroupByValue;
     private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
+    private final Function ownerMasterFilter;
     private final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<DirectMapValue> perWorkerGroupByValues;
     private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
+    private final ObjList<Function> perWorkerMasterFilters;
     private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
     private final long valueSizeInBytes;
 
@@ -106,15 +106,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
+            @Nullable CompiledFilter compiledMasterFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @Nullable Function ownerMasterFilter,
+            @Nullable ObjList<Function> perWorkerMasterFilters,
             int workerCount
     ) {
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
@@ -125,11 +125,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.masterTimestampIndex = masterTimestampIndex;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
-            this.compiledFilter = compiledFilter;
+            this.compiledMasterFilter = compiledMasterFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
-            this.ownerFilter = ownerFilter;
-            this.perWorkerFilters = perWorkerFilters;
+            this.ownerMasterFilter = ownerMasterFilter;
+            this.perWorkerMasterFilters = perWorkerMasterFilters;
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
 
             this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead());
@@ -202,11 +202,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         Misc.freeObjList(perWorkerSlaveTimeFrameHelpers);
         Misc.free(ownerJoinFilter);
         Misc.freeObjList(perWorkerJoinFilters);
-        Misc.free(compiledFilter);
+        Misc.free(compiledMasterFilter);
         Misc.free(bindVarMemory);
         Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
+        Misc.free(ownerMasterFilter);
+        Misc.freeObjList(perWorkerMasterFilters);
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.freeObjList(ownerGroupByFunctions);
@@ -225,15 +225,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return bindVarMemory;
     }
 
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
-    }
-
-    public Function getFilter(int slotId) {
-        if (slotId == -1 || perWorkerFilters == null) {
-            return ownerFilter;
-        }
-        return perWorkerFilters.getQuick(slotId);
+    public CompiledFilter getCompiledMasterFilter() {
+        return compiledMasterFilter;
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -272,6 +265,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerGroupByValues.getQuick(slotId);
     }
 
+    public Function getMasterFilter(int slotId) {
+        if (slotId == -1 || perWorkerMasterFilters == null) {
+            return ownerMasterFilter;
+        }
+        return perWorkerMasterFilters.getQuick(slotId);
+    }
+
     public int getMasterTimestampIndex() {
         return masterTimestampIndex;
     }
@@ -294,15 +294,15 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        if (ownerFilter != null) {
-            ownerFilter.init(symbolTableSource, executionContext);
+        if (ownerMasterFilter != null) {
+            ownerMasterFilter.init(symbolTableSource, executionContext);
         }
 
-        if (perWorkerFilters != null) {
+        if (perWorkerMasterFilters != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
+                Function.init(perWorkerMasterFilters, symbolTableSource, executionContext, ownerMasterFilter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }

@@ -94,11 +94,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
+            @Nullable CompiledFilter compiledMasterFilter,
             @Nullable MemoryCARW bindVarMemory,
             @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @Nullable Function masterFilter,
+            @Nullable ObjList<Function> perWorkerMasterFilters,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
@@ -116,7 +116,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnSplit,
-                filter != null
+                masterFilter != null
         );
         final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
                 asm,
@@ -131,11 +131,11 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 valueTypes,
                 groupByFunctions,
                 perWorkerGroupByFunctions,
-                compiledFilter,
+                compiledMasterFilter,
                 bindVarMemory,
                 bindVarFunctions,
-                filter,
-                perWorkerFilters,
+                masterFilter,
+                perWorkerMasterFilters,
                 workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
@@ -143,7 +143,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 configuration,
                 messageBus,
                 atom,
-                filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
                 reduceTaskFactory,
                 workerCount,
                 PageFrameReduceTask.TYPE_WINDOW_JOIN
@@ -319,8 +319,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final CompiledFilter compiledFilter = atom.getCompiledFilter();
-        final Function filter = atom.getFilter(slotId);
+        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
+        final Function filter = atom.getMasterFilter(slotId);
         final DirectMapValue value = atom.getMapValue(slotId);
         final AsyncWindowJoinAtom.TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
