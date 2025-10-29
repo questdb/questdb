@@ -1741,7 +1741,7 @@ public final class TableUtils {
                     throw validationException()
                             .put("invalid column type [path=").put(metaPath)
                             .put(", columnType=").put(type)
-                            .put(", columnIndex").put(i)
+                            .put(", columnIndex=").put(i)
                             .put(']');
                 }
 
@@ -1755,7 +1755,11 @@ public final class TableUtils {
                     }
 
                     if (getIndexBlockCapacity(metaMem, i) < 2) {
-                        throw validationException().put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                        throw validationException()
+                                .put("invalid index value block capacity [path=").put(metaPath)
+                                .put(", indexBlockCapacity=").put(getIndexBlockCapacity(metaMem, i))
+                                .put(", columnIndex=").put(i)
+                                .put(']');
                     }
                 }
             }
@@ -1764,11 +1768,15 @@ public final class TableUtils {
             int denseCount = 0;
             if (nameIndex != null) {
                 for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                        offset += Vm.getStorageLength(name);
+                    final CharSequence columnName = getColumnName(metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(columnName, denseCount++)) {
+                        offset += Vm.getStorageLength(columnName);
                     } else {
-                        throw validationException().put("Duplicate column [name=").put(name).put("] at ").put(i);
+                        throw validationException()
+                                .put("duplicate column [path=").put(metaPath)
+                                .put(", columnName=").put(columnName)
+                                .put(", columnIndex=").put(i)
+                                .put(']');
                     }
                 }
             }
