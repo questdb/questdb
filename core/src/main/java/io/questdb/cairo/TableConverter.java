@@ -170,7 +170,6 @@ public class TableConverter {
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
             return switch (walType) {
-                // fall through
                 case TABLE_TYPE_WAL, TABLE_TYPE_MAT -> true;
                 case TABLE_TYPE_NON_WAL -> false;
                 default ->
