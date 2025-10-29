@@ -266,7 +266,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata) throws SqlException {
-        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, int scanDirection) throws SqlException {
+        createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
     }
 }

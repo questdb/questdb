@@ -171,8 +171,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
-    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -4014,7 +4014,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     try {
                         final RecordMetadata metadata = newFactory.getMetadata();
-                        createViewOp.validateAndUpdateMetadataFromSelect(metadata);
+                        createViewOp.validateAndUpdateMetadataFromSelect(metadata, newFactory.getScanDirection());
 
                         viewDefinition = engine.createView(
                                 executionContext.getSecurityContext(),
