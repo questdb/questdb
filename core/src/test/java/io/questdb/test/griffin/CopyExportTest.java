@@ -1064,12 +1064,14 @@ public class CopyExportTest extends AbstractCairoTest {
                                                 exportRoot + File.separator + "output3.parquet" + "\t1\tfinished\n",
                                         "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
                                 // Verify only filtered data was exported
-                        assertSql("""
+                        assertSql(
+                                """
                                         id\tvalue
                                         2\t2.5
                                         3\t3.5
                                         """,
-                                        "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id");
+                                "select * from read_parquet('" + exportRoot + File.separator + "output3" + ".parquet') order by id"
+                        );
                             }
                     );
 
