@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-public interface ReadOnlyObjList<T> {
+import io.questdb.std.str.Sinkable;
+
+public interface ReadOnlyObjList<T> extends Sinkable {
     T get(int index);
 
     T getLast();
@@ -36,4 +38,6 @@ public interface ReadOnlyObjList<T> {
     int indexOf(Object o);
 
     int size();
+
+    ObjList<T> copy();
 }
