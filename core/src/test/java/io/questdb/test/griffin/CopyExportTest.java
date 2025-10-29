@@ -1047,6 +1047,32 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReverseTimestampOrdering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test_table (x TIMESTAMP);");
+            execute("insert into test_table values (0), (2), (5);");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy (test_table ORDER BY x DESC) to 'output1' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "output1.parquet" + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
+                        // Verify exported data can be read back and matches original
+                        assertSql("x\n" +
+                                        "1970-01-01T00:00:00.000005Z\n" +
+                                        "1970-01-01T00:00:00.000002Z\n" +
+                                        "1970-01-01T00:00:00.000000Z\n",
+                                "select * from read_parquet('" + exportRoot + File.separator + "output1" + ".parquet')");
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
     // Demonstration of proper copy export test pattern
     @Test
     public void testCopyTableToParquetWithExportLog() throws Exception {

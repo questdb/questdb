@@ -29,10 +29,10 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
+import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -43,6 +43,7 @@ import io.questdb.network.TlsSessionInitFailedException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -431,7 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         }
 
         @Override
-        public ObjList<CharSequence> getGroups() {
+        public ReadOnlyObjList<CharSequence> getGroups() {
             return null;
         }
 

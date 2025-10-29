@@ -22,35 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.test.griffin.engine.functions.eq;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.PrincipalContext;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.ReadOnlyObjList;
-import org.jetbrains.annotations.Nullable;
 
-public interface Authenticator extends QuietCloseable, Mutable, PrincipalContext {
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-    @Override
-    default void clear() {
-    }
+public class EqSymFunctionFactoryTest extends AbstractCairoTest {
 
-    @Override
-    default void close() {
-    }
-
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
-    }
-
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable
-    default ReadOnlyObjList<CharSequence> getGroups() {
-        return null;
+    @Test
+    public void testSmoke() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");
+            assertQuery(
+                    """
+                            a\tb
+                            1\t1
+                            \t
+                            1\t1
+                            \t
+                            5\t5
+                            \t
+                            5\t5
+                            \t
+                            1\t1
+                            """,
+                    "select * from x where a = b",
+                    null,
+                    true,
+                    false
+            );
+        });
     }
 }
