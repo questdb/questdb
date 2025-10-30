@@ -289,7 +289,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      *
      * @return true if the factory supports time frames
      * and {@link #getTimeFrameCursor(SqlExecutionContext)}
-     * or {@link #newTimeFrameCursor(SqlExecutionContext)} can be safely called.
+     * or {@link #newTimeFrameCursor()} can be safely called.
      */
     default boolean supportsTimeFrameCursor() {
         return false;
