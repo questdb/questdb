@@ -382,10 +382,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         //  we should see if we can stay inside of this method until we have a completely idle iteration
         //  at the same time we should hog this thread in case we are always 'useful', we can probably
         //  introduce a loop count after which we always exit
-        boolean useful = false;
 
         final long timestamp = clock.getTicks();
-        processDisconnects(timestamp);
+        boolean useful = processDisconnects(timestamp);
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;

@@ -474,15 +474,17 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         // no-op
     }
 
-    protected void processDisconnects(long epochMs) {
-        disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
+    protected boolean processDisconnects(long epochMs) {
+        boolean useful = disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
                     .$("ms, closing listener [serverFd=").$(serverFd)
                     .I$();
             nf.close(serverFd);
             serverFd = -1;
+            useful = true;
         }
+        return useful;
     }
 
     protected void publishOperation(int operation, C context) {
