@@ -29,11 +29,24 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
+
+    public static GroupByFunction newInstance(Function arg, int position) {
+        int k = ColumnType.tagOf(arg.getType());
+        return switch (k) {
+            case ColumnType.DECIMAL8 -> new AvgDecimal8GroupByFunction(arg, position);
+            case ColumnType.DECIMAL16 -> new AvgDecimal16GroupByFunction(arg, position);
+            case ColumnType.DECIMAL32 -> new AvgDecimal32GroupByFunction(arg, position);
+            case ColumnType.DECIMAL64 -> new AvgDecimal64GroupByFunction(arg, position);
+            case ColumnType.DECIMAL128 -> new AvgDecimal128GroupByFunction(arg, position);
+            default -> new AvgDecimal256GroupByFunction(arg, position);
+        };
+    }
 
     @Override
     public String getSignature() {
@@ -55,17 +68,5 @@ public class AvgDecimalGroupByFunctionFactory implements FunctionFactory {
     ) {
         Function arg = args.getQuick(0);
         return newInstance(arg, position);
-    }
-
-    public static Function newInstance(Function arg, int position) {
-        int k = ColumnType.tagOf(arg.getType());
-        return switch (k) {
-            case ColumnType.DECIMAL8 -> new AvgDecimal8GroupByFunction(arg, position);
-            case ColumnType.DECIMAL16 -> new AvgDecimal16GroupByFunction(arg, position);
-            case ColumnType.DECIMAL32 -> new AvgDecimal32GroupByFunction(arg, position);
-            case ColumnType.DECIMAL64 -> new AvgDecimal64GroupByFunction(arg, position);
-            case ColumnType.DECIMAL128 -> new AvgDecimal128GroupByFunction(arg, position);
-            default -> new AvgDecimal256GroupByFunction(arg, position);
-        };
     }
 }

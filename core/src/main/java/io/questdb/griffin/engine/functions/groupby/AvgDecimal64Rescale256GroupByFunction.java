@@ -60,13 +60,12 @@ class AvgDecimal64Rescale256GroupByFunction extends Decimal256Function implement
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long value = arg.getDecimal64(record);
         if (value == Decimals.DECIMAL64_NULL) {
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex + 1, value);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -94,33 +93,60 @@ class AvgDecimal64Rescale256GroupByFunction extends Decimal256Function implement
         return arg;
     }
 
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        if (calc(rec)) {
+            sink.ofRaw(
+                    decimal256A.getLh(),
+                    decimal256A.getLl()
+            );
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        if (calc(rec)) {
+            return (short) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL16_NULL;
+        }
+    }
 
     @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
-        calc(rec);
-        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
+        if (calc(rec)) {
+            sink.copyRaw(decimal256A);
+        } else {
+            sink.ofRawNull();
+        }
     }
 
-    private void calc(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count > 0) {
-            try {
-                final int argScale = ColumnType.getDecimalScale(arg.getType());
-                if (rec.getBool(valueIndex + 3)) {
-                    rec.getDecimal128(valueIndex, decimal128A);
-                    long s = decimal128A.getHigh() < 0 ? -1L : 0L;
-                    decimal256A.of(s, s, decimal128A.getHigh(), decimal128A.getLow(), argScale);
-                } else {
-                    long v = rec.getDecimal64(valueIndex + 1);
-                    long s = v < 0 ? -1L : 0L;
-                    decimal256A.of(s, s, s, v, argScale);
-                }
-                decimal256A.divide(0, 0, 0, count, 0, ColumnType.getDecimalScale(type), RoundingMode.HALF_EVEN);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
-            }
+    @Override
+    public int getDecimal32(Record rec) {
+        if (calc(rec)) {
+            return (int) decimal256A.getLl();
         } else {
-            decimal256A.ofRawNull();
+            return Decimals.DECIMAL32_NULL;
+        }
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        if (calc(rec)) {
+            return decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL64_NULL;
+        }
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        if (calc(rec)) {
+            return (byte) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL8_NULL;
         }
     }
 
@@ -237,6 +263,30 @@ class AvgDecimal64Rescale256GroupByFunction extends Decimal256Function implement
             Decimal128.uncheckedAdd(decimal128A, decimal64A);
             mapValue.putDecimal128(valueIndex, decimal128A);
             mapValue.putBool(valueIndex + 3, true);
+        }
+    }
+
+    private boolean calc(Record rec) {
+        long count = rec.getLong(valueIndex + 2);
+        if (count > 0) {
+            try {
+                final int argScale = ColumnType.getDecimalScale(arg.getType());
+                if (rec.getBool(valueIndex + 3)) {
+                    rec.getDecimal128(valueIndex, decimal128A);
+                    long s = decimal128A.getHigh() < 0 ? -1L : 0L;
+                    decimal256A.of(s, s, decimal128A.getHigh(), decimal128A.getLow(), argScale);
+                } else {
+                    long v = rec.getDecimal64(valueIndex + 1);
+                    long s = v < 0 ? -1L : 0L;
+                    decimal256A.of(s, s, s, v, argScale);
+                }
+                decimal256A.divide(0, 0, 0, count, 0, ColumnType.getDecimalScale(type), RoundingMode.HALF_EVEN);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+            }
+            return true;
+        } else {
+            return false;
         }
     }
 }

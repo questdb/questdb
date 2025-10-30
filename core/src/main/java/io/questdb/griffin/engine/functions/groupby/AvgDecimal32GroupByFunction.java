@@ -58,13 +58,12 @@ class AvgDecimal32GroupByFunction extends Decimal32Function implements GroupByFu
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
         if (value == Decimals.DECIMAL32_NULL) {
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex + 1, value);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -138,20 +137,21 @@ class AvgDecimal32GroupByFunction extends Decimal32Function implements GroupByFu
 
         if (!srcOverflow && !destOverflow) {
             long srcCount = srcValue.getLong(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 2);
             final boolean srcNull = srcCount == 0;
-            final boolean destNull = destCount == 0;
-            if (!destNull && !srcNull) {
+            if (!srcNull) {
+                long destCount = destValue.getLong(valueIndex + 2);
+                final boolean destNull = destCount == 0;
                 long src = srcValue.getDecimal64(valueIndex + 1);
-                long dest = destValue.getDecimal64(valueIndex + 1);
-                // both not null
-                add(destValue, src, dest);
-                destValue.addLong(valueIndex + 2, srcCount);
-            } else if (destNull) {
-                // put src value in
-                long src = srcValue.getDecimal64(valueIndex + 1);
-                destValue.putLong(valueIndex + 1, src);
-                destValue.putLong(valueIndex + 2, srcCount);
+                if (!destNull) {
+                    long dest = destValue.getDecimal64(valueIndex + 1);
+                    // both not null
+                    add(destValue, src, dest);
+                    destValue.addLong(valueIndex + 2, srcCount);
+                } else {
+                    // put src value in
+                    destValue.putLong(valueIndex + 1, src);
+                    destValue.putLong(valueIndex + 2, srcCount);
+                }
             }
         } else if (srcOverflow && !destOverflow) {
             // src overflown, therefore it could not be null (null does not overflow)

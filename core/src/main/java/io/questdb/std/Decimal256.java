@@ -433,7 +433,7 @@ public class Decimal256 implements Sinkable, Decimal {
         int delta = scale + (divisorScale - dividendScale);
 
         // Fail early if we're sure to overflow.
-        if ((delta > 0 && (scale + delta) >= MAX_SCALE) || (delta < 0 && (scale - delta) >= MAX_SCALE)) {
+        if ((delta > 0 && (dividendScale + delta) >= MAX_SCALE) || (delta < 0 && (divisorScale - delta) >= MAX_SCALE)) {
             throw NumericException.instance().put("Overflow in division: resulting scale would exceed maximum (" + MAX_SCALE + ")");
         }
 
@@ -901,15 +901,6 @@ public class Decimal256 implements Sinkable, Decimal {
         final long bLH = Decimal256.POWERS_TEN_TABLE[pow][offset + 2];
         final long bLL = Decimal256.POWERS_TEN_TABLE[pow][offset + 3];
         uncheckedAdd(this, bHH, bHL, bLH, bLL);
-    }
-
-    /**
-     * In-place addition.
-     *
-     * @throws NumericException if overflow occurs
-     */
-    public void uncheckedAdd(Decimal256 other) {
-        uncheckedAdd(this, hh, hl, lh, ll, other.hh, other.hl, other.lh, other.ll);
     }
 
     /**
@@ -1777,6 +1768,15 @@ public class Decimal256 implements Sinkable, Decimal {
         return sink.toString();
     }
 
+    /**
+     * In-place addition.
+     *
+     * @throws NumericException if overflow occurs
+     */
+    public void uncheckedAdd(Decimal256 other) {
+        uncheckedAdd(this, hh, hl, lh, ll, other.hh, other.hl, other.lh, other.ll);
+    }
+
     private static void add(Decimal256 result,
                             long aHH, long aHL, long aLH, long aLL, int aScale,
                             long bHH, long bHL, long bLH, long bLL, int bScale) {
@@ -1827,6 +1827,30 @@ public class Decimal256 implements Sinkable, Decimal {
         }
     }
 
+    private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
+        final int offset = (multiplier - 1) * 4;
+        long bHH = POWERS_TEN_TABLE[pow][offset];
+        if (aHH != bHH) {
+            return Long.compare(aHH, bHH);
+        }
+        long bHL = POWERS_TEN_TABLE[pow][offset + 1];
+        if (aHL != bHL) {
+            return Long.compareUnsigned(aHL, bHL);
+        }
+        long bLH = POWERS_TEN_TABLE[pow][offset + 2];
+        if (aLH != bLH) {
+            return Long.compareUnsigned(aLH, bLH);
+        }
+        long bLL = POWERS_TEN_TABLE[pow][offset + 3];
+        return Long.compareUnsigned(aLL, bLL);
+    }
+
+    private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
+        for (int i = 0; i < 8; i++) {
+            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
+        }
+    }
+
     private static void uncheckedAdd(Decimal256 result,
                                      long aHH, long aHL, long aLH, long aLL,
                                      long bHH, long bHL, long bLH, long bLL) {
@@ -1854,30 +1878,6 @@ public class Decimal256 implements Sinkable, Decimal {
             throw NumericException.instance().put("Overflow in addition: result exceeds 256-bit capacity");
         }
         result.hh = r;
-    }
-
-    private static int compareToPowerOfTen(long aHH, long aHL, long aLH, long aLL, int pow, int multiplier) {
-        final int offset = (multiplier - 1) * 4;
-        long bHH = POWERS_TEN_TABLE[pow][offset];
-        if (aHH != bHH) {
-            return Long.compare(aHH, bHH);
-        }
-        long bHL = POWERS_TEN_TABLE[pow][offset + 1];
-        if (aHL != bHL) {
-            return Long.compareUnsigned(aHL, bHL);
-        }
-        long bLH = POWERS_TEN_TABLE[pow][offset + 2];
-        if (aLH != bLH) {
-            return Long.compareUnsigned(aLH, bLH);
-        }
-        long bLL = POWERS_TEN_TABLE[pow][offset + 3];
-        return Long.compareUnsigned(aLL, bLL);
-    }
-
-    private static void putLongIntoBytes(byte[] bytes, int offset, long value) {
-        for (int i = 0; i < 8; i++) {
-            bytes[offset + i] = (byte) (value >>> ((7 - i) * 8));
-        }
     }
 
     private static void uncheckedAdd(Decimal256 result, long bHH, long bHL, long bLH, long bLL) {

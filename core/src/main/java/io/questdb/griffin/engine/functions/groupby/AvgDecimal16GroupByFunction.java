@@ -56,8 +56,7 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
         if (value == Decimals.DECIMAL16_NULL) {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex, value);
             mapValue.putLong(valueIndex + 1, 1);
@@ -68,11 +67,7 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
         if (value != Decimals.DECIMAL16_NULL) {
-            long curr = mapValue.getLong(valueIndex);
-            if (curr == Decimals.DECIMAL64_NULL) {
-                curr = 0;
-            }
-            mapValue.putLong(valueIndex, curr + value);
+            mapValue.addLong(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }
     }
@@ -136,14 +131,8 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
         long srcCount = srcValue.getLong(valueIndex + 1);
         if (srcCount > 0) {
             long src = srcValue.getLong(valueIndex);
-            long dest = destValue.getLong(valueIndex);
-            if (dest == Decimals.DECIMAL64_NULL) {
-                destValue.putLong(valueIndex, src);
-                destValue.putLong(valueIndex + 1, srcCount);
-            } else {
-                destValue.putLong(valueIndex, src + dest);
-                destValue.addLong(valueIndex + 1, srcCount);
-            }
+            destValue.addLong(valueIndex, src);
+            destValue.addLong(valueIndex + 1, srcCount);
         }
     }
 

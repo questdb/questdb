@@ -60,13 +60,12 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal128(record, decimal128A);
         if (decimal128A.isNull()) {
-            mapValue.putDecimal128(valueIndex + 1, Decimal128.ZERO);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putDecimal128(valueIndex + 1, decimal128A);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -122,10 +121,11 @@ class AvgDecimal128Rescale256GroupByFunction extends Decimal256Function implemen
 
     @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
-        if (!calc(rec)) {
-            decimal256A.ofRawNull();
+        if (calc(rec)) {
+            sink.copyRaw(decimal256A);
+        } else {
+            sink.ofRawNull();
         }
-        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
     }
 
     @Override

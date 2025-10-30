@@ -59,13 +59,12 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         arg.getDecimal128(record, decimal128A);
         if (decimal128A.isNull()) {
-            mapValue.putDecimal128(valueIndex + 1, Decimal128.ZERO);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putDecimal128(valueIndex + 1, decimal128A);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -149,29 +148,30 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
 
         if (!srcOverflow && !destOverflow) {
             long srcCount = srcValue.getLong(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 2);
             final boolean srcNull = srcCount == 0;
-            final boolean destNull = destCount == 0;
-            if (!destNull && !srcNull) {
+            if (!srcNull) {
+                long destCount = destValue.getLong(valueIndex + 2);
+                final boolean destNull = destCount == 0;
                 srcValue.getDecimal128(valueIndex + 1, decimal128B);
-                destValue.getDecimal128(valueIndex + 1, decimal128A);
-                // both not null
-                try {
-                    Decimal128.uncheckedAdd(decimal128A, decimal128B);
-                    destValue.putDecimal128(valueIndex + 1, decimal128A);
-                } catch (NumericException e) {
-                    decimal256A.ofRaw(0, 0, 0, 0);
-                    Decimal256.uncheckedAdd(decimal256A, decimal128A);
-                    Decimal256.uncheckedAdd(decimal256A, decimal128B);
-                    destValue.putDecimal256(valueIndex, decimal256A);
-                    destValue.putBool(valueIndex + 3, true);
+                if (!destNull) {
+                    // both not null
+                    destValue.getDecimal128(valueIndex + 1, decimal128A);
+                    try {
+                        Decimal128.uncheckedAdd(decimal128A, decimal128B);
+                        destValue.putDecimal128(valueIndex + 1, decimal128A);
+                    } catch (NumericException e) {
+                        decimal256A.ofRaw(0, 0, 0, 0);
+                        Decimal256.uncheckedAdd(decimal256A, decimal128A);
+                        Decimal256.uncheckedAdd(decimal256A, decimal128B);
+                        destValue.putDecimal256(valueIndex, decimal256A);
+                        destValue.putBool(valueIndex + 3, true);
+                    }
+                    destValue.addLong(valueIndex + 2, srcCount);
+                } else {
+                    // put src value in
+                    destValue.putDecimal128(valueIndex + 1, decimal128B);
+                    destValue.putLong(valueIndex + 2, srcCount);
                 }
-                destValue.addLong(valueIndex + 2, srcCount);
-            } else if (destNull) {
-                // put src value in
-                srcValue.getDecimal128(valueIndex + 1, decimal128B);
-                destValue.putDecimal128(valueIndex + 1, decimal128B);
-                destValue.putLong(valueIndex + 2, srcCount);
             }
         } else if (srcOverflow && !destOverflow) {
             // src overflown, therefore it could not be null (null does not overflow)

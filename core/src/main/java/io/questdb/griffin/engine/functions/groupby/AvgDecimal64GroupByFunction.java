@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
 import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -59,13 +58,12 @@ class AvgDecimal64GroupByFunction extends Decimal64Function implements GroupByFu
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long value = arg.getDecimal64(record);
         if (value == Decimals.DECIMAL64_NULL) {
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex + 1, value);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -139,20 +137,21 @@ class AvgDecimal64GroupByFunction extends Decimal64Function implements GroupByFu
 
         if (!srcOverflow && !destOverflow) {
             long srcCount = srcValue.getLong(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 2);
             final boolean srcNull = srcCount == 0;
-            final boolean destNull = destCount == 0;
-            if (!destNull && !srcNull) {
+            if (!srcNull) {
+                long destCount = destValue.getLong(valueIndex + 2);
+                final boolean destNull = destCount == 0;
                 long src = srcValue.getDecimal64(valueIndex + 1);
-                long dest = destValue.getDecimal64(valueIndex + 1);
-                // both not null
-                add(destValue, src, dest);
-                destValue.addLong(valueIndex + 2, srcCount);
-            } else if (destNull) {
-                // put src value in
-                long src = srcValue.getDecimal64(valueIndex + 1);
-                destValue.putLong(valueIndex + 1, src);
-                destValue.putLong(valueIndex + 2, srcCount);
+                if (!destNull) {
+                    long dest = destValue.getDecimal64(valueIndex + 1);
+                    // both not null
+                    add(destValue, src, dest);
+                    destValue.addLong(valueIndex + 2, srcCount);
+                } else {
+                    // put src value in
+                    destValue.putLong(valueIndex + 1, src);
+                    destValue.putLong(valueIndex + 2, srcCount);
+                }
             }
         } else if (srcOverflow && !destOverflow) {
             // src overflown, therefore it could not be null (null does not overflow)
@@ -185,7 +184,7 @@ class AvgDecimal64GroupByFunction extends Decimal64Function implements GroupByFu
             // both overflown, neither could be null
             srcValue.getDecimal128(valueIndex, decimal128A);
             destValue.getDecimal128(valueIndex, decimal128B);
-            decimal128B.add(decimal128A);
+            decimal128B.uncheckedAdd(decimal128A);
             destValue.putDecimal128(valueIndex, decimal128B);
             destValue.addLong(valueIndex + 2, srcValue.getLong(valueIndex + 2));
         }
@@ -198,6 +197,11 @@ class AvgDecimal64GroupByFunction extends Decimal64Function implements GroupByFu
         mapValue.putBool(valueIndex + 3, false);
     }
 
+    @Override
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
+    }
+
     private void add(MapValue mapValue, long decimal64A, long decimal64B) {
         try {
             mapValue.putLong(valueIndex + 1, Decimal64.uncheckedAdd(decimal64A, decimal64B));
@@ -207,11 +211,6 @@ class AvgDecimal64GroupByFunction extends Decimal64Function implements GroupByFu
             mapValue.putDecimal128(valueIndex, decimal128A);
             mapValue.putBool(valueIndex + 3, true);
         }
-    }
-
-    @Override
-    public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
     }
 
     private long calc(Record rec) {

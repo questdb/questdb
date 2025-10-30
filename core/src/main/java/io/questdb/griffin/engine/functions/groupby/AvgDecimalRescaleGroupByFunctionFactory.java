@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -37,36 +38,17 @@ import io.questdb.std.Transient;
 
 public class AvgDecimalRescaleGroupByFunctionFactory implements FunctionFactory {
 
-    public static Function newInstance(Function arg, int position, int targetScale) {
+    public static GroupByFunction newInstance(Function arg, int position, int targetScale) {
         final int argType = arg.getType();
         final int argPrecision = ColumnType.getDecimalPrecision(argType);
         final int argScale = ColumnType.getDecimalScale(argType);
         final int targetPrecision = argPrecision - argScale + targetScale;
         final int targetType = ColumnType.getDecimalType(targetPrecision, targetScale);
-        final int targetTag = ColumnType.tagOf(targetType);
         return switch (ColumnType.tagOf(argType)) {
-            case ColumnType.DECIMAL8 -> switch (targetTag) {
-                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                        new AvgDecimal8Rescale64GroupByFunction(arg, position, targetType);
-                case ColumnType.DECIMAL128 -> new AvgDecimal8Rescale128GroupByFunction(arg, position, targetType);
-                default -> new AvgDecimal8Rescale256GroupByFunction(arg, position, targetType);
-            };
-            case ColumnType.DECIMAL16 -> switch (targetTag) {
-                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                        new AvgDecimal16Rescale64GroupByFunction(arg, position, targetType);
-                case ColumnType.DECIMAL128 -> new AvgDecimal16Rescale128GroupByFunction(arg, position, targetType);
-                default -> new AvgDecimal16Rescale256GroupByFunction(arg, position, targetType);
-            };
-            case ColumnType.DECIMAL32 -> switch (targetTag) {
-                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                     ColumnType.DECIMAL128 -> new AvgDecimal32Rescale128GroupByFunction(arg, position, targetType);
-                default -> new AvgDecimal32Rescale256GroupByFunction(arg, position, targetType);
-            };
-            case ColumnType.DECIMAL64 -> switch (targetTag) {
-                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64,
-                     ColumnType.DECIMAL128 -> new AvgDecimal64Rescale128GroupByFunction(arg, position, targetType);
-                default -> new AvgDecimal64Rescale256GroupByFunction(arg, position, targetType);
-            };
+            case ColumnType.DECIMAL8 -> new AvgDecimal8Rescale256GroupByFunction(arg, position, targetType);
+            case ColumnType.DECIMAL16 -> new AvgDecimal16Rescale256GroupByFunction(arg, position, targetType);
+            case ColumnType.DECIMAL32 -> new AvgDecimal32Rescale256GroupByFunction(arg, position, targetType);
+            case ColumnType.DECIMAL64 -> new AvgDecimal64Rescale256GroupByFunction(arg, position, targetType);
             case ColumnType.DECIMAL128 -> new AvgDecimal128Rescale256GroupByFunction(arg, position, targetType);
             default -> new AvgDecimal256Rescale256GroupByFunction(arg, position, targetType);
         };

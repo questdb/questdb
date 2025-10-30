@@ -416,6 +416,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         public LeastDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
             this.n = args.size();
+            for (int i = 0; i < n; i++) {
+                if (ColumnType.isDecimal(this.args.getQuick(i).getType())) {
+                    this.args.setQuick(i, Decimal256LoaderFunctionFactory.getInstance(this.args.getQuick(i)));
+                }
+            }
         }
 
         @Override
@@ -448,8 +453,8 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
         private double load(Function arg, Record rec) {
             final int type = arg.getType();
-            if (ColumnType.isDecimal(type)) {
-                DecimalUtil.load(decimal256, decimal128, arg, rec, type);
+            if (ColumnType.tagOf(type) == ColumnType.DECIMAL256) {
+                arg.getDecimal256(rec, decimal256);
                 if (decimal256.isNull()) {
                     return Double.NEGATIVE_INFINITY;
                 }

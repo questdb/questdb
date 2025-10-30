@@ -408,7 +408,6 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
-        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int n;
         private final StringSink sink = new StringSink();
@@ -416,6 +415,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public GreatestDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
             this.n = args.size();
+            for (int i = 0; i < n; i++) {
+                if (ColumnType.isDecimal(this.args.getQuick(i).getType())) {
+                    this.args.setQuick(i, Decimal256LoaderFunctionFactory.getInstance(this.args.getQuick(i)));
+                }
+            }
         }
 
         @Override
@@ -448,8 +452,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         private double load(Function arg, Record rec) {
             final int type = arg.getType();
-            if (ColumnType.isDecimal(type)) {
-                DecimalUtil.load(decimal256, decimal128, arg, rec, type);
+            if (ColumnType.tagOf(type) == ColumnType.DECIMAL256) {
+                arg.getDecimal256(rec, decimal256);
                 if (decimal256.isNull()) {
                     return Double.NEGATIVE_INFINITY;
                 }

@@ -66,13 +66,12 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
         if (value == Decimals.DECIMAL32_NULL) {
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex + 1, value);
             mapValue.putLong(valueIndex + 2, 1);
+            mapValue.putBool(valueIndex + 3, false);
         }
-        mapValue.putBool(valueIndex + 3, false);
     }
 
     @Override
@@ -101,9 +100,60 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
     }
 
     @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        if (calc(rec)) {
+            sink.ofRaw(
+                    decimal256A.getLh(),
+                    decimal256A.getLl()
+            );
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        if (calc(rec)) {
+            return (short) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL16_NULL;
+        }
+    }
+
+    @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
-        calc(rec);
-        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
+        if (calc(rec)) {
+            sink.copyRaw(decimal256A);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        if (calc(rec)) {
+            return (int) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL32_NULL;
+        }
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        if (calc(rec)) {
+            return decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL64_NULL;
+        }
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        if (calc(rec)) {
+            return (byte) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL8_NULL;
+        }
     }
 
     @Override
@@ -147,20 +197,21 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
 
         if (!srcOverflow && !destOverflow) {
             long srcCount = srcValue.getLong(valueIndex + 2);
-            long destCount = destValue.getLong(valueIndex + 2);
             final boolean srcNull = srcCount == 0;
-            final boolean destNull = destCount == 0;
-            if (!destNull && !srcNull) {
+            if (!srcNull) {
+                long destCount = destValue.getLong(valueIndex + 2);
+                final boolean destNull = destCount == 0;
                 long src = srcValue.getDecimal64(valueIndex + 1);
-                long dest = destValue.getDecimal64(valueIndex + 1);
-                // both not null
-                add(destValue, src, dest);
-                destValue.addLong(valueIndex + 2, srcCount);
-            } else if (destNull) {
-                // put src value in
-                long src = srcValue.getDecimal64(valueIndex + 1);
-                destValue.putLong(valueIndex + 1, src);
-                destValue.putLong(valueIndex + 2, srcCount);
+                if (!destNull) {
+                    long dest = destValue.getDecimal64(valueIndex + 1);
+                    // both not null
+                    add(destValue, src, dest);
+                    destValue.addLong(valueIndex + 2, srcCount);
+                } else {
+                    // put src value in
+                    destValue.putLong(valueIndex + 1, src);
+                    destValue.putLong(valueIndex + 2, srcCount);
+                }
             }
         } else if (srcOverflow && !destOverflow) {
             // src overflown, therefore it could not be null (null does not overflow)
@@ -233,7 +284,7 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
         }
     }
 
-    private void calc(Record rec) {
+    private boolean calc(Record rec) {
         long count = rec.getLong(valueIndex + 2);
         if (count > 0) {
             try {
@@ -251,8 +302,9 @@ class AvgDecimal32Rescale256GroupByFunction extends Decimal256Function implement
             } catch (NumericException e) {
                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
             }
+            return true;
         } else {
-            decimal256A.ofRawNull();
+            return false;
         }
     }
 }

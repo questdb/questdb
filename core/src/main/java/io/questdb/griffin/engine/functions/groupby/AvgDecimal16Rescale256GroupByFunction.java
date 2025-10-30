@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal256Function;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.NumericException;
@@ -56,8 +57,7 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
         if (value == Decimals.DECIMAL16_NULL) {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
+            setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex, value);
             mapValue.putLong(valueIndex + 1, 1);
@@ -68,11 +68,7 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
         if (value != Decimals.DECIMAL16_NULL) {
-            long curr = mapValue.getLong(valueIndex);
-            if (curr == Decimals.DECIMAL64_NULL) {
-                curr = 0;
-            }
-            mapValue.putLong(valueIndex, curr + value);
+            mapValue.addLong(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }
     }
@@ -84,21 +80,60 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
 
 
     @Override
-    public void getDecimal256(Record rec, Decimal256 sink) {
-        long count = rec.getLong(valueIndex + 1);
-        if (count > 0) {
-            try {
-                long value = rec.getLong(valueIndex);
-                long s = value < 0 ? -1L : 0L;
-                decimal256A.of(s, s, s, value, ColumnType.getDecimalScale(arg.getType()));
-                decimal256A.divide(0, 0, 0, count, 0, ColumnType.getDecimalScale(type), RoundingMode.HALF_EVEN);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
-            }
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        if (calc(rec)) {
+            sink.ofRaw(
+                    decimal256A.getLh(),
+                    decimal256A.getLl()
+            );
         } else {
-            decimal256A.ofRawNull();
+            sink.ofRawNull();
         }
-        sink.ofRaw(decimal256A.getHh(), decimal256A.getHl(), decimal256A.getLh(), decimal256A.getLl());
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        if (calc(rec)) {
+            return (short) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL16_NULL;
+        }
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        if (calc(rec)) {
+            sink.copyRaw(decimal256A);
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        if (calc(rec)) {
+            return (int) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL32_NULL;
+        }
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        if (calc(rec)) {
+            return decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL64_NULL;
+        }
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        if (calc(rec)) {
+            return (byte) decimal256A.getLl();
+        } else {
+            return Decimals.DECIMAL8_NULL;
+        }
     }
 
     @Override
@@ -138,14 +173,8 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
         long srcCount = srcValue.getLong(valueIndex + 1);
         if (srcCount > 0) {
             long src = srcValue.getLong(valueIndex);
-            long dest = destValue.getLong(valueIndex);
-            if (dest == Decimals.DECIMAL64_NULL) {
-                destValue.putLong(valueIndex, src);
-                destValue.putLong(valueIndex + 1, srcCount);
-            } else {
-                destValue.putLong(valueIndex, src + dest);
-                destValue.addLong(valueIndex + 1, srcCount);
-            }
+            destValue.addLong(valueIndex, src);
+            destValue.addLong(valueIndex + 1, srcCount);
         }
     }
 
@@ -158,5 +187,22 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    private boolean calc(Record rec) {
+        long count = rec.getLong(valueIndex + 1);
+        if (count > 0) {
+            try {
+                long value = rec.getLong(valueIndex);
+                decimal256A.ofRaw(value);
+                decimal256A.setScale(ColumnType.getDecimalScale(arg.getType()));
+                decimal256A.divide(0, 0, 0, count, 0, ColumnType.getDecimalScale(type), RoundingMode.HALF_EVEN);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+            }
+            return true;
+        } else {
+            return false;
+        }
     }
 }
