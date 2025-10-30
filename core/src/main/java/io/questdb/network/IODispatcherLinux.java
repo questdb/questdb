@@ -388,7 +388,16 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;
-        if (n > 0) {
+        if (n > 0 || pendingAccept) {
+            boolean acceptProcessed = false;
+
+            if (pendingAccept) {
+                // we have left-overs from a previous round, process them now
+                pendingAccept = !accept(timestamp);
+                acceptProcessed = true;
+                useful = true;
+            }
+
             // check all activated FDs
             LOG.debug().$("epoll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
@@ -396,8 +405,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 offset += EpollAccessor.SIZEOF_EVENT;
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
-                if (id == 0) {
+                if (id == 0 && !acceptProcessed) {
                     pendingAccept = !accept(timestamp);
+                    acceptProcessed = true;
                     useful = true;
                     continue;
                 }
@@ -410,27 +420,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     watermark--;
                 }
             }
-        }
-
-        // We use epoll in Edge-Triggered (ET) mode. If an `accept()` call in a previous
-        // round did not drain all pending connections, ET mode means epoll won't
-        // notify us again for those remaining connections.
-        //
-        // The `accept()` function (called in the main event loop) tracks this,
-        // setting 'pendingAccept = true' if it exits while connections are still pending.
-        //
-        // We check this flag *after* the main event loop as an optimization.
-        // If a *new* connection event arrived in *this* round, the main loop's `accept()`
-        // call would have run and likely drained all connections (including the old ones),
-        // resetting 'pendingAccept' to 'false'.
-        //
-        // This final check handles the case where no new events arrived, but a
-        // backlog still exists, or the main loop's `accept` failed to clear it.
-        // It avoids an unnecessary, expensive `accept()` syscall if the backlog
-        // was already cleared by the main loop.
-        if (pendingAccept && isListening()) {
-            pendingAccept = !accept(timestamp);
-            useful = true;
         }
 
         // process rows over watermark (new connections)
