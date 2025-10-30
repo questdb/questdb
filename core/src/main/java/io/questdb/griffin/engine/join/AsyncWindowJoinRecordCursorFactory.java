@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -63,6 +64,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
@@ -75,6 +77,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncWindowJoinRecordCursor cursor;
     private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
@@ -84,7 +87,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
-            @NotNull RecordMetadata joinMetadata,
+            @NotNull JoinRecordMetadata joinMetadata,
+            @NotNull RecordMetadata outMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @Nullable Function joinFilter,
@@ -102,14 +106,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
             int workerCount
     ) {
-        super(joinMetadata);
-
+        super(outMetadata);
         assert masterFactory.supportsPageFrameCursor();
         assert slaveFactory.supportsTimeFrameCursor();
 
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
+        this.joinMetadata = joinMetadata;
         this.cursor = new AsyncWindowJoinRecordCursor(
                 configuration,
                 groupByFunctions,
@@ -117,6 +121,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 columnSplit,
                 masterFilter != null
         );
+
+        int masterTsType = masterFactory.getMetadata().getTimestampType();
+        int slaveTsType = slaveFactory.getMetadata().getTimestampType();
+        long masterTsScale = 1;
+        long slaveTsScale = 1;
+        if (masterTsType != slaveTsType) {
+            masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
+            slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
+        }
         final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
                 asm,
                 configuration,
@@ -135,6 +148,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 bindVarFunctions,
                 masterFilter,
                 perWorkerMasterFilters,
+                masterTsScale,
+                slaveTsScale,
                 workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
@@ -191,13 +206,48 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        // TODO(puzpuzpuz): toPlan is currently broken
-        // TODO(puzpuzpuz): add window lo/hi
         sink.type("Async Window Join");
         sink.meta("workers").val(workerCount);
-        sink.val(frameSequence.getAtom());
+        final AsyncWindowJoinAtom atom = frameSequence.getAtom();
+        if (atom.getJoinFilter(0) != null) {
+            sink.setMetadata(joinMetadata);
+            sink.attr("join filter").val(atom.getJoinFilter(0));
+            sink.setMetadata(null);
+        }
+
+        long rowLo = atom.getJoinWindowLo();
+        long rowHi = atom.getJoinWindowHi();
+        sink.attr("window lo");
+        if (rowLo == Long.MAX_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (rowHi == Long.MIN_VALUE) {
+            sink.val("unbounded following");
+        } else if (rowLo == 0) {
+            sink.val("current row");
+        } else if (rowLo < 0) {
+            sink.val(Math.abs(rowLo)).val(" following");
+        } else {
+            sink.val(rowLo).val(" preceding");
+        }
+
+        sink.attr("window hi");
+        if (rowHi == Long.MAX_VALUE) {
+            sink.val("unbounded following");
+        } else if (rowHi == Long.MIN_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (rowHi == 0) {
+            sink.val("current row");
+        } else if (rowHi < 0) {
+            sink.val(Math.abs(rowLo)).val(" preceding");
+        } else {
+            sink.val(rowHi).val(" following");
+        }
+
+        if (atom.getMasterFilter(0) != null) {
+            sink.attr("master filter").val(atom.getMasterFilter(0), masterFactory);
+        }
         sink.child(masterFactory);
-        sink.child("Hash", slaveFactory);
+        sink.child(slaveFactory);
     }
 
     private static void aggregate(
@@ -229,12 +279,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final AsyncWindowJoinAtom.TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final Function joinFilter = atom.getJoinFilter(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
+
+        final long slaveTsScale = atom.getSlaveTsScale();
+        final long masterTsScale = atom.getMasterTsScale();
 
         try {
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
@@ -249,9 +302,18 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 functionUpdater.updateEmpty(value);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                // TODO(puzpuzpuz): rescale master timestamp to slave unit
-                final long slaveTimestampLo = masterTimestamp - joinWindowLo;
-                final long slaveTimestampHi = masterTimestamp + joinWindowHi;
+                long slaveTimestampLo, slaveTimestampHi;
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                }
 
                 // Now we need to find slave rowid interval to scan.
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
@@ -259,10 +321,10 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
+                        if (scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale) > slaveTimestampHi) {
                             break;
                         }
-                        if (joinFilter.getBool(joinRecord)) {
+                        if (joinFilter == null || joinFilter.getBool(joinRecord)) {
                             if (value.isNew()) {
                                 functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
                                 value.setNew(false);
@@ -316,12 +378,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         final Function filter = atom.getMasterFilter(slotId);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final AsyncWindowJoinAtom.TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final Function joinFilter = atom.getJoinFilter(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
+
+        final long slaveTsScale = atom.getSlaveTsScale();
+        final long masterTsScale = atom.getMasterTsScale();
 
         try {
             if (compiledFilter == null || frameMemory.hasColumnTops()) {
@@ -346,9 +411,18 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 functionUpdater.updateEmpty(value);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                // TODO(puzpuzpuz): rescale master timestamp to slave unit
-                final long slaveTimestampLo = masterTimestamp - joinWindowLo;
-                final long slaveTimestampHi = masterTimestamp + joinWindowHi;
+                long slaveTimestampLo, slaveTimestampHi;
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                }
 
                 // Now we need to find slave rowid interval to scan.
                 long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
@@ -356,7 +430,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
+                        if (scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale) > slaveTimestampHi) {
                             break;
                         }
                         if (joinFilter == null || joinFilter.getBool(joinRecord)) {
@@ -388,5 +462,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(slaveFactory);
         Misc.free(frameSequence);
         Misc.free(cursor);
+        Misc.free(joinMetadata);
     }
 }

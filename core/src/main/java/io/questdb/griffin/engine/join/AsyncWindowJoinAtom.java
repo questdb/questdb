@@ -28,11 +28,14 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -47,6 +50,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -54,10 +58,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
@@ -68,6 +74,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final long joinWindowHi;
     private final long joinWindowLo;
     private final int masterTimestampIndex;
+    private final long masterTsScale;
     private final GroupByAllocator ownerAllocator;
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
@@ -77,7 +84,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
-    private final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
+    private final TimeFrameHelper ownerSlaveTimeFrameHelper;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -86,7 +93,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
-    private final ObjList<AsyncTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final ObjList<TimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final long slaveTsScale;
     private final long valueSizeInBytes;
 
     public AsyncWindowJoinAtom(
@@ -107,6 +115,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            long masterTsScale,
+            long slaveTsScale,
             int workerCount
     ) {
         assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
@@ -127,11 +137,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.ownerMasterFilter = ownerMasterFilter;
             this.perWorkerMasterFilters = perWorkerMasterFilters;
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+            this.masterTsScale = masterTsScale;
+            this.slaveTsScale = slaveTsScale;
 
-            this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead());
+            this.ownerSlaveTimeFrameHelper = new TimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead()));
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new TimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
             }
 
             this.ownerJoinRecord = new JoinRecord(columnSplit);
@@ -271,16 +283,24 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return masterTimestampIndex;
     }
 
+    public long getMasterTsScale() {
+        return masterTsScale;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public DirectMapValue getOwnerGroupByValue() {
         return ownerGroupByValue;
     }
 
-    public AsyncTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
+    public TimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimeFrameHelper;
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
+    }
+
+    public long getSlaveTsScale() {
+        return slaveTsScale;
     }
 
     public long getValueSizeBytes() {
@@ -439,4 +459,249 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
+    // TODO(puzpuzpuz): merge with AsyncTimeFrameHelper - that class doesn't have scale
+    public static class TimeFrameHelper implements QuietCloseable {
+        private final long lookahead;
+        private final PageFrameMemoryRecord record;
+        private final long scale;
+        private final TimeFrame timeFrame;
+        private final ConcurrentTimeFrameCursor timeFrameCursor;
+        private final int timestampIndex;
+        private int bookmarkedFrameIndex = -1;
+        private long bookmarkedRowId = Long.MIN_VALUE;
+
+        public TimeFrameHelper(ConcurrentTimeFrameCursor timeFrameCursor, long lookahead, long scale) {
+            this.timeFrameCursor = timeFrameCursor;
+            this.record = timeFrameCursor.getRecord();
+            this.timeFrame = timeFrameCursor.getTimeFrame();
+            this.lookahead = lookahead;
+            this.timestampIndex = timeFrameCursor.getTimestampIndex();
+            this.scale = scale;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(timeFrameCursor);
+        }
+
+        // finds the first row id within the given interval
+        public long findRowLo(long timestampLo, long timestampHi) {
+            long rowLo = Long.MIN_VALUE;
+            // let's start with the last found frame and row id
+            if (bookmarkedFrameIndex != -1) {
+                timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+                timeFrameCursor.open();
+                rowLo = bookmarkedRowId;
+            }
+
+            for (; ; ) {
+                // find the frame to be scanned
+                if (rowLo == Long.MIN_VALUE) {
+                    while (timeFrameCursor.next()) {
+                        // carry on if the frame is to the left of the interval
+                        if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) <= timestampLo) {
+                            // bookmark the frame, so that next time we search we start with it
+                            bookmarkCurrentFrame(0);
+                            continue;
+                        }
+                        // check if the frame intersects with the interval, so it's of our interest
+                        if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale) < timestampHi) {
+                            if (timeFrameCursor.open() == 0) {
+                                continue;
+                            }
+                            // now we know the exact boundaries of the frame, let's check them
+                            if (scaleTimestamp(timeFrame.getTimestampHi(), scale) <= timestampLo) {
+                                // the frame is to the left of the interval, so carry on
+                                bookmarkCurrentFrame(0);
+                                continue;
+                            }
+                            if (scaleTimestamp(timeFrame.getTimestampLo(), scale) < timestampHi) {
+                                // yay, it's what we need!
+                                if (scaleTimestamp(timeFrame.getTimestampLo(), scale) >= timestampLo) {
+                                    // we can start with the first row
+                                    bookmarkCurrentFrame(timeFrame.getRowLo());
+                                    return timeFrame.getRowLo();
+                                }
+                                // we need to find the first row in the intersection
+                                rowLo = timeFrame.getRowLo();
+                                break;
+                            }
+                        }
+                        return Long.MIN_VALUE;
+                    }
+                    if (rowLo == Long.MIN_VALUE) {
+                        return Long.MIN_VALUE;
+                    }
+                }
+
+                // bookmark the frame
+                bookmarkCurrentFrame(rowLo);
+
+                // scan the found frame
+                // start with a brief linear scan
+                final long scanResult = linearScan(timestampLo, timestampHi, rowLo);
+                if (scanResult >= 0) {
+                    // we've found the row
+                    bookmarkCurrentFrame(scanResult);
+                    return scanResult;
+                } else if (scanResult == Long.MIN_VALUE) {
+                    // there are no timestamps in the wanted interval
+                    if (scaleTimestamp(timeFrame.getTimestampHi(), scale) > timestampHi) {
+                        // the interval is contained in the frame, no need to try the next one
+                        return Long.MIN_VALUE;
+                    }
+                    // the next frame may have an intersection with the interval, try it
+                    rowLo = Long.MIN_VALUE;
+                    continue;
+                }
+                // ok, the scan gave us nothing, do the binary search
+                rowLo = -scanResult - 1;
+                final long searchResult = binarySearch(timestampLo, timestampHi, rowLo);
+                if (searchResult == Long.MIN_VALUE) {
+                    // there are no timestamps in the wanted interval
+                    if (scaleTimestamp(timeFrame.getTimestampHi(), scale) > timestampHi) {
+                        // the interval is contained in the frame, no need to try the next one
+                        return Long.MIN_VALUE;
+                    }
+                    // the next frame may have an intersection with the interval, try it
+                    rowLo = Long.MIN_VALUE;
+                    continue;
+                }
+                // we've found the row
+                bookmarkCurrentFrame(searchResult);
+                return searchResult;
+            }
+        }
+
+        public Record getRecord() {
+            return record;
+        }
+
+        public SymbolTableSource getSymbolTableSource() {
+            return timeFrameCursor;
+        }
+
+        public int getTimeFrameIndex() {
+            return timeFrame.getFrameIndex();
+        }
+
+        public long getTimeFrameRowHi() {
+            return timeFrame.getRowHi();
+        }
+
+        public long getTimeFrameRowLo() {
+            return timeFrame.getRowLo();
+        }
+
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        public boolean nextFrame(long timestampHi) {
+            if (!timeFrameCursor.next()) {
+                return false;
+            }
+            if (timestampHi >= scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale)) {
+                return timeFrameCursor.open() > 0;
+            }
+            return false;
+        }
+
+        public void of(
+                TablePageFrameCursor frameCursor,
+                PageFrameAddressCache frameAddressCache,
+                IntList framePartitionIndexes,
+                LongList frameRowCounts,
+                LongList partitionTimestamps,
+                int frameCount
+        ) {
+            timeFrameCursor.of(
+                    frameCursor,
+                    frameAddressCache,
+                    framePartitionIndexes,
+                    frameRowCounts,
+                    partitionTimestamps,
+                    frameCount
+            );
+            toTop();
+        }
+
+        public void recordAtRowIndex(long rowId) {
+            timeFrameCursor.recordAtRowIndex(record, rowId);
+        }
+
+        public void toTop() {
+            timeFrameCursor.toTop();
+            record.clear();
+            bookmarkedFrameIndex = -1;
+            bookmarkedRowId = Long.MIN_VALUE;
+        }
+
+        // Finds the first (most-left) value in the given interval.
+        private long binarySearch(long timestampLo, long timestampHi, long rowLo) {
+            long low = rowLo;
+            long high = timeFrame.getRowHi() - 1;
+            while (high - low > 65) {
+                final long mid = (low + high) >>> 1;
+                recordAtRowIndex(mid);
+                long midTimestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+
+                if (midTimestamp < timestampLo) {
+                    low = mid;
+                } else if (midTimestamp > timestampLo) {
+                    high = mid - 1;
+                } else {
+                    // In case of multiple values equal to timestampLo, find the first one
+                    return binarySearchScrollUp(low, mid, timestampLo);
+                }
+            }
+
+            // scan up
+            for (long r = low; r < high + 1; r++) {
+                recordAtRowIndex(r);
+                long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+                if (timestamp >= timestampLo) {
+                    if (timestamp < timestampHi) {
+                        return r;
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+            return Long.MIN_VALUE;
+        }
+
+        private long binarySearchScrollUp(long low, long high, long timestampLo) {
+            long timestamp;
+            do {
+                if (high > low) {
+                    high--;
+                } else {
+                    return low;
+                }
+                recordAtRowIndex(high);
+                timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+            } while (timestamp == timestampLo);
+            return high + 1;
+        }
+
+        private void bookmarkCurrentFrame(long rowId) {
+            bookmarkedFrameIndex = timeFrame.getFrameIndex();
+            bookmarkedRowId = rowId;
+        }
+
+        private long linearScan(long timestampLo, long timestampHi, long rowLo) {
+            final long scanHi = Math.min(rowLo + lookahead, timeFrame.getRowHi());
+            for (long r = rowLo; r < scanHi; r++) {
+                recordAtRowIndex(r);
+                final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
+                if (timestamp >= timestampLo) {
+                    if (timestamp < timestampHi) {
+                        return r;
+                    }
+                    return Long.MIN_VALUE;
+                }
+            }
+            return -rowLo - lookahead - 1;
+        }
+    }
 }
