@@ -3151,6 +3151,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_WINDOW:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 WindowJoinContext context = slaveModel.getWindowJoinContext();
+                                if (context.isIncludePrevailing()) {
+                                    throw SqlException.position(0).put("including prevailing is not supported in WINDOW joins");
+                                }
+                                TimestampDriver timestampDriver = ColumnType.getTimestampDriver(masterMetadata.getTimestampType());
+                                long lo = Long.MIN_VALUE, hi = Long.MAX_VALUE;
+                                switch (context.getLoKind()) {
+                                    case WindowJoinContext.CURRENT:
+                                        lo = 0;
+                                        break;
+                                    case WindowJoinContext.PRECEDING:
+                                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
+                                        if (context.getLoExprTimeUnit() != 0) {
+                                            lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
+                                        }
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
+                                        if (context.getLoExprTimeUnit() != 0) {
+                                            lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
+                                        }
+                                        lo *= -1;
+                                }
+                                switch (context.getHiKind()) {
+                                    case WindowJoinContext.CURRENT:
+                                        hi = 0;
+                                        break;
+                                    case WindowJoinContext.PRECEDING:
+                                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
+                                        if (context.getHiExprTimeUnit() != 0) {
+                                            hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
+                                        }
+                                        hi *= -1;
+                                        break;
+                                    case WindowJoinContext.FOLLOWING:
+                                        hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
+                                        if (context.getHiExprTimeUnit() != 0) {
+                                            hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
+                                        }
+                                }
+                                if (hi < lo * -1) {
+                                    int hiPos = context.getHiExprPos();
+                                    throw SqlException.position(hiPos == 0 ? context.getLoExprPos() : hiPos).put("WINDOW join hi value cannot be less than lo value");
+                                }
+
+                                // validate columns in aggregate model
                                 QueryModel aggModel = context.getParentModel();
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
@@ -3226,17 +3271,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         null,
                                         validateSampleByFillType
                                 );
-
-                                // temp only support long constant
-                                long lo = evalNonNegativeLongConstantOrDie(functionParser, context.getLoExpr(), executionContext);
-                                long hi = evalNonNegativeLongConstantOrDie(functionParser, context.getHiExpr(), executionContext);
-                                TimestampDriver timestampDriver = ColumnType.getTimestampDriver(masterMetadata.getTimestampType());
-                                if (context.getLoExprTimeUnit() != 0) {
-                                    lo = timestampDriver.from(lo, context.getLoExprTimeUnit());
-                                }
-                                if (context.getHiExprTimeUnit() != 0) {
-                                    hi = timestampDriver.from(hi, context.getHiExprTimeUnit());
-                                }
 
                                 master = new AsyncWindowJoinRecordCursorFactory(
                                         executionContext.getCairoEngine(),
