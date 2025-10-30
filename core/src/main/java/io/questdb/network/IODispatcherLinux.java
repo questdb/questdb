@@ -399,10 +399,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    if (acceptProcessed) {
-                        // accept() is eager and we already accepted what we could in this Worker round
-                        continue;
-                    }
                     pendingAccept = !accept(timestamp);
                     acceptProcessed = true;
                     useful = true;
@@ -414,6 +410,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 }
             }
 
+            // pendingAccept is almost always false -> testing it as first to make the branch easy to predict
             if (pendingAccept && !acceptProcessed && isListening()) {
                 // we have left-overs from a previous round, process them now
                 pendingAccept = !accept(timestamp);
