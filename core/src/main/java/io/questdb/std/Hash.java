@@ -69,7 +69,8 @@ public final class Hash {
     }
 
     public static long hashInt64(int k) {
-        return fmix64(Integer.toUnsignedLong(k));
+        return k * M2;
+//        return fmix64(Integer.toUnsignedLong(k));
     }
 
     public static int hashLong128_32(long key1, long key2) {
