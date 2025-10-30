@@ -382,7 +382,7 @@ public class CopyExportContext {
                         false
                 );
                 createOp.setTableKind(TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT);
-                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata());
+                createOp.validateAndUpdateMetadataFromSelect(rcf.getMetadata(), rcf.getScanDirection());
             }
         } catch (SqlException ex) {
             ex.setPosition(ex.getPosition() + tableOrSelectTextPos);
