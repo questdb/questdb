@@ -46,6 +46,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
     private final WorkerPoolConfiguration exportPoolConfiguration;
+    private final WorkerPoolConfiguration viewCompilerPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
@@ -64,6 +65,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         this.sharedPoolWriteConfiguration = new DefaultWorkerPoolConfiguration("shared_write");
         this.matViewRefreshPoolConfiguration = new DefaultWorkerPoolConfiguration("mat_view_refresh");
         this.exportPoolConfiguration = new DefaultWorkerPoolConfiguration("export");
+        this.viewCompilerPoolConfiguration = new DefaultWorkerPoolConfiguration("view_compiler");
         this.walApplyPoolConfiguration = new DefaultWorkerPoolConfiguration("wal_apply");
     }
 
@@ -99,6 +101,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+        return viewCompilerPoolConfiguration;
     }
 
     @Override
@@ -158,7 +165,6 @@ public class DefaultServerConfiguration implements ServerConfiguration {
 
     private static class DefaultWorkerPoolConfiguration implements WorkerPoolConfiguration {
 
-
         private final String name;
 
         private DefaultWorkerPoolConfiguration(String name) {
@@ -174,6 +180,5 @@ public class DefaultServerConfiguration implements ServerConfiguration {
         public int getWorkerCount() {
             return 2;
         }
-
     }
 }

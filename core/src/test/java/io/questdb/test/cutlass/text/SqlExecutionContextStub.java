@@ -215,7 +215,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void resetFlags() {
+    public void reset() {
     }
 
     @Override

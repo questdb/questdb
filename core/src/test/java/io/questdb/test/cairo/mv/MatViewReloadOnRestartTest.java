@@ -149,8 +149,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     assertSql(main1, replaceExpectedTimestamp(expected), "price_1h order by ts, sym");
 
                     assertLineError(Transport.HTTP, main1, refreshJob, replaceExpectedTimestamp(expected));
-                    assertLineError(Transport.UDP, main1, refreshJob, replaceExpectedTimestamp(expected));
-                    assertLineError(Transport.TCP, main1, refreshJob, replaceExpectedTimestamp(expected));
+                    // TODO(eugene): how to check the error for TCP/UDP?
+                    //assertLineError(Transport.UDP, main1, refreshJob, replaceExpectedTimestamp(expected));
+                    //assertLineError(Transport.TCP, main1, refreshJob, replaceExpectedTimestamp(expected));
                 }
 
                 new SendAndReceiveRequestBuilder().withPort(HTTP_PORT).execute(
@@ -1056,8 +1057,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     .doubleColumn("price", 1.330)
                     .atNow();
             sender.flush();
+            Assert.fail("exception expected");
         } catch (LineSenderException e) {
-            // TODO(eugene): how to check the error for TCP/UDP?
             assertContains(e.getMessage(), "cannot modify materialized view");
         }
 

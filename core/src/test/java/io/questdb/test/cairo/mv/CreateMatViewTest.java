@@ -79,7 +79,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            final int iterations = 25;
+            final int iterations = 50;
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final AtomicInteger errorCounter = new AtomicInteger();
             final AtomicInteger createCounter = new AtomicInteger();
@@ -121,6 +121,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         if (knownCount > droppedAt) {
                             execute("drop materialized view if exists price_1h", executionContext);
                             droppedAt = createCounter.get();
+                            drainWalQueue();
                         } else {
                             Os.sleep(1);
                         }
@@ -811,6 +812,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
+
+            assertQuery(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
+                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    "tables()",
+                    false,
+                    false
+            );
         });
     }
 
@@ -851,6 +861,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isDedupKey(2));
                 assertEquals(0, metadata.getTtlHoursOrMonths());
             }
+
+            assertQuery(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type\n" +
+                            "2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM\n" +
+                            "1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT\n",
+                    "tables()",
+                    false,
+                    false
+            );
         });
     }
 
@@ -1177,13 +1196,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     25,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     39,
-                    "table with the requested name already exists"
+                    "table or view with the requested name already exists"
             );
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";

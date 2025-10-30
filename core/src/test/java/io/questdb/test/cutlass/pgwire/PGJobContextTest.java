@@ -3087,8 +3087,8 @@ if __name__ == "__main__":
             try (Statement stmt = connection.createStatement()) {
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]\n" +
+                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T\n",
                             sink, rs
                     );
                 }
@@ -3098,8 +3098,8 @@ if __name__ == "__main__":
                 stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
 
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
-                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],table_type[CHAR]\n" +
+                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,T\n",
                             sink, rs
                     );
                 }
@@ -3383,16 +3383,16 @@ if __name__ == "__main__":
     public void testDropTable() throws Exception {
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
-                {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
-                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop table", "ERROR: expected [IF EXISTS] table-name"},
+                {"drop doesnt", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
                 {"drop table if exists", "ERROR: table name expected"},
                 {"drop table if exists;", "ERROR: table name expected"},
                 {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
                 {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
+                {"drop database ;", "ERROR: 'table' or 'view' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
@@ -11843,6 +11843,32 @@ create table tab as (
     public void testVarcharBindvarEqStringyCol() throws Exception {
         testVarcharBindVars(
                 "select v,s from x where ?::varchar != v and ?::varchar != s");
+    }
+
+    @Test
+    public void testViewWithBindingVars() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table tango (x int, y int, ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("insert into tango values (1, 2, '2000'), (3, 4, '2001')");
+                // note: we switched the column
+                stmt.execute("create view v_tango as select x as y, y as x from tango");
+            }
+
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select y, x from v_tango where y = ?")) {
+                stmt.setInt(1, 1);
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("y[INTEGER],x[INTEGER]\n" +
+                                    "1,2\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        }, () -> setProperty(PropertyKey.CAIRO_VIEW_ENABLED, "true"));
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {

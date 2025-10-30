@@ -217,7 +217,9 @@ public class WalWriter implements TableWriterAPI {
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable();
+            if (!tableToken.isView()) {
+                configureSymbolTable();
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
