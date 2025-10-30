@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -54,32 +55,32 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-// TODO(puzpuzpuz): check inclusive/exclusive boundary logic
-// TODO(puzpuzpuz): consider implementing limit and negative limit
-// TODO(puzpuzpuz): consider applying time intrinsic intervals/table min/max ts from left-hand to right-hand
-public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final PageFrameReducer AGGREGATE = AsyncWindowJoinRecordCursorFactory::aggregate;
-    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncWindowJoinRecordCursorFactory::filterAndAggregate;
+// TODO(puzpuzpuz): it's a quick and dirty prototype
+public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
+    private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregate;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final AsyncWindowJoinRecordCursor cursor;
-    private final PageFrameSequence<AsyncWindowJoinAtom> frameSequence;
+    private final AsyncFastWindowJoinRecordCursor cursor;
+    private final PageFrameSequence<AsyncFastWindowJoinAtom> frameSequence;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
 
-    public AsyncWindowJoinRecordCursorFactory(
+    public AsyncFastWindowJoinRecordCursorFactory(
             @NotNull CairoEngine engine,
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
@@ -87,8 +88,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull RecordMetadata joinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @Nullable Function joinFilter,
-            @Nullable ObjList<Function> perWorkerJoinFilters,
+            int masterSymbolIndex,
+            int slaveSymbolIndex,
             long joinWindowLo,
             long joinWindowHi,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -110,19 +111,19 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         final int columnSplit = masterFactory.getMetadata().getColumnCount();
-        this.cursor = new AsyncWindowJoinRecordCursor(
+        this.cursor = new AsyncFastWindowJoinRecordCursor(
                 configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
                 columnSplit,
                 masterFilter != null
         );
-        final AsyncWindowJoinAtom atom = new AsyncWindowJoinAtom(
+        final AsyncFastWindowJoinAtom atom = new AsyncFastWindowJoinAtom(
                 asm,
                 configuration,
                 slaveFactory,
-                joinFilter,
-                perWorkerJoinFilters,
+                masterSymbolIndex,
+                slaveSymbolIndex,
                 joinWindowLo,
                 joinWindowHi,
                 columnSplit,
@@ -151,7 +152,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncFastWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(masterFactory, executionContext, collectSubSeq, order);
     }
 
@@ -209,7 +210,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     ) {
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
+        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
 
         final PageFrameMemory frameMemory = task.populateFrameMemory();
         record.init(frameMemory);
@@ -231,14 +232,75 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final DirectMapValue value = atom.getMapValue(slotId);
         final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-        final Function joinFilter = atom.getJoinFilter(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
+        final int[] slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+
+        // Clean up the in-memory index.
+        final LongList[] slaveRowIds = atom.getSlaveRowIds(slotId);
+        for (LongList list : slaveRowIds) {
+            Misc.clear(list);
+        }
+        final LongList[] slaveTimestamps = atom.getSlaveTimestamps(slotId);
+        for (LongList list : slaveTimestamps) {
+            Misc.clear(list);
+        }
+        final int[] slaveRowLos = atom.getSlaveRowLos(slotId);
+        Arrays.fill(slaveRowLos, 0);
 
         try {
+            final int masterSymbolIndex = atom.getMasterSymbolIndex();
+            final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
+            // First, build the in-memory index. For every master key in this page frame,
+            // it stores rowids and timestamps of the matching slave rows.
+            record.setRowIndex(0);
+            final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
+            record.setRowIndex(frameRowCount - 1);
+            final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
+
+            long slaveTimestampLo = masterTimestampLo - joinWindowLo;
+            long slaveTimestampHi = masterTimestampHi + joinWindowHi;
+
+            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            if (slaveRowId != Long.MIN_VALUE) {
+                long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                for (; ; ) {
+                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                    final long slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                    if (slaveTimestamp > slaveTimestampHi) {
+                        break;
+                    }
+                    final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                    final int matchingMasterKey = slaveSymbolLookupTable[Math.max(slaveKey + 1, 0)];
+                    if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
+                        final int idx = Math.max(matchingMasterKey + 1, 0);
+                        LongList rowIds = slaveRowIds[idx];
+                        if (rowIds == null) {
+                            rowIds = new LongList();
+                            slaveRowIds[idx] = rowIds;
+                        }
+                        LongList timestamps = slaveTimestamps[idx];
+                        if (timestamps == null) {
+                            timestamps = new LongList();
+                            slaveTimestamps[idx] = timestamps;
+                        }
+                        rowIds.add(baseSlaveRowId + slaveRowId);
+                        timestamps.add(slaveTimestamp);
+                    }
+                    if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                        if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                            break;
+                        }
+                        slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                        baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                    }
+                }
+            }
+
+            // Next, iterate through the master rows looking into the index we've built.
             for (long r = 0; r < frameRowCount; r++) {
                 record.setRowIndex(r);
 
@@ -249,33 +311,30 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 functionUpdater.updateEmpty(value);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                // TODO(puzpuzpuz): rescale master timestamp to slave unit
-                final long slaveTimestampLo = masterTimestamp - joinWindowLo;
-                final long slaveTimestampHi = masterTimestamp + joinWindowHi;
+                slaveTimestampLo = masterTimestamp - joinWindowLo;
+                slaveTimestampHi = masterTimestamp + joinWindowHi;
 
-                // Now we need to find slave rowid interval to scan.
-                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-                if (slaveRowId != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
-                    for (; ; ) {
-                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
+                final int masterKey = record.getInt(masterSymbolIndex);
+                final int idx = Math.max(masterKey + 1, 0);
+                LongList rowIds = slaveRowIds[idx];
+                LongList timestamps = slaveTimestamps[idx];
+                int rowLo = slaveRowLos[idx];
+
+                if (rowIds != null && rowIds.size() > 0) {
+                    rowLo = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampLo, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                    slaveRowLos[idx] = rowLo;
+                    for (int i = rowLo, n = timestamps.size(); i < n; i++) {
+                        if (timestamps.getQuick(i) > slaveTimestampHi) {
                             break;
                         }
-                        if (joinFilter.getBool(joinRecord)) {
-                            if (value.isNew()) {
-                                functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
-                                value.setNew(false);
-                            } else {
-                                functionUpdater.updateExisting(value, joinRecord, baseSlaveRowId + slaveRowId);
-                            }
-                        }
-                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
-                            if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
-                                break;
-                            }
-                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
+                        slaveRowId = rowIds.getQuick(i);
+                        slaveTimeFrameHelper.recordAt(slaveRowId);
+                        if (value.isNew()) {
+                            functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                            value.setNew(false);
+                        } else {
+                            functionUpdater.updateExisting(value, joinRecord, slaveRowId);
                         }
                     }
                 }
@@ -292,94 +351,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = task.getFrameRowCount();
-        assert frameRowCount > 0;
-        final PageFrameSequence<AsyncWindowJoinAtom> frameSequence = task.getFrameSequence(AsyncWindowJoinAtom.class);
-        final AsyncWindowJoinAtom atom = frameSequence.getAtom();
-
-        final PageFrameMemory frameMemory = task.populateFrameMemory();
-        record.init(frameMemory);
-
-        // The list will row ids followed by group by value slots.
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final int masterTimestampIndex = atom.getMasterTimestampIndex();
-        final long joinWindowLo = atom.getJoinWindowLo();
-        final long joinWindowHi = atom.getJoinWindowHi();
-        final long valueSizeInBytes = atom.getValueSizeBytes();
-        assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
-        final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
-
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
-        final Function filter = atom.getMasterFilter(slotId);
-        final DirectMapValue value = atom.getMapValue(slotId);
-        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
-        final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-        final Function joinFilter = atom.getJoinFilter(slotId);
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final JoinRecord joinRecord = atom.getJoinRecord(slotId);
-        joinRecord.of(record, slaveRecord);
-
-        try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
-                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
-            }
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-
-            final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
-
-            for (long p = 0; p < filteredRowCount; p++) {
-                long r = rows.get(p);
-                record.setRowIndex(r);
-
-                rows.ensureCapacity(valueSizeInLongs);
-                value.of(rows.getAppendAddress());
-                value.setNew(true);
-                rows.skip(valueSizeInLongs);
-                functionUpdater.updateEmpty(value);
-
-                final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                // TODO(puzpuzpuz): rescale master timestamp to slave unit
-                final long slaveTimestampLo = masterTimestamp - joinWindowLo;
-                final long slaveTimestampHi = masterTimestamp + joinWindowHi;
-
-                // Now we need to find slave rowid interval to scan.
-                long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
-                if (slaveRowId != Long.MIN_VALUE) {
-                    long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
-                    for (; ; ) {
-                        slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
-                        if (slaveRecord.getTimestamp(slaveTimestampIndex) > slaveTimestampHi) {
-                            break;
-                        }
-                        if (joinFilter == null || joinFilter.getBool(joinRecord)) {
-                            if (value.isNew()) {
-                                functionUpdater.updateNew(value, joinRecord, baseSlaveRowId + slaveRowId);
-                                value.setNew(false);
-                            } else {
-                                functionUpdater.updateExisting(value, joinRecord, baseSlaveRowId + slaveRowId);
-                            }
-                        }
-                        if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
-                            if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
-                                break;
-                            }
-                            slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
-                            baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
-                        }
-                    }
-                }
-            }
-        } finally {
-            atom.release(slotId);
-        }
+        // TODO(puzpuzpuz): implement properly
     }
 
     @Override

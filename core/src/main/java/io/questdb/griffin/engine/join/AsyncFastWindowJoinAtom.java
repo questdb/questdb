@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -58,15 +59,22 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
-public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
+// TODOs:
+// * LUTs assume up to LOOKUP_TABLE_SIZE symbols
+// * on-heap IntObjHashMaps and LongLists should be swapped with off-heap data structs
+public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
+    private static final int LOOKUP_TABLE_SIZE = 1024;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
+    private final int masterSymbolIndex;
     private final int masterTimestampIndex;
     private final GroupByAllocator ownerAllocator;
     // Note: all function updaters should be used through a getFunctionUpdater() call
@@ -74,27 +82,34 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final DirectMapValue ownerGroupByValue;
-    private final Function ownerJoinFilter;
     private final JoinRecord ownerJoinRecord;
     private final Function ownerMasterFilter;
+    private final LongList[] ownerSlaveRowIds;
+    private final int[] ownerSlaveRowLos;
     private final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
+    private final LongList[] ownerSlaveTimestamps;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<DirectMapValue> perWorkerGroupByValues;
-    private final ObjList<Function> perWorkerJoinFilters;
     private final ObjList<JoinRecord> perWorkerJoinRecords;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<Function> perWorkerMasterFilters;
+    private final ObjList<LongList[]> perWorkerSlaveRowIds;
+    private final ObjList<int[]> perWorkerSlaveRowLos;
     private final ObjList<AsyncTimeFrameHelper> perWorkerSlaveTimeFrameHelpers;
+    private final ObjList<LongList[]> perWorkerSlaveTimestamps;
+    private final int slaveSymbolIndex;
+    // slave-to-master symbol key LUT
+    private final int[] slaveSymbolLookupTable;
     private final long valueSizeInBytes;
 
-    public AsyncWindowJoinAtom(
+    public AsyncFastWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
-            @Nullable Function ownerJoinFilter,
-            @Nullable ObjList<Function> perWorkerJoinFilters,
+            int masterSymbolIndex,
+            int slaveSymbolIndex,
             long joinWindowLo,
             long joinWindowHi,
             int columnSplit,
@@ -109,13 +124,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> perWorkerMasterFilters,
             int workerCount
     ) {
-        assert perWorkerJoinFilters == null || perWorkerJoinFilters.size() == workerCount;
         assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
 
         final int slotCount = Math.min(workerCount, configuration.getPageFrameReduceQueueCapacity());
         try {
-            this.ownerJoinFilter = ownerJoinFilter;
-            this.perWorkerJoinFilters = perWorkerJoinFilters;
+            this.masterSymbolIndex = masterSymbolIndex;
+            this.slaveSymbolIndex = slaveSymbolIndex;
             this.joinWindowLo = joinWindowLo;
             this.joinWindowHi = joinWindowHi;
             this.masterTimestampIndex = masterTimestampIndex;
@@ -127,6 +141,22 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.ownerMasterFilter = ownerMasterFilter;
             this.perWorkerMasterFilters = perWorkerMasterFilters;
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+
+            this.slaveSymbolLookupTable = new int[LOOKUP_TABLE_SIZE];
+            this.ownerSlaveRowIds = new LongList[LOOKUP_TABLE_SIZE];
+            this.ownerSlaveTimestamps = new LongList[LOOKUP_TABLE_SIZE];
+            this.perWorkerSlaveRowIds = new ObjList<>(slotCount);
+            this.perWorkerSlaveTimestamps = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSlaveRowIds.extendAndSet(i, new LongList[LOOKUP_TABLE_SIZE]);
+                perWorkerSlaveTimestamps.extendAndSet(i, new LongList[LOOKUP_TABLE_SIZE]);
+            }
+
+            this.ownerSlaveRowLos = new int[LOOKUP_TABLE_SIZE];
+            this.perWorkerSlaveRowLos = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                perWorkerSlaveRowLos.extendAndSet(i, new int[LOOKUP_TABLE_SIZE]);
+            }
 
             this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead());
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
@@ -195,8 +225,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
     public void close() {
         Misc.free(ownerSlaveTimeFrameHelper);
         Misc.freeObjList(perWorkerSlaveTimeFrameHelpers);
-        Misc.free(ownerJoinFilter);
-        Misc.freeObjList(perWorkerJoinFilters);
         Misc.free(compiledMasterFilter);
         Misc.free(bindVarMemory);
         Misc.freeObjList(bindVarFunctions);
@@ -231,13 +259,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
-    public Function getJoinFilter(int slotId) {
-        if (slotId == -1 || perWorkerJoinFilters == null) {
-            return ownerJoinFilter;
-        }
-        return perWorkerJoinFilters.getQuick(slotId);
-    }
-
     public JoinRecord getJoinRecord(int slotId) {
         if (slotId == -1) {
             return ownerJoinRecord;
@@ -267,6 +288,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return perWorkerMasterFilters.getQuick(slotId);
     }
 
+    public int getMasterSymbolIndex() {
+        return masterSymbolIndex;
+    }
+
     public int getMasterTimestampIndex() {
         return masterTimestampIndex;
     }
@@ -276,11 +301,40 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         return ownerGroupByValue;
     }
 
+    public LongList[] getSlaveRowIds(int slotId) {
+        if (slotId == -1) {
+            return ownerSlaveRowIds;
+        }
+        return perWorkerSlaveRowIds.getQuick(slotId);
+    }
+
+    public int[] getSlaveRowLos(int slotId) {
+        if (slotId == -1) {
+            return ownerSlaveRowLos;
+        }
+        return perWorkerSlaveRowLos.getQuick(slotId);
+    }
+
+    public int getSlaveSymbolIndex() {
+        return slaveSymbolIndex;
+    }
+
+    public int[] getSlaveSymbolLookupTable() {
+        return slaveSymbolLookupTable;
+    }
+
     public AsyncTimeFrameHelper getSlaveTimeFrameHelper(int slotId) {
         if (slotId == -1) {
             return ownerSlaveTimeFrameHelper;
         }
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId);
+    }
+
+    public LongList[] getSlaveTimestamps(int slotId) {
+        if (slotId == -1) {
+            return ownerSlaveTimestamps;
+        }
+        return perWorkerSlaveTimestamps.getQuick(slotId);
     }
 
     public long getValueSizeBytes() {
@@ -339,21 +393,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
 
         // now we can init join filters
-        joinSymbolTableSource.of(masterSymbolTableSource, ownerSlaveTimeFrameHelper.getSymbolTableSource());
-
-        if (ownerJoinFilter != null) {
-            ownerJoinFilter.init(joinSymbolTableSource, executionContext);
-        }
-
-        if (perWorkerJoinFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerJoinFilters, joinSymbolTableSource, executionContext, ownerJoinFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        final SymbolTableSource slaveSymbolTableSource = ownerSlaveTimeFrameHelper.getSymbolTableSource();
+        joinSymbolTableSource.of(masterSymbolTableSource, slaveSymbolTableSource);
 
         Function.init(ownerGroupByFunctions, masterSymbolTableSource, executionContext, null);
 
@@ -367,6 +408,20 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
+        }
+
+        StaticSymbolTable masterSymbolTable = (StaticSymbolTable) masterSymbolTableSource.getSymbolTable(masterSymbolIndex);
+        StaticSymbolTable slaveSymbolTable = (StaticSymbolTable) slaveSymbolTableSource.getSymbolTable(slaveSymbolIndex);
+        Arrays.fill(slaveSymbolLookupTable, StaticSymbolTable.VALUE_NOT_FOUND);
+        for (int masterKey = 0, n = masterSymbolTable.getSymbolCount(); masterKey < n; masterKey++) {
+            final CharSequence masterSym = masterSymbolTable.valueOf(masterKey);
+            final int slaveKey = slaveSymbolTable.keyOf(masterSym);
+            if (slaveKey != StaticSymbolTable.VALUE_NOT_FOUND) {
+                slaveSymbolLookupTable[slaveKey + 1] = masterKey;
+            }
+        }
+        if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
+            slaveSymbolLookupTable[0] = StaticSymbolTable.VALUE_IS_NULL;
         }
     }
 
@@ -390,8 +445,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.attr("join filter").val(ownerJoinFilter);
-        sink.attr("filter").val(ownerJoinFilter);
+        // no-op
     }
 
     public void toTop() {
@@ -438,5 +492,4 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
             this.slaveSource = slaveSource;
         }
     }
-
 }

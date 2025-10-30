@@ -137,6 +137,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqSymFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -194,6 +195,7 @@ import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
+import io.questdb.griffin.engine.join.AsyncFastWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -313,8 +315,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3233,10 +3235,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     throw SqlException.$(slaveModel.getJoinKeywordPosition(), "slave table does not support time frame cursor for WINDOW join");
                                 }
 
-                                if (slaveModel.getOuterJoinExpressionClause() != null) {
-                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                }
-
                                 // assemble groupBy function
                                 ObjList<QueryColumn> columns = aggModel.getColumns();
                                 keyTypes.clear();
@@ -3272,47 +3270,104 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         validateSampleByFillType
                                 );
 
-                                master = new AsyncWindowJoinRecordCursorFactory(
-                                        executionContext.getCairoEngine(),
-                                        asm,
-                                        configuration,
-                                        executionContext.getMessageBus(),
-                                        outerProjectionMetadata,
-                                        master,
-                                        slave,
-                                        filter,
-                                        compileWorkerFilterConditionally(
-                                                executionContext,
-                                                filter,
-                                                executionContext.getSharedQueryWorkerCount(),
-                                                slaveModel.getOuterJoinExpressionClause(),
-                                                joinMetadata
-                                        ),
-                                        lo,
-                                        hi,
-                                        valueTypes,
-                                        groupByFunctions,
-                                        compileWorkerGroupByFunctionsConditionally(
-                                                executionContext,
-                                                aggModel,
-                                                groupByFunctions,
-                                                executionContext.getSharedQueryWorkerCount(),
-                                                joinMetadata
-                                        ),
-                                        compiledFilter,
-                                        bindVarMemory,
-                                        bindVarFunctions,
-                                        masterFilter,
-                                        compileWorkerFilterConditionally(
-                                                executionContext,
-                                                masterFilter,
-                                                executionContext.getSharedQueryWorkerCount(),
-                                                masterFilterExpr,
-                                                master.getMetadata()
-                                        ),
-                                        reduceTaskFactory,
-                                        executionContext.getSharedQueryWorkerCount()
-                                );
+                                if (slaveModel.getOuterJoinExpressionClause() != null) {
+                                    filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                }
+
+                                // TODO(puzpuzpuz): replace this hack with something better
+                                if (filter instanceof EqSymFunctionFactory.Func eqSymFunc) {
+                                    final int columnSplit = master.getMetadata().getColumnCount();
+                                    final int leftSymbolIndex = ((SymbolColumn) eqSymFunc.getLeft()).getColumnIndex();
+                                    final int rightSymbolIndex = ((SymbolColumn) eqSymFunc.getRight()).getColumnIndex();
+                                    final int masterSymbolIndex;
+                                    final int slaveSymbolIndex;
+                                    if (leftSymbolIndex < columnSplit) {
+                                        masterSymbolIndex = leftSymbolIndex;
+                                        slaveSymbolIndex = rightSymbolIndex - columnSplit;
+                                    } else {
+                                        masterSymbolIndex = rightSymbolIndex;
+                                        slaveSymbolIndex = leftSymbolIndex - columnSplit;
+                                    }
+                                    Misc.free(filter);
+                                    master = new AsyncFastWindowJoinRecordCursorFactory(
+                                            executionContext.getCairoEngine(),
+                                            asm,
+                                            configuration,
+                                            executionContext.getMessageBus(),
+                                            outerProjectionMetadata,
+                                            master,
+                                            slave,
+                                            masterSymbolIndex,
+                                            slaveSymbolIndex,
+                                            lo,
+                                            hi,
+                                            valueTypes,
+                                            groupByFunctions,
+                                            compileWorkerGroupByFunctionsConditionally(
+                                                    executionContext,
+                                                    aggModel,
+                                                    groupByFunctions,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    joinMetadata
+                                            ),
+                                            compiledFilter,
+                                            bindVarMemory,
+                                            bindVarFunctions,
+                                            masterFilter,
+                                            compileWorkerFilterConditionally(
+                                                    executionContext,
+                                                    masterFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    masterFilterExpr,
+                                                    master.getMetadata()
+                                            ),
+                                            reduceTaskFactory,
+                                            executionContext.getSharedQueryWorkerCount()
+                                    );
+                                } else {
+                                    master = new AsyncWindowJoinRecordCursorFactory(
+                                            executionContext.getCairoEngine(),
+                                            asm,
+                                            configuration,
+                                            executionContext.getMessageBus(),
+                                            outerProjectionMetadata,
+                                            master,
+                                            slave,
+                                            filter,
+                                            compileWorkerFilterConditionally(
+                                                    executionContext,
+                                                    filter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    slaveModel.getOuterJoinExpressionClause(),
+                                                    joinMetadata
+                                            ),
+                                            lo,
+                                            hi,
+                                            valueTypes,
+                                            groupByFunctions,
+                                            compileWorkerGroupByFunctionsConditionally(
+                                                    executionContext,
+                                                    aggModel,
+                                                    groupByFunctions,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    joinMetadata
+                                            ),
+                                            compiledFilter,
+                                            bindVarMemory,
+                                            bindVarFunctions,
+                                            masterFilter,
+                                            compileWorkerFilterConditionally(
+                                                    executionContext,
+                                                    masterFilter,
+                                                    executionContext.getSharedQueryWorkerCount(),
+                                                    masterFilterExpr,
+                                                    master.getMetadata()
+                                            ),
+                                            reduceTaskFactory,
+                                            executionContext.getSharedQueryWorkerCount()
+                                    );
+                                }
+
                                 joinMetadata = Misc.free(joinMetadata);
                                 break;
                             default:

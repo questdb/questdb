@@ -76,7 +76,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         return ((SymbolFunction) symFunc).isSymbolTableStatic();
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
+    public static class Func extends AbstractEqBinaryFunction {
         private static final int LOOKUP_TABLE_SIZE = 1024;
         // Lookup hash table for lazy matching key caching
         private final DirectIntIntHashMap lookupMap;
