@@ -391,13 +391,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         if (n > 0 || pendingAccept) {
             boolean acceptProcessed = false;
 
-            if (pendingAccept) {
-                // we have left-overs from a previous round, process them now
-                pendingAccept = !accept(timestamp);
-                acceptProcessed = true;
-                useful = true;
-            }
-
             // check all activated FDs
             LOG.debug().$("epoll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
@@ -405,20 +398,26 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 offset += EpollAccessor.SIZEOF_EVENT;
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
-                if (id == 0 && !acceptProcessed) {
+                if (id == 0) {
+                    if (acceptProcessed) {
+                        // accept() is eager and we already accepted what we could in this Worker round
+                        continue;
+                    }
                     pendingAccept = !accept(timestamp);
                     acceptProcessed = true;
                     useful = true;
-                    continue;
-                }
-                if (isEventId(id)) {
+                } else if (isEventId(id)) {
                     handleSuspendEvent(id);
-                    continue;
-                }
-                if (handleSocketOperation(id)) {
+                } else if (handleSocketOperation(id)) {
                     useful = true;
                     watermark--;
                 }
+            }
+
+            if (pendingAccept && !acceptProcessed && isListening()) {
+                // we have left-overs from a previous round, process them now
+                pendingAccept = !accept(timestamp);
+                useful = true;
             }
         }
 
