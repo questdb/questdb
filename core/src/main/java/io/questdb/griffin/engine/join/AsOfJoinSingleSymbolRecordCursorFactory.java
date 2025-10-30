@@ -181,6 +181,8 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
         public void close() {
             if (isOpen) {
                 isOpen = false;
+                slaveTimestamp = Long.MIN_VALUE;
+                lastSlaveRowID = Long.MIN_VALUE;
                 joinKeyMap.close();
                 super.close();
             }
@@ -211,7 +213,7 @@ public class AsOfJoinSingleSymbolRecordCursorFactory extends AbstractJoinRecordC
                         slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp >= minSlaveTimestamp) {
                             key = joinKeyMap.withKey();
-                            key.putInt(slaveCursor.getRecord().getInt(slaveSymbolColumnIndex));
+                            key.putInt(slaveRecord.getInt(slaveSymbolColumnIndex));
                             value = key.createValue();
                             value.putLong(0, lastSlaveRowID);
                         }

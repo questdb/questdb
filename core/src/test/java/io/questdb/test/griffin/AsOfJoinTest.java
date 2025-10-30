@@ -3532,6 +3532,78 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleSymbolAsOf() throws Exception {
+        assertMemoryLeak(
+                (TestUtils.LeakProneCode) () -> {
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table t1 as (
+                                    SELECT
+                                        rnd_symbol_zipf(1_000, 2.0) AS symbol,
+                                        rnd_symbol('buy', 'sell') as side,
+                                        rnd_double() * 20 + 10 AS price,
+                                        rnd_double() * 20 + 10 AS amount,
+                                        generate_series as timestamp
+                                      FROM generate_series('2025-01-01'::#TIMESTAMP, '2025-01-02', '172898983u')
+                                      ) timestamp(timestamp) partition by day
+                                    """,
+                            leftTableTimestampType.getTypeName()
+                    );
+
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table t2 as (
+                                    SELECT
+                                          '2024-12-31T23'::#TIMESTAMP + (60*x) + rnd_long(-20, 20, 0) as ts,
+                                          rnd_symbol_zipf(1_000, 2.0) sym,
+                                          rnd_double() * 10.0 + 5.0 bid,
+                                          rnd_double() * 10.0 + 5.0 ask
+                                          FROM long_sequence(10_000)
+                                    ) timestamp(ts) partition by day
+                                    """,
+                            leftTableTimestampType.getTypeName()
+                    );
+
+                    var asofSQL = """
+                                    SELECT /*+ ASOF_LINEAR_SEARCH(t p) */ avg(bid)\s
+                                    FROM t1 t\s
+                                    ASOF JOIN t2 p on (t.symbol=p.sym);
+                            """;
+
+                    assertQueryNoLeakCheck(
+                            """
+                                    avg
+                                    10.82018197104726
+                                    """,
+                            asofSQL,
+                            null,
+                            false,
+                            true
+                    );
+
+                    assertSql(
+                            """
+                                    QUERY PLAN
+                                    GroupBy vectorized: false
+                                      values: [avg(bid)]
+                                        SelectedRecord
+                                            AsOf Join Single Symbol
+                                              condition: p.sym=t.symbol
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                    """,
+                            "explain " + asofSQL
+
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testWithIntrisifiedTimestampFilter() throws Exception {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {

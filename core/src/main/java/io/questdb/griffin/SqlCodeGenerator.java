@@ -190,6 +190,7 @@ import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
@@ -1114,34 +1115,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return allWorkerGroupByFunctions;
         }
         return null;
-    }
-
-    private RecordCursorFactory createAsOfJoin(
-            RecordMetadata metadata,
-            RecordCursorFactory master,
-            RecordSink masterKeySink,
-            RecordCursorFactory slave,
-            RecordSink slaveKeySink,
-            int columnSplit,
-            JoinContext joinContext,
-            long toleranceInterval
-    ) {
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-
-        return new AsOfJoinLightRecordCursorFactory(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                masterKeySink,
-                slaveKeySink,
-                columnSplit,
-                joinContext,
-                toleranceInterval
-        );
     }
 
     private @NotNull AsofJoinColumnAccessHelper createAsofColumnAccessHelper(RecordMetadata masterMetadata, RecordMetadata slaveMetadata, boolean selfJoin) {
@@ -2696,40 +2669,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                switch (joinType) {
-                                    case JOIN_CROSS_LEFT:
-                                        master = new NestedLoopLeftJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_RIGHT:
-                                        master = new NestedLoopRightJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_FULL:
-                                        master = new NestedLoopFullJoinRecordCursorFactory(
-                                                configuration,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata),
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                }
+                                master = switch (joinType) {
+                                    case JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    case JOIN_CROSS_RIGHT -> new NestedLoopRightJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata)
+                                    );
+                                    case JOIN_CROSS_FULL -> new NestedLoopFullJoinRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata),
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    default -> master;
+                                };
                                 masterAlias = null;
                                 break;
                             case JOIN_CROSS:
@@ -2779,13 +2747,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                 AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
                                                 boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
-                                                JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                                 int joinColumnSplit = masterMetadata.getColumnCount();
                                                 JoinContext slaveContext = slaveModel.getJoinContext();
                                                 if (isOptimizable && hasIndexHint && isSingleSymbolJoinWithIndex(slaveMetadata)) {
                                                     master = new AsOfJoinIndexedRecordCursorFactory(
                                                             configuration,
-                                                            metadata,
+                                                            joinMetadata,
                                                             master,
                                                             slave,
                                                             joinColumnSplit,
@@ -2795,39 +2763,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             asOfToleranceInterval
                                                     );
                                                 } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    keyTypes.clear();
-                                                    keyTypes.add(ColumnType.INT);
-                                                    valueTypes.clear();
-                                                    valueTypes.add(ColumnType.LONG);
-
-                                                    return new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
-                                                            metadata,
+                                                            joinMetadata,
                                                             master,
                                                             slave,
-                                                            keyTypes,
-                                                            valueTypes,
                                                             joinColumnSplit,
                                                             slaveSymbolColumnIndex,
                                                             columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
-//                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
-//                                                            configuration,
-//                                                            metadata,
-//                                                            master,
-//                                                            slave,
-//                                                            joinColumnSplit,
-//                                                            slaveSymbolColumnIndex,
-//                                                            columnAccessHelper,
-//                                                            slaveContext,
-//                                                            asOfToleranceInterval
-//                                                    );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
-                                                            metadata,
+                                                            joinMetadata,
                                                             master,
                                                             masterSink,
                                                             slave,
@@ -2917,16 +2867,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         }
 
                                         if (!created) {
-                                            master = createAsOfJoin(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    masterSink,
-                                                    slave,
-                                                    slaveSink,
-                                                    masterMetadata.getColumnCount(),
-                                                    slaveModel.getJoinContext(),
-                                                    asOfToleranceInterval
-                                            );
+                                            joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
+                                            int joinColumnSplit = masterMetadata.getColumnCount();
+                                            JoinContext slaveContext = slaveModel.getJoinContext();
+                                            valueTypes.clear();
+                                            valueTypes.add(LONG);
+                                            if (isSingleSymbolJoin(slaveMetadata)) {
+                                                AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
+                                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                keyTypes.clear();
+                                                keyTypes.add(ColumnType.INT);
+
+                                                return new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                        configuration,
+                                                        joinMetadata,
+                                                        master,
+                                                        slave,
+                                                        keyTypes,
+                                                        valueTypes,
+                                                        joinColumnSplit,
+                                                        slaveSymbolColumnIndex,
+                                                        columnAccessHelper,
+                                                        slaveContext,
+                                                        asOfToleranceInterval
+                                                );
+
+                                            } else {
+                                                master = new AsOfJoinLightRecordCursorFactory(
+                                                        configuration,
+                                                        joinMetadata,
+                                                        master,
+                                                        slave,
+                                                        keyTypes,
+                                                        valueTypes,
+                                                        masterSink,
+                                                        slaveSink,
+                                                        joinColumnSplit,
+                                                        slaveContext,
+                                                        asOfToleranceInterval
+                                                );
+                                            }
                                         }
                                     } else {
                                         boolean created = false;
@@ -4405,27 +4385,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             boolean processJoins
     ) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, executionContext);
-            case SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, executionContext);
-            case SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, executionContext);
-            case SELECT_MODEL_WINDOW:
-                return generateSelectWindow(model, executionContext);
-            case SELECT_MODEL_DISTINCT:
-                return generateSelectDistinct(model, executionContext);
-            case SELECT_MODEL_CURSOR:
-                return generateSelectCursor(model, executionContext);
-            case SELECT_MODEL_SHOW:
-                return model.getTableNameFunction();
-            default:
+        return switch (model.getSelectModelType()) {
+            case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
+            case SELECT_MODEL_GROUP_BY -> generateSelectGroupBy(model, executionContext);
+            case SELECT_MODEL_VIRTUAL -> generateSelectVirtual(model, executionContext);
+            case SELECT_MODEL_WINDOW -> generateSelectWindow(model, executionContext);
+            case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
+            case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
+            case SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            default -> {
                 if (model.getJoinModels().size() > 1 && processJoins) {
-                    return generateJoins(model, executionContext);
+                    yield generateJoins(model, executionContext);
                 }
-                return generateNoSelect(model, executionContext);
-        }
+                yield generateNoSelect(model, executionContext);
+            }
+        };
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5321,12 +5295,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation
