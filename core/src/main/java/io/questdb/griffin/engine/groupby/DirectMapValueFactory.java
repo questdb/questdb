@@ -24,16 +24,30 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 
 /**
  * Common interface for flyweight map values over off-heap memory.
  */
-public interface DirectMapValue extends MapValue {
+public class DirectMapValueFactory {
 
-    long getSizeInBytes();
+    private DirectMapValueFactory() {
+    }
 
-    void of(long ptr);
-
-    void setNew(boolean isNew);
+    public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes) {
+        boolean compact = true;
+        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
+            final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
+            assert size > 0;
+            if (size > Long.BYTES) {
+                compact = false;
+                break;
+            }
+        }
+        if (compact) {
+            return new DirectCompactMapValue(valueTypes.getColumnCount());
+        }
+        return new DirectMapValueImpl(valueTypes.getColumnCount());
+    }
 }

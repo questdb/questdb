@@ -44,6 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -171,12 +172,11 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerAllocators = null;
             }
 
-            final int valueCount = valueTypes.getColumnCount();
-            ownerGroupByValue = new DirectMapValue(valueCount);
+            ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes);
             valueSizeInBytes = ownerGroupByValue.getSizeInBytes();
             perWorkerGroupByValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerGroupByValues.extendAndSet(i, new DirectMapValue(valueCount));
+                perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
             }
         } catch (Throwable th) {
             close();

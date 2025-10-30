@@ -66,7 +66,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
-// TODO(puzpuzpuz): add support for JIT-compiled filters
+// TODO(puzpuzpuz): check inclusive/exclusive boundary logic
 // TODO(puzpuzpuz): consider implementing limit and negative limit
 // TODO(puzpuzpuz): consider applying time intrinsic intervals/table min/max ts from left-hand to right-hand
 public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
