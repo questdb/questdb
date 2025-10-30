@@ -232,7 +232,7 @@ public class PGJobContextTest extends BasePGTest {
         recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
-        acceptLoopTimeout = bufferSizeRnd.nextInt(500);
+        acceptLoopTimeout = bufferSizeRnd.nextInt(500) + 10;
 
         LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
                 .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
