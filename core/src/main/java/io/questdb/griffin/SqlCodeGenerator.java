@@ -2795,6 +2795,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             asOfToleranceInterval
                                                     );
                                                 } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
+                                                    keyTypes.clear();
+                                                    keyTypes.add(ColumnType.INT);
                                                     valueTypes.clear();
                                                     valueTypes.add(ColumnType.LONG);
 
