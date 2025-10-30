@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -39,6 +40,8 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+
+import java.util.Arrays;
 
 public class EqSymFunctionFactory implements FunctionFactory {
 
@@ -74,26 +77,33 @@ public class EqSymFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends AbstractEqBinaryFunction {
-        private final DirectIntIntHashMap lookupCache;
+        private static final int LOOKUP_TABLE_SIZE = 1024;
+        // Lookup hash table for lazy matching key caching
+        private final DirectIntIntHashMap lookupMap;
+        private boolean isLookupTableBuilt;
         private StaticSymbolTable leftTable;
+        // LUT for the small left symbol table case
+        private int[] lookupTable;
         private StaticSymbolTable rightTable;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
         public Func(Function left, Function right) {
             super(left, right);
             // use zero as the no-key value to speed up zeroing the hash table
-            this.lookupCache = new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP);
+            this.lookupMap = new DirectIntIntHashMap(16, 0.5, 0, MemoryTag.NATIVE_UNORDERED_MAP);
         }
 
         @Override
         public void close() {
             super.close();
-            Misc.free(lookupCache);
+            Misc.free(lookupMap);
         }
 
         @Override
         public void cursorClosed() {
             super.cursorClosed();
-            lookupCache.restoreInitialCapacity();
+            lookupMap.restoreInitialCapacity();
         }
 
         @Override
@@ -104,11 +114,16 @@ public class EqSymFunctionFactory implements FunctionFactory {
             final int leftKey = left.getInt(rec);
             final int rightKey = right.getInt(rec);
 
+            if (isLookupTableBuilt) {
+                // StaticSymbolTable.VALUE_IS_NULL is remapped to 0
+                return negated != (rightKey == lookupTable[Math.max(leftKey + 1, 0)]);
+            }
+
             // take the key + 1, so that zero is not possible
-            final long index = lookupCache.keyIndex(leftKey + 1);
+            final long index = lookupMap.keyIndex(leftKey + 1);
             final int matchingRightKey;
             if (index < 0) {
-                matchingRightKey = lookupCache.valueAt(index);
+                matchingRightKey = lookupMap.valueAt(index);
             } else {
                 if (leftKey != StaticSymbolTable.VALUE_IS_NULL) {
                     final CharSequence leftSym = leftTable.valueOf(leftKey);
@@ -118,7 +133,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
                             ? StaticSymbolTable.VALUE_IS_NULL
                             : StaticSymbolTable.VALUE_NOT_FOUND;
                 }
-                lookupCache.putAt(index, leftKey + 1, matchingRightKey);
+                lookupMap.putAt(index, leftKey + 1, matchingRightKey);
             }
 
             return negated != (rightKey == matchingRightKey);
@@ -129,12 +144,64 @@ public class EqSymFunctionFactory implements FunctionFactory {
             super.init(symbolTableSource, executionContext);
             this.leftTable = ((SymbolFunction) left).getStaticSymbolTable();
             this.rightTable = ((SymbolFunction) right).getStaticSymbolTable();
-            lookupCache.restoreInitialCapacity();
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
+            lookupMap.restoreInitialCapacity();
+
+            int leftSymbolCount = leftTable.getSymbolCount();
+            if (leftTable.containsNullValue()) {
+                leftSymbolCount++;
+            }
+            if (leftSymbolCount <= LOOKUP_TABLE_SIZE) {
+                if (lookupTable == null) {
+                    lookupTable = new int[LOOKUP_TABLE_SIZE];
+                }
+                Arrays.fill(lookupTable, StaticSymbolTable.VALUE_NOT_FOUND);
+                for (int leftKey = 0, n = leftTable.getSymbolCount(); leftKey < n; leftKey++) {
+                    final CharSequence leftSym = leftTable.valueOf(leftKey);
+                    final int rightKey = rightTable.keyOf(leftSym);
+                    // StaticSymbolTable.VALUE_IS_NULL is remapped to 0, hence +1
+                    lookupTable[leftKey + 1] = rightKey;
+                }
+                if (leftTable.containsNullValue()) {
+                    lookupTable[0] = rightTable.containsNullValue()
+                            ? StaticSymbolTable.VALUE_IS_NULL
+                            : StaticSymbolTable.VALUE_NOT_FOUND;
+                }
+                isLookupTableBuilt = true;
+            }
         }
 
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof Func thatF && isLookupTableBuilt) {
+                if (thatF.lookupTable == null) {
+                    thatF.lookupTable = new int[LOOKUP_TABLE_SIZE];
+                }
+                System.arraycopy(lookupTable, 0, thatF.lookupTable, 0, LOOKUP_TABLE_SIZE);
+                thatF.isLookupTableBuilt = true;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val('=').val(right);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 }
