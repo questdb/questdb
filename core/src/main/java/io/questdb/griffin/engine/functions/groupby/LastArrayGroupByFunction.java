@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,24 +36,18 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByArraySink;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
+public class LastArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final GroupByArraySink sink;
     private int valueIndex;
 
-    public FirstArrayGroupByFunction(@NotNull Function arg) {
+    public LastArrayGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
         this.type = arg.getType();
         this.sink = new GroupByArraySink(type);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(arg);
     }
 
     @Override
@@ -71,12 +65,16 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        mapValue.putLong(valueIndex, rowId);
+        long ptr = mapValue.getLong(valueIndex + 1);
+        sink.of(ptr);
+        sink.put(arg.getArray(record));
+        mapValue.putLong(valueIndex + 1, sink.ptr());
     }
 
     @Override
     public Function getArg() {
-        return arg;
+        return this.arg;
     }
 
     @Override
@@ -92,7 +90,7 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
 
     @Override
     public String getName() {
-        return "first";
+        return "last";
     }
 
     @Override
@@ -108,8 +106,8 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.LONG);    // memory pointer
+        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG);
     }
 
     @Override
@@ -131,13 +129,12 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId > destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
         }
     }
 
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         sink.setAllocator(allocator);
     }
@@ -148,8 +145,7 @@ public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByF
         mapValue.putLong(valueIndex + 1, 0);
     }
 
-    @Override
     public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
+        return true;
     }
 }
