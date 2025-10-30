@@ -348,7 +348,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
      * caller must retry on next iteration to avoid stranding connections with edge-triggered epoll.
      */
     protected boolean accept(long timestamp) {
-        final long acceptEndTime = timestamp + configuration.getAcceptLoopTimeout();
+        // note: acceptEndTime intentionally uses current wall-clock time and not the passed timestamp
+        // why? we want to run the accept loop for up to the configured timeout, regardless of any time
+        // spent on activities before entering this loop
+        final long acceptEndTime = clock.getTicks() + configuration.getAcceptLoopTimeout();
         int tlConCount = connectionCount.get();
         boolean drainedFully = false;
         while (tlConCount < configuration.getLimit() && acceptEndTime > clock.getTicks()) {
