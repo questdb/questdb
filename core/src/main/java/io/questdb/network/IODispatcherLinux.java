@@ -33,6 +33,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
+    private boolean pendingAccept;
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
@@ -397,7 +398,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    accept(timestamp);
+                    pendingAccept = !accept(timestamp);
                     useful = true;
                     continue;
                 }
@@ -410,6 +411,27 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     watermark--;
                 }
             }
+        }
+
+        // We use epoll in Edge-Triggered (ET) mode. If an `accept()` call in a previous
+        // round did not drain all pending connections, ET mode means epoll won't
+        // notify us again for those remaining connections.
+        //
+        // The `accept()` function (called in the main event loop) tracks this,
+        // setting 'pendingAccept = true' if it exits while connections are still pending.
+        //
+        // We check this flag *after* the main event loop as an optimization.
+        // If a *new* connection event arrived in *this* round, the main loop's `accept()`
+        // call would have run and likely drained all connections (including the old ones),
+        // resetting 'pendingAccept' to 'false'.
+        //
+        // This final check handles the case where no new events arrived, but a
+        // backlog still exists, or the main loop's `accept` failed to clear it.
+        // It avoids an unnecessary, expensive `accept()` syscall if the backlog
+        // was already cleared by the main loop.
+        if (pendingAccept && isListening()) {
+            pendingAccept = !accept(timestamp);
+            useful = true;
         }
 
         // process rows over watermark (new connections)

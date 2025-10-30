@@ -339,9 +339,18 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         return (readyForWrite ? Socket.WRITE_FLAG : 0) | (readyForRead ? Socket.READ_FLAG : 0);
     }
 
-    protected void accept(long timestamp) {
+    /**
+     * Accepts pending connections in a greedy loop until the queue is drained (EAGAIN), timeout expires,
+     * or connection limit is reached.
+     *
+     * @param timestamp current time in milliseconds
+     * @return true if fully drained to EAGAIN, false if exited early (timeout/limit). When false,
+     * caller must retry on next iteration to avoid stranding connections with edge-triggered epoll.
+     */
+    protected boolean accept(long timestamp) {
         final long acceptEndTime = timestamp + configuration.getAcceptLoopTimeout();
         int tlConCount = connectionCount.get();
+        boolean drainedFully = false;
         while (tlConCount < configuration.getLimit() && acceptEndTime > clock.getTicks()) {
             // This 'accept' is greedy.
             // Rather than to rely on epoll (or similar) to fire accept requests at us one at
@@ -351,7 +360,9 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             long fd = nf.accept(serverFd);
 
             if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
+                if (nf.errno() == Net.EWOULDBLOCK) {
+                    drainedFully = true;
+                } else {
                     LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).I$();
                 }
                 break;
@@ -419,6 +430,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 checkConnectionLimitAndRestartListener();
             }
         }
+        return drainedFully;
     }
 
     protected void doDisconnect(C context, int src) {

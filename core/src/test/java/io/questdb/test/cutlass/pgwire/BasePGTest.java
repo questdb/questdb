@@ -91,6 +91,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected CopyExportRequestJob copyExportRequestJob = null;
     protected CopyImportRequestJob copyImportRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
+    protected int acceptLoopTimeout = 500;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected long maxQueryTime = Long.MAX_VALUE;
     protected int recvBufferSize = 1024 * 1024;
@@ -583,6 +584,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
                 return concurrentCacheConfiguration;
+            }
+
+            @Override
+            public long getAcceptLoopTimeout() {
+                return acceptLoopTimeout;
             }
 
             @Override

@@ -232,10 +232,13 @@ public class PGJobContextTest extends BasePGTest {
         recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
+        acceptLoopTimeout = bufferSizeRnd.nextInt(500);
+
         LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
                 .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
                 .$(", recvBufferSize=").$(recvBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .$(", acceptLoopTimeout=").$(acceptLoopTimeout)
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
