@@ -3152,14 +3152,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 WindowJoinContext context = slaveModel.getWindowJoinContext();
                                 QueryModel aggModel = context.getParentModel();
-                                // todo @victor
-                                /* ObjList<QueryColumn> cols = aggModel.getColumns();
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
+                                ObjList<QueryColumn> cols = aggModel.getColumns();
                                 for (int j = 0, m = cols.size(); j < m; j++) {
-                                    CharSequence col = cols.get(j).getAst().token;
-                                    if (!functionParser.getFunctionFactoryCache().isGroupBy(col) && masterMetadata.getColumnIndexQuiet(col) < 0) {
-                                         throw InvalidColumnException.INSTANCE;
+                                    ExpressionNode ast = cols.get(j).getAst();
+                                    if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                                        int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
+                                        if (colIndex == -1) {
+                                            throw SqlException.invalidColumn(ast.position, ast.token);
+                                        }
+                                        if (colIndex >= masterMetadata.getColumnCount()) {
+                                            throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
+                                        }
                                     }
-                                }*/
+                                }
 
                                 // steal master filter
                                 CompiledFilter compiledFilter = null;
@@ -3180,8 +3187,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (!slave.supportsTimeFrameCursor()) {
                                     throw SqlException.$(slaveModel.getJoinKeywordPosition(), "slave table does not support time frame cursor for WINDOW join");
                                 }
-                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
+
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
