@@ -190,9 +190,9 @@ import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
 import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -310,8 +310,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -2795,17 +2795,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             asOfToleranceInterval
                                                     );
                                                 } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
+                                                    valueTypes.clear();
+                                                    valueTypes.add(ColumnType.LONG);
+
+                                                    return new AsOfJoinSingleSymbolRecordCursorFactory(
                                                             configuration,
                                                             metadata,
                                                             master,
                                                             slave,
+                                                            keyTypes,
+                                                            valueTypes,
                                                             joinColumnSplit,
                                                             slaveSymbolColumnIndex,
                                                             columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
+//                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
+//                                                            configuration,
+//                                                            metadata,
+//                                                            master,
+//                                                            slave,
+//                                                            joinColumnSplit,
+//                                                            slaveSymbolColumnIndex,
+//                                                            columnAccessHelper,
+//                                                            slaveContext,
+//                                                            asOfToleranceInterval
+//                                                    );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
                                                             configuration,
