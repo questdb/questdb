@@ -4786,7 +4786,7 @@ public class SqlOptimiser implements Mutable {
                                     dot = -1;
                                 }
 
-                                if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
+                                if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE && baseParent.getSelectModelType() != SELECT_MODEL_WINDOW_JOIN) {
                                     QueryModel synthetic = queryModelPool.next();
                                     synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0, z = baseParent.getBottomUpColumns().size(); j < z; j++) {
@@ -5043,6 +5043,10 @@ public class SqlOptimiser implements Mutable {
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
             if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
                 throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+            }
+
+            if (sampleBy != null && QueryModel.isWindowJoin(nested)) {
+                throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with WINDOW JOIN");
             }
 
             if (
@@ -6001,6 +6005,9 @@ public class SqlOptimiser implements Mutable {
             // fail-fast if this is an arithmetic expression where we expect window function
             if (window && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
+            }
+            if (window && isWindowJoin) {
+                throw SqlException.$(qc.getAst().position, "WINDOW functions are not allowed in WINDOW JOIN queries");
             }
 
             if (qc.getAst().type == BIND_VARIABLE) {
