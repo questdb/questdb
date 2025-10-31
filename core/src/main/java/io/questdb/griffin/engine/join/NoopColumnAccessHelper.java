@@ -22,35 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.PrincipalContext;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.ReadOnlyObjList;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import org.jetbrains.annotations.NotNull;
 
-public interface Authenticator extends QuietCloseable, Mutable, PrincipalContext {
-
-    @Override
-    default void clear() {
-    }
+public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    public static final NoopColumnAccessHelper INSTANCE = new NoopColumnAccessHelper();
 
     @Override
-    default void close() {
+    public CharSequence getMasterValue(Record masterRecord) {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper can't return the master value");
     }
 
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
     }
 
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable
-    default ReadOnlyObjList<CharSequence> getGroups() {
-        return null;
+    @Override
+    public @NotNull StaticSymbolTable getSlaveSymbolTable() {
+        throw new UnsupportedOperationException("NoopColumnAccessHelper doesn't have a symbol table");
+    }
+
+    public boolean isShortCircuit(Record masterRecord) {
+        return false;
+    }
+
+    @Override
+    public void of(TimeFrameRecordCursor slaveCursor) {
+
     }
 }

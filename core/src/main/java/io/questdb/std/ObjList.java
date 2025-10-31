@@ -316,6 +316,11 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         return pos;
     }
 
+    @Override
+    public ObjList<T> copy() {
+        return new ObjList<>(this);
+    }
+
     public void sort(Comparator<T> cmp) {
         sort(0, pos, cmp);
     }
