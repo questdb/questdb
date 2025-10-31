@@ -41,6 +41,7 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -711,7 +712,17 @@ public final class WhereClauseParser implements Mutable {
                             in.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
                         } else if (checkFunctionCanBeInterval(func)) {
-                            if (func.isRuntimeConstant()) {
+                            if (func.isConstant()) {
+                                Interval interval = timestampDriver.fixInterval(func.getInterval(null), func.getType());
+                                if (!isNegated) {
+                                    model.intersectIntervals(interval.getLo(), interval.getHi());
+                                } else {
+                                    model.subtractIntervals(interval.getLo(), interval.getHi());
+                                }
+                                in.intrinsicValue = IntrinsicModel.TRUE;
+                                Misc.free(func);
+                                return true;
+                            } else if (func.isRuntimeConstant()) {
                                 if (!isNegated) {
                                     model.intersectRuntimeIntervals(func);
                                 } else {

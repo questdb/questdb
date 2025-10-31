@@ -33,25 +33,27 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final VirtualFunctionRecordCursor cursor;
     private final ObjList<Function> functions;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
-    private final RecordMetadata priorityMetadata;
+    private final PriorityMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
 
     public VirtualRecordCursorFactory(
-            RecordMetadata virtualMetadata,
-            RecordMetadata priorityMetadata,
-            ObjList<Function> functions,
-            RecordCursorFactory base,
+            @NotNull RecordMetadata virtualMetadata,
+            @NotNull PriorityMetadata priorityMetadata,
+            @NotNull ObjList<Function> functions,
+            @NotNull RecordCursorFactory base,
             int virtualColumnReservedSlots
     ) {
         super(virtualMetadata);
@@ -76,7 +78,13 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
-        this.cursor = new VirtualFunctionRecordCursor(functions, memoizedFunctions, this.supportsRandomAccess, virtualColumnReservedSlots);
+        this.cursor = new VirtualFunctionRecordCursor(
+                priorityMetadata,
+                functions,
+                memoizedFunctions,
+                this.supportsRandomAccess,
+                virtualColumnReservedSlots
+        );
         this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
         this.priorityMetadata = priorityMetadata;
     }
@@ -123,6 +131,15 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        final int baseColumnIndex = cursor.getLongTopKColumnIndex(columnIndex);
+        if (baseColumnIndex != -1) {
+            return base.recordCursorSupportsLongTopK(baseColumnIndex);
+        }
+        return false;
     }
 
     @Override

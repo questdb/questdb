@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 
@@ -82,8 +83,18 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+        baseCursor.longTopK(list, columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return baseCursor.preComputedStateSize();
     }
 
     @Override
@@ -104,11 +115,6 @@ class SelectedRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         baseCursor.toTop();
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return baseCursor.preComputedStateSize();
     }
 
     void of(RecordCursor cursor) {

@@ -36,8 +36,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeAllNull() throws Exception {
         assertQuery(
-                "mode_long\tmode_string\tmode_varchar\n" +
-                        "null\t\t\n",
+                """
+                        mode_long\tmode_string\tmode_varchar
+                        null\t\t
+                        """,
                 "select mode(l) as mode_long, mode(s) as mode_string, mode(v) as mode_varchar from tab",
                 "create table tab as (" +
                         "select null::long as l, null::string as s, null::varchar as v from long_sequence(5)" +
@@ -51,8 +53,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeDouble() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "1.5\n",
+                """
+                        mode
+                        1.5
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 1.5 as f from long_sequence(3) " +
@@ -70,8 +74,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
-                "mode_long\tmode_string\tmode_varchar\n" +
-                        "null\t\t\n",
+                """
+                        mode_long\tmode_string\tmode_varchar
+                        null\t\t
+                        """,
                 "select mode(l) as mode_long, mode(s) as mode_string, mode(v) as mode_varchar from tab",
                 "create table tab (l long, s string, v varchar)",
                 null,
@@ -83,8 +89,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeString() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "apple\n",
+                """
+                        mode
+                        apple
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'apple' as f from long_sequence(3) " +
@@ -102,8 +110,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeSymbol() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "AAPL\n",
+                """
+                        mode
+                        AAPL
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'AAPL'::symbol as f from long_sequence(4) " +
@@ -121,8 +131,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeVarchar() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "hello\n",
+                """
+                        mode
+                        hello
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'hello'::varchar as f from long_sequence(3) " +
@@ -158,9 +170,11 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithGroupBy() throws Exception {
         assertQuery(
-                "trader\tmost_frequent_symbol\n" +
-                        "Alice\tAAPL\n" +
-                        "Bob\tMSFT\n",
+                """
+                        trader\tmost_frequent_symbol
+                        Alice\tAAPL
+                        Bob\tMSFT
+                        """,
                 "select trader, mode(symbol) as most_frequent_symbol from trades group by trader order by trader",
                 "create table trades as (" +
                         "select 'Alice' as trader, 'AAPL'::symbol as symbol from long_sequence(3) " +
@@ -180,8 +194,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithHighCardinality() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "frequent_value\n",
+                """
+                        mode
+                        frequent_value
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'frequent_value' as f from long_sequence(50) " +
@@ -213,9 +229,11 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
                             "select 'MSFT'::symbol as symbol, 'BUY' as side from long_sequence(2))"
             );
             assertQueryNoLeakCheck(
-                    "symbol\tmode_side\n" +
-                            "AAPL\tBUY\n" +
-                            "MSFT\tSELL\n",
+                    """
+                            symbol\tmode_side
+                            AAPL\tBUY
+                            MSFT\tSELL
+                            """,
                     "select p.symbol, mode(o.side) as mode_side " +
                             "from prices p " +
                             "join orders o on p.symbol = o.symbol " +
@@ -232,8 +250,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithLargeDataset() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "target\n",
+                """
+                        mode
+                        target
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 'target' as f from long_sequence(100) " +
@@ -249,8 +269,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithMixedDataTypes() throws Exception {
         assertQuery(
-                "mode_long\tmode_double\tmode_string\tmode_symbol\tmode_boolean\n" +
-                        "100\t1.5\tapple\tAAPL\ttrue\n",
+                """
+                        mode_long\tmode_double\tmode_string\tmode_symbol\tmode_boolean
+                        100\t1.5\tapple\tAAPL\ttrue
+                        """,
                 "select mode(l) mode_long, mode(d) mode_double, mode(s) mode_string, mode(sym) mode_symbol, mode(b) mode_boolean from tab",
                 "create table tab as (" +
                         "select 100L as l, 1.5 as d, 'apple' as s, 'AAPL'::symbol as sym, true as b from long_sequence(3) " +
@@ -268,8 +290,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithNaNAndInfinity() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "1.0\n",
+                """
+                        mode
+                        1.0
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select 1.0 as f from long_sequence(3) " +
@@ -289,8 +313,10 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithNulls() throws Exception {
         assertQuery(
-                "mode\n" +
-                        "5\n",
+                """
+                        mode
+                        5
+                        """,
                 "select mode(f) from tab",
                 "create table tab as (" +
                         "select null::long as f from long_sequence(3) " +
@@ -308,10 +334,12 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithOrderBy() throws Exception {
         assertQuery(
-                "g\tmode\n" +
-                        "C\t3\n" +
-                        "B\t2\n" +
-                        "A\t1\n",
+                """
+                        g\tmode
+                        C\t3
+                        B\t2
+                        A\t1
+                        """,
                 "select g, mode(f) from tab group by g order by mode(f) desc",
                 "create table tab as (" +
                         "select 'A' as g, 1L as f from long_sequence(5) " +
@@ -329,10 +357,12 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithSampleBy() throws Exception {
         assertQuery(
-                "k\tmode\n" +
-                        "1970-01-01T00:00:00.000000Z\tA\n" +
-                        "1970-01-01T01:00:00.000000Z\tB\n" +
-                        "1970-01-01T02:00:00.000000Z\tC\n",
+                """
+                        k\tmode
+                        1970-01-01T00:00:00.000000Z\tA
+                        1970-01-01T01:00:00.000000Z\tB
+                        1970-01-01T02:00:00.000000Z\tC
+                        """,
                 "select k, mode(f) from tab sample by 1h",
                 "create table tab as (" +
                         "select " +
@@ -351,9 +381,11 @@ public class ModeGroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testModeWithSubquery() throws Exception {
         assertQuery(
-                "department\tmost_common_rating\n" +
-                        "Engineering\t85\n" +
-                        "Sales\t75\n",
+                """
+                        department\tmost_common_rating
+                        Engineering\t85
+                        Sales\t75
+                        """,
                 "select department, mode(rating) as most_common_rating " +
                         "from (" +
                         "  select department, rating " +

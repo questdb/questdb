@@ -296,6 +296,21 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testDifferentSymbolColumnsCompare() throws Exception {
+        serialize("asymbol > anothersymbol");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testDifferentSymbolColumnsEq() throws Exception {
+        serialize("asymbol = anothersymbol");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testDifferentSymbolColumnsNotEq() throws Exception {
+        serialize("asymbol != anothersymbol");
+    }
+
+    @Test(expected = SqlException.class)
     public void testEmptyIn() throws Exception {
         serialize("anint IN ()");
     }

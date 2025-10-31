@@ -26,8 +26,9 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cutlass.text.CopyRequestTask;
-import io.questdb.cutlass.text.CopyTask;
+import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.text.CopyImportRequestTask;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.FanOut;
@@ -67,7 +68,25 @@ public interface MessageBus extends Closeable {
 
     CairoConfiguration getConfiguration();
 
-    MPSequence getCopyRequestPubSeq();
+    MPSequence getCopyExportRequestPubSeq();
+
+    RingQueue<CopyExportRequestTask> getCopyExportRequestQueue();
+
+    MCSequence getCopyExportRequestSubSeq();
+
+    SCSequence getCopyImportColSeq();
+
+    SPSequence getCopyImportPubSeq();
+
+    RingQueue<CopyImportTask> getCopyImportQueue();
+
+    SPSequence getCopyImportRequestPubSeq();
+
+    RingQueue<CopyImportRequestTask> getCopyImportRequestQueue();
+
+    SCSequence getCopyImportRequestSubSeq();
+
+    MCSequence getCopyImportSubSeq();
 
     MPSequence getGroupByMergeShardPubSeq();
 
@@ -132,18 +151,6 @@ public interface MessageBus extends Closeable {
     MPSequence getTableWriterEventPubSeq();
 
     RingQueue<TableWriterTask> getTableWriterEventQueue();
-
-    SCSequence getTextImportColSeq();
-
-    SPSequence getTextImportPubSeq();
-
-    RingQueue<CopyTask> getTextImportQueue();
-
-    RingQueue<CopyRequestTask> getTextImportRequestQueue();
-
-    SCSequence getTextImportRequestSubSeq();
-
-    MCSequence getTextImportSubSeq();
 
     MPSequence getVectorAggregatePubSeq();
 

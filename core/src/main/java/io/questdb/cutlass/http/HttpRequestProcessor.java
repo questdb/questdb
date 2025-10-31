@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.metrics.AtomicLongGauge;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
@@ -35,10 +33,6 @@ import io.questdb.network.ServerDisconnectException;
 import static io.questdb.cutlass.http.HttpRequestValidator.METHOD_GET;
 
 public interface HttpRequestProcessor {
-    default AtomicLongGauge connectionCountGauge(Metrics metrics) {
-        return metrics.jsonQueryMetrics().connectionCountGauge();
-    }
-
     // after this callback is invoked, the server will disconnect the client.
     // if a processor desires to write a goodbye letter to the client,
     // it must also send TCP FIN by invoking socket.shutdownWrite()
@@ -48,20 +42,20 @@ public interface HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
     }
 
-    default int getConnectionLimit(HttpContextConfiguration configuration) {
-        return configuration.getJsonQueryConnectionLimit();
+    default String getName() {
+        return ActiveConnectionTracker.PROCESSOR_OTHER;
     }
 
     default byte getRequiredAuthType() {
         return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    default boolean ignoreConnectionLimitCheck() {
-        return false;
-    }
-
     default short getSupportedRequestTypes() {
         return METHOD_GET;
+    }
+
+    default boolean ignoreConnectionLimitCheck() {
+        return false;
     }
 
     default void onConnectionClosed(HttpConnectionContext context) {
@@ -83,12 +77,16 @@ public interface HttpRequestProcessor {
     default void parkRequest(HttpConnectionContext context, boolean pausedQuery) {
     }
 
-    default boolean processCookies(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    default boolean processServiceAccountCookie(HttpConnectionContext context, SecurityContext securityContext) throws PeerIsSlowToReadException, PeerDisconnectedException {
         return true;
     }
 
     default boolean requiresAuthentication() {
         return getRequiredAuthType() != SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    default boolean reservedOneAdminConnection() {
+        return false;
     }
 
     default void resumeRecv(HttpConnectionContext context) {

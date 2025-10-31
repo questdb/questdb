@@ -1414,7 +1414,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // upgrade partition version
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
         final int newPartitionDirLen = other.size();
 
         // set the parquet file full path
@@ -1633,7 +1633,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // upgrade partition version
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
         final int newPartitionDirLen = other.size();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -1681,14 +1681,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            final int rowGroupCount = parquetMetadata.rowGroupCount();
+            final int rowGroupCount = parquetMetadata.getRowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                 final long rowGroupRowCount = parquetDecoder.decodeRowGroup(
                         rowGroupBuffers,
                         parquetColumnIdsAndTypes,
                         rowGroupIndex,
                         0,
-                        parquetMetadata.rowGroupSize(rowGroupIndex)
+                        parquetMetadata.getRowGroupSize(rowGroupIndex)
                 );
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
@@ -5784,8 +5784,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
 
             int parquetColumnIndex = -1;
-            for (int idx = 0, cnt = parquetMetadata.columnCount(); idx < cnt; idx++) {
-                if (parquetMetadata.columnId(idx) == columnIndex) {
+            for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+                if (parquetMetadata.getColumnId(idx) == columnIndex) {
                     parquetColumnIndex = idx;
                     break;
                 }
@@ -5810,10 +5810,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
 
                 long rowCount = 0;
-                final int rowGroupCount = parquetMetadata.rowGroupCount();
+                final int rowGroupCount = parquetMetadata.getRowGroupCount();
                 final BitmapIndexWriter indexWriter = indexer.getWriter();
                 for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                    final int rowGroupSize = parquetMetadata.rowGroupSize(rowGroupIndex);
+                    final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
                     if (rowCount + rowGroupSize <= columnTop) {
                         rowCount += rowGroupSize;
                         continue;
@@ -8841,11 +8841,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetColumnIdsAndTypes.add(timestampType);
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             attachMinTimestamp = parquetStatBuffers.getMinValueLong(0);
-            final int rowGroupCount = parquetDecoder.metadata().rowGroupCount();
+            final int rowGroupCount = parquetDecoder.metadata().getRowGroupCount();
+            assert rowGroupCount > 0;
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, rowGroupCount - 1);
             attachMaxTimestamp = parquetStatBuffers.getMaxValueLong(0);
 
-            return parquetDecoder.metadata().rowCount();
+            return parquetDecoder.metadata().getRowCount();
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -9909,7 +9910,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (copyTargetFrame) {
                 try {
                     setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn);
-                    createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+                    createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
@@ -10163,7 +10164,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     auxMem.truncate();
                     ColumnType.getDriver(columnType).configureAuxMemMA(auxMem);
                 }
+                if (metadata.isIndexed(i)) {
+                    // Reset indexer column top
+                    indexers.get(i).resetColumnTop();
+                }
             }
+
         }
     }
 

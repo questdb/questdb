@@ -570,7 +570,7 @@ public class FilesCacheFuzzTest extends AbstractTest {
                                 Files.close(fd2);
                             }
 
-                            if (Files.remove(singleFile.$())) {
+                            if (TestUtils.remove(singleFile.$())) {
                                 markRemovedOperations.incrementAndGet();
                             }
                         }

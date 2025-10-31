@@ -2205,7 +2205,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
-                            "              filter: (seller='sf' or buyer='sf') [pre-touch]\n" +
+                            "              filter: (seller='sf' or buyer='sf')\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: trades\n"
@@ -2445,6 +2445,24 @@ public class GroupByTest extends AbstractCairoTest {
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testLimitedOrderByLongConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
+            assertQueryNoLeakCheck(
+                    "sym\tlatest\n" +
+                            "1\t0\n" +
+                            "2\t0\n",
+                    "SELECT sym, first((0::timestamp)::long) latest " +
+                            "FROM x " +
+                            "WHERE ts IN '2023-01-01' " +
+                            "ORDER BY latest DESC " +
+                            "LIMIT 10;"
             );
         });
     }

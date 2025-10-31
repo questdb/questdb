@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import org.junit.Assume;
@@ -52,8 +53,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void test1997Millennium() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2\n",
+                """
+                        extract
+                        2
+                        """,
                 "select extract(millennium from '1997-04-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -62,8 +65,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
         );
 
         assertQuery(
-                "extract\n" +
-                        "2\n",
+                """
+                        extract
+                        2
+                        """,
                 "select extract('millennium' from '1997-04-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -75,8 +80,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testBeforeEndOfYear() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "364\n",
+                """
+                        extract
+                        364
+                        """,
                 "select extract(doy from '2022-12-30T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -85,8 +92,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
         );
 
         assertQuery(
-                "extract\n" +
-                        "364\n",
+                """
+                        extract
+                        364
+                        """,
                 "select extract('doy' from '2022-12-30T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -98,8 +107,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testBeginningOfCentury() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "20\n",
+                """
+                        extract
+                        20
+                        """,
                 "select extract(century from '2000-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -111,8 +122,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testCenturyNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(century from null)",
                 null,
                 null,
@@ -142,8 +155,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testDayNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(day from null)",
                 null,
                 null,
@@ -155,8 +170,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testDecadeNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(decade from null)",
                 null,
                 null,
@@ -168,8 +185,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testDowNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(dow from null)",
                 null,
                 null,
@@ -181,8 +200,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testDoyNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(doy from null)",
                 null,
                 null,
@@ -194,8 +215,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testEndOfLeapYear() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "366\n",
+                """
+                        extract
+                        366
+                        """,
                 "select extract(doy from '2020-12-31T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -207,8 +230,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testEndOfYear() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "365\n",
+                """
+                        extract
+                        365
+                        """,
                 "select extract(doy from '2022-12-31T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -220,8 +245,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testEpochNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(epoch from null)",
                 null,
                 null,
@@ -234,8 +261,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testFirstCentury() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(century from '0001-01-01T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -247,8 +276,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testHourNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(hour from null)",
                 null,
                 null,
@@ -260,8 +291,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testIsoDowNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(isodow from null)",
                 null,
                 null,
@@ -273,8 +306,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testIsoYearNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(isoyear from null)",
                 null,
                 null,
@@ -286,8 +321,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testIsoYearWeek1Start() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2022\n",
+                """
+                        extract
+                        2022
+                        """,
                 "select extract(isoyear from '2022-01-03T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -299,8 +336,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testIsoYearWeek1StartLeap() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2020\n",
+                """
+                        extract
+                        2020
+                        """,
                 "select extract(isoyear from '2019-12-31T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -312,8 +351,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testIsoYearWeek52Start() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2021\n",
+                """
+                        extract
+                        2021
+                        """,
                 "select extract(isoyear from '2022-01-01T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -325,8 +366,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMicrosecondsNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(microseconds from null)",
                 null,
                 null,
@@ -338,8 +381,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMillenniumNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(millennium from null)",
                 null,
                 null,
@@ -351,8 +396,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMilliseconds() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "555\n",
+                """
+                        extract
+                        555
+                        """,
                 "select extract(milliseconds from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -364,8 +411,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMillisecondsNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(milliseconds from null)",
                 null,
                 null,
@@ -377,8 +426,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMillisecondsPreEpoch() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "555\n",
+                """
+                        extract
+                        555
+                        """,
                 "select extract(milliseconds from '1905-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -390,8 +441,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinuteNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(minute from null)",
                 null,
                 null,
@@ -412,8 +465,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testMonthNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(month from null)",
                 null,
                 null,
@@ -428,6 +483,21 @@ public class ExtractFunctionTest extends AbstractCairoTest {
                 "select extract(hour from from to_timestamp('2022-03-11T22:00:30.555555Z'))",
                 25,
                 "Unnecessary `from`. Typo?"
+        );
+    }
+
+    @Test
+    public void testNanosecondsNull() throws Exception {
+        assertQuery(
+                """
+                        extract
+                        null
+                        """,
+                "select extract(nanoseconds from null)",
+                null,
+                null,
+                true,
+                true
         );
     }
 
@@ -461,8 +531,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testQuarterFirst1() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(quarter from '2022-01-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -474,8 +546,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testQuarterFirst2() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2\n",
+                """
+                        extract
+                        2
+                        """,
                 "select extract(quarter from '2022-04-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -487,8 +561,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testQuarterLast1() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(quarter from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -500,8 +576,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testQuarterLast4() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "4\n",
+                """
+                        extract
+                        4
+                        """,
                 "select extract(quarter from '2022-12-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -513,8 +591,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testQuarterNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(quarter from null)",
                 null,
                 null,
@@ -526,8 +606,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testSecondNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(second from null)",
                 null,
                 null,
@@ -539,8 +621,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testSecondPreEpoch() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "30\n",
+                """
+                        extract
+                        30
+                        """,
                 "select extract(second from '1812-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -552,8 +636,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testStartOfYear() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(doy from '2022-01-01T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -574,8 +660,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaCentury() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "21\n",
+                """
+                        extract
+                        21
+                        """,
                 "select extract(century from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -587,8 +675,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaDay() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "11\n",
+                """
+                        extract
+                        11
+                        """,
                 "select extract(day from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -600,8 +690,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaDecade() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "202\n",
+                """
+                        extract
+                        202
+                        """,
                 "select extract(decade from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -613,8 +705,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaDowSaturday() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "6\n",
+                """
+                        extract
+                        6
+                        """,
                 "select extract(dow from '2022-04-16T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -626,8 +720,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaDowSunday() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "0\n",
+                """
+                        extract
+                        0
+                        """,
                 "select extract(dow from '2022-04-10T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -639,8 +735,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaDoy() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "112\n",
+                """
+                        extract
+                        112
+                        """,
                 "select extract(doy from '2022-04-22T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -652,8 +750,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaEpoch() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1650664830\n",
+                """
+                        extract
+                        1650664830
+                        """,
                 "select extract(epoch from '2022-04-22T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -665,8 +765,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaHour() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "22\n",
+                """
+                        extract
+                        22
+                        """,
                 "select extract(hour from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -678,8 +780,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaIsoDowMonday() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(isodow from '2022-04-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -691,8 +795,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaIsoDowSunday() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "7\n",
+                """
+                        extract
+                        7
+                        """,
                 "select extract(isodow from '2022-04-10T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -704,8 +810,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaMicroseconds() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "555555\n",
+                """
+                        extract
+                        555555
+                        """,
                 "select extract(microseconds from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -717,8 +825,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaMicrosecondsPreEpoch() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "555555\n",
+                """
+                        extract
+                        555555
+                        """,
                 "select extract(microseconds from '1917-03-11T22:00:40.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -730,8 +840,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaMillennium() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "3\n",
+                """
+                        extract
+                        3
+                        """,
                 "select extract(millennium from '2022-04-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -743,8 +855,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaMinute() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "45\n",
+                """
+                        extract
+                        45
+                        """,
                 "select extract(minute from '2022-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -756,9 +870,37 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaMonth() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "3\n",
+                """
+                        extract
+                        3
+                        """,
                 "select extract(month from '2022-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVanillaNanoseconds() throws Exception {
+        assertQuery(
+                "extract\n" +
+                        (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "555555000\n" : "555555123\n"),
+                "select extract(nanoseconds from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
+                null,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testVanillaNanosecondsPreEpoch() throws Exception {
+        assertQuery(
+                "extract\n" +
+                        (ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "555555000\n" : "555555123\n"),
+                "select extract(nanoseconds from '1917-03-11T22:00:40.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
                 true,
@@ -769,8 +911,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaSecond() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "30\n",
+                """
+                        extract
+                        30
+                        """,
                 "select extract(second from '2022-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -782,8 +926,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaWeek() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "10\n",
+                """
+                        extract
+                        10
+                        """,
                 "select extract(week from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -795,8 +941,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaYear() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2022\n",
+                """
+                        extract
+                        2022
+                        """,
                 "select extract(year from '2022-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -808,8 +956,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testVanillaYearPreEpoch() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1908\n",
+                """
+                        extract
+                        1908
+                        """,
                 "select extract(year from '1908-03-11T22:45:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -821,8 +971,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeek1Start() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(week from '2022-01-03T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -834,8 +986,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeek1StartLeap() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "1\n",
+                """
+                        extract
+                        1
+                        """,
                 "select extract(week from '2019-12-31T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -847,8 +1001,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeek2End() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "2\n",
+                """
+                        extract
+                        2
+                        """,
                 "select extract(week from '2022-01-16T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -860,8 +1016,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeek3Start() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "3\n",
+                """
+                        extract
+                        3
+                        """,
                 "select extract(week from '2022-01-17T22:00:30.555555Z')",
                 null,
                 null,
@@ -873,8 +1031,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeek52Start() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "52\n",
+                """
+                        extract
+                        52
+                        """,
                 "select extract(week from '2022-01-01T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,
@@ -886,8 +1046,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testWeekNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(week from null)",
                 null,
                 null,
@@ -899,8 +1061,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     @Test
     public void testYearNull() throws Exception {
         assertQuery(
-                "extract\n" +
-                        "null\n",
+                """
+                        extract
+                        null
+                        """,
                 "select extract(year from null)",
                 null,
                 null,
@@ -913,8 +1077,10 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testZeroCentury() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
         assertQuery(
-                "extract\n" +
-                        "-1\n",
+                """
+                        extract
+                        -1
+                        """,
                 "select extract(century from '0000-01-01T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
                 null,
                 null,

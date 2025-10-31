@@ -27,8 +27,6 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.MicrosTimestampDriver;
-import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -61,8 +59,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 
 public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
@@ -75,12 +71,12 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final DirectByteSlice bufferView = new DirectByteSlice();
     private final long flushIntervalNanos;
     private final ObjList<String> hosts;
+    private final int initialBackoffMillis;
     private final boolean isTls;
+    private final int maxBackoffMillis;
     private final int maxNameLength;
     private final long maxRetriesNanos;
     private final long minRequestThroughput;
-    private final int maxBackoffMillis;
-    private final int initialBackoffMillis;
     private final String password;
     private final String path;
     private final IntList ports;
@@ -279,7 +275,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                     currentAddressIndex = i % hosts.size();
                     if (currentAddressIndex < 64) {
                         // we can blacklist only the first 64 hosts, that's fine, we don't expect more hosts anyway
-                        // and if there ever are more hosts then the side-effect is that we will retry on the same host
+                        // and if there ever are more hosts then the side effect is that we will retry on the same host
                         // even after it returned a non-retryable error
                         if (hostBlacklistBitmap == allBlacklistedMask) {
                             // if all hosts are blacklisted, we can't retry
@@ -404,27 +400,11 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
-    @Override
-    public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ');
-        // todo. Not efficient for timestamp > Long.MAX_VALUE, consider introduce a conf like 'timestamp_transmit_use_nanos' ?
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp, unit));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp, unit)).put('t');
+    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
+        if (statusCode == null || statusCode.size() != 3) {
+            return false;
         }
-        atNow();
-    }
-
-    @Override
-    public void at(Instant timestamp) {
-        request.putAscii(' ');
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(timestamp));
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(timestamp)).put('t');
-        }
-        atNow();
+        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
     }
 
     @Override
@@ -493,13 +473,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '2' && statusCode.byteAt(2) == '1';
     }
 
-    public static boolean isNotFound(DirectUtf8Sequence statusCode) {
-        if (statusCode == null || statusCode.size() != 3) {
-            return false;
-        }
-        return statusCode.byteAt(0) == '4' && statusCode.byteAt(1) == '0' && statusCode.byteAt(2) == '4';
-    }
-
     @Override
     public Sender longColumn(CharSequence name, long value) {
         writeFieldName(name);
@@ -563,35 +536,13 @@ public abstract class AbstractLineHttpSender implements Sender {
         if (state != RequestState.EMPTY) {
             throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
         }
-        if (table.length() == 0) {
+        if (table.isEmpty()) {
             throw new LineSenderException("table name cannot be empty");
         }
         // set bookmark at start of the line.
         rowBookmark = request.getContentLength();
         state = RequestState.TABLE_NAME_SET;
         escapeQuotedString(table);
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value, unit)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value, unit)).putAscii('t');
-        }
-        return this;
-    }
-
-    @Override
-    public Sender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name);
-        try {
-            request.put(NanosTimestampDriver.INSTANCE.from(value)).putAscii('n');
-        } catch (ArithmeticException e) {
-            request.put(MicrosTimestampDriver.INSTANCE.from(value)).putAscii('t');
-        }
         return this;
     }
 
@@ -696,7 +647,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
 
         long retryingDeadlineNanos = Long.MIN_VALUE;
-        int retryBackoff = RETRY_INITIAL_BACKOFF_MS;
+        int retryBackoff = initialBackoffMillis;
         int contentLen = request.getContentLength();
         int actualTimeoutMillis = baseTimeoutMillis;
         if (minRequestThroughput > 0) {
@@ -722,7 +673,7 @@ public abstract class AbstractLineHttpSender implements Sender {
                 if (isSuccessResponse(statusCode)) {
                     consumeChunkedResponse(response); // if any
                     if (keepAliveDisabled(response)) {
-                        // Server has HTTP keep-alive disabled and it's closing this TCP connection.
+                        // Server has HTTP keep-alive disabled, and it's closing this TCP connection.
                         client.disconnect();
                     }
                     lastFlushFailed = false;
@@ -787,6 +738,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
         r.withContent();
         rowBookmark = r.getContentLength();
+        state = RequestState.EMPTY;
         return r;
     }
 
@@ -825,7 +777,7 @@ public abstract class AbstractLineHttpSender implements Sender {
             sink.clear();
             chunkedResponseToSink(response, sink);
             LineSenderException ex = new LineSenderException("Could not flush buffer: HTTP endpoint authentication error", retryable);
-            if (sink.length() > 0) {
+            if (!sink.isEmpty()) {
                 ex = ex.put(": ").put(sink);
             }
             ex.put(" [http-status=").put(statusAscii).put(']');
@@ -1017,14 +969,14 @@ public abstract class AbstractLineHttpSender implements Sender {
             assert state == State.INIT;
 
             sink.put(messageSink).put(" [http-status=").put(httpStatus.asAsciiCharSequence());
-            if (codeSink.length() > 0 || errorIdSink.length() > 0 || lineSink.length() > 0) {
-                if (errorIdSink.length() > 0) {
+            if (!codeSink.isEmpty() || !errorIdSink.isEmpty() || !lineSink.isEmpty()) {
+                if (!errorIdSink.isEmpty()) {
                     sink.put(", id: ").put(errorIdSink);
                 }
-                if (codeSink.length() > 0) {
+                if (!codeSink.isEmpty()) {
                     sink.put(", code: ").put(codeSink);
                 }
-                if (lineSink.length() > 0) {
+                if (!lineSink.isEmpty()) {
                     sink.put(", line: ").put(lineSink);
                 }
             }

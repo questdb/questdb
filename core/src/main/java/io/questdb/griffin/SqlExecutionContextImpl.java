@@ -71,8 +71,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private boolean clockUseNow = false;
     private boolean cloneSymbolTables;
-    private boolean columnPreTouchEnabled = true;
-    private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
     private int intervalFunctionType;
     private int jitMode;
@@ -109,7 +107,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
-        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine, cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
     }
 
     @Override
@@ -226,13 +224,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public long getNow(int timestampType) {
         assert ColumnType.isTimestamp(timestampType);
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return nowMicros;
-            case ColumnType.TIMESTAMP_NANO:
-                return nowNanos;
-        }
-        return 0L;
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> nowMicros;
+            case ColumnType.TIMESTAMP_NANO -> nowNanos;
+            default -> 0L;
+        };
     }
 
     @Override
@@ -286,16 +282,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isColumnPreTouchEnabled() {
-        return columnPreTouchEnabled;
-    }
-
-    @Override
-    public boolean isColumnPreTouchEnabledOverride() {
-        return columnPreTouchEnabledOverride;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -340,8 +326,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
-        this.columnPreTouchEnabled = true;
-        this.columnPreTouchEnabledOverride = true;
         this.allowNonDeterministicFunction = true;
     }
 
@@ -364,16 +348,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setCloneSymbolTables(boolean cloneSymbolTables) {
         this.cloneSymbolTables = cloneSymbolTables;
-    }
-
-    @Override
-    public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
-        this.columnPreTouchEnabled = columnPreTouchEnabled;
-    }
-
-    @Override
-    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
-        this.columnPreTouchEnabledOverride = columnPreTouchEnabledOverride;
     }
 
     @Override
@@ -463,6 +437,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
         return with(securityContext, bindVariableService, null, -1, null);
     }
+
 
     public SqlExecutionContextImpl with(
             @NotNull SecurityContext securityContext,

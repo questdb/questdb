@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import org.jetbrains.annotations.NotNull;
@@ -252,7 +253,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.75;
+        return 0.5;
     }
 
     @Override
@@ -514,6 +515,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewMaxRefreshStepUs() {
+        return Micros.YEAR_MICROS_NONLEAP;
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
@@ -660,13 +666,48 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getParquetExportCopyReportFrequencyLines() {
+        return 500_000;
+    }
+
+    @Override
+    public int getParquetExportCompressionCodec() {
+        return ParquetCompression.COMPRESSION_ZSTD;
+    }
+
+    @Override
+    public int getParquetExportCompressionLevel() {
+        return 9;
+    }
+
+    @Override
+    public int getParquetExportDataPageSize() {
+        return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public int getParquetExportRowGroupSize() {
+        return 0; // use default (512*512) rows
+    }
+
+    @Override
+    public int getParquetExportVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public CharSequence getParquetExportTableNamePrefix() {
+        return "zzz.copy.";
+    }
+
+    @Override
     public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+        return ParquetCompression.COMPRESSION_ZSTD;
     }
 
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
-        return 0;
+        return 9;
     }
 
     @Override
@@ -804,6 +845,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlCopyBufferSize() {
         return 1024 * 1024;
+    }
+
+    @Override
+    public int getSqlCopyExportQueueCapacity() {
+        return 32;
+    }
+
+    @Override
+    public CharSequence getSqlCopyExportRoot() {
+        return null;
     }
 
     @Override
@@ -1326,6 +1377,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isParquetExportRawArrayEncoding() {
+        return false;
+    }
+
+    @Override
+    public boolean isParquetExportStatisticsEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isPartitionEncoderParquetRawArrayEncoding() {
         return false;
     }
@@ -1362,11 +1423,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelFilterEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isSqlParallelFilterPreTouchEnabled() {
         return true;
     }
 

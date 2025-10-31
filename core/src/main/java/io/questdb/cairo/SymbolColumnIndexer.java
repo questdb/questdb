@@ -158,6 +158,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void resetColumnTop() {
+        columnTop = 0;
+    }
+
+    @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
     }
