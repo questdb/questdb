@@ -157,20 +157,19 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     @Override
     protected boolean runSerially() {
         final long timestamp = clock.getTicks();
-        processDisconnects(timestamp);
+        boolean useful = processDisconnects(timestamp);
 
         int count;
         if (readFdSet.getCount() > 0 || writeFdSet.getCount() > 0) {
             count = sf.select(readFdSet.address(), writeFdSet.address(), 0, 0);
             if (count < 0) {
                 LOG.error().$("select failure [err=").$(nf.errno()).I$();
-                return false;
+                return useful;
             }
         } else {
             count = 0;
         }
 
-        boolean useful = false;
         fds.clear();
         int watermark = pending.size();
         // collect reads into hash map

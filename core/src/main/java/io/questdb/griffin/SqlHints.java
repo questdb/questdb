@@ -31,11 +31,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
+    public static final String ASOF_DRIVEBY_CACHE_HINT = "asof_driveby_cache";
     public static final String ASOF_FAST_SEARCH_HINT = "asof_fast_search";
     public static final String ASOF_INDEX_SEARCH_HINT = "asof_index_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
+
+    public static boolean hasAsOfDrivebyCacheHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_DRIVEBY_CACHE_HINT, tableNameA, tableNameB);
+    }
 
     public static boolean hasAsOfFastSearchHint(
             @NotNull QueryModel queryModel,
