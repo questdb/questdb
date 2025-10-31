@@ -458,6 +458,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                     return Double.NEGATIVE_INFINITY;
                 }
                 sink.clear();
+                decimal256.setScale(ColumnType.getDecimalScale(type));
                 sink.put(decimal256);
                 return Numbers.parseDouble(sink);
             }
