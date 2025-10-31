@@ -245,7 +245,7 @@ public class AsyncTimeFrameHelper implements QuietCloseable {
             recordAtRowIndex(r);
             long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
             if (timestamp >= timestampLo) {
-                if (timestamp < timestampHi) {
+                if (timestamp <= timestampHi) {
                     return r;
                 }
                 return Long.MIN_VALUE;
