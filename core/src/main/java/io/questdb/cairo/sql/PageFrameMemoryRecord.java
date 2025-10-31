@@ -358,6 +358,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
+    public long getPageAddress(int columnIndex) {
+        return pageAddresses.getQuick(columnIndex);
+    }
+
     @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);

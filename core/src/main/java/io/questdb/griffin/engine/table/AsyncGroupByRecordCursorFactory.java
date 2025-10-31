@@ -32,9 +32,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.Unordered2Map;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -57,9 +62,11 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Hash;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -230,9 +237,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 long baseRowId = record.getRowId();
 
                 if (fragment.isNotSharded()) {
-                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                        aggregateNonShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
+                        aggregateNonShardedShortKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                        aggregateNonShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                        aggregateNonShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else {
+                        aggregateNonShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    }
                 } else {
-                    aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                        aggregateShardedVarcharKey(record, frameRowCount, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                        aggregateShardedIntKey(record, frameRowCount, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                        aggregateShardedLongKey(record, frameRowCount, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else {
+                        aggregateShardedGeneric(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                    }
                 }
 
                 atom.requestSharding(fragment);
@@ -244,7 +269,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateFilteredNonSharded(
+    private static void aggregateFilteredNonShardedGeneric(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -268,7 +293,102 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateFilteredSharded(
+    private static void aggregateFilteredNonShardedIntKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered4Map map = (Unordered4Map) fragment.reopenMap();
+        final long startPtr = record.getPageAddress(columnIndex);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            final long p = startPtr + (r << 2);
+            final int key = Unsafe.getUnsafe().getInt(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredNonShardedLongKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered8Map map = (Unordered8Map) fragment.reopenMap();
+        final long startPtr = record.getPageAddress(columnIndex);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            final long p = startPtr + (r << 3);
+            final long key = Unsafe.getUnsafe().getLong(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredNonShardedShortKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered2Map map = (Unordered2Map) fragment.reopenMap();
+        final long startPtr = record.getPageAddress(columnIndex);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            final long p = startPtr + (r << 1);
+            final short key = Unsafe.getUnsafe().getShort(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredNonShardedVarcharKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final UnorderedVarcharMap map = (UnorderedVarcharMap) fragment.reopenMap();
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            record.setRowIndex(r);
+            final MapKey key = map.withKey();
+            key.putVarchar(record.getVarcharA(columnIndex));
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredShardedGeneric(
             PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
@@ -305,7 +425,95 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateNonSharded(
+    private static void aggregateFilteredShardedIntKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final long startPtr = record.getPageAddress(columnIndex);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            final long p = startPtr + (r << 2);
+            final int key = Unsafe.getUnsafe().getInt(p);
+            final long hashCode = Hash.hashInt64(key);
+            final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
+
+            MapValue shardValue = shard.createValueWithKey(key, hashCode);
+            record.setRowIndex(r);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredShardedLongKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final long startPtr = record.getPageAddress(columnIndex);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            final long p = startPtr + (r << 3);
+            final long key = Unsafe.getUnsafe().getLong(p);
+            final long hashCode = Hash.hashLong64(key);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
+
+            MapValue shardValue = shard.createValueWithKey(key, hashCode);
+            record.setRowIndex(r);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateFilteredShardedVarcharKey(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        // The first map is used to write keys.
+        final Map lookupShard = fragment.getShards().getQuick(0);
+        for (long i = 0, n = rows.size(); i < n; i++) {
+            final long r = rows.get(i);
+            record.setRowIndex(r);
+            final MapKey lookupKey = lookupShard.withKey();
+            lookupKey.putVarchar(record.getVarcharA(columnIndex));
+            lookupKey.commit();
+            final long hashCode = lookupKey.hash();
+
+            final Map shard = fragment.getShardMap(hashCode);
+            final MapKey shardKey;
+            if (shard != lookupShard) {
+                shardKey = shard.withKey();
+                shardKey.copyFrom(lookupKey);
+            } else {
+                shardKey = lookupKey;
+            }
+
+            MapValue shardValue = shardKey.createValue(hashCode);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateNonShardedGeneric(
             PageFrameMemoryRecord record,
             long frameRowCount,
             long baseRowId,
@@ -328,7 +536,92 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateSharded(
+    private static void aggregateNonShardedIntKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered4Map map = (Unordered4Map) fragment.reopenMap();
+        for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 4) {
+            final int key = Unsafe.getUnsafe().getInt(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateNonShardedLongKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered8Map map = (Unordered8Map) fragment.reopenMap();
+        for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 8) {
+            final long key = Unsafe.getUnsafe().getLong(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateNonShardedShortKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final Unordered2Map map = (Unordered2Map) fragment.reopenMap();
+        for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 2) {
+            final short key = Unsafe.getUnsafe().getShort(p);
+            MapValue value = map.createValueWithKey(key);
+            record.setRowIndex(r);
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateNonShardedVarcharKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        final UnorderedVarcharMap map = (UnorderedVarcharMap) fragment.reopenMap();
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+            final MapKey key = map.withKey();
+            key.putVarchar(record.getVarcharA(columnIndex));
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                functionUpdater.updateNew(value, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateShardedGeneric(
             PageFrameMemoryRecord record,
             long frameRowCount,
             long baseRowId,
@@ -343,6 +636,88 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             final MapKey lookupKey = lookupShard.withKey();
             mapSink.copy(record, lookupKey);
+            lookupKey.commit();
+            final long hashCode = lookupKey.hash();
+
+            final Map shard = fragment.getShardMap(hashCode);
+            final MapKey shardKey;
+            if (shard != lookupShard) {
+                shardKey = shard.withKey();
+                shardKey.copyFrom(lookupKey);
+            } else {
+                shardKey = lookupKey;
+            }
+
+            MapValue shardValue = shardKey.createValue(hashCode);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateShardedIntKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 4) {
+            final int key = Unsafe.getUnsafe().getInt(p);
+            final long hashCode = Hash.hashInt64(key);
+            final Unordered4Map shard = (Unordered4Map) fragment.getShardMap(hashCode);
+
+            MapValue shardValue = shard.createValueWithKey(key, hashCode);
+            record.setRowIndex(r);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateShardedLongKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        for (long r = 0, p = record.getPageAddress(columnIndex); r < frameRowCount; r++, p += 8) {
+            final long key = Unsafe.getUnsafe().getLong(p);
+            final long hashCode = Hash.hashLong64(key);
+            final Unordered8Map shard = (Unordered8Map) fragment.getShardMap(hashCode);
+
+            MapValue shardValue = shard.createValueWithKey(key, hashCode);
+            record.setRowIndex(r);
+            if (shardValue.isNew()) {
+                functionUpdater.updateNew(shardValue, record, baseRowId + r);
+            } else {
+                functionUpdater.updateExisting(shardValue, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateShardedVarcharKey(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            AsyncGroupByAtom.MapFragment fragment,
+            int columnIndex
+    ) {
+        // The first map is used to write keys.
+        final Map lookupShard = fragment.getShards().getQuick(0);
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+
+            final MapKey lookupKey = lookupShard.withKey();
+            lookupKey.putVarchar(record.getVarcharA(columnIndex));
             lookupKey.commit();
             final long hashCode = lookupKey.hash();
 
@@ -407,9 +782,27 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 long baseRowId = record.getRowId();
 
                 if (fragment.isNotSharded()) {
-                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                        aggregateFilteredNonShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleShortColumnSink shortColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered2Map) {
+                        aggregateFilteredNonShardedShortKey(record, rows, baseRowId, functionUpdater, fragment, shortColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                        aggregateFilteredNonShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                        aggregateFilteredNonShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else {
+                        aggregateFilteredNonShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    }
                 } else {
-                    aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    if (mapSink instanceof RecordSinkFactory.SingleVarcharColumnSink varcharColumnSink && atom.getFragment(slotId).getMap() instanceof UnorderedVarcharMap) {
+                        aggregateFilteredShardedVarcharKey(record, rows, baseRowId, functionUpdater, fragment, varcharColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleIntColumnSink intColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered4Map) {
+                        aggregateFilteredShardedIntKey(record, rows, baseRowId, functionUpdater, fragment, intColumnSink.getColumnIndex());
+                    } else if (mapSink instanceof RecordSinkFactory.SingleLongColumnSink longColumnSink && atom.getFragment(slotId).getMap() instanceof Unordered8Map) {
+                        aggregateFilteredShardedLongKey(record, rows, baseRowId, functionUpdater, fragment, longColumnSink.getColumnIndex());
+                    } else {
+                        aggregateFilteredShardedGeneric(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    }
                 }
 
                 atom.requestSharding(fragment);
