@@ -35,6 +35,7 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SPSequence;
+import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,7 +91,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
     private final int testConnectionBufSize;
-    protected boolean closed = false;
+    protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
     protected long serverFd;
     private long closeListenFdEpochMs;
@@ -180,8 +181,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        final long cursor = disconnectPubSeq.nextBully();
-        assert cursor > -1;
+        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         disconnectQueue.get(cursor).context = context;
         disconnectPubSeq.done(cursor);
     }
@@ -232,7 +236,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        long cursor = interestPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(interestPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
@@ -260,6 +268,16 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         pending.set(r, OPM_OPERATION, -1);
         pending.set(r, context);
         pendingAdded(r);
+    }
+
+    private long bullyUntilClosed(Sequence sequence) {
+        // inlined version of sequence.nextBully() - we need to check for the 'closed' flag while looping
+        // if the queue is full and all other workers are closed, then a naive bully would block forever
+        long cursor;
+        while ((cursor = sequence.next()) < 0 && !closed) {
+            sequence.getBarrier().getWaitStrategy().signal();
+        }
+        return cursor;
     }
 
     private void checkConnectionLimitAndRestartListener() {
@@ -491,7 +509,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     protected void publishOperation(int operation, C context) {
-        long cursor = ioEventPubSeq.nextBully();
+        final long cursor = bullyUntilClosed(ioEventPubSeq);
+        if (cursor < 0) {
+            assert closed;
+            return;
+        }
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
