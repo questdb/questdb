@@ -30,10 +30,12 @@ import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Paths;
 import java.util.concurrent.locks.LockSupport;
@@ -51,6 +53,7 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    public static final LibcDetector.LibcType libc;
 
     private Os() {
     }
@@ -312,7 +315,18 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
+            if (type == LINUX) {
+                libc = LibcDetector.detectLibc();
+                if (libc == LibcDetector.LibcType.UNKNOWN) {
+                    throw new FatalError("Cannot detect libc type, please report this as a bug");
+                }
+            } else {
+                libc = LibcDetector.LibcType.UNKNOWN;
+            }
+
+            final boolean isMusl = libc == LibcDetector.LibcType.MUSL;
+
+            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + (isMusl ? "-musl" : "") + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
             String devCXXLib = devCXXLibRoot + cxxLibName;
@@ -352,6 +366,7 @@ public final class Os {
         } else {
             type = _32Bit;
             name = System.getProperty("os.name");
+            libc = LibcDetector.LibcType.UNKNOWN;
         }
     }
 }
