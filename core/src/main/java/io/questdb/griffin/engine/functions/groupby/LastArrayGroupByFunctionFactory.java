@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,35 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.auth;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.security.PrincipalContext;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.ReadOnlyObjList;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface Authenticator extends QuietCloseable, Mutable, PrincipalContext {
+public class LastArrayGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last(D[])";
+    }
 
     @Override
-    default void clear() {
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    default void close() {
-    }
-
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_NONE;
-    }
-
-    /**
-     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
-     * For other authentication types returns null.
-     */
-    @Nullable
-    default ReadOnlyObjList<CharSequence> getGroups() {
-        return null;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new LastArrayGroupByFunction(args.getQuick(0));
     }
 }
