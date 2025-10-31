@@ -77,23 +77,22 @@ public class AsyncTimeFrameHelper implements QuietCloseable {
             if (rowLo == Long.MIN_VALUE) {
                 while (timeFrameCursor.next()) {
                     // carry on if the frame is to the left of the interval
-                    if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) <= timestampLo) {
+                    if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) < timestampLo) {
                         // bookmark the frame, so that next time we search we start with it
                         bookmarkCurrentFrame(0);
                         continue;
                     }
                     // check if the frame intersects with the interval, so it's of our interest
-                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale) < timestampHi) {
+                    if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale) <= timestampHi) {
                         if (timeFrameCursor.open() == 0) {
                             continue;
                         }
                         // now we know the exact boundaries of the frame, let's check them
                         if (scaleTimestamp(timeFrame.getTimestampHi(), scale) <= timestampLo) {
-                            // the frame is to the left of the interval, so carry on
                             bookmarkCurrentFrame(0);
                             continue;
                         }
-                        if (scaleTimestamp(timeFrame.getTimestampLo(), scale) < timestampHi) {
+                        if (scaleTimestamp(timeFrame.getTimestampLo(), scale) <= timestampHi) {
                             // yay, it's what we need!
                             if (scaleTimestamp(timeFrame.getTimestampLo(), scale) >= timestampLo) {
                                 // we can start with the first row
@@ -105,6 +104,9 @@ public class AsyncTimeFrameHelper implements QuietCloseable {
                             break;
                         }
                     }
+
+                    // next row may have interval with current frame
+                    bookmarkCurrentFrame(0);
                     return Long.MIN_VALUE;
                 }
                 if (rowLo == Long.MIN_VALUE) {
@@ -277,7 +279,7 @@ public class AsyncTimeFrameHelper implements QuietCloseable {
             recordAtRowIndex(r);
             final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
             if (timestamp >= timestampLo) {
-                if (timestamp < timestampHi) {
+                if (timestamp <= timestampHi) {
                     return r;
                 }
                 return Long.MIN_VALUE;

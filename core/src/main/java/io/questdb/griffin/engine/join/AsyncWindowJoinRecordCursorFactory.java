@@ -122,8 +122,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 masterFilter != null
         );
 
-        int masterTsType = masterFactory.getMetadata().getTimestampType();
-        int slaveTsType = slaveFactory.getMetadata().getTimestampType();
+        final int masterTsType = masterFactory.getMetadata().getTimestampType();
+        final int slaveTsType = slaveFactory.getMetadata().getTimestampType();
         long masterTsScale = 1;
         long slaveTsScale = 1;
         if (masterTsType != slaveTsType) {
@@ -251,7 +251,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final AsyncWindowJoinAtom.TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final Function joinFilter = atom.getJoinFilter(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -350,7 +350,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
         final Function filter = atom.getMasterFilter(slotId);
         final DirectMapValue value = atom.getMapValue(slotId);
-        final AsyncWindowJoinAtom.TimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
         final Record slaveRecord = slaveTimeFrameHelper.getRecord();
         final Function joinFilter = atom.getJoinFilter(slotId);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);

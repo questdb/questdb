@@ -120,15 +120,15 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 columnSplit,
                 masterFilter != null
         );
-        int masterTsType = masterFactory.getMetadata().getTimestampType();
-        int slaveTsType = slaveFactory.getMetadata().getTimestampType();
+
+        final int masterTsType = masterFactory.getMetadata().getTimestampType();
+        final int slaveTsType = slaveFactory.getMetadata().getTimestampType();
         long masterTsScale = 1;
         long slaveTsScale = 1;
         if (masterTsType != slaveTsType) {
             masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
             slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
         }
-
         final AsyncFastWindowJoinAtom atom = new AsyncFastWindowJoinAtom(
                 asm,
                 configuration,
