@@ -12025,16 +12025,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowJoin() throws SqlException {
+    public void testWindowJoin() throws Exception {
         assertQuery(
                 "select-window-join sum(t.price + q.price) sum from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between unbounded preceding and current row excluding prevailing outer-join-expression t.tag = q.tag) t",
-                "select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag",
+                "select sum(t.price + q.price) from trades t WINDOW JOIN quotes q on tag range between unbounded preceding and current row",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
         );
         assertQuery(
                 "select-virtual price + 1 column, sum from (select-window-join [t.price price, sum(q.price) sum] t.price price, sum(q.price) sum from (select [price, tag] from trades t timestamp (timestamp) window join select [price, tag] from quotes q timestamp (timestamp) between unbounded preceding and current row excluding prevailing outer-join-expression t.tag = q.tag) t) t",
-                "select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag",
+                "select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag range between unbounded preceding and current row",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
         );
@@ -12062,6 +12062,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE),
                 modelOf("quotes").timestamp().col("tag", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE)
         );
+        assertException("select t.price + 1, sum(q.price) from trades t WINDOW JOIN quotes q on tag", 71, "'range' expected");
     }
 
     @Test

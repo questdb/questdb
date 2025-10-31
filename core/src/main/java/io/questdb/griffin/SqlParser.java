@@ -2824,7 +2824,8 @@ public class SqlParser {
         }
 
         tok = optTok(lexer);
-        if (joinType == QueryModel.JOIN_WINDOW && tok != null && isRangeKeyword(tok)) {
+        if (joinType == QueryModel.JOIN_WINDOW) {
+            expectTok(lexer, tok, "range");
             tok = optTok(lexer);
             expectTok(lexer, tok, "between");
             tok = tok(lexer, "'unbounded', 'current' or expression");

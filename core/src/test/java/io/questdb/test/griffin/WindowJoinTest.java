@@ -110,6 +110,69 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinBinarySearch() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable(true);
+            String expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\tnull\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\tnull\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\tnull\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\tnull\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\tnull\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\tnull\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\tnull\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\tnull\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\tnull\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\tnull\n" +
+                    "TSLA\t400.0\t2023-01-01T09:10:00.000000Z\tnull\n" +
+                    "TSLA\t401.0\t2023-01-01T09:11:00.000000Z\tnull\n" +
+                    "AMZN\t500.0\t2023-01-01T09:12:00.000000Z\tnull\n" +
+                    "AMZN\t501.0\t2023-01-01T09:13:00.000000Z\t99.5\n" +
+                    "META\t600.0\t2023-01-01T09:14:00.000000Z\t200.0\n" +
+                    "META\t601.0\t2023-01-01T09:15:00.000000Z\t202.0\n" +
+                    "TSLA\t402.0\t2023-01-01T09:16:00.000000Z\t301.0\n" +
+                    "AMZN\t502.0\t2023-01-01T09:17:00.000000Z\t400.0\n" +
+                    "META\t602.0\t2023-01-01T09:18:00.000000Z\t500.0\n" +
+                    "NFLX\t700.0\t2023-01-01T09:19:00.000000Z\t600.0\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Window Join workers: 1\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "900000000" : "900000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "840000000" : "840000000000") + " preceding\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p " +
+                            " range between 15 minute preceding and 14 minute preceding " +
+                            "order by t.ts;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from trades t " +
+                            "left join prices p " +
+                            "on p.ts >= dateadd('m', -15, t.ts) AND p.ts <= dateadd('m', -14, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowJoinNoOtherCondition() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -209,7 +272,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void prepareTable() throws SqlException {
+    private void prepareTable(boolean extraData) throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +
                         "  sym symbol," +
@@ -256,5 +319,41 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "('GOOGL', 301.5, cast('2023-01-01T09:08:00.000000Z' as #TIMESTAMP));",
                 rightTableTimestampType.getTypeName()
         );
+
+        if (extraData) {
+            executeWithRewriteTimestamp(
+                    "insert into trades values " +
+                            "('TSLA', 400.0, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
+                            "('TSLA', 401.0, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 500.0, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 501.0, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 600.0, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 601.0, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
+                            "('TSLA', 402.0, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 502.0, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 602.0, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP))," +
+                            "('NFLX', 700.0, cast('2023-01-01T09:19:00.000000Z' as #TIMESTAMP));",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    "insert into prices values " +
+                            "('TSLA', 399.5, cast('2023-01-01T09:09:00.000000Z' as #TIMESTAMP))," +
+                            "('TSLA', 400.5, cast('2023-01-01T09:10:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 499.5, cast('2023-01-01T09:11:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 500.5, cast('2023-01-01T09:12:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 599.5, cast('2023-01-01T09:13:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 600.5, cast('2023-01-01T09:14:00.000000Z' as #TIMESTAMP))," +
+                            "('TSLA', 401.5, cast('2023-01-01T09:15:00.000000Z' as #TIMESTAMP))," +
+                            "('AMZN', 501.5, cast('2023-01-01T09:16:00.000000Z' as #TIMESTAMP))," +
+                            "('META', 601.5, cast('2023-01-01T09:17:00.000000Z' as #TIMESTAMP))," +
+                            "('NFLX', 699.5, cast('2023-01-01T09:18:00.000000Z' as #TIMESTAMP));",
+                    rightTableTimestampType.getTypeName()
+            );
+        }
+    }
+
+    private void prepareTable() throws SqlException {
+        prepareTable(false);
     }
 }
