@@ -125,8 +125,8 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getDefaultColumnTypeForTimestamp() {
-        return getDelegate().getDefaultColumnTypeForTimestamp();
+    public int getDefaultCreateTimestampColumnType() {
+        return getDelegate().getDefaultCreateTimestampColumnType();
     }
 
     @Override

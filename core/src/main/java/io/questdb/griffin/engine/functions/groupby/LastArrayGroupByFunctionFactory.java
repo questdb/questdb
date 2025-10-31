@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,27 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.join;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface SymbolShortCircuit {
-    @Transient
-    CharSequence getMasterValue(Record masterRecord);
+public class LastArrayGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "last(D[])";
+    }
 
-    @NotNull
-    StaticSymbolTable getSlaveSymbolTable();
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    /**
-     * When joining on a single symbol column, detects when the slave column doesn't have
-     * the symbol at all (by inspecting its int-to-symbol mapping), avoiding linear search
-     * in that case.
-     */
-    boolean isShortCircuit(Record masterRecord);
-
-    void of(TimeFrameRecordCursor slaveCursor);
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new LastArrayGroupByFunction(args.getQuick(0));
+    }
 }

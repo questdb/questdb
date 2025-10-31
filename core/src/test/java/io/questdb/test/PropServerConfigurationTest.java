@@ -666,52 +666,52 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testDefaultAddColumnTypeForTimestamp() throws Exception {
+    public void testDefaultTimestampColumnType() throws Exception {
         Properties properties = new Properties();
 
         // default
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // empty
         properties.setProperty("line.timestamp.default.column.type", "");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // timestamp
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // timestamp_ns
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_NS");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // lowercase
         properties.setProperty("line.timestamp.default.column.type", "timestamp");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // camel case
         properties.setProperty("line.timestamp.default.column.type", "Timestamp_Ns");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_NANO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // not allowed
         properties.setProperty("line.timestamp.default.column.type", "STRING");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // not allowed
         properties.setProperty("line.timestamp.default.column.type", "SHORT");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
 
         // nonexistent type
         properties.setProperty("line.timestamp.default.column.type", "TIMESTAMP_MS");
         configuration = newPropServerConfiguration(properties);
-        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForTimestamp());
+        Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, configuration.getLineTcpReceiverConfiguration().getDefaultCreateTimestampColumnType());
     }
 
     @Test

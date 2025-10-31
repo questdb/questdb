@@ -1727,12 +1727,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 this.lineTcpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
+
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
                     log.info().$("invalid default column type for float ").$safe(floatDefaultColumnTypeName).$(", will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
+
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
                 if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
@@ -4973,13 +4975,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
-            return lineDefaultTimestampColumnType;
+        public int getDefaultPartitionBy() {
+            return lineTcpDefaultPartitionBy;
         }
 
         @Override
-        public int getDefaultPartitionBy() {
-            return lineTcpDefaultPartitionBy;
+        public int getDefaultTimestampColumnType() {
+            return lineDefaultTimestampColumnType;
         }
 
         @Override
@@ -5153,7 +5155,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDefaultColumnTypeForTimestamp() {
+        public int getDefaultCreateTimestampColumnType() {
             return lineDefaultTimestampColumnType;
         }
 

@@ -1215,7 +1215,7 @@ public class SqlOptimiser implements Mutable {
             CharSequence token = orderByAdvice.getQuick(i).token;
             int loc = Chars.indexOfLastUnquoted(token, '.');
             if (loc > -1) {
-                if (prefix.length() == 0) {
+                if (prefix.isEmpty()) {
                     prefix = token.subSequence(0, loc);
                 } else if (!Chars.equalsIgnoreCase(prefix, token, 0, loc)) {
                     return false;
@@ -6702,8 +6702,7 @@ public class SqlOptimiser implements Mutable {
                                 : null;
                         if (token != null) {
                             // Add it to candidates list.
-                            trivialExpressions.putIfAbsent(token, 0);
-                            trivialExpressions.increment(token);
+                            trivialExpressions.inc(token);
                             // Put the literal to the candidate list, so that we don't have
                             // to look it up later.
                             trivialExpressionCandidates.setQuick(i, token);
@@ -6713,8 +6712,7 @@ public class SqlOptimiser implements Mutable {
 
                 // Or if it's a literal, add it, in case we have A, A + 1.
                 if (nestedAst.type == LITERAL) {
-                    trivialExpressions.putIfAbsent(nestedAst.token, 0);
-                    trivialExpressions.increment(nestedAst.token);
+                    trivialExpressions.inc(nestedAst.token);
                 }
             }
 

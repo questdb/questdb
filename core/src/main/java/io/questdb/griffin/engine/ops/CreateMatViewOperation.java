@@ -57,5 +57,5 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, QueryModel queryModel) throws SqlException;
 
-    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException;
+    void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata, int scanDirection) throws SqlException;
 }

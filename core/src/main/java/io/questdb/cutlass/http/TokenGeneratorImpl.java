@@ -8,6 +8,18 @@ import org.jetbrains.annotations.NotNull;
 
 import java.security.SecureRandom;
 
+/**
+ * Generates cryptographically secure random tokens with a configurable prefix and length.
+ * Tokens are Base64 URL-encoded.
+ *
+ * <p><b>Thread Safety:</b> This class is <b>NOT thread-safe</b>. External synchronization
+ * is required when accessed from multiple threads. Internal buffers ({@code byteSeq} and
+ * {@code tokenSink}) are reused across calls for performance.
+ *
+ * <p><b>Important:</b> The {@code CharSequence} returned by {@link #newToken()} is transient
+ * and backed by a reusable buffer. Callers must copy the value if they need to retain it
+ * beyond the next invocation.
+ */
 public class TokenGeneratorImpl implements TokenGenerator {
     private final ByteArraySequence byteSeq;
     private final int length;
@@ -22,6 +34,15 @@ public class TokenGeneratorImpl implements TokenGenerator {
         byteSeq = new ByteArraySequence(length);
     }
 
+    /**
+     * Generates a new cryptographically secure random token.
+     *
+     * <p><b>Warning:</b> The returned {@code CharSequence} is backed by a reusable buffer
+     * and will be overwritten on the next call. Callers must copy the value (e.g., by calling
+     * {@code .toString()}) if they need to retain it.
+     *
+     * @return a transient token string that must be copied if retained
+     */
     @Transient
     @NotNull
     public CharSequence newToken() {

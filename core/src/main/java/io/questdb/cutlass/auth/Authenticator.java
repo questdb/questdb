@@ -27,8 +27,8 @@ package io.questdb.cutlass.auth;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.PrincipalContext;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.ReadOnlyObjList;
 import org.jetbrains.annotations.Nullable;
 
 public interface Authenticator extends QuietCloseable, Mutable, PrincipalContext {
@@ -50,7 +50,7 @@ public interface Authenticator extends QuietCloseable, Mutable, PrincipalContext
      * For other authentication types returns null.
      */
     @Nullable
-    default ObjList<CharSequence> getGroups() {
+    default ReadOnlyObjList<CharSequence> getGroups() {
         return null;
     }
 }

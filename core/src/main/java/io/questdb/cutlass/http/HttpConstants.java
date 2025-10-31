@@ -69,7 +69,7 @@ public final class HttpConstants {
     @SuppressWarnings("unused")
     public static final String METHOD_PUT = "PUT";
     public static final long SESSION_COOKIE_MAX_AGE_SECONDS = 2592000L;
-    public static final String SESSION_COOKIE_ATTRIBUTES = "; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_COOKIE_MAX_AGE_SECONDS;
+    public static final String SESSION_COOKIE_ATTRIBUTES = "; HttpOnly; Path=/; SameSite=Strict; Max-Age=" + SESSION_COOKIE_MAX_AGE_SECONDS;
     public static final String SESSION_COOKIE_NAME = "qdb_session";
     public static final Utf8String SESSION_COOKIE_NAME_UTF8 = new Utf8String(SESSION_COOKIE_NAME);
     public static final String SESSION_ID_PREFIX = "qs1";
