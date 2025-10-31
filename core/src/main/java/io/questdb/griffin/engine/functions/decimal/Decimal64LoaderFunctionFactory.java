@@ -71,14 +71,14 @@ public final class Decimal64LoaderFunctionFactory {
     private static int buildDecimalType(int fromDecimalType) {
         int precision = ColumnType.getDecimalPrecision(fromDecimalType);
         int scale = ColumnType.getDecimalScale(fromDecimalType);
-        return ColumnType.getDecimalType(ColumnType.DECIMAL128, precision, scale);
+        return ColumnType.getDecimalType(ColumnType.DECIMAL64, precision, scale);
     }
 
     private static class FuncByte extends Decimal64Function implements UnaryFunction {
         private final Function arg;
 
         public FuncByte(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 3, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 3, 0));
             this.arg = arg;
         }
 
@@ -102,7 +102,7 @@ public final class Decimal64LoaderFunctionFactory {
         private final Function arg;
 
         public FuncDate(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 19, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 19, 0));
             this.arg = arg;
         }
 
@@ -288,7 +288,7 @@ public final class Decimal64LoaderFunctionFactory {
         private final Function arg;
 
         public FuncInt(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 10, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 10, 0));
             this.arg = arg;
         }
 
@@ -317,7 +317,7 @@ public final class Decimal64LoaderFunctionFactory {
         private final Function arg;
 
         public FuncLong(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 19, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 19, 0));
             this.arg = arg;
         }
 
@@ -346,7 +346,7 @@ public final class Decimal64LoaderFunctionFactory {
         private final Function arg;
 
         public FuncShort(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 5, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 5, 0));
             this.arg = arg;
         }
 
@@ -370,7 +370,7 @@ public final class Decimal64LoaderFunctionFactory {
         private final Function arg;
 
         public FuncTimestamp(Function arg) {
-            super(ColumnType.getDecimalType(ColumnType.DECIMAL128, 19, 0));
+            super(ColumnType.getDecimalType(ColumnType.DECIMAL64, 19, 0));
             this.arg = arg;
         }
 
