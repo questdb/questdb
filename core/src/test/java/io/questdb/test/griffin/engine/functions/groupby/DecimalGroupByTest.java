@@ -72,6 +72,26 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgFuzz() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+
+        for (int i = 0; i < 1_000; i++) {
+            int precision = rnd.nextInt(72) + 1;
+            int scale = rnd.nextInt(precision);
+            int targetScale = rnd.nextInt(precision);
+            if (precision - scale + targetScale + 5 >= 76) {
+                continue;
+            }
+            try {
+                assertAvgFuzz(rnd, precision, scale, targetScale, 3, 10, 1000);
+            } catch (Throwable th) {
+                System.err.printf("Failed at iteration %d with precision %d, scale %d and targetScale %d\n", i, precision, scale, targetScale);
+                throw th;
+            }
+        }
+    }
+
+    @Test
     public void testDecimal128Avg() {
         // We write 10k rows, out of these:
         //   - We split the content in 3 symbols: 'a', 'b' and 'c'
@@ -866,6 +886,53 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         assertAvg(precision, scale, targetScale, src256, dst256);
     }
 
+    private void assertAvgFuzz(Rnd rnd, int precision, int scale, int targetScale, int nanRate, int nMaps, int maxRowsPerMap) {
+        try (var loader = new RandomDecimalLoader(rnd, precision, scale, nanRate)) {
+            GroupByFunction func;
+            if (scale == targetScale) {
+                func = AvgDecimalGroupByFunctionFactory.newInstance(loader, 0);
+            } else {
+                func = AvgDecimalRescaleGroupByFunctionFactory.newInstance(loader, 0, targetScale);
+            }
+
+            var types = new ArrayColumnTypes();
+            func.initValueTypes(types);
+
+            var maps = new LinkedList<MapValue>();
+            loader.reset();
+            for (int i = 0; i < nMaps; i++) {
+                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % maxRowsPerMap);
+                maps.push(map);
+            }
+
+            while (maps.size() > 1) {
+                var m1 = maps.pop();
+                var m2 = maps.pop();
+                func.merge(m1, m2);
+                maps.addLast(m1);
+            }
+
+            var m1 = maps.pop();
+            DecimalUtil.load(decimal256, decimal128, func, m1, func.getType());
+            if (loader.getCount() == 0) {
+                // Both src and dest are null, we expect a null result
+                Assert.assertTrue(decimal256.isNull());
+            } else {
+                var sum = loader.getAccumulator();
+                var expected = sum.divide(BigDecimal.valueOf(loader.getCount()), targetScale, RoundingMode.HALF_EVEN);
+                Assert.assertEquals(
+                        String.format("result mismatch, expected %s but got %s [precision=%d, scale=%d, targetScale=%d]",
+                                expected,
+                                decimal256,
+                                precision,
+                                scale,
+                                targetScale
+                        ),
+                        expected, decimal256.toBigDecimal());
+            }
+        }
+    }
+
     private void assertSum(int precision, int scale, Decimal128 src, Decimal128 dst) {
         var src256 = new Decimal256();
         if (src.isNull()) {
@@ -1098,14 +1165,16 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                 }
                 case ColumnType.DECIMAL128 -> {
                     hhRange = hlRange = range = 0;
-                    highRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - Numbers.getPrecision(Long.MAX_VALUE) - 1, 1));
+                    final int highPrec = precision - Numbers.getPrecision(Long.MAX_VALUE) - 1;
+                    highRange = highPrec > 0 ? Numbers.getMaxValue(highPrec) : 0;
                 }
                 default -> {
                     highRange = range = 0;
                     final int maxLongPrecision = Numbers.getPrecision(Long.MAX_VALUE);
-                    final int hhPrecision = Math.max(ColumnType.getDecimalPrecision(type) - 3 * maxLongPrecision - 1, 0);
+                    final int hhPrecision = Math.max(precision - 3 * maxLongPrecision - 1, 0);
                     hhRange = hhPrecision > 0 ? Numbers.getMaxValue(hhPrecision) : 0;
-                    hlRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - 2 * maxLongPrecision - 1, 1));
+                    final int hlPrecision = Math.max(precision - 2 * maxLongPrecision - 1, 0);
+                    hlRange = hlPrecision > 0 ? Numbers.getMaxValue(hlPrecision) : 0;
                 }
             }
         }
@@ -1126,7 +1195,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
             }
             count++;
             sink.ofRaw(
-                    rnd.nextPositiveLong() % highRange,
+                    highRange > 0 ? rnd.nextPositiveLong() % highRange : 0,
                     rnd.nextLong()
             );
             sink.setScale(scale);
@@ -1153,7 +1222,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
             count++;
             sink.ofRaw(
                     hhRange > 0 ? rnd.nextPositiveLong() % hhRange : 0,
-                    rnd.nextPositiveLong() % hlRange,
+                    hlRange > 0 ? rnd.nextPositiveLong() % hlRange : 0,
                     rnd.nextLong(),
                     rnd.nextLong()
             );
