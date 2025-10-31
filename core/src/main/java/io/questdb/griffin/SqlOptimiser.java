@@ -3511,7 +3511,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
-                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, node, false)) {
+                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, n, false)) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);
@@ -3519,7 +3519,7 @@ public class SqlOptimiser implements Mutable {
                         n = null;
                         break;
                     default:
-                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, node, true)) {
+                        if (joinBarriers.contains(joinModel.getJoinType()) || isConditionWindowJoinAndInvolvedRightTable(parent, joinModel, joinIndex, n, true)) {
                             addOuterJoinExpression(parent, joinModel, joinIndex, n);
                         } else {
                             parent.addParsedWhereNode(n, innerPredicate);

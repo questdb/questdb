@@ -169,6 +169,64 @@ public class WindowJoinTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+            expect = replaceTimestampSuffix("sym\tprice\tts\twindow_price\n" +
+                    "AAPL\t100.0\t2023-01-01T09:00:00.000000Z\tnull\n" +
+                    "AAPL\t101.0\t2023-01-01T09:01:00.000000Z\tnull\n" +
+                    "AAPL\t102.0\t2023-01-01T09:02:00.000000Z\tnull\n" +
+                    "MSFT\t200.0\t2023-01-01T09:03:00.000000Z\tnull\n" +
+                    "MSFT\t201.0\t2023-01-01T09:04:00.000000Z\tnull\n" +
+                    "GOOGL\t300.0\t2023-01-01T09:05:00.000000Z\tnull\n" +
+                    "GOOGL\t301.0\t2023-01-01T09:06:00.000000Z\tnull\n" +
+                    "AAPL\t103.0\t2023-01-01T09:07:00.000000Z\tnull\n" +
+                    "MSFT\t202.0\t2023-01-01T09:08:00.000000Z\t200.5\n" +
+                    "GOOGL\t302.0\t2023-01-01T09:09:00.000000Z\t600.0\n" +
+                    "TSLA\t400.0\t2023-01-01T09:10:00.000000Z\tnull\n" +
+                    "TSLA\t401.0\t2023-01-01T09:11:00.000000Z\tnull\n" +
+                    "AMZN\t500.0\t2023-01-01T09:12:00.000000Z\tnull\n" +
+                    "AMZN\t501.0\t2023-01-01T09:13:00.000000Z\tnull\n" +
+                    "META\t600.0\t2023-01-01T09:14:00.000000Z\tnull\n" +
+                    "META\t601.0\t2023-01-01T09:15:00.000000Z\tnull\n" +
+                    "TSLA\t402.0\t2023-01-01T09:16:00.000000Z\tnull\n" +
+                    "AMZN\t502.0\t2023-01-01T09:17:00.000000Z\t500.5\n" +
+                    "META\t602.0\t2023-01-01T09:18:00.000000Z\t1200.0\n" +
+                    "NFLX\t700.0\t2023-01-01T09:19:00.000000Z\tnull\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Window Fast Join workers: 1\n" +
+                            "      join filter: sym=sym\n" +
+                            "      window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "300000000" : "300000000000") + " preceding\n" +
+                            "      window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "240000000" : "240000000000") + " preceding\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: prices\n",
+                    "select t.*, sum(p.price) as window_price " +
+                            "from trades t " +
+                            "window join prices p on t.sym = p.sym" +
+                            " range between 5 minute preceding and 4 minute preceding " +
+                            "order by t.ts;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select t.*, sum(p.price) window_price " +
+                            "from trades t " +
+                            "left join prices p " +
+                            "on t.sym = p.sym and p.ts >= dateadd('m', -5, t.ts) AND p.ts <= dateadd('m', -4, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
