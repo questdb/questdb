@@ -76,7 +76,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private LongList auxPageSizes;
     private byte frameFormat = -1;
     private int frameIndex = -1;
-    public LongList pageAddresses;
+    private LongList pageAddresses;
     private LongList pageSizes;
     private long rowIdOffset;
     private long rowIndex;
