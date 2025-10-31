@@ -154,7 +154,8 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
 
         public Decimal128Func(int type, int nanRate) {
             super(type, nanRate);
-            this.highRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - Numbers.getPrecision(Long.MAX_VALUE) - 1, 1));
+            final int highPrecision = ColumnType.getDecimalPrecision(type) - Numbers.getPrecision(Long.MAX_VALUE) - 1;
+            this.highRange = highPrecision > 0 ? Numbers.getMaxValue(highPrecision) : 0;
         }
 
         @Override
@@ -163,7 +164,7 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
                 sink.ofRawNull();
             } else {
                 sink.ofRaw(
-                        rnd.nextPositiveLong() % highRange,
+                        highRange > 0 ? rnd.nextPositiveLong() % highRange : 0,
                         rnd.nextLong()
                 );
             }
@@ -194,9 +195,11 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
         public Decimal256Func(int type, int nanRate) {
             super(type, nanRate);
             final int maxLongPrecision = Numbers.getPrecision(Long.MAX_VALUE);
-            final int hhPrecision = Math.max(ColumnType.getDecimalPrecision(type) - 3 * maxLongPrecision - 1, 0);
+            final int precision = ColumnType.getDecimalPrecision(type);
+            final int hhPrecision = Math.max(precision - 3 * maxLongPrecision - 1, 0);
             this.hhRange = hhPrecision > 0 ? Numbers.getMaxValue(hhPrecision) : 0;
-            this.hlRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - 2 * maxLongPrecision - 1, 1));
+            final int hlPrecision = Math.max(precision - 2 * maxLongPrecision - 1, 0);
+            hlRange = hlPrecision > 0 ? Numbers.getMaxValue(hlPrecision) : 0;
         }
 
         @Override
@@ -205,8 +208,8 @@ public class RndDecimalFunctionFactory implements FunctionFactory {
                 sink.ofRawNull();
             } else {
                 sink.ofRaw(
-                        rnd.nextPositiveLong() % hhRange,
-                        rnd.nextPositiveLong() % hlRange,
+                        hhRange > 0 ? rnd.nextPositiveLong() % hhRange : 0,
+                        hlRange > 0 ? rnd.nextPositiveLong() % hlRange : 0,
                         rnd.nextLong(),
                         rnd.nextLong()
                 );
