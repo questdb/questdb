@@ -34,11 +34,14 @@ import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.AvgDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.functions.groupby.AvgDecimalRescaleGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.SumDecimalGroupByFunctionFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -47,6 +50,7 @@ import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.LinkedList;
 
 public class DecimalGroupByTest extends AbstractCairoTest {
     private final Decimal128 decimal128 = new Decimal128();
@@ -153,6 +157,41 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal128SumIter() {
+        var values = new Decimal128[]{
+                Decimal128.fromLong(999, 0),
+                Decimal128.fromLong(123456789, 0),
+                new Decimal128(54210108624275221L, -1, 0),
+                Decimal128.NULL_VALUE
+        };
+        var precisions = new int[]{20, 26, 38};
+        var scales = new int[]{0, 3, 5, 8, 18, 28, 33};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    if (precision == 20 && (src.getHigh() > 99 || dst.getHigh() > 99)) {
+                        continue;
+                    } else if (precision == 26 && (src.getHigh() > 123456789 || dst.getHigh() > 123456789)) {
+                        continue;
+                    }
+                    for (var scale : scales) {
+                        if (scale >= precision) {
+                            continue;
+                        }
+
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testDecimal16Avg() {
         // We write 10k rows, out of these:
         //   - We split the content in 3 symbols: 'a', 'b' and 'c'
@@ -217,6 +256,31 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                                     dst
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal16SumIter() {
+        var values = new long[]{-12, 31, 1234, Decimals.DECIMAL64_NULL};
+        var precisions = new int[]{3, 4};
+        var scales = new int[]{0, 2};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    if (precision == 3 && (src > 999 || dst > 999)) {
+                        continue;
+                    }
+
+                    for (var scale : scales) {
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
                     }
                 }
             }
@@ -307,6 +371,39 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal256SumIter() {
+        var values = new Decimal256[]{
+                Decimal256.fromLong(999, 0),
+                Decimal256.fromLong(123456789, 0),
+                new Decimal256(123, 456, 789, 123, 0),
+                Decimal256.NULL_VALUE
+        };
+        var precisions = new int[]{40, 56, 76};
+        var scales = new int[]{0, 3, 5, 8, 18, 28, 45};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    if (precision < 76 && (src.getHh() > 0 || dst.getHh() > 0)) {
+                        continue;
+                    }
+                    for (var scale : scales) {
+                        if (scale >= precision) {
+                            continue;
+                        }
+
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testDecimal32Avg() {
         // We write 10k rows, out of these:
         //   - We split the content in 3 symbols: 'a', 'b' and 'c'
@@ -371,6 +468,31 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                                     dst
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal32SumIter() {
+        var values = new long[]{123, 999, 999_999_999, Decimals.DECIMAL64_NULL};
+        var precisions = new int[]{5, 9};
+        var scales = new int[]{0, 3};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    if (precision < 9 && (src == 999_999_999 || dst == 999_999_999)) {
+                        continue;
+                    }
+
+                    for (var scale : scales) {
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
                     }
                 }
             }
@@ -452,6 +574,34 @@ public class DecimalGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimal64SumIter() {
+        var values = new long[]{999L, 999_999_999, 999_999_999_999_999_999L, Decimals.DECIMAL64_NULL};
+        var precisions = new int[]{10, 18};
+        var scales = new int[]{0, 3, 5, 8, 12, 14, 16};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    if (precision < 18 && (src == 999_999_999_999_999_999L || dst == 999_999_999_999_999_999L)) {
+                        continue;
+                    }
+
+                    for (var scale : scales) {
+                        if (scale >= precision) {
+                            continue;
+                        }
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testDecimal8Avg() {
         // We write 10k rows, out of these:
         //   - We split the content in 3 symbols: 'a', 'b' and 'c'
@@ -512,6 +662,27 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                                     dst
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testDecimal8SumIter() {
+        var values = new long[]{-12, 31, Decimals.DECIMAL64_NULL};
+        var precisions = new int[]{2};
+        var scales = new int[]{0, 1};
+        for (var src : values) {
+            for (var dst : values) {
+                for (var precision : precisions) {
+                    for (var scale : scales) {
+                        assertSum(
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        );
                     }
                 }
             }
@@ -588,22 +759,20 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         );
     }
 
-    private void assertAvg(int precision, int scale, int targetScale, long src, long dst) {
-        var src256 = new Decimal256();
-        if (src == Decimals.DECIMAL64_NULL) {
-            src256.ofRawNull();
-        } else {
-            src256.ofRaw(src);
-        }
+    @Test
+    public void testSumFuzz() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
 
-        var dst256 = new Decimal256();
-        if (dst == Decimals.DECIMAL64_NULL) {
-            dst256.ofRawNull();
-        } else {
-            dst256.ofRaw(dst);
+        for (int i = 0; i < 1_000; i++) {
+            int precision = rnd.nextInt(72) + 1;
+            int scale = rnd.nextInt(precision);
+            try {
+                assertSumFuzz(rnd, precision, scale, 3, 10, 1000);
+            } catch (Throwable th) {
+                System.err.printf("Failed at iteration %d with precision %d and scale %d\n", i, precision, scale);
+                throw th;
+            }
         }
-
-        assertAvg(precision, scale, targetScale, src256, dst256);
     }
 
     private void assertAvg(int precision, int scale, int targetScale, Decimal128 src, Decimal128 dst) {
@@ -628,7 +797,7 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         src.setScale(scale);
         dst.setScale(scale);
 
-        try (var loader = new DecimalLoader(precision, scale)) {
+        try (var loader = new StaticDecimalLoader(precision, scale)) {
             GroupByFunction func;
             if (scale == targetScale) {
                 func = AvgDecimalGroupByFunctionFactory.newInstance(loader, 0);
@@ -639,8 +808,10 @@ public class DecimalGroupByTest extends AbstractCairoTest {
             var types = new ArrayColumnTypes();
             func.initValueTypes(types);
 
-            var srcMap = buildMap(types.getColumnCount(), func, loader, src, 10000);
-            var dstMap = buildMap(types.getColumnCount(), func, loader, dst, 10000);
+            loader.value = src;
+            var srcMap = buildMap(types.getColumnCount(), func, 10000);
+            loader.value = dst;
+            var dstMap = buildMap(types.getColumnCount(), func, 10000);
             func.merge(dstMap, srcMap);
 
             // Compute the expected value
@@ -677,15 +848,198 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         }
     }
 
+    private void assertAvg(int precision, int scale, int targetScale, long src, long dst) {
+        var src256 = new Decimal256();
+        if (src == Decimals.DECIMAL64_NULL) {
+            src256.ofRawNull();
+        } else {
+            src256.ofRaw(src);
+        }
+
+        var dst256 = new Decimal256();
+        if (dst == Decimals.DECIMAL64_NULL) {
+            dst256.ofRawNull();
+        } else {
+            dst256.ofRaw(dst);
+        }
+
+        assertAvg(precision, scale, targetScale, src256, dst256);
+    }
+
+    private void assertSum(int precision, int scale, Decimal128 src, Decimal128 dst) {
+        var src256 = new Decimal256();
+        if (src.isNull()) {
+            src256.ofRawNull();
+        } else {
+            src256.ofRaw(src.getHigh(), src.getLow());
+        }
+
+        var dst256 = new Decimal256();
+        if (dst.isNull()) {
+            dst256.ofRawNull();
+        } else {
+            dst256.ofRaw(dst.getHigh(), dst.getLow());
+        }
+
+        assertSum(precision, scale, src256, dst256);
+    }
+
+    private void assertSum(int precision, int scale, long src, long dst) {
+        var src256 = new Decimal256();
+        if (src == Decimals.DECIMAL64_NULL) {
+            src256.ofRawNull();
+        } else {
+            src256.ofRaw(src);
+        }
+
+        var dst256 = new Decimal256();
+        if (dst == Decimals.DECIMAL64_NULL) {
+            dst256.ofRawNull();
+        } else {
+            dst256.ofRaw(dst);
+        }
+
+        assertSum(precision, scale, src256, dst256);
+    }
+
+    private void assertSum(int precision, int scale, Decimal256 src, Decimal256 dst) {
+        src.setScale(scale);
+        dst.setScale(scale);
+
+        try (var loader = new StaticDecimalLoader(precision, scale)) {
+            GroupByFunction func;
+            func = SumDecimalGroupByFunctionFactory.newInstance(loader, 0);
+
+            var types = new ArrayColumnTypes();
+            func.initValueTypes(types);
+
+            loader.value = src;
+            var srcMap = buildMap(types.getColumnCount(), func, 10000);
+            loader.value = dst;
+            var dstMap = buildMap(types.getColumnCount(), func, 10000);
+            func.merge(dstMap, srcMap);
+
+
+            // Compute the expected value
+            var sum = BigDecimal.ZERO;
+            int count = 0;
+            if (!src.isNull()) {
+                sum = sum.add(src.toBigDecimal().multiply(BigDecimal.valueOf(10000)));
+                count += 10000;
+            }
+            if (!dst.isNull()) {
+                sum = sum.add(dst.toBigDecimal().multiply(BigDecimal.valueOf(10000)));
+                count += 10000;
+            }
+
+            DecimalUtil.load(decimal256, decimal128, func, dstMap, func.getType());
+            if (count == 0) {
+                // Both src and dest are null, we expect a null result
+                Assert.assertTrue(decimal256.isNull());
+            } else {
+                Assert.assertEquals(
+                        String.format("result mismatch, expected %s but got %s [precision=%d, scale=%d, src=%s, dst=%s]",
+                                sum,
+                                decimal256,
+                                precision,
+                                scale,
+                                src,
+                                dst
+                        ),
+                        sum, decimal256.toBigDecimal());
+            }
+        }
+    }
+
+    private void assertSumFuzz(Rnd rnd, int precision, int scale, int nanRate, int nMaps, int maxRowsPerMap) {
+        try (var loader = new RandomDecimalLoader(rnd, precision, scale, nanRate)) {
+            GroupByFunction func;
+            func = SumDecimalGroupByFunctionFactory.newInstance(loader, 0);
+
+            var types = new ArrayColumnTypes();
+            func.initValueTypes(types);
+
+            var maps = new LinkedList<Triple<MapValue, BigDecimal, Integer>>();
+            for (int i = 0; i < nMaps; i++) {
+                loader.reset();
+                var map = buildMap(types.getColumnCount(), func, rnd.nextPositiveInt() % maxRowsPerMap);
+                var acc = loader.getAccumulator();
+                var count = loader.getCount();
+                // Check that the accumulation worked properly on a per-map basis
+                DecimalUtil.load(decimal256, decimal128, func, map, func.getType());
+                if (count == 0) {
+                    Assert.assertTrue(decimal256.isNull());
+                } else {
+                    Assert.assertEquals(
+                            String.format("result mismatch, expected %s but got %s [precision=%d, scale=%d] when computing map %d",
+                                    acc,
+                                    decimal256,
+                                    precision,
+                                    scale,
+                                    i
+                            ),
+                            acc, decimal256.toBigDecimal());
+                }
+
+                var triple = new Triple(map, acc, count);
+                maps.push(triple);
+            }
+
+            int mapIter = 0;
+            while (maps.size() > 1) {
+                var m1 = maps.pop();
+                var m2 = maps.pop();
+                func.merge(m1.a, m2.a);
+
+                var sum = m1.b.add(m2.b);
+                int count = m1.c + m2.c;
+
+                // Check that the merge worked properly
+                DecimalUtil.load(decimal256, decimal128, func, m1.a, func.getType());
+                if (count == 0) {
+                    Assert.assertTrue(decimal256.isNull());
+                } else {
+                    Assert.assertEquals(
+                            String.format("result mismatch, expected %s but got %s [precision=%d, scale=%d] at merge step %d",
+                                    sum,
+                                    decimal256,
+                                    precision,
+                                    scale,
+                                    mapIter
+                            ),
+                            sum, decimal256.toBigDecimal());
+                }
+
+                mapIter++;
+                m1.b = sum;
+                m1.c = count;
+                maps.addLast(m1);
+            }
+
+            var m1 = maps.pop();
+            DecimalUtil.load(decimal256, decimal128, func, m1.a, func.getType());
+            if (m1.c == 0) {
+                // Both src and dest are null, we expect a null result
+                Assert.assertTrue(decimal256.isNull());
+            } else {
+                Assert.assertEquals(
+                        String.format("result mismatch, expected %s but got %s [precision=%d, scale=%d]",
+                                m1.b,
+                                decimal256,
+                                precision,
+                                scale
+                        ),
+                        m1.b, decimal256.toBigDecimal());
+            }
+        }
+    }
+
     private MapValue buildMap(
             int columnCount,
             GroupByFunction func,
-            DecimalLoader loader,
-            Decimal256 value,
             int count
     ) {
         var mapValue = new SimpleMapValue(columnCount);
-        loader.value = value;
         func.computeFirst(mapValue, null, 0);
         for (int i = 1; i < count; i++) {
             func.computeNext(mapValue, null, i);
@@ -717,10 +1071,139 @@ public class DecimalGroupByTest extends AbstractCairoTest {
         }
     }
 
-    private static class DecimalLoader extends DecimalFunction {
+    private static class RandomDecimalLoader extends DecimalFunction {
+        private final long hhRange;
+        private final long highRange;
+        private final long hlRange;
+        private final int nanRate;
+        private final int range;
+        private final Rnd rnd;
+        private final int scale;
+        private BigDecimal accumulator = BigDecimal.ZERO;
+        private int count = 0;
+
+        public RandomDecimalLoader(Rnd rnd, int precision, int scale, int nanRate) {
+            super(ColumnType.getDecimalType(precision, scale));
+            this.rnd = rnd;
+            this.nanRate = nanRate;
+            this.scale = scale;
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32 -> {
+                    hhRange = hlRange = highRange = 0;
+                    range = (int) Numbers.getMaxValue(precision);
+                }
+                case ColumnType.DECIMAL64 -> {
+                    hhRange = hlRange = range = 0;
+                    highRange = Numbers.getMaxValue(precision);
+                }
+                case ColumnType.DECIMAL128 -> {
+                    hhRange = hlRange = range = 0;
+                    highRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - Numbers.getPrecision(Long.MAX_VALUE) - 1, 1));
+                }
+                default -> {
+                    highRange = range = 0;
+                    final int maxLongPrecision = Numbers.getPrecision(Long.MAX_VALUE);
+                    final int hhPrecision = Math.max(ColumnType.getDecimalPrecision(type) - 3 * maxLongPrecision - 1, 0);
+                    hhRange = hhPrecision > 0 ? Numbers.getMaxValue(hhPrecision) : 0;
+                    hlRange = Numbers.getMaxValue(Math.max(ColumnType.getDecimalPrecision(type) - 2 * maxLongPrecision - 1, 1));
+                }
+            }
+        }
+
+        public BigDecimal getAccumulator() {
+            return accumulator;
+        }
+
+        public int getCount() {
+            return count;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                sink.ofRawNull();
+                return;
+            }
+            count++;
+            sink.ofRaw(
+                    rnd.nextPositiveLong() % highRange,
+                    rnd.nextLong()
+            );
+            sink.setScale(scale);
+            accumulator = accumulator.add(sink.toBigDecimal());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            count++;
+            short v = (short) (rnd.nextPositiveInt() % range);
+            accumulator = accumulator.add(BigDecimal.valueOf(v, scale));
+            return v;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                sink.ofRawNull();
+                return;
+            }
+            count++;
+            sink.ofRaw(
+                    hhRange > 0 ? rnd.nextPositiveLong() % hhRange : 0,
+                    rnd.nextPositiveLong() % hlRange,
+                    rnd.nextLong(),
+                    rnd.nextLong()
+            );
+            sink.setScale(scale);
+            accumulator = accumulator.add(sink.toBigDecimal());
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            count++;
+            int v = rnd.nextPositiveInt() % range;
+            accumulator = accumulator.add(BigDecimal.valueOf(v, scale));
+            return v;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            count++;
+            long v = rnd.nextPositiveLong() % highRange;
+            accumulator = accumulator.add(BigDecimal.valueOf(v, scale));
+            return v;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (nanRate != 0 && rnd.nextInt() % nanRate == 0) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            count++;
+            byte v = (byte) (rnd.nextPositiveInt() % range);
+            accumulator = accumulator.add(BigDecimal.valueOf(v, scale));
+            return v;
+        }
+
+        public void reset() {
+            accumulator = BigDecimal.ZERO;
+            count = 0;
+        }
+    }
+
+    private static class StaticDecimalLoader extends DecimalFunction {
         public Decimal256 value = new Decimal256();
 
-        public DecimalLoader(int precision, int scale) {
+        public StaticDecimalLoader(int precision, int scale) {
             super(ColumnType.getDecimalType(precision, scale));
         }
 
@@ -771,6 +1254,18 @@ public class DecimalGroupByTest extends AbstractCairoTest {
                 return Decimals.DECIMAL8_NULL;
             }
             return (byte) value.getLl();
+        }
+    }
+
+    private class Triple<A, B, C> {
+        public A a;
+        public B b;
+        public C c;
+
+        public Triple(A a, B b, C c) {
+            this.a = a;
+            this.b = b;
+            this.c = c;
         }
     }
 }

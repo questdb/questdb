@@ -157,7 +157,7 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
                     // both not null
                     destValue.getDecimal128(valueIndex + 1, decimal128A);
                     try {
-                        Decimal128.uncheckedAdd(decimal128A, decimal128B);
+                        decimal128A.uncheckedAdd(decimal128B);
                         destValue.putDecimal128(valueIndex + 1, decimal128A);
                     } catch (NumericException e) {
                         decimal256A.ofRaw(0, 0, 0, 0);
