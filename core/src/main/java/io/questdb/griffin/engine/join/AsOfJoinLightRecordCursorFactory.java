@@ -251,7 +251,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 if (value != null) {
                     slaveCursor.recordAt(slaveRecord, value.getLong(0));
                     slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                    record.hasSlave(toleranceInterval == Numbers.LONG_NULL || slaveTimestamp >= masterTimestamp - toleranceInterval);
+                    record.hasSlave(slaveTimestamp >= minSlaveTimestamp);
                 } else {
                     record.hasSlave(false);
                 }
