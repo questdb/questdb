@@ -255,8 +255,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             execute("CREATE TABLE tabb ( bx int, bid int );");
             execute("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
-                            "3\t7\t23\t27\n",
+            assertQueryNoLeakCheck("""
+                            sum\tsum1\tsum2\tsum3
+                            3\t7\t23\t27
+                            """,
                     "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
                             "FROM taba " +
                             "join tabb on aid = bid", null, false, false, true);
@@ -311,8 +313,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testSumOfAddition1() throws Exception {
-        assertAggQuery("r\n" +
-                        "65\n",
+        assertAggQuery("""
+                        r
+                        65
+                        """,
                 "select sum(x+1) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -320,8 +324,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testSumOfAddition2() throws Exception {
-        assertAggQuery("r\n" +
-                        "65\n",
+        assertAggQuery("""
+                        r
+                        65
+                        """,
                 "select sum(1+x) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -330,8 +336,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfAdditionOfDouble1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "66.0\n",
+                """
+                        r
+                        66.0
+                        """,
                 "select sum(d+1) r from y",
                 "create table y as ( select x + 0.1d as d from long_sequence(10) )"
         );
@@ -340,8 +348,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are Infinity and thus ignored
     public void testSumOfAdditionOfDouble2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "1.7E308\n",
+                """
+                        r
+                        1.7E308
+                        """,
                 "select sum(d+1) r from y",
                 "create table y as ( select 1.7E308 * x as d  from long_sequence(10) )"
         );
@@ -350,8 +360,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are null and thus ignored
     public void testSumOfAdditionOfDouble3() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "2.0\n",
+                """
+                        r
+                        2.0
+                        """,
                 "select sum(d+1) r from y",
                 "create table y as ( select (1.7E308 * x)/(1.7E308*x) as d  from long_sequence(10) )"
         );
@@ -360,8 +372,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfAdditionOfShort() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "65\n",
+                """
+                        r
+                        65
+                        """,
                 "select sum(x+1) r from y",
                 "create table y as ( select x::short x from long_sequence(10) )"
         );
@@ -370,8 +384,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfAdditionOverflow1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-9223372036854775805\n",
+                """
+                        r
+                        -9223372036854775805
+                        """,
                 "select sum(x+9223372036854775807) r from y",
                 "create table y as ( select x from long_sequence(3) )"
         );
@@ -380,8 +396,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfAdditionOverflow2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-9223372036854775805\n",
+                """
+                        r
+                        -9223372036854775805
+                        """,
                 "select sum(x) + 9223372036854775807*3 r from y",
                 "create table y as ( select x from long_sequence(3) )"
         );
@@ -390,15 +408,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfAdditionWithNull() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(x+null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(null+x) r from y",
                 null
         );
@@ -408,8 +430,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplication1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "55\n",
+                """
+                        r
+                        55
+                        """,
                 "select sum(x*1) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -418,8 +442,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplication2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "55\n",
+                """
+                        r
+                        55
+                        """,
                 "select sum(1*x) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -428,8 +454,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplicationOfDouble1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "112.00000000000001\n",
+                """
+                        r
+                        112.00000000000001
+                        """,
                 "select sum(d*2) r from y",
                 "create table y as ( select x + 0.1d as d from long_sequence(10) )"
         );
@@ -438,8 +466,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are Infinity and thus ignored
     public void testSumOfMultiplicationOfDouble2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "1.7E308\n",
+                """
+                        r
+                        1.7E308
+                        """,
                 "select sum(d*2) r from y",
                 "create table y as ( select (1.7E308/2)*x as d  from long_sequence(10) )"
         );
@@ -448,8 +478,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are null and thus ignored
     public void testSumOfMultiplicationOfDouble3() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "2.0\n",
+                """
+                        r
+                        2.0
+                        """,
                 "select sum(d*2) r from y",
                 "create table y as ( select (1.7E308 * x)/(1.7E308*x) as d  from long_sequence(10) )"
         );
@@ -458,8 +490,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplicationOverflow1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-6\n",
+                """
+                        r
+                        -6
+                        """,
                 "select sum(x*9223372036854775807) r from y",
                 "create table y as ( select x from long_sequence(3) )"
         );
@@ -468,8 +502,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplicationOverflow2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-6\n",
+                """
+                        r
+                        -6
+                        """,
                 "select sum(x) * 9223372036854775807 r from y",
                 "create table y as ( select x from long_sequence(3) )"
         );
@@ -478,15 +514,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfMultiplicationWithNull() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(x*null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(null*x) r from y",
                 null
         );
@@ -496,8 +536,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtraction1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "45\n",
+                """
+                        r
+                        45
+                        """,
                 "select sum(x-1) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -506,8 +548,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtraction2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-45\n",
+                """
+                        r
+                        -45
+                        """,
                 "select sum(1-x) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
@@ -516,8 +560,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtractionOfDouble1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "46.0\n",
+                """
+                        r
+                        46.0
+                        """,
                 "select sum(d-1) r from y",
                 "create table y as ( select x + 0.1d as d from long_sequence(10) )"
         );
@@ -526,8 +572,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are Infinity and thus ignored
     public void testSumOfSubtractionOfDouble2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "-1.7E308\n",
+                """
+                        r
+                        -1.7E308
+                        """,
                 "select sum(d-1) r from y",
                 "create table y as ( select -1.7E308 * x as d  from long_sequence(10) )"
         );
@@ -536,8 +584,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test // all values except first are null and thus ignored
     public void testSumOfSubtractionOfDouble3() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "0.0\n",
+                """
+                        r
+                        0.0
+                        """,
                 "select sum(d-1) r from y",
                 "create table y as ( select (1.7E308 * x)/(1.7E308 * x) as d from long_sequence(10) )"
         );
@@ -546,8 +596,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtractionOfShort() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "45\n",
+                """
+                        r
+                        45
+                        """,
                 "select sum(x-1) r from y",
                 "create table y as ( select x::short x from long_sequence(10) )"
         );
@@ -556,8 +608,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtractionOverflow1() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "9223372036854775805\n",
+                """
+                        r
+                        9223372036854775805
+                        """,
                 "select sum(x-9223372036854775807) r from y",
                 "create table y as ( select -x x from long_sequence(3) )"
         );
@@ -566,8 +620,10 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtractionOverflow2() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "9223372036854775805\n",
+                """
+                        r
+                        9223372036854775805
+                        """,
                 "select sum(x) - 9223372036854775807*3 r from y",
                 "create table y as ( select -x x from long_sequence(3) )"
         );
@@ -576,15 +632,19 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     @Test
     public void testSumOfSubtractionWithNull() throws Exception {
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(x-null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
-                "r\n" +
-                        "null\n",
+                """
+                        r
+                        null
+                        """,
                 "select sum(null-x) r from y",
                 null
         );
