@@ -365,16 +365,16 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                     rowLo = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampLo, Vect.BIN_SEARCH_SCAN_UP);
                     rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
                     slaveRowLos[idx] = rowLo;
-                    for (int i = rowLo, n = timestamps.size(); i < n; i++) {
-                        if (timestamps.getQuick(i) > slaveTimestampHi) {
-                            break;
-                        }
-                        slaveRowId = rowIds.getQuick(i);
+                    int rowHi = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampHi, Vect.BIN_SEARCH_SCAN_DOWN);
+                    rowHi = rowHi < 0 ? -rowHi - 1 : rowHi;
+                    if (rowLo < rowHi) {
+                        slaveRowId = rowIds.getQuick(rowLo);
                         slaveTimeFrameHelper.recordAt(slaveRowId);
-                        if (value.isNew()) {
-                            functionUpdater.updateNew(value, joinRecord, slaveRowId);
-                            value.setNew(false);
-                        } else {
+                        functionUpdater.updateNew(value, joinRecord, slaveRowId);
+                        value.setNew(false);
+                        for (int i = rowLo + 1; i < rowHi; i++) {
+                            slaveRowId = rowIds.getQuick(i);
+                            slaveTimeFrameHelper.recordAt(slaveRowId);
                             functionUpdater.updateExisting(value, joinRecord, slaveRowId);
                         }
                     }
