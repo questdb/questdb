@@ -3561,7 +3561,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                           FROM long_sequence(10_000)
                                     ) timestamp(ts) partition by day
                                     """,
-                            leftTableTimestampType.getTypeName()
+                            rightTableTimestampType.getTypeName()
                     );
 
                     var asofSQL = """

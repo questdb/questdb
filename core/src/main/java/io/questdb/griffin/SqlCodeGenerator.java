@@ -2878,7 +2878,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 keyTypes.clear();
                                                 keyTypes.add(ColumnType.INT);
 
-                                                return new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                master = new AsOfJoinSingleSymbolRecordCursorFactory(
                                                         configuration,
                                                         joinMetadata,
                                                         master,
