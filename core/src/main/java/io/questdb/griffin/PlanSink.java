@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Sinkable;
@@ -84,6 +85,8 @@ public interface PlanSink {
     PlanSink putBaseColumnName(int columnIdx);
 
     PlanSink putColumnName(int columnIdx);
+
+    void setMetadata(RecordMetadata metadata);
 
     PlanSink type(CharSequence type);
 

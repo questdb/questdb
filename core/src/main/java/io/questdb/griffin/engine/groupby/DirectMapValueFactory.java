@@ -22,32 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.groupby;
 
-public interface ColumnTypes {
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 
-    /**
-     * Returns total size in bytes in case of all fixed-size columns
-     * or -1 if there is a var-size column in the given list.
-     */
-    static int sizeInBytes(ColumnTypes types) {
-        if (types == null) {
-            return 0;
-        }
-        int totalSize = 0;
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            final int columnType = types.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                totalSize += size;
-            } else {
-                return -1;
-            }
-        }
-        return totalSize;
+/**
+ * Common interface for flyweight map values over off-heap memory.
+ */
+public class DirectMapValueFactory {
+
+    private DirectMapValueFactory() {
     }
 
-    int getColumnCount();
-
-    int getColumnType(int columnIndex);
+    public static DirectMapValue createDirectMapValue(ColumnTypes valueTypes) {
+        boolean compact = true;
+        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
+            final int size = ColumnType.sizeOf(valueTypes.getColumnType(i));
+            assert size > 0;
+            if (size > Long.BYTES) {
+                compact = false;
+                break;
+            }
+        }
+        if (compact) {
+            return new DirectCompactMapValue(valueTypes.getColumnCount());
+        }
+        return new DirectMapValueImpl(valueTypes.getColumnCount());
+    }
 }

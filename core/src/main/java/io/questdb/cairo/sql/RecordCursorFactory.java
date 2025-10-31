@@ -31,6 +31,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.IntList;
@@ -184,6 +186,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns the original filter expression that can be stolen by parent factories.
+     * When {@link #supportsFilterStealing()} returns true, this method should return
+     * the original expression of the stolen filter.
+     *
+     * @return the original filter expression that can be stolen, or null if
+     * filter stealing is not supported
+     */
+    default ExpressionNode getStealFilterExpr() {
+        return null;
+    }
+
+    /**
      * If factory operates on table directly returns table's token, null otherwise.
      * When this method returns a table token, it also means that the factory doesn't
      * remap column names via aliases.
@@ -194,7 +208,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
-    default TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Returns time frame cursor or null if time frames aren't supported by the factory.
+     */
+    default TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         return null;
     }
 
@@ -218,7 +235,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * the above factory (e.g. a parallel GROUP BY one) can steal the projection.
      * <p>
      * Projection consist of cross-indexes and metadata columns.
-     * <p>
      *
      * @return true if the factory stands for nothing more but a projection
      * @see #getColumnCrossIndex()
@@ -226,6 +242,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean isProjection() {
         return false;
+    }
+
+    /**
+     * Returns a new time frame cursor instance or null if time frames aren't supported by the factory.
+     * The returned instance can be used by a worker thread, i.e. the underlying interaction with
+     * table reader is synchronized between the time frame instances returned by this method.
+     * <p>
+     * Unlike with {@link #getTimeFrameCursor(SqlExecutionContext)}, the returned cursor has to be
+     * initialized before usage.
+     */
+    default ConcurrentTimeFrameCursor newTimeFrameCursor() {
+        return null;
     }
 
     /**
@@ -260,7 +288,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Time frames are supported only for full table scan cursors, i.e. "x" queries.
      *
      * @return true if the factory supports time frames
-     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called.
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)}
+     * or {@link #newTimeFrameCursor()} can be safely called.
      */
     default boolean supportsTimeFrameCursor() {
         return false;

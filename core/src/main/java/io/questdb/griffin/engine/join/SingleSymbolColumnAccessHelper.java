@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.IntIntHashMap;
 import org.jetbrains.annotations.NotNull;
 
@@ -92,7 +92,7 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
     }
 
     @Override
-    public void of(TimeFrameRecordCursor slaveCursor) {
+    public void of(TimeFrameCursor slaveCursor) {
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
         this.masterKeysExistingInSlaveCache.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();

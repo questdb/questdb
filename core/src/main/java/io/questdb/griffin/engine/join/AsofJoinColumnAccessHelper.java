@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.TimeFrameRecordCursor;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
@@ -58,5 +58,5 @@ public interface AsofJoinColumnAccessHelper {
         return getSlaveKey(masterRecord) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
-    void of(TimeFrameRecordCursor slaveCursor);
+    void of(TimeFrameCursor slaveCursor);
 }

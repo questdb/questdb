@@ -31,6 +31,23 @@ import org.junit.Test;
 public class EqSymFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testLargeSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_symbol(4000,1,7,3) a, rnd_symbol(4000,1,7,3) b from long_sequence(5000))");
+            assertQuery(
+                    """
+                            count
+                            288
+                            """,
+                    "select count() from x where a = b",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('1','3','5',null) a, rnd_symbol('1','4','5',null) b from long_sequence(50))");

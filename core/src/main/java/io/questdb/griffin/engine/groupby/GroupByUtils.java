@@ -391,6 +391,15 @@ public class GroupByUtils {
         return func;
     }
 
+    public static boolean isBatchComputationSupported(ObjList<GroupByFunction> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).supportsBatchComputation()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {
