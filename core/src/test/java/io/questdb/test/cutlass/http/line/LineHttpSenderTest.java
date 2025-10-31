@@ -29,8 +29,10 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
@@ -62,6 +64,7 @@ import org.junit.Test;
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
@@ -872,6 +875,50 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         testCreateTimestampColumns(NanosTimestampDriver.floor("2025-11-20T10:55:24.123456789Z"), ChronoUnit.NANOS, PROTOCOL_VERSION_V2,
                 new int[]{ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO, ColumnType.TIMESTAMP_NANO},
                 "1.111\t2025-11-19T10:55:24.123456789Z\t2025-11-19T10:55:24.123456Z\t2025-11-19T10:55:24.123000Z\t2025-11-19T10:55:24.123456799Z\t2025-11-20T10:55:24.123456789Z");
+    }
+
+    @Test
+    public void testDdlListenerOnTableCreated() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain questdb = startWithEnvVariables()) {
+                final AtomicBoolean failed = new AtomicBoolean();
+                final CairoEngine engine = questdb.getEngine();
+                engine.setDdlListener(new DefaultDdlListener() {
+                    @Override
+                    public void onTableOrMatViewCreated(SecurityContext securityContext, TableToken tableToken, int tableKind) {
+                        try {
+                            // assert that this is the expected table name and id
+                            final int tableId = (int) engine.getTableIdGenerator().getCurrentId();
+                            Assert.assertEquals("tab", tableToken.getTableName());
+                            Assert.assertEquals(tableId, tableToken.getTableId());
+
+                            // assert that the table is not available to others for reading yet
+                            Assert.assertNull(engine.getTableTokenIfExists("tab"));
+
+                            // assert that others competing to create the same table, cannot lock the table name 
+                            Assert.assertNull(engine.lockTableName("tab", tableId, false, true));
+                        } catch (Throwable th) {
+                            th.printStackTrace(System.out);
+                            failed.set(true);
+                        }
+                    }
+                });
+
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + questdb.getHttpServerPort())
+                        .build()
+                ) {
+                    sender.table("tab").longColumn("col", 1).atNow();
+                } catch (Throwable e) {
+                    e.printStackTrace(System.out);
+                    Assert.fail("Failed to ingest data, check log for exception");
+                }
+
+                if (failed.get()) {
+                    Assert.fail("Failed in DDL listener, check log for exception");
+                }
+            }
+        });
     }
 
     @Test
