@@ -214,35 +214,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             sink.attr("join filter").val(atom.getJoinFilter(0));
             sink.setMetadata(null);
         }
-
-        long rowLo = atom.getJoinWindowLo();
-        long rowHi = atom.getJoinWindowHi();
-        sink.attr("window lo");
-        if (rowLo == Long.MAX_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (rowHi == Long.MIN_VALUE) {
-            sink.val("unbounded following");
-        } else if (rowLo == 0) {
-            sink.val("current row");
-        } else if (rowLo < 0) {
-            sink.val(Math.abs(rowLo)).val(" following");
-        } else {
-            sink.val(rowLo).val(" preceding");
-        }
-
-        sink.attr("window hi");
-        if (rowHi == Long.MAX_VALUE) {
-            sink.val("unbounded following");
-        } else if (rowHi == Long.MIN_VALUE) {
-            sink.val("unbounded preceding");
-        } else if (rowHi == 0) {
-            sink.val("current row");
-        } else if (rowHi < 0) {
-            sink.val(Math.abs(rowLo)).val(" preceding");
-        } else {
-            sink.val(rowHi).val(" following");
-        }
-
+        sink.val(atom);
         if (atom.getMasterFilter(0) != null) {
             sink.attr("master filter").val(atom.getMasterFilter(0), masterFactory);
         }

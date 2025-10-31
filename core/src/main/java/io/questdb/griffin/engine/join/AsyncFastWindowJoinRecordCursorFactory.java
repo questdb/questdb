@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -68,6 +69,7 @@ import java.util.Arrays;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 // TODO(puzpuzpuz): it's a quick and dirty prototype
 public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -118,6 +120,15 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 columnSplit,
                 masterFilter != null
         );
+        int masterTsType = masterFactory.getMetadata().getTimestampType();
+        int slaveTsType = slaveFactory.getMetadata().getTimestampType();
+        long masterTsScale = 1;
+        long slaveTsScale = 1;
+        if (masterTsType != slaveTsType) {
+            masterTsScale = ColumnType.getTimestampDriver(masterTsType).toNanosScale();
+            slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
+        }
+
         final AsyncFastWindowJoinAtom atom = new AsyncFastWindowJoinAtom(
                 asm,
                 configuration,
@@ -136,6 +147,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 bindVarFunctions,
                 masterFilter,
                 perWorkerMasterFilters,
+                masterTsScale,
+                slaveTsScale,
                 workerCount
         );
         this.frameSequence = new PageFrameSequence<>(
@@ -192,13 +205,19 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        // TODO(puzpuzpuz): toPlan is currently broken
-        // TODO(puzpuzpuz): add window lo/hi
-        sink.type("Async Window Join");
+        sink.type("Async Window Fast Join");
         sink.meta("workers").val(workerCount);
-        sink.val(frameSequence.getAtom());
+        final AsyncFastWindowJoinAtom atom = frameSequence.getAtom();
+        sink.attr("join filter")
+                .val(masterFactory.getMetadata().getColumnName(atom.getMasterSymbolIndex()))
+                .val("=")
+                .val(slaveFactory.getMetadata().getColumnName(atom.getSlaveSymbolIndex()));
+        sink.val(atom);
+        if (atom.getMasterFilter(0) != null) {
+            sink.attr("master filter").val(atom.getMasterFilter(0), masterFactory);
+        }
         sink.child(masterFactory);
-        sink.child("Hash", slaveFactory);
+        sink.child(slaveFactory);
     }
 
     private static void aggregate(
@@ -235,6 +254,9 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final JoinRecord joinRecord = atom.getJoinRecord(slotId);
         joinRecord.of(record, slaveRecord);
+        final long slaveTsScale = atom.getSlaveTsScale();
+        final long masterTsScale = atom.getMasterTsScale();
+
         final int[] slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
 
         // Clean up the in-memory index.
@@ -260,16 +282,26 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
             record.setRowIndex(frameRowCount - 1);
             final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
+            long slaveTimestampLo, slaveTimestampHi;
 
-            long slaveTimestampLo = masterTimestampLo - joinWindowLo;
-            long slaveTimestampHi = masterTimestampHi + joinWindowHi;
+            if (joinWindowLo == Long.MAX_VALUE) {
+                slaveTimestampLo = Long.MIN_VALUE;
+            } else {
+                slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            }
+
+            if (joinWindowHi == Long.MAX_VALUE) {
+                slaveTimestampHi = Long.MAX_VALUE;
+            } else {
+                slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            }
 
             long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
             if (slaveRowId != Long.MIN_VALUE) {
                 long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                 for (; ; ) {
                     slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
-                    final long slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
                     if (slaveTimestamp > slaveTimestampHi) {
                         break;
                     }
@@ -311,8 +343,17 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 functionUpdater.updateEmpty(value);
 
                 final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
-                slaveTimestampLo = masterTimestamp - joinWindowLo;
-                slaveTimestampHi = masterTimestamp + joinWindowHi;
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                }
 
                 final int masterKey = record.getInt(masterSymbolIndex);
                 final int idx = Math.max(masterKey + 1, 0);

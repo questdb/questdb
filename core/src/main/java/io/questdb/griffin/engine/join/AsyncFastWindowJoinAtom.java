@@ -76,6 +76,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final long joinWindowLo;
     private final int masterSymbolIndex;
     private final int masterTimestampIndex;
+    private final long masterTsScale;
     private final GroupByAllocator ownerAllocator;
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
@@ -102,6 +103,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final int slaveSymbolIndex;
     // slave-to-master symbol key LUT
     private final int[] slaveSymbolLookupTable;
+    private final long slaveTsScale;
     private final long valueSizeInBytes;
 
     public AsyncFastWindowJoinAtom(
@@ -122,6 +124,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             @Nullable ObjList<Function> bindVarFunctions,
             @Nullable Function ownerMasterFilter,
             @Nullable ObjList<Function> perWorkerMasterFilters,
+            long masterTsScale,
+            long slaveTsScale,
             int workerCount
     ) {
         assert perWorkerMasterFilters == null || perWorkerMasterFilters.size() == workerCount;
@@ -141,6 +145,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             this.ownerMasterFilter = ownerMasterFilter;
             this.perWorkerMasterFilters = perWorkerMasterFilters;
             this.joinSymbolTableSource = new JoinSymbolTableSource(columnSplit);
+            this.masterTsScale = masterTsScale;
+            this.slaveTsScale = slaveTsScale;
 
             this.slaveSymbolLookupTable = new int[LOOKUP_TABLE_SIZE];
             this.ownerSlaveRowIds = new LongList[LOOKUP_TABLE_SIZE];
@@ -158,10 +164,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerSlaveRowLos.extendAndSet(i, new int[LOOKUP_TABLE_SIZE]);
             }
 
-            this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead());
+            this.ownerSlaveTimeFrameHelper = new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead()));
+                perWorkerSlaveTimeFrameHelpers.extendAndSet(i, new AsyncTimeFrameHelper(slaveFactory.newTimeFrameCursor(), configuration.getSqlAsOfJoinLookAhead(), slaveTsScale));
             }
 
             this.ownerJoinRecord = new JoinRecord(columnSplit);
@@ -296,6 +302,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         return masterTimestampIndex;
     }
 
+    public long getMasterTsScale() {
+        return masterTsScale;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public DirectMapValue getOwnerGroupByValue() {
         return ownerGroupByValue;
@@ -335,6 +345,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             return ownerSlaveTimestamps;
         }
         return perWorkerSlaveTimestamps.getQuick(slotId);
+    }
+
+    public long getSlaveTsScale() {
+        return slaveTsScale;
     }
 
     public long getValueSizeBytes() {
@@ -445,7 +459,31 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        // no-op
+        sink.attr("window lo");
+        if (joinWindowLo == Long.MAX_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowLo == Long.MIN_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowLo == 0) {
+            sink.val("current row");
+        } else if (joinWindowLo < 0) {
+            sink.val(Math.abs(joinWindowLo)).val(" following");
+        } else {
+            sink.val(joinWindowLo).val(" preceding");
+        }
+
+        sink.attr("window hi");
+        if (joinWindowHi == Long.MAX_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowHi == Long.MIN_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowHi == 0) {
+            sink.val("current row");
+        } else if (joinWindowHi < 0) {
+            sink.val(Math.abs(joinWindowHi)).val(" preceding");
+        } else {
+            sink.val(joinWindowHi).val(" following");
+        }
     }
 
     public void toTop() {

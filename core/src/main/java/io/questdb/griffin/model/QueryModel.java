@@ -1924,9 +1924,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
 
                             if (wjc.isIncludePrevailing()) {
-                                sink.putAscii("including prevailing");
+                                sink.putAscii(" including prevailing");
                             } else {
-                                sink.putAscii("excluding prevailing");
+                                sink.putAscii(" excluding prevailing");
                             }
                         }
 

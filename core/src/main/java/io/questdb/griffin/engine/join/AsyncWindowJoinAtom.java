@@ -410,8 +410,31 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.attr("join filter").val(ownerJoinFilter);
-        sink.attr("filter").val(ownerJoinFilter);
+        sink.attr("window lo");
+        if (joinWindowLo == Long.MAX_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowLo == Long.MIN_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowLo == 0) {
+            sink.val("current row");
+        } else if (joinWindowLo < 0) {
+            sink.val(Math.abs(joinWindowLo)).val(" following");
+        } else {
+            sink.val(joinWindowLo).val(" preceding");
+        }
+
+        sink.attr("window hi");
+        if (joinWindowHi == Long.MAX_VALUE) {
+            sink.val("unbounded following");
+        } else if (joinWindowHi == Long.MIN_VALUE) {
+            sink.val("unbounded preceding");
+        } else if (joinWindowHi == 0) {
+            sink.val("current row");
+        } else if (joinWindowHi < 0) {
+            sink.val(Math.abs(joinWindowHi)).val(" preceding");
+        } else {
+            sink.val(joinWindowHi).val(" following");
+        }
     }
 
     public void toTop() {
@@ -459,7 +482,6 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
-    // TODO(puzpuzpuz): merge with AsyncTimeFrameHelper - that class doesn't have scale
     public static class TimeFrameHelper implements QuietCloseable {
         private final long lookahead;
         private final PageFrameMemoryRecord record;
@@ -499,23 +521,22 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 if (rowLo == Long.MIN_VALUE) {
                     while (timeFrameCursor.next()) {
                         // carry on if the frame is to the left of the interval
-                        if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) <= timestampLo) {
+                        if (scaleTimestamp(timeFrame.getTimestampEstimateHi(), scale) < timestampLo) {
                             // bookmark the frame, so that next time we search we start with it
                             bookmarkCurrentFrame(0);
                             continue;
                         }
                         // check if the frame intersects with the interval, so it's of our interest
-                        if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale) < timestampHi) {
+                        if (scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale) <= timestampHi) {
                             if (timeFrameCursor.open() == 0) {
                                 continue;
                             }
                             // now we know the exact boundaries of the frame, let's check them
                             if (scaleTimestamp(timeFrame.getTimestampHi(), scale) <= timestampLo) {
-                                // the frame is to the left of the interval, so carry on
                                 bookmarkCurrentFrame(0);
                                 continue;
                             }
-                            if (scaleTimestamp(timeFrame.getTimestampLo(), scale) < timestampHi) {
+                            if (scaleTimestamp(timeFrame.getTimestampLo(), scale) <= timestampHi) {
                                 // yay, it's what we need!
                                 if (scaleTimestamp(timeFrame.getTimestampLo(), scale) >= timestampLo) {
                                     // we can start with the first row
@@ -527,6 +548,9 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                                 break;
                             }
                         }
+
+                        // next row may have interval with current frame
+                        bookmarkCurrentFrame(0);
                         return Long.MIN_VALUE;
                     }
                     if (rowLo == Long.MIN_VALUE) {
@@ -695,7 +719,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Plannable {
                 recordAtRowIndex(r);
                 final long timestamp = scaleTimestamp(record.getTimestamp(timestampIndex), scale);
                 if (timestamp >= timestampLo) {
-                    if (timestamp < timestampHi) {
+                    if (timestamp <= timestampHi) {
                         return r;
                     }
                     return Long.MIN_VALUE;

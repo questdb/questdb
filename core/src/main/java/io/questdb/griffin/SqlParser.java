@@ -4474,6 +4474,7 @@ public class SqlParser {
         tableAliasStop.add("tolerance");
         tableAliasStop.add("right");
         tableAliasStop.add("full");
+        tableAliasStop.add("range");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");
