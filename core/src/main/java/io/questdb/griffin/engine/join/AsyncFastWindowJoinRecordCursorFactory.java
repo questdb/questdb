@@ -73,6 +73,9 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
+// TODO(puzpuzpuz): support "small" page frame size mode in page frame cursor and use it for window join factories;
+//                  when it's on, separate min/max page frame config props should be used,
+//                  10x smaller than the current defaults, i.e. 10k/100k
 // TODO(puzpuzpuz): it's a quick and dirty prototype
 public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
