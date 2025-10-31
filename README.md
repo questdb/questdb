@@ -169,6 +169,13 @@ Interact with QuestDB and your data via the following interfaces:
 - [REST API](https://questdb.com/docs/reference/api/rest/) for CSV import and
   cURL on port `9000`
 
+## Bulk Loading with Parquet Files
+For optimal performance with high-volume time-series data, copy Parquet files to the server's `/import` directory (configurable via `COPY_INPUT_ROOT` in `conf/server.conf`) and load them using:
+
+```sql
+INSERT INTO sensors (ts, value) SELECT ts, value FROM read_parquet('bulk_data.parquet');
+```
+
 ### Popular third-party tools
 
 Popular tools that integrate with QuestDB include:
