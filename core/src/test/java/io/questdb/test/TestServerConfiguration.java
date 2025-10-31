@@ -44,8 +44,8 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -71,6 +71,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         }
     };
     private final WorkerPoolConfiguration confMatViewRefreshPool;
+    private final WorkerPoolConfiguration confExportPool;
     private final WorkerPoolConfiguration confSharedPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
@@ -140,7 +141,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                     }
 
                     @Override
-                    public Clock getNanosecondClock() {
+                    public NanosecondClock getNanosecondClock() {
                         return StationaryNanosClock.INSTANCE;
                     }
                 }) {
@@ -201,6 +202,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
         };
 
         this.confMatViewRefreshPool = () -> 0; // shared pool
+        this.confExportPool = () -> 2; // default export pool worker count
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -240,6 +242,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return confMatViewRefreshPool;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return confExportPool;
     }
 
     @Override

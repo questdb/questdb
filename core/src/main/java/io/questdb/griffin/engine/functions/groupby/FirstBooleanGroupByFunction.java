@@ -87,6 +87,11 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     }
 
     @Override
+    public boolean isConstant() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return UnaryFunction.super.isThreadSafe();
     }

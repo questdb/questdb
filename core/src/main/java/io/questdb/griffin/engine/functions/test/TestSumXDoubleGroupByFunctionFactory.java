@@ -32,6 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "sumx(DS)";
@@ -43,7 +44,13 @@ public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new TestSumDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }

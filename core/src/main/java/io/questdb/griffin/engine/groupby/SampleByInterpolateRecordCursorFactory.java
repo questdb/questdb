@@ -727,7 +727,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // this is the default path, we align time intervals to the first observation
                 sampler.setStart(timestamp);
             } else {
-                sampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+                sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value

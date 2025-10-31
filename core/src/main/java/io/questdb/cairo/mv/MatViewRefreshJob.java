@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -581,8 +582,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable MatViewStateStore stateStore,
             @Nullable MatViewRefreshTask refreshTask
     ) {
-        if (th instanceof CairoException) {
-            CairoException ex = (CairoException) th;
+        if (th instanceof CairoException ex) {
             if (ex.isTableDoesNotExist()) {
                 // Can be that the mat view underlying table is in the middle of being renamed at this moment,
                 // do not invalidate the view in this case.
@@ -811,10 +811,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             Misc.free(factory);
-            LOG.error()
+            int errno = Integer.MIN_VALUE;
+            if (th instanceof CairoException e) {
+                if (e.isInterruption() && engine.isClosing()) {
+                    // The query was cancelled, because a questdb shutdown.
+                    LOG.info().$("materialized view refresh cancelled on shutdown [view=").$(viewTableToken)
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    return false;
+                } else {
+                    errno = e.getErrno();
+                }
+            }
+
+            LogRecord log = LOG.error()
                     .$("could not refresh materialized view [view=").$(viewTableToken)
-                    .$(", ex=").$(th)
-                    .I$();
+                    .$(", ex=").$(th);
+
+            if (errno != Integer.MIN_VALUE) {
+                log.$(", errno=").$(errno);
+            }
+            log.I$();
+
             refreshFailState(viewDefinition, viewState, walWriter, th);
             return false;
         }
