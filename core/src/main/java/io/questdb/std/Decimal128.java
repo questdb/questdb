@@ -759,7 +759,16 @@ public class Decimal128 implements Sinkable, Decimal {
 
     @Override
     public boolean equals(Object obj) {
+        if (this == obj) return true;
         if (!(obj instanceof Decimal128 other)) return false;
+
+        final boolean isNull = isNull();
+        final boolean otherIsNull = other.isNull();
+        if (isNull != otherIsNull) {
+            return false;
+        } else if (isNull) {
+            return true; // We don't need to compare scales for null values
+        }
         return this.high == other.high &&
                 this.low == other.low &&
                 this.scale == other.scale;

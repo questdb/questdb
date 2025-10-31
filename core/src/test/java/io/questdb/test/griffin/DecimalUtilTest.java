@@ -1297,7 +1297,7 @@ public class DecimalUtilTest extends AbstractCairoTest {
             DecimalUtil.store(decimal256, mem, ColumnType.getDecimalType(76, 0));
             Decimal256 result = new Decimal256();
             mem.getDecimal256(0, result);
-            Assert.assertEquals(decimal256, result);
+            Assert.assertEquals(String.format("assertion failed, expected %s but got %s", decimal256, result), decimal256, result);
         }
     }
 

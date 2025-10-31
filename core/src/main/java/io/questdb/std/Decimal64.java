@@ -474,9 +474,15 @@ public class Decimal64 implements Sinkable, Decimal {
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
-        if (obj == null || getClass() != obj.getClass()) return false;
+        if (!(obj instanceof Decimal64 other)) return false;
 
-        Decimal64 other = (Decimal64) obj;
+        final boolean isNull = isNull();
+        final boolean otherIsNull = other.isNull();
+        if (isNull != otherIsNull) {
+            return false;
+        } else if (isNull) {
+            return true; // We don't need to compare scales for null values
+        }
         return compareTo(other) == 0;
     }
 

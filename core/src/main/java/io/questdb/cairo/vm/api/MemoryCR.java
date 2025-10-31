@@ -101,12 +101,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     @Override
     default void getDecimal256(long offset, Decimal256 sink) {
         final long addr = addressOf(offset + 32L);
-        sink.ofRaw(
-                Unsafe.getUnsafe().getLong(addr - 32L),
-                Unsafe.getUnsafe().getLong(addr - 24L),
-                Unsafe.getUnsafe().getLong(addr - 16L),
-                Unsafe.getUnsafe().getLong(addr - 8L)
-        );
+        sink.ofRawAddress(addr - 32L);
     }
 
     @Override
