@@ -496,7 +496,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (txnTracker != null) {
                     txnTracker.getMemPressureControl().onOutOfMemory();
                     if (txnTracker.getMemPressureControl().isReadyToProcess()) {
-                        engine.notifyWalTxnRepublisher(tableToken);
+                        engine.notifyWalTxnQueueOverflow(tableToken);
                         return;
                     } else {
                         LOG.info().$("high memory pressure, table is backed off from processing WAL transactions [table=")
@@ -825,7 +825,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 .I$();
                         // This is abnormal termination but table is not set to suspended state.
                         // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
-                        engine.notifyWalTxnRepublisher(tableToken);
+                        engine.notifyWalTxnQueueOverflow(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
                     // We do not suspend table because of having initial value on writerTxn. It will either be
