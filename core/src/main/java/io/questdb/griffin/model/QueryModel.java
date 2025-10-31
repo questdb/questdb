@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -159,6 +160,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
+    private CharSequenceIntHashMap columnAliasRefCounts = new CharSequenceIntHashMap(8, 0.4, 0);
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
@@ -486,6 +488,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         forceBackwardScan = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
+        columnAliasRefCounts.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -942,6 +945,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return this;
     }
 
+    public int getRefCount(CharSequence alias) {
+        return columnAliasRefCounts.get(alias);
+    }
+
     public ExpressionNode getSampleBy() {
         return sampleBy;
     }
@@ -1081,6 +1088,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
+    }
+
+    public void incrementColumnRefCount(CharSequence alias, int refCount) {
+        if (columnAliasIndexes.get(alias) > -1) {
+            int keyIndex = columnAliasRefCounts.keyIndex(alias);
+            if (keyIndex < 0) {
+                int old = columnAliasRefCounts.valueAt(keyIndex);
+                columnAliasRefCounts.putAt(keyIndex, alias, old + refCount);
+            } else {
+                columnAliasRefCounts.putAt(keyIndex, alias, refCount);
+            }
+        }
     }
 
     public boolean isArtificialStar() {
