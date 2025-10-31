@@ -58,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -94,6 +95,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata joinMetadata,
+            @Nullable IntList columnIndex,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             int masterSymbolIndex,
@@ -123,6 +125,7 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
+                columnIndex,
                 columnSplit,
                 masterFilter != null
         );

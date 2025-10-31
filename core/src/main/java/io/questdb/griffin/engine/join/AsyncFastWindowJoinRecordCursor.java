@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,6 +54,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFastWindowJoinRecordCursor.class);
@@ -61,7 +63,7 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final VirtualRecord groupByRecord;
     private final boolean isMasterFiltered;
     private final PageFrameMemoryRecord masterRecord;
-    private final JoinRecord record;
+    private final Record record;
     private final RecordMetadata slaveMetadata;
     private final LongList slavePartitionTimestamps = new LongList();
     private final PageFrameAddressCache slaveTimeFrameAddressCache;
@@ -87,6 +89,7 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull RecordMetadata slaveMetadata,
+            @Nullable IntList columnIndex,
             int columnSplit,
             boolean isMasterFiltered
     ) {
@@ -97,8 +100,15 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
         masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         groupByRecord = new VirtualRecord(groupByFunctions);
-        record = new JoinRecord(columnSplit);
-        record.of(masterRecord, groupByRecord);
+        JoinRecord jr = new JoinRecord(columnSplit);
+        jr.of(masterRecord, groupByRecord);
+        if (columnIndex != null) {
+            SelectedRecord sr = new SelectedRecord(columnIndex);
+            sr.of(jr);
+            this.record = sr;
+        } else {
+            this.record = jr;
+        }
     }
 
     @Override

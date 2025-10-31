@@ -315,8 +315,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.SqlOptimiser.evalNonNegativeLongConstantOrDie;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_MICRO_HOUR_INT = 1;
@@ -3204,6 +3204,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 ObjList<QueryColumn> cols = aggModel.getColumns();
+                                IntList columnIndex = new IntList(cols.size());
+                                int groupByCnt = 0;
+                                int splitIndex = masterMetadata.getColumnCount();
+
                                 for (int j = 0, m = cols.size(); j < m; j++) {
                                     ExpressionNode ast = cols.get(j).getAst();
                                     if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
@@ -3211,9 +3215,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (colIndex == -1) {
                                             throw SqlException.invalidColumn(ast.position, ast.token);
                                         }
-                                        if (colIndex >= masterMetadata.getColumnCount()) {
+                                        if (colIndex >= splitIndex) {
                                             throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
                                         }
+                                        columnIndex.add(colIndex);
+                                    } else {
+                                        columnIndex.add(splitIndex + groupByCnt);
+                                        groupByCnt++;
+                                    }
+                                }
+                                if (columnIndex.size() == splitIndex + groupByCnt) {
+                                    boolean skipColumnIndex = true;
+                                    for (int j = 0, m = columnIndex.size(); j < m; j++) {
+                                        if (j != columnIndex.getQuick(j)) {
+                                            skipColumnIndex = false;
+                                            break;
+                                        }
+                                    }
+                                    if (skipColumnIndex) {
+                                        columnIndex = null;
                                     }
                                 }
 
@@ -3297,6 +3317,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             configuration,
                                             executionContext.getMessageBus(),
                                             outerProjectionMetadata,
+                                            columnIndex,
                                             master,
                                             slave,
                                             masterSymbolIndex,
@@ -3334,6 +3355,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext.getMessageBus(),
                                             joinMetadata,
                                             outerProjectionMetadata,
+                                            columnIndex,
                                             master,
                                             slave,
                                             filter,

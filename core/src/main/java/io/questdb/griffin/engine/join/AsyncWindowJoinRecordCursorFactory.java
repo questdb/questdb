@@ -55,6 +55,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
@@ -88,6 +89,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull MessageBus messageBus,
             @NotNull JoinRecordMetadata joinMetadata,
             @NotNull RecordMetadata outMetadata,
+            @Nullable IntList columnIndex,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
             @Nullable Function joinFilter,
@@ -117,6 +119,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
                 configuration,
                 groupByFunctions,
                 slaveFactory.getMetadata(),
+                columnIndex,
                 columnSplit,
                 masterFilter != null
         );
