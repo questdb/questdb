@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -87,6 +89,56 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getDate(col);
         }
         return recordB.getDate(col);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        if (useA) {
+            recordA.getDecimal128(col, sink);
+        } else {
+            recordB.getDecimal128(col, sink);
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (useA) {
+            return recordA.getDecimal16(col);
+        }
+        return recordB.getDecimal16(col);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        if (useA) {
+            recordA.getDecimal256(col, sink);
+        } else {
+            recordB.getDecimal256(col, sink);
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (useA) {
+            return recordA.getDecimal32(col);
+        }
+        return recordB.getDecimal32(col);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (useA) {
+            return recordA.getDecimal64(col);
+        }
+        return recordB.getDecimal64(col);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (useA) {
+            return recordA.getDecimal8(col);
+        }
+        return recordB.getDecimal8(col);
     }
 
     @Override

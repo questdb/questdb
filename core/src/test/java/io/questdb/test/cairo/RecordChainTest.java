@@ -24,14 +24,30 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -314,6 +330,34 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(expected.getLong128Hi(i), actual.getLong128Hi(i));
                     Assert.assertEquals(expected.getLong128Lo(i), actual.getLong128Lo(i));
                     break;
+                case ColumnType.DECIMAL8:
+                    Assert.assertEquals(expected.getDecimal8(i), actual.getDecimal8(i));
+                    break;
+                case ColumnType.DECIMAL16:
+                    Assert.assertEquals(expected.getDecimal16(i), actual.getDecimal16(i));
+                    break;
+                case ColumnType.DECIMAL32:
+                    Assert.assertEquals(expected.getDecimal32(i), actual.getDecimal32(i));
+                    break;
+                case ColumnType.DECIMAL64:
+                    Assert.assertEquals(expected.getDecimal64(i), actual.getDecimal64(i));
+                    break;
+                case ColumnType.DECIMAL128: {
+                    Decimal128 expectedDecimal = new Decimal128();
+                    expected.getDecimal128(i, expectedDecimal);
+                    Decimal128 actualDecimal = new Decimal128();
+                    actual.getDecimal128(i, actualDecimal);
+                    Assert.assertEquals(expectedDecimal, actualDecimal);
+                    break;
+                }
+                case ColumnType.DECIMAL256: {
+                    Decimal256 expectedDecimal = new Decimal256();
+                    expected.getDecimal256(i, expectedDecimal);
+                    Decimal256 actualDecimal = new Decimal256();
+                    actual.getDecimal256(i, actualDecimal);
+                    Assert.assertEquals(expectedDecimal, actualDecimal);
+                    break;
+                }
                 default:
                     throw CairoException.critical(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
             }

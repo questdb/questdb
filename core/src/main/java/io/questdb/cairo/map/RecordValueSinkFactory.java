@@ -55,6 +55,10 @@ public class RecordValueSinkFactory {
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        int rGetDecimal8 = asm.poolInterfaceMethod(Record.class, "getDecimal8", "(I)B");
+        int rGetDecimal16 = asm.poolInterfaceMethod(Record.class, "getDecimal16", "(I)S");
+        int rGetDecimal32 = asm.poolInterfaceMethod(Record.class, "getDecimal32", "(I)I");
+        int rGetDecimal64 = asm.poolInterfaceMethod(Record.class, "getDecimal64", "(I)J");
         //
         int wPutInt = asm.poolInterfaceMethod(MapValue.class, "putInt", "(II)V");
         int wPutLong = asm.poolInterfaceMethod(MapValue.class, "putLong", "(IJ)V");
@@ -66,6 +70,8 @@ public class RecordValueSinkFactory {
         int wPutDouble = asm.poolInterfaceMethod(MapValue.class, "putDouble", "(ID)V");
         int wPutDate = asm.poolInterfaceMethod(MapValue.class, "putDate", "(IJ)V");
         int wPutTimestamp = asm.poolInterfaceMethod(MapValue.class, "putTimestamp", "(IJ)V");
+        int wPutDecimal128 = asm.poolInterfaceMethod(MapValue.class, "putDecimal128", "(ILio/questdb/cairo/sql/Record;I)V");
+        int wPutDecimal256 = asm.poolInterfaceMethod(MapValue.class, "putDecimal256", "(ILio/questdb/cairo/sql/Record;I)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/map/MapValue;)V");
@@ -84,10 +90,15 @@ public class RecordValueSinkFactory {
         for (int i = 0; i < n; i++) {
 
             int index = columnFilter.getColumnIndexFactored(i);
+            // stack: []
             asm.aload(2);
+            // stack: [MapValue]
             asm.iconst(i);
+            // stack: [MapValue, index]
             asm.aload(1);
+            // stack: [MapValue, index, Record]
             asm.iconst(index);
+            // stack: [MapValue, index, Record, columnIndex]
 
             int columnType = columnTypes.getColumnType(index);
             switch (ColumnType.tagOf(columnType)) {
@@ -151,6 +162,44 @@ public class RecordValueSinkFactory {
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
                     asm.invokeInterface(wPutDouble, 3);
+                    break;
+                case ColumnType.DECIMAL8:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(rGetDecimal8, 1);
+                    // stack: [MapValue, index, byte]
+                    asm.invokeInterface(wPutByte, 2);
+                    // stack: []
+                    break;
+                case ColumnType.DECIMAL16:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(rGetDecimal16, 1);
+                    // stack: [MapValue, index, short]
+                    asm.invokeInterface(wPutShort, 2);
+                    // stack: []
+                    break;
+                case ColumnType.DECIMAL32:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(rGetDecimal32, 1);
+                    // stack: [MapValue, index, int]
+                    asm.invokeInterface(wPutInt, 2);
+                    // stack: []
+                    break;
+                case ColumnType.DECIMAL64:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(rGetDecimal64, 1);
+                    // stack: [MapValue, index, long]
+                    asm.invokeInterface(wPutLong, 3);
+                    // stack: []
+                    break;
+                case ColumnType.DECIMAL128:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(wPutDecimal128, 3);
+                    // stack: []
+                    break;
+                case ColumnType.DECIMAL256:
+                    // stack: [MapValue, index, Record, columnIndex]
+                    asm.invokeInterface(wPutDecimal256, 3);
+                    // stack: []
                     break;
                 default:
                     throw new UnsupportedOperationException();

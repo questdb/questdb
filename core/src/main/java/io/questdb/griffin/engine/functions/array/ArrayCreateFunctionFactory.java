@@ -198,6 +198,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public @NotNull ObjList<Function> args() {
+            return args;
+        }
+
+        @Override
         public void assignType(int type, BindVariableService bindVariableService) {
             this.type = type;
             arrayOut.setType(type);
@@ -207,11 +212,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         public void close() {
             MultiArgFunction.super.close();
             Misc.free(arrayOut);
-        }
-
-        @Override
-        public @NotNull ObjList<Function> getArgs() {
-            return args;
         }
 
         @Override
@@ -274,6 +274,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public ObjList<Function> args() {
+            return array.getFunctions();
+        }
+
+        @Override
         public void assignType(int type, BindVariableService bindVariableService) {
             assert array.isEmpty() : "array is not empty";
             this.type = type;
@@ -284,11 +289,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         public void close() {
             MultiArgFunction.super.close();
             Misc.free(array);
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return array.getFunctions();
         }
 
         @Override

@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
@@ -190,6 +192,36 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public char getChar(int columnIndex) {
             return baseRecord.getChar(columnIndex);
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            baseRecord.getDecimal128(col, sink);
+        }
+
+        @Override
+        public short getDecimal16(int columnIndex) {
+            return baseRecord.getDecimal16(columnIndex);
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            baseRecord.getDecimal256(col, sink);
+        }
+
+        @Override
+        public int getDecimal32(int columnIndex) {
+            return baseRecord.getDecimal32(columnIndex);
+        }
+
+        @Override
+        public long getDecimal64(int columnIndex) {
+            return baseRecord.getDecimal64(columnIndex);
+        }
+
+        @Override
+        public byte getDecimal8(int columnIndex) {
+            return baseRecord.getDecimal8(columnIndex);
         }
 
         @Override

@@ -41,7 +41,7 @@ public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunc
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

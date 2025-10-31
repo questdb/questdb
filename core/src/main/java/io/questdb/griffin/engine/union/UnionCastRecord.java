@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -104,6 +106,56 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getDate(recordA);
         }
         return castFunctionsB.getQuick(col).getDate(recordB);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 decimal128) {
+        if (useA) {
+            castFunctionsA.getQuick(col).getDecimal128(recordA, decimal128);
+        } else {
+            castFunctionsB.getQuick(col).getDecimal128(recordB, decimal128);
+        }
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal16(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal16(recordB);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 decimal256) {
+        if (useA) {
+            castFunctionsA.getQuick(col).getDecimal256(recordA, decimal256);
+        } else {
+            castFunctionsB.getQuick(col).getDecimal256(recordB, decimal256);
+        }
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal32(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal32(recordB);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal64(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal64(recordB);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getDecimal8(recordA);
+        }
+        return castFunctionsB.getQuick(col).getDecimal8(recordB);
     }
 
     @Override

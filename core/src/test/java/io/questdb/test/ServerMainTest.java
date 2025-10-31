@@ -525,6 +525,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.text.roll.buffer.limit\tQDB_HTTP_TEXT_ROLL_BUFFER_LIMIT\t4194304\tdefault\tfalse\tfalse\n" +
                                     "http.text.roll.buffer.size\tQDB_HTTP_TEXT_ROLL_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.text.timestamp.adapter.pool.capacity\tQDB_HTTP_TEXT_TIMESTAMP_ADAPTER_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
+                                    "http.text.decimal.adapter.pool.capacity\tQDB_HTTP_TEXT_DECIMAL_ADAPTER_POOL_CAPACITY\t64\tdefault\tfalse\tfalse\n" +
                                     "http.text.utf8.sink.size\tQDB_HTTP_TEXT_UTF8_SINK_SIZE\t4096\tdefault\tfalse\tfalse\n" +
                                     "http.version\tQDB_HTTP_VERSION\tHTTP/1.1\tdefault\tfalse\tfalse\n" +
                                     "http.worker.affinity\tQDB_HTTP_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +

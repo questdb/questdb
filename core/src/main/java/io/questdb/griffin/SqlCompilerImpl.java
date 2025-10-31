@@ -277,19 +277,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     public static long copyOrderedBatched(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordMetadata metadata,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
-            long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker
+            long o3MaxLag
     ) {
-        return copyOrderedBatched(writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+        return copyOrderedBatched(context, writer, metadata, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, CopyDataProgressReporter.NOOP, -1);
     }
 
     public static long copyOrderedBatched(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordMetadata metadata,
             RecordCursor cursor,
@@ -297,39 +298,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
         long rowCount;
         int timestampColumnType = metadata.getColumnType(cursorTimestampIndex);
         if (ColumnType.isSymbolOrString(timestampColumnType)) {
-            rowCount = copyOrderedBatchedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatchedStrTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
         } else if (metadata.getColumnType(cursorTimestampIndex) == ColumnType.VARCHAR) {
-            rowCount = copyOrderedBatchedVarcharTimestamp(writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter);
+            rowCount = copyOrderedBatchedVarcharTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
         } else {
-            rowCount = copyOrderedBatched0(writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, reportFrequency);
+            rowCount = copyOrderedBatched0(context, writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, reporter, reportFrequency);
         }
         return rowCount;
     }
 
     public static long copyUnordered(
+            SqlExecutionContext context,
             RecordCursor cursor,
             TableWriterAPI writer,
-            RecordToRowCopier copier,
-            SqlExecutionCircuitBreaker circuitBreaker
+            RecordToRowCopier copier
     ) {
-        return copyUnordered(cursor, writer, copier, circuitBreaker, CopyDataProgressReporter.NOOP, -1);
+        return copyUnordered(context, cursor, writer, copier, CopyDataProgressReporter.NOOP, -1);
     }
 
     /**
      * Returns number of copied rows.
      */
     public static long copyUnordered(
+            SqlExecutionContext context,
             RecordCursor cursor,
             TableWriterAPI writer,
             RecordToRowCopier copier,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
@@ -337,9 +337,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
             TableWriter.Row row = writer.newRow();
-            copier.copy(record, row);
+            copier.copy(context, record, row);
             row.append();
             rowCount++;
             if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
@@ -608,6 +608,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // returns number of copied rows
     private static long copyOrderedBatched0(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
@@ -615,7 +616,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
@@ -626,9 +626,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
                 TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-                copier.copy(record, row);
+                copier.copy(context, record, row);
                 row.append();
                 if (++rowCount >= commitTarget) {
                     writer.ic(o3MaxLag);
@@ -640,9 +640,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } else {
             while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
                 TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
-                copier.copy(record, row);
+                copier.copy(context, record, row);
                 row.append();
                 if (++rowCount >= commitTarget) {
                     writer.ic(o3MaxLag);
@@ -660,13 +660,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // returns number of copied rows
     private static long copyOrderedBatchedStrTimestamp(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter
     ) {
         long commitTarget = batchSize;
@@ -675,10 +675,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
-            copier.copy(record, row);
+            copier.copy(context, record, row);
             row.append();
             if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
@@ -695,13 +695,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // returns number of copied rows
     private static long copyOrderedBatchedVarcharTimestamp(
+            SqlExecutionContext context,
             TableWriterAPI writer,
             RecordCursor cursor,
             RecordToRowCopier copier,
             int cursorTimestampIndex,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter
     ) {
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
@@ -710,10 +710,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
-            copier.copy(record, row);
+            copier.copy(context, record, row);
             row.append();
             if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
@@ -784,6 +784,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         .put(']');
             }
             columnType = ColumnType.encodeArrayType(ColumnType.tagOf(columnType), dim);
+        }
+
+        if (columnType == ColumnType.DECIMAL) {
+            columnType = SqlParser.parseDecimalColumnType(lexer);
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -3391,6 +3395,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // returns number of copied rows
     private long copyTableData(
+            SqlExecutionContext context,
             RecordCursor cursor,
             RecordMetadata metadata,
             TableWriterAPI writer,
@@ -3398,18 +3403,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             RecordToRowCopier recordToRowCopier,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             @NotNull CopyDataProgressReporter reporter,
             int reportFrequency
     ) {
         int timestampIndex = writerMetadata.getTimestampIndex();
         long rowCount;
         if (timestampIndex == -1) {
-            rowCount = copyUnordered(cursor, writer, recordToRowCopier, circuitBreaker, reporter, reportFrequency);
+            rowCount = copyUnordered(context, cursor, writer, recordToRowCopier, reporter, reportFrequency);
         } else if (batchSize != -1) {
-            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, circuitBreaker, reporter, configuration.getParquetExportCopyReportFrequencyLines());
+            rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, batchSize, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         } else {
-            rowCount = copyOrderedBatched(writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, circuitBreaker, reporter, configuration.getParquetExportCopyReportFrequencyLines());
+            rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         }
         writer.commit();
         return rowCount;
@@ -3419,14 +3423,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Sets insertCount to number of copied rows.
      */
     private void copyTableDataAndUnlock(
-            SecurityContext securityContext,
+            SqlExecutionContext context,
             TableToken tableToken,
             boolean isWalEnabled,
             RecordCursor cursor,
             RecordMetadata cursorMetadata,
             long batchSize,
             long o3MaxLag,
-            SqlExecutionCircuitBreaker circuitBreaker,
             CopyDataProgressReporter reporter
     ) {
         TableWriterAPI writerAPI = null;
@@ -3453,6 +3456,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             RecordMetadata writerMetadata = writerAPI.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
             this.insertCount = copyTableData(
+                    context,
                     cursor,
                     cursorMetadata,
                     writerAPI,
@@ -3465,7 +3469,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     ),
                     batchSize,
                     o3MaxLag,
-                    circuitBreaker,
                     reporter,
                     configuration.getParquetExportCopyReportFrequencyLines()
             );
@@ -3478,7 +3481,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (isWalEnabled) {
                 Misc.free(writerAPI);
             } else {
-                engine.unlock(securityContext, tableToken, writer, false);
+                engine.unlock(context.getSecurityContext(), tableToken, writer, false);
             }
         }
     }
@@ -3680,14 +3683,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                         try {
                             copyTableDataAndUnlock(
-                                    executionContext.getSecurityContext(),
+                                    executionContext,
                                     tableToken,
                                     createTableOp.isWalEnabled(),
                                     cursor,
                                     metadata,
                                     createTableOp.getBatchSize(),
                                     createTableOp.getBatchO3MaxLag(),
-                                    executionContext.getCircuitBreaker(),
                                     createTableOp.getCopyDataProgressReporter()
                             );
                         } catch (CairoException e) {
@@ -4099,6 +4101,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             valueFunctions.add(function);
+            listColumnFilter.add(metadataColumnIndex + 1);
+            return;
+        }
+
+        Function implicitCast = functionParser.createImplicitCast(functionPosition, function, columnType);
+        if (implicitCast != null) {
+            valueFunctions.add(implicitCast);
             listColumnFilter.add(metadataColumnIndex + 1);
             return;
         }
@@ -4603,7 +4612,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sink.clear();
                         sink.put('\'').put(tableName).put('\'');
 
-                        try (SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                        try (SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1)
+                                .with(AllowAllSecurityContext.INSTANCE)
+                                .with(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)
+                        ) {
                             while (true) {
                                 try (
                                         RecordCursorFactory factory = engine.select(sink, allowAllContext);
@@ -4611,6 +4623,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 ) {
                                     // statement/query timeout value is most likely too small for backup operation
                                     copyTableData(
+                                            allowAllContext,
                                             cursor,
                                             factory.getMetadata(),
                                             backupWriter,
@@ -4618,7 +4631,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                             recordToRowCopier,
                                             configuration.getCreateTableModelBatchSize(),
                                             configuration.getO3MaxLag(),
-                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER,
                                             CopyDataProgressReporter.NOOP,
                                             configuration.getParquetExportCopyReportFrequencyLines()
                                     );
@@ -4816,6 +4828,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
         addSupportedConversion(ColumnType.DATE, numericTypes);
 
+        //region Decimals
+        for (short i = ColumnType.DECIMAL8; i <= ColumnType.DECIMAL256; i++) {
+            for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
+                addSupportedConversion(i, j);
+            }
+            // We only allow types that are accurately representable to be converted directly, others should use explicit
+            // casting.
+            addSupportedConversion(ColumnType.BYTE, i);
+            addSupportedConversion(ColumnType.SHORT, i);
+            addSupportedConversion(ColumnType.INT, i);
+            addSupportedConversion(ColumnType.LONG, i);
+        }
+        //endregion
 
         // Other exotics <-> strings
         addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);

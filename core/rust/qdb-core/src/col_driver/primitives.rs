@@ -78,6 +78,12 @@ impl_primitive_type_driver!(GeoLong);
 impl_primitive_type_driver!(Uuid);
 impl_primitive_type_driver!(Long128);
 impl_primitive_type_driver!(IPv4);
+impl_primitive_type_driver!(Decimal8);
+impl_primitive_type_driver!(Decimal16);
+impl_primitive_type_driver!(Decimal32);
+impl_primitive_type_driver!(Decimal64);
+impl_primitive_type_driver!(Decimal128);
+impl_primitive_type_driver!(Decimal256);
 
 #[cfg(test)]
 mod tests {

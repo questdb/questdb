@@ -25,6 +25,8 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 
 public interface MapValue extends Record {
@@ -92,6 +94,18 @@ public interface MapValue extends Record {
     void putChar(int index, char value);
 
     void putDate(int index, long value);
+
+    void putDecimal128(int index, Record record, int colIndex);
+
+    void putDecimal128(int index, Decimal128 decimal128);
+
+    void putDecimal128Null(int index);
+
+    void putDecimal256(int index, Record record, int colIndex);
+
+    void putDecimal256(int index, Decimal256 decimal256);
+
+    void putDecimal256Null(int index);
 
     void putDouble(int index, double value);
 

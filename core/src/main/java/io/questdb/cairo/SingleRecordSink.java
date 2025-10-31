@@ -29,6 +29,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -125,6 +127,24 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         checkCapacity(8);
         Unsafe.getUnsafe().putLong(appendAddress, value);
         appendAddress += 8;
+    }
+
+    @Override
+    public void putDecimal128(Decimal128 decimal128) {
+        checkCapacity(16);
+        Unsafe.getUnsafe().putLong(appendAddress, decimal128.getHigh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal128.getLow());
+        appendAddress += 16;
+    }
+
+    @Override
+    public void putDecimal256(Decimal256 decimal256) {
+        checkCapacity(32L);
+        Unsafe.getUnsafe().putLong(appendAddress, decimal256.getHh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, decimal256.getHl());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, decimal256.getLh());
+        Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, decimal256.getLl());
+        appendAddress += 32L;
     }
 
     @Override

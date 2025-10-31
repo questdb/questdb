@@ -40,7 +40,7 @@ class IntCaseFunction extends IntFunction implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

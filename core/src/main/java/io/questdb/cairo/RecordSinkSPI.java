@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -34,7 +36,6 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public interface RecordSinkSPI {
-
     void putArray(ArrayView view);
 
     void putBin(BinarySequence value);
@@ -46,6 +47,10 @@ public interface RecordSinkSPI {
     void putChar(char value);
 
     void putDate(long value);
+
+    void putDecimal128(Decimal128 value);
+
+    void putDecimal256(Decimal256 value);
 
     void putDouble(double value);
 

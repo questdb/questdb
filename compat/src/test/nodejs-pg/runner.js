@@ -139,6 +139,14 @@ class TestRunner {
         //     return value.replace(/(-?\d+)(?!\.)/g, '$1.0').replace(/\s+/g, '');
         // }
 
+        // For decimals, ensure that they are normalized (e.g., 1.0 becomes 1)
+        if (typeof value === "string") {
+            const num = Number(value);
+            if (!isNaN(num)) {
+                return num.toString();
+            }
+        }
+
         return value;
     }
 

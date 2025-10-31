@@ -163,7 +163,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return args;
         }
 

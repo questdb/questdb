@@ -35,6 +35,8 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -185,6 +187,12 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         this.nextRecordOffset = nextRecordOffset;
     }
 
+    @Override
+    public long preComputedStateSize() {
+        // chain just streams rows from the cache
+        return 0;
+    }
+
     public long put(Record record, long prevRecordOffset) {
         long offset = beginRecord(prevRecordOffset);
         recordSink.copy(record, this);
@@ -235,6 +243,16 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public void putDate(long date) {
         putLong(date);
+    }
+
+    @Override
+    public void putDecimal128(Decimal128 decimal128) {
+        mem.putDecimal128(decimal128.getHigh(), decimal128.getLow());
+    }
+
+    @Override
+    public void putDecimal256(Decimal256 decimal256) {
+        mem.putDecimal256(decimal256.getHh(), decimal256.getHl(), decimal256.getLh(), decimal256.getLl());
     }
 
     @Override
@@ -358,12 +376,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
-    public long preComputedStateSize() {
-        // chain just streams rows from the cache
-        return 0;
-    }
-
-    @Override
     public void toTop() {
         if (mem.getAppendOffset() == 0) {
             nextRecordOffset = -1L;
@@ -442,6 +454,36 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         @Override
         public char getChar(int col) {
             return mem.getChar(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            mem.getDecimal128(fixedWithColumnOffset(col), sink);
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return mem.getDecimal16(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            mem.getDecimal256(fixedWithColumnOffset(col), sink);
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return mem.getDecimal32(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return mem.getDecimal64(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return mem.getDecimal8(fixedWithColumnOffset(col));
         }
 
         @Override

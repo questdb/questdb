@@ -57,9 +57,9 @@ public class SHA1VarcharFunctionFactory implements FunctionFactory {
 
     private static class SHA1Func extends VarcharFunction implements UnaryFunction {
         private final Function data;
+        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.SHA1);
         private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
-        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.SHA1);
 
         public SHA1Func(final Function data) {
             this.data = data;

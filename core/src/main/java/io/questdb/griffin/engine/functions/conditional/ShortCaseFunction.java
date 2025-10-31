@@ -39,7 +39,7 @@ class ShortCaseFunction extends ShortFunction implements CaseFunction {
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

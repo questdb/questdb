@@ -28,17 +28,56 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class IntervalFunctionTest extends AbstractCairoTest {
+    private static final IntervalFunction function = new IntervalFunction(ColumnType.INTERVAL_TIMESTAMP_MICRO) {
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            return Interval.NULL;
+        }
+    };
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        function.getDecimal128(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        function.getDecimal16(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        function.getDecimal256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        function.getDecimal32(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        function.getDecimal64(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        function.getDecimal8(null);
+    }
 
     @Test
     public void testInterval() throws Exception {

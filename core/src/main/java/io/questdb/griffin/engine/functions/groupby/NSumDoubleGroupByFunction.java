@@ -109,13 +109,21 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        double srcSum = srcValue.getDouble(valueIndex);
-        long srcCount = srcValue.getLong(valueIndex + 2);
-
-        double destSum = destValue.getDouble(valueIndex);
-        double destC = destValue.getDouble(valueIndex + 1);
-        sum(destValue, srcSum, destSum, destC);
-        destValue.addLong(valueIndex + 2, srcCount);
+        final double srcSum = srcValue.getDouble(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 2);
+        if (srcCount > 0) {
+            final long destCount = destValue.getLong(valueIndex + 2);
+            if (destCount > 0) {
+                final double destSum = destValue.getDouble(valueIndex);
+                final double destC = destValue.getDouble(valueIndex + 1);
+                sum(destValue, srcSum, destSum, destC);
+                destValue.putLong(valueIndex + 2, destCount + srcCount);
+            } else {
+                destValue.putDouble(valueIndex, srcSum);
+                destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+                destValue.putLong(valueIndex + 2, srcCount);
+            }
+        }
     }
 
     @Override

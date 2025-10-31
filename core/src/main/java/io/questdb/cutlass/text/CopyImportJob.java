@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -48,6 +49,7 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     private Path tmpPath2;
     private DirectUtf16Sink utf16Sink;
     private DirectUtf8Sink utf8Sink;
+    private final Decimal256 decimal256;
 
     public CopyImportJob(MessageBus messageBus) {
         super(messageBus.getCopyImportQueue(), messageBus.getCopyImportSubSeq());
@@ -59,6 +61,7 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
             int utf8SinkSize = messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize();
             this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
             this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.decimal256 = new Decimal256();
             this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_IMPORT);
             this.tmpPath1 = new Path();
             this.tmpPath2 = new Path();
@@ -94,7 +97,7 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final CopyImportTask task = queue.get(cursor);
-        final boolean result = task.run(tlw, indexer, utf16Sink, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
+        final boolean result = task.run(tlw, indexer, utf16Sink, utf8Sink, decimal256, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
         subSeq.done(cursor);
         return result;
     }

@@ -37,6 +37,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -109,6 +111,36 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
     @Override
     public long getDate(Record rec) {
         return getBase().getDate(rec);
+    }
+
+    @Override
+    public void getDecimal128(Record rec, Decimal128 sink) {
+        getBase().getDecimal128(rec, sink);
+    }
+
+    @Override
+    public short getDecimal16(Record rec) {
+        return getBase().getDecimal16(rec);
+    }
+
+    @Override
+    public void getDecimal256(Record rec, Decimal256 sink) {
+        getBase().getDecimal256(rec, sink);
+    }
+
+    @Override
+    public int getDecimal32(Record rec) {
+        return getBase().getDecimal32(rec);
+    }
+
+    @Override
+    public long getDecimal64(Record rec) {
+        return getBase().getDecimal64(rec);
+    }
+
+    @Override
+    public byte getDecimal8(Record rec) {
+        return getBase().getDecimal8(rec);
     }
 
     @Override

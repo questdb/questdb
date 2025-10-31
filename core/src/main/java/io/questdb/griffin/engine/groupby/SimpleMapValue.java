@@ -25,13 +25,18 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 
 public class SimpleMapValue implements MapValue {
-
+    private final Decimal128 decimal128 = new Decimal128();
+    private final Decimal256 decimal256 = new Decimal256();
     private final Long256Impl long256 = new Long256Impl();
     private final long[] values;
     private boolean isNew;
@@ -117,6 +122,46 @@ public class SimpleMapValue implements MapValue {
     @Override
     public long getDate(int index) {
         return values[4 * index];
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        int index = 4 * col;
+        sink.ofRaw(
+                values[index],
+                values[index + 1]
+        );
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return (short) values[4 * col];
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        int index = 4 * col;
+        sink.ofRaw(
+                values[index],
+                values[index + 1],
+                values[index + 2],
+                values[index + 3]
+        );
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return (int) values[4 * col];
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return values[4 * col];
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return (byte) values[4 * col];
     }
 
     @Override
@@ -245,6 +290,56 @@ public class SimpleMapValue implements MapValue {
     @Override
     public void putDate(int index, long value) {
         values[4 * index] = value;
+    }
+
+    @Override
+    public void putDecimal128(int index, Record record, int colIndex) {
+        final int idx = 4 * index;
+        record.getDecimal128(colIndex, decimal128);
+        values[idx] = decimal128.getHigh();
+        values[idx + 1] = decimal128.getLow();
+    }
+
+    @Override
+    public void putDecimal128(int index, Decimal128 decimal128) {
+        final int idx = 4 * index;
+        values[idx] = decimal128.getHigh();
+        values[idx + 1] = decimal128.getLow();
+    }
+
+    @Override
+    public void putDecimal128Null(int index) {
+        final int idx = 4 * index;
+        values[idx] = Decimals.DECIMAL128_HI_NULL;
+        values[idx + 1] = Decimals.DECIMAL128_LO_NULL;
+    }
+
+    @Override
+    public void putDecimal256(int index, Record record, int colIndex) {
+        final int idx = 4 * index;
+        record.getDecimal256(colIndex, decimal256);
+        values[idx] = decimal256.getHh();
+        values[idx + 1] = decimal256.getHl();
+        values[idx + 2] = decimal256.getLh();
+        values[idx + 3] = decimal256.getLl();
+    }
+
+    @Override
+    public void putDecimal256(int index, Decimal256 decimal256) {
+        final int idx = 4 * index;
+        values[idx] = decimal256.getHh();
+        values[idx + 1] = decimal256.getHl();
+        values[idx + 2] = decimal256.getLh();
+        values[idx + 3] = decimal256.getLl();
+    }
+
+    @Override
+    public void putDecimal256Null(int index) {
+        final int idx = 4 * index;
+        values[idx] = Decimals.DECIMAL256_HH_NULL;
+        values[idx + 1] = Decimals.DECIMAL256_HL_NULL;
+        values[idx + 2] = Decimals.DECIMAL256_LH_NULL;
+        values[idx + 3] = Decimals.DECIMAL256_LL_NULL;
     }
 
     @Override

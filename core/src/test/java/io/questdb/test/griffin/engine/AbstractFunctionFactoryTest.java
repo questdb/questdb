@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
@@ -414,7 +415,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             expression1,
                             expression2,
                             0,
-                            args[0]);
+                            args[0]
+                    );
 
                     expression1.put(' ').put(name).put(' ');
                     expression2.put(' ').put(name).put(' ');
@@ -429,7 +431,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             expression1,
                             expression2,
                             1,
-                            args[1]);
+                            args[1]
+                    );
                     break;
             }
         } else {
@@ -563,6 +566,25 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        public void andAssertDecimal256(long hh, long hl, long lh, long ll, int scale) {
+            Decimal256 decimal256 = new Decimal256();
+            function1.getDecimal256(record, decimal256);
+            Assert.assertEquals(hh, decimal256.getHh());
+            Assert.assertEquals(hl, decimal256.getHl());
+            Assert.assertEquals(lh, decimal256.getLh());
+            Assert.assertEquals(ll, decimal256.getLl());
+            Assert.assertEquals(scale, ColumnType.getDecimalScale(function1.getType()));
+            cleanup();
+        }
+
+        public void andAssertDecimal256Null() {
+            Decimal256 decimal256 = new Decimal256();
+            function1.getDecimal256(record, decimal256);
+            Assert.assertTrue(decimal256.isNull());
+            Assert.assertEquals(0, ColumnType.getDecimalScale(function1.getType()));
+            cleanup();
+        }
+
         public void andAssertLong256(Long256 expected) {
             Assert.assertEquals(expected, function1.getLong256A(record));
             Assert.assertEquals(expected, function2.getLong256A(record));
@@ -648,12 +670,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
-    private static class TestRecord implements Record, QuietCloseable {
-        private final Object[] args;
-
-        public TestRecord(Object[] args) {
-            this.args = args;
-        }
+    private record TestRecord(Object[] args) implements Record, QuietCloseable {
 
         @Override
         public void close() {

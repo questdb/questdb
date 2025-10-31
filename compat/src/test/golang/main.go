@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	pgxdecimal "github.com/jackc/pgx-shopspring-decimal"
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
 )
 
@@ -307,6 +309,8 @@ func (tr *TestRunner) formatValue(value interface{}) interface{} {
 	case []interface{}:
 		// Handle array values
 		return tr.formatArrayValue(v)
+	case decimal.Decimal:
+		return v.String()
 	}
 	return value
 }
@@ -590,6 +594,7 @@ func (tr *TestRunner) main(yamlFile string) error {
 			if err != nil {
 				return fmt.Errorf("unable to connect to database: %v", err)
 			}
+			pgxdecimal.Register(conn.TypeMap())
 
 			err = tr.runTest(ctx, test, config.Variables, conn)
 			conn.Close(ctx)

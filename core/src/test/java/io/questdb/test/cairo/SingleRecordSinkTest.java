@@ -27,6 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
@@ -175,7 +177,9 @@ public class SingleRecordSinkTest extends AbstractTest {
         PUT_TIMESTAMP,
         PUT_VARCHAR,
         PUT_LONG256_DIRECT,
-        PUT_LONG256_WRAPPED;
+        PUT_LONG256_WRAPPED,
+        PUT_DECIMAL128,
+        PUT_DECIMAL256;
 
         private void put(SingleRecordSink sink, Rnd rnd, boolean badValue) {
             switch (this) {
@@ -409,6 +413,25 @@ public class SingleRecordSinkTest extends AbstractTest {
                     if (badValue) {
                         rnd.reset(s0, s1);
                     }
+                    break;
+                case PUT_DECIMAL128:
+                    long rndDecimal128Hi = rnd.nextPositiveLong() % Decimal128.MAX_VALUE.getHigh();
+                    long rndDecimal128Lo = rnd.nextLong();
+                    if (badValue) {
+                        rndDecimal128Hi++;
+                    }
+                    sink.putDecimal128(new Decimal128(rndDecimal128Hi, rndDecimal128Lo, 0));
+                    break;
+                case PUT_DECIMAL256:
+                    long rndDecimal256HH = rnd.nextPositiveLong() % Decimal256.MAX_VALUE.getHh();
+                    long rndDecimal256HL = rnd.nextLong();
+                    long rndDecimal256LH = rnd.nextLong();
+                    long rndDecimal256LL = rnd.nextLong();
+                    if (badValue) {
+                        rndDecimal256HH++;
+                    }
+                    var decimal256 = new Decimal256(rndDecimal256HH, rndDecimal256HL, rndDecimal256LH, rndDecimal256LL, 0);
+                    sink.putDecimal256(decimal256);
                     break;
                 default:
                     throw new UnsupportedOperationException();

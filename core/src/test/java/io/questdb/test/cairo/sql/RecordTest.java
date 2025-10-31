@@ -56,6 +56,36 @@ public class RecordTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal128() {
+        RECORD.getDecimal128(0, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal16() {
+        RECORD.getDecimal16(0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal256() {
+        RECORD.getDecimal256(0, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal32() {
+        RECORD.getDecimal32(0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal64() {
+        RECORD.getDecimal64(0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDecimal8() {
+        RECORD.getDecimal8(0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDouble() {
         RECORD.getDouble(0);
     }

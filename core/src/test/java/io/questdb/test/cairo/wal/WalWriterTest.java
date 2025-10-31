@@ -69,6 +69,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -2148,6 +2150,12 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("varchara", ColumnType.VARCHAR)
                     .col("varcharb", ColumnType.VARCHAR)
                     .col("array", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1))
+                    .col("decimal8", ColumnType.getDecimalType(2, 0))
+                    .col("decimal16", ColumnType.getDecimalType(4, 0))
+                    .col("decimal32", ColumnType.getDecimalType(6, 0))
+                    .col("decimal64", ColumnType.getDecimalType(12, 0))
+                    .col("decimal128", ColumnType.getDecimalType(25, 0))
+                    .col("decimal256", ColumnType.getDecimalType(50, 0))
                     .timestamp("ts")
                     .wal();
             tableToken = createTable(model);
@@ -2160,6 +2168,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Long256Impl long256 = new Long256Impl();
                 final StringSink stringSink = new StringSink();
                 final DirectBinarySequence binSeq = new DirectBinarySequence();
+                final Decimal128 decimal128 = new Decimal128();
+                final Decimal256 decimal256 = new Decimal256();
 
                 final String walName;
                 final IntList walSymbolCounts = new IntList();
@@ -2232,6 +2242,14 @@ public class WalWriterTest extends AbstractCairoTest {
                         }
                         row.putArray(33, array);
 
+                        decimal256.ofLong(i, 0);
+                        row.putDecimal(34, decimal256);
+                        row.putDecimal(35, decimal256);
+                        row.putDecimal(36, decimal256);
+                        row.putDecimal(37, decimal256);
+                        row.putDecimal(38, decimal256);
+                        row.putDecimal(39, decimal256);
+
                         row.append();
                     }
 
@@ -2245,7 +2263,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowsToInsertTotal)) {
-                    assertEquals(35, reader.getColumnCount());
+                    assertEquals(41, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
                     assertEquals(rowsToInsertTotal, reader.size());
@@ -2329,7 +2347,20 @@ public class WalWriterTest extends AbstractCairoTest {
                             assertEquals(i + j, array.getDouble(j), 0.0001);
                         }
 
-                        assertEquals(ts, record.getTimestamp(34));
+                        assertEquals(i, record.getDecimal8(34));
+                        assertEquals(i, record.getDecimal16(35));
+                        assertEquals(i, record.getDecimal32(36));
+                        assertEquals(i, record.getDecimal64(37));
+                        record.getDecimal128(38, decimal128);
+                        assertEquals(0, decimal128.getHigh());
+                        assertEquals(i, decimal128.getLow());
+                        record.getDecimal256(39, decimal256);
+                        assertEquals(0, decimal256.getHh());
+                        assertEquals(0, decimal256.getHl());
+                        assertEquals(0, decimal256.getLh());
+                        assertEquals(i, decimal256.getLl());
+
+                        assertEquals(ts, record.getTimestamp(40));
                         assertEquals(i, record.getRowId());
                         testSink.clear();
                         ((Sinkable) record).toSink(testSink);

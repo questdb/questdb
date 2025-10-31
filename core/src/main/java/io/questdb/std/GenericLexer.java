@@ -39,6 +39,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final IntHashSet WHITESPACE_CH = new IntHashSet();
     private static final String NULL_SENTINEL = "NULL_SENTINEL";
     private final ObjectPool<FloatingSequencePair> csPairPool;
+    private final ObjectPool<FloatingSequenceTriple> csTriplePool;
     private final ObjectPool<FloatingSequence> csPool;
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final IntStack stashedNumbers = new IntStack();
@@ -58,6 +59,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public GenericLexer(int poolCapacity) {
         csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
         csPairPool = new ObjectPool<>(FloatingSequencePair::new, poolCapacity);
+        csTriplePool = new ObjectPool<>(FloatingSequenceTriple::new, poolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(Chars.toString(WHITESPACE.get(i)));
         }
@@ -192,6 +194,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return seqPair;
     }
 
+    public CharSequence immutableTripleOf(char separator, CharSequence value0, CharSequence value1, CharSequence value2) {
+        FloatingSequenceTriple seqTriple = csTriplePool.next();
+        seqTriple.cs0 = (FloatingSequence) value0;
+        seqTriple.cs1 = (FloatingSequence) immutableOf(value1);
+        seqTriple.cs2 = (FloatingSequence) immutableOf(value2);
+        seqTriple.sep = separator;
+        return seqTriple;
+    }
+
     public int lastTokenPosition() {
         return _lo;
     }
@@ -308,6 +319,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public void of(CharSequence cs, int lo, int hi) {
         this.csPool.clear();
         this.csPairPool.clear();
+        this.csTriplePool.clear();
         this.content = cs;
         this._start = lo;
         this._pos = lo;
@@ -325,6 +337,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public void restart() {
         this.csPool.clear();
         this.csPairPool.clear();
+        this.csTriplePool.clear();
         this._pos = this._start;
         this.next = null;
         this.unparsed.clear();
@@ -426,8 +439,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static class FloatingSequencePair extends AbstractCharSequence implements Mutable {
         public static final char NO_SEPARATOR = (char) 0;
 
-        FloatingSequence cs0;
-        FloatingSequence cs1;
+        public FloatingSequence cs0;
+        public FloatingSequence cs1;
         char sep = NO_SEPARATOR;
 
         @Override
@@ -461,6 +474,68 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                 b.put(sep);
             }
             b.put(cs1);
+            return b.toString();
+        }
+    }
+
+    public static class FloatingSequenceTriple extends AbstractCharSequence implements Mutable {
+        public static final char NO_SEPARATOR = (char) 0;
+
+        public FloatingSequence cs0;
+        public FloatingSequence cs1;
+        public FloatingSequence cs2;
+        char sep = NO_SEPARATOR;
+
+        @Override
+        public char charAt(int index) {
+            int cs0Len = cs0.length();
+            if (index < cs0Len) {
+                return cs0.charAt(index);
+            }
+            index -= cs0Len;
+            if (sep != NO_SEPARATOR) {
+                if (index == 0) {
+                    return sep;
+                }
+                index--;
+            }
+            int cs1Len = cs1.length();
+            if (index < cs1Len) {
+                return cs1.charAt(index);
+            }
+            index -= cs1Len;
+            if (sep != NO_SEPARATOR) {
+                if (index == 0) {
+                    return sep;
+                }
+                index--;
+            }
+            return cs2.charAt(index);
+        }
+
+        @Override
+        public void clear() {
+            // no-op
+        }
+
+        @Override
+        public int length() {
+            return cs0.length() + cs1.length() + cs2.length() + (sep != NO_SEPARATOR ? 2 : 0);
+        }
+
+        @NotNull
+        @Override
+        public String toString() {
+            final Utf16Sink b = Misc.getThreadLocalSink();
+            b.put(cs0);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
+            b.put(cs1);
+            if (sep != NO_SEPARATOR) {
+                b.put(sep);
+            }
+            b.put(cs2);
             return b.toString();
         }
     }

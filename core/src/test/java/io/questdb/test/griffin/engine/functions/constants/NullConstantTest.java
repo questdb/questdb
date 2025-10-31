@@ -43,6 +43,9 @@ import io.questdb.griffin.engine.functions.constants.ShortConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -87,6 +90,16 @@ public class NullConstantTest {
         Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoInt(null));
         Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoShort(null));
         Assert.assertNull(constant.extendedOps().getRecord(null));
+        Assert.assertEquals(Decimals.DECIMAL8_NULL, constant.getDecimal8(null));
+        Assert.assertEquals(Decimals.DECIMAL16_NULL, constant.getDecimal16(null));
+        Assert.assertEquals(Decimals.DECIMAL32_NULL, constant.getDecimal32(null));
+        Assert.assertEquals(Decimals.DECIMAL64_NULL, constant.getDecimal64(null));
+        Decimal128 decimal128 = new Decimal128();
+        constant.getDecimal128(null, decimal128);
+        Assert.assertTrue(decimal128.isNull());
+        Decimal256 decimal256 = new Decimal256();
+        constant.getDecimal256(null, decimal256);
+        Assert.assertTrue(decimal256.isNull());
 
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);

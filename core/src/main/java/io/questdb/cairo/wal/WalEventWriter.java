@@ -37,6 +37,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
@@ -183,6 +185,35 @@ class WalEventWriter implements Closeable {
             case ColumnType.ARRAY:
                 eventMem.putArray(function.getArray(null));
                 break;
+            case ColumnType.DECIMAL8:
+                eventMem.putByte(function.getDecimal8(null));
+                break;
+            case ColumnType.DECIMAL16:
+                eventMem.putShort(function.getDecimal16(null));
+                break;
+            case ColumnType.DECIMAL32:
+                eventMem.putInt(function.getDecimal32(null));
+                break;
+            case ColumnType.DECIMAL64:
+                eventMem.putLong(function.getDecimal64(null));
+                break;
+            case ColumnType.DECIMAL128: {
+                Decimal128 d = new Decimal128();
+                function.getDecimal128(null, d);
+                eventMem.putDecimal128(d.getHigh(), d.getLow());
+                break;
+            }
+            case ColumnType.DECIMAL256: {
+                Decimal256 d = new Decimal256();
+                function.getDecimal256(null, d);
+                eventMem.putDecimal256(
+                        d.getHh(),
+                        d.getHl(),
+                        d.getLh(),
+                        d.getLl()
+                );
+                break;
+            }
             default:
                 throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }

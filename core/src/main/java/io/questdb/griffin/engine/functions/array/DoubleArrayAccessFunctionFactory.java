@@ -70,9 +70,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         // If the array argument is another array slicing function, and if all its arguments are indexes
         // (not ranges for slicing), we can inline it into this function by prepending all its args to
         // our args, and by using its array argument as our array argument.
-        if (arrayArg instanceof SliceDoubleArrayFunction) {
+        if (arrayArg instanceof SliceDoubleArrayFunction sliceFn) {
             boolean canInline = true;
-            final SliceDoubleArrayFunction sliceFn = (SliceDoubleArrayFunction) arrayArg;
             final ObjList<Function> rangeArgs = sliceFn.allArgs;
             for (int n = rangeArgs.size(), i = 0; i < n; i++) {
                 if (ColumnType.isInterval(rangeArgs.getQuick(i).getType())) {
@@ -265,7 +264,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return allArgs;
         }
 
@@ -330,7 +329,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public ObjList<Function> getArgs() {
+        public ObjList<Function> args() {
             return allArgs;
         }
 

@@ -33,6 +33,8 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
@@ -219,6 +221,66 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
         }
         return NullMemoryCMR.INSTANCE.getChar(0);
+    }
+
+    @Override
+    public void getDecimal128(int columnIndex, Decimal128 sink) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            address += (rowIndex << 4);
+            sink.ofRaw(
+                    Unsafe.getUnsafe().getLong(address),
+                    Unsafe.getUnsafe().getLong(address + 8L)
+            );
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public short getDecimal16(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal16(0);
+    }
+
+    @Override
+    public void getDecimal256(int columnIndex, Decimal256 sink) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            sink.ofRawAddress(address + (rowIndex << 5));
+        } else {
+            sink.ofRawNull();
+        }
+    }
+
+    @Override
+    public int getDecimal32(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal32(0);
+    }
+
+    @Override
+    public long getDecimal64(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal64(0);
+    }
+
+    @Override
+    public byte getDecimal8(int columnIndex) {
+        long address = pageAddresses.getQuick(columnIndex);
+        if (address != 0) {
+            return Unsafe.getUnsafe().getByte(address + rowIndex);
+        }
+        return NullMemoryCMR.INSTANCE.getDecimal8(0);
     }
 
     @Override

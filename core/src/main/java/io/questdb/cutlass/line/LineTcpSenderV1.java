@@ -29,6 +29,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.std.Decimal256;
 import org.jetbrains.annotations.NotNull;
 
 import java.time.Instant;
@@ -49,6 +50,16 @@ public class LineTcpSenderV1 extends AbstractLineTcpSender {
     public final void at(Instant timestamp) {
         putAsciiInternal(' ').put(NanosTimestampDriver.INSTANCE.from(timestamp));
         atNow();
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, Decimal256 value) {
+        throw new LineSenderException("current protocol version does not support decimal");
+    }
+
+    @Override
+    public Sender decimalColumn(CharSequence name, CharSequence value) {
+        throw new LineSenderException("current protocol version does not support decimal");
     }
 
     @Override

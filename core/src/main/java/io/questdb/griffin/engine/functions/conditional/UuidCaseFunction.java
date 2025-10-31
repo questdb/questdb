@@ -40,7 +40,7 @@ public final class UuidCaseFunction extends UuidFunction implements MultiArgFunc
     }
 
     @Override
-    public ObjList<Function> getArgs() {
+    public ObjList<Function> args() {
         return args;
     }
 

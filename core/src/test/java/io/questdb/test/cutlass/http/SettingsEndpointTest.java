@@ -57,7 +57,7 @@ import java.util.HashMap;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE;
-import static io.questdb.client.Sender.PROTOCOL_VERSION_V2;
+import static io.questdb.client.Sender.PROTOCOL_VERSION_V3;
 import static io.questdb.preferences.SettingsStore.Mode.MERGE;
 import static io.questdb.preferences.SettingsStore.Mode.OVERWRITE;
 import static io.questdb.test.tools.TestUtils.*;
@@ -78,7 +78,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
             "\"release.version\":\"[DEVELOPMENT]\"," +
             "\"http.settings.readonly\":false," +
             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-            "\"line.proto.support.versions\":[1,2]," +
+            "\"line.proto.support.versions\":[1,2,3]," +
             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
             "\"posthog.enabled\":false," +
             "\"posthog.api.key\":null," +
@@ -134,7 +134,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -156,7 +156,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -207,7 +207,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -256,7 +256,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         responseHeaders.await();
                         assertEquals(String.valueOf(200), responseHeaders.getStatusCode());
                         parser.parse(responseHeaders.getResponse());
-                        Assert.assertEquals(PROTOCOL_VERSION_V2, parser.getDefaultProtocolVersion());
+                        Assert.assertEquals(PROTOCOL_VERSION_V3, parser.getDefaultProtocolVersion());
                     }
                 }
             }
@@ -283,7 +283,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -318,7 +318,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -340,7 +340,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -386,7 +386,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -424,7 +424,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -460,7 +460,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -494,7 +494,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -549,7 +549,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":false," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -607,7 +607,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         "\"release.version\":\"[DEVELOPMENT]\"," +
                         "\"http.settings.readonly\":false," +
                         "\"accepting.writes\":[\"tcp\", \"pgwire\"]," +
-                        "\"line.proto.support.versions\":[1,2]," +
+                        "\"line.proto.support.versions\":[1,2,3]," +
                         "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                         "\"posthog.enabled\":false," +
                         "\"posthog.api.key\":null," +
@@ -633,7 +633,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                         "\"release.version\":\"[DEVELOPMENT]\"," +
                         "\"http.settings.readonly\":false," +
                         "\"accepting.writes\":[]," +
-                        "\"line.proto.support.versions\":[1,2]," +
+                        "\"line.proto.support.versions\":[1,2,3]," +
                         "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                         "\"posthog.enabled\":false," +
                         "\"posthog.api.key\":null," +
@@ -684,7 +684,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                             "\"release.version\":\"[DEVELOPMENT]\"," +
                             "\"http.settings.readonly\":true," +
                             "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                            "\"line.proto.support.versions\":[1,2]," +
+                            "\"line.proto.support.versions\":[1,2,3]," +
                             "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                             "\"posthog.enabled\":false," +
                             "\"posthog.api.key\":null," +
@@ -842,7 +842,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                 "\"release.version\":\"[DEVELOPMENT]\"," +
                 "\"http.settings.readonly\":false," +
                 "\"accepting.writes\":[\"http\", \"tcp\", \"pgwire\"]," +
-                "\"line.proto.support.versions\":[1,2]," +
+                "\"line.proto.support.versions\":[1,2,3]," +
                 "\"ilp.proto.transports\":[\"tcp\", \"http\"]," +
                 "\"posthog.enabled\":false," +
                 "\"posthog.api.key\":null," +
