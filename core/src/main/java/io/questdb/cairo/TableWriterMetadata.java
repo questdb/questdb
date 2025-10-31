@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.Chars;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.META_OFFSET_PARTITION_BY;
 
@@ -125,14 +127,14 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public final void reload(MemoryMR metaMem) {
+    public final void reload(@NotNull Utf8Sequence metaPath, MemoryMR metaMem) {
         this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         this.columnNameIndexMap.clear();
         this.tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
-        TableUtils.validateMeta(metaMem, columnNameIndexMap, ColumnType.VERSION);
+        TableUtils.validateMeta(metaPath, metaMem, columnNameIndexMap, ColumnType.VERSION);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);

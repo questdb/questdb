@@ -65,6 +65,7 @@ public class TableConverter {
         }
 
         final Path path = Path.getThreadLocal(configuration.getDbRoot());
+        final Path metaPath = Path.getThreadLocal2(configuration.getDbRoot());
         final int rootLen = path.size();
         final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -83,8 +84,9 @@ public class TableConverter {
                                 .I$();
 
                         path.trimTo(rootLen).concat(dirNameSink);
+                        metaPath.trimTo(rootLen).concat(dirNameSink);
                         try (final MemoryMARW metaMem = Vm.getCMARWInstance()) {
-                            openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+                            openSmallFile(ff, metaPath, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             final String dirName = dirNameSink.toString();
                             TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
 
@@ -114,7 +116,7 @@ public class TableConverter {
 
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
-                                        metadata.reload(metaMem);
+                                        metadata.reload(metaPath, metaMem);
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
 
@@ -167,16 +169,12 @@ public class TableConverter {
             }
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
-            switch (walType) {
-                case TABLE_TYPE_WAL:
-                    // fall through
-                case TABLE_TYPE_MAT:
-                    return true;
-                case TABLE_TYPE_NON_WAL:
-                    return false;
-                default:
-                    throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');
-            }
+            return switch (walType) {
+                case TABLE_TYPE_WAL, TABLE_TYPE_MAT -> true;
+                case TABLE_TYPE_NON_WAL -> false;
+                default ->
+                        throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');
+            };
         } finally {
             ff.close(fd);
         }

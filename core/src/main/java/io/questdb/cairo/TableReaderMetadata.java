@@ -222,7 +222,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             isCopy = false;
             Misc.free(metaCopyMem);
             metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
-            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+            TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
             readFromMem(metaMem);
         } catch (Throwable e) {
             clear();
@@ -283,7 +283,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
 
         tmpValidationMap.clear();
-        TableUtils.validateMeta(transitionMeta, tmpValidationMap, ColumnType.VERSION);
+        TableUtils.validateMeta(path, transitionMeta, tmpValidationMap, ColumnType.VERSION);
         return true;
     }
 

@@ -189,7 +189,7 @@ public class WalEventReader implements Closeable {
             final int version = eventMem.getInt(WAL_FORMAT_OFFSET_32);
             final short formatVersion = Numbers.decodeLowShort(version);
             if (formatVersion != WALE_FORMAT_VERSION && formatVersion != WALE_MAT_VIEW_FORMAT_VERSION) {
-                throw TableUtils.validationException(eventMem)
+                throw TableUtils.validationException()
                         .put("WAL events file version does not match runtime version [expected=")
                         .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
                         .put(", actual=").put(formatVersion)

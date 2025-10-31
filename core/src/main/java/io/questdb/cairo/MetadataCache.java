@@ -136,6 +136,7 @@ public class MetadataCache implements QuietCloseable {
     }
 
     private @NotNull ColumnVersionReader getColumnVersionReader() {
+        //noinspection ReplaceNullCheck
         if (columnVersionReader != null) {
             return columnVersionReader;
         }
@@ -165,7 +166,7 @@ public class MetadataCache implements QuietCloseable {
         try {
             // open metadata
             metaMem.smallFile(engine.getConfiguration().getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
-            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+            TableUtils.validateMeta(path, metaMem, null, ColumnType.VERSION);
 
             table.setMetadataVersion(Long.MIN_VALUE);
 

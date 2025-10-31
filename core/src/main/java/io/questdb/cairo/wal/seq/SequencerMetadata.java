@@ -44,6 +44,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
@@ -211,7 +212,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.jumpTo(size);
         }
 
-        loadSequencerMetadata(roMetaMem);
+        loadSequencerMetadata(path, roMetaMem);
         structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
         columnCount = columnMetadata.size();
         timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
@@ -306,25 +307,25 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         columnCount = columnMetadata.size();
     }
 
-    private void loadSequencerMetadata(MemoryMR metaMem) {
+    private void loadSequencerMetadata(Utf8Sequence metaPath, MemoryMR metaMem) {
         columnMetadata.clear();
         columnNameIndexMap.clear();
         readColumnOrder.clear();
 
         try {
             final long memSize = Math.min(checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS), metaMem.getInt(SEQ_META_OFFSET_WAL_LENGTH));
-            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
-            final int columnCount = TableUtils.getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
-            final int timestampIndex = TableUtils.getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            validateMetaVersion(metaPath, metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
+            final int columnCount = TableUtils.getColumnCount(metaPath, metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
+            final int timestampIndex = TableUtils.getTimestampIndex(metaPath, metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
             // load column types and names
             long checkSum = columnCount;
             long offset = SEQ_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
-                final int type = TableUtils.getColumnType(metaMem, memSize, offset, i);
+                final int type = TableUtils.getColumnType(metaPath, metaMem, memSize, offset, i);
                 offset += Integer.BYTES;
 
-                final String name = TableUtils.getColumnName(metaMem, memSize, offset, i).toString();
+                final String name = TableUtils.getColumnName(metaPath, metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
 
                 if (type > 0) {
@@ -345,7 +346,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             if (timestampIndex != -1) {
                 final int timestampType = columnMetadata.getQuick(timestampIndex).getColumnType();
                 if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                    throw validationException().put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
 

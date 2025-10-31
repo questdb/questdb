@@ -57,7 +57,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 10,
                 5,
-                "Index flag is only supported for SYMBOL at [6]" //failed validation on garbage flags value
+                "index flag is only supported for SYMBOL column type" //failed validation on garbage flags value
         );
     }
 
@@ -71,7 +71,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 1000,
                 5,
-                "File is too small, column types are missing 4096",
+                "file is too small, column types are missing",
                 4096,
                 4096
         );
@@ -149,7 +149,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length + 10,
                 5,
-                "File is too small, column types are missing",
+                "file is too small, column types are missing",
                 4906,
                 128
         );
@@ -165,7 +165,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 23,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 
@@ -179,7 +179,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 -2,
-                "Timestamp"
+                "timestamp index is outside of range"
         );
     }
 
@@ -209,7 +209,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 5,
-                "Invalid column type"
+                "invalid column type"
         );
     }
 
@@ -234,13 +234,13 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         // because appender cannot truncate file to size smaller than default page size
         // when reader is open.
         if (Os.type != Os.WINDOWS) {
-            assertTransitionIndexValidation(99);
+            assertTransitionIndexValidation(99, "index flag is only supported for SYMBOL column type");
         }
     }
 
     @Test
     public void testTransitionIndexWhenColumnCountOverflows() throws Exception {
-        assertTransitionIndexValidation(Integer.MAX_VALUE - 1);
+        assertTransitionIndexValidation(Integer.MAX_VALUE - 1, "file is too small, column types are missing");
     }
 
     private void assertMetaConstructorFailure(String[] names, int[] types, int columnCount, int timestampIndex, String contains) throws Exception {
@@ -303,7 +303,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertTransitionIndexValidation(int columnCount) throws Exception {
+    private void assertTransitionIndexValidation(int columnCount, String contains) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
@@ -328,7 +328,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                         metadata.prepareTransition(0);
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");
+                        TestUtils.assertContains(e.getFlyweightMessage(), contains);
                     }
                 }
             }

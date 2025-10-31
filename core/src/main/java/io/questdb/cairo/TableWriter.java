@@ -3227,7 +3227,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.concat(META_FILE_NAME);
         try (ddlMem) {
             ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
-            metadata.reload(ddlMem);
+            metadata.reload(path, ddlMem);
         } finally {
             path.trimTo(rootLen);
         }
@@ -3670,7 +3670,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 attachMetadata = new TableWriterMetadata(tableToken);
             }
             attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
-            attachMetadata.reload(attachMetaMem);
+            attachMetadata.reload(detachedPath, attachMetaMem);
 
             if (metadata.getTableId() != attachMetadata.getTableId()) {
                 // very same table, attaching foreign partitions is not allowed
@@ -10363,7 +10363,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 ddlMem.of(ff, path.$(), ff.getPageSize(), len, MemoryTag.MMAP_TABLE_WRITER, CairoConfiguration.O_NONE, POSIX_MADV_RANDOM);
                 validationMap.clear();
-                validateMeta(ddlMem, validationMap, ColumnType.VERSION);
+                validateMeta(path, ddlMem, validationMap, ColumnType.VERSION);
             } finally {
                 ddlMem.close(false);
                 path.trimTo(pathSize);
