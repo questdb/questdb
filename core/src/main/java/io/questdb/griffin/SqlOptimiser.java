@@ -1876,6 +1876,7 @@ public class SqlOptimiser implements Mutable {
             // add column to both models
             addColumnToTranslatingModel(column, translatingModel, innerVirtualModel, baseModel);
             if (addColumnToInnerVirtualModel) {
+                assert innerVirtualModel != null;
                 ExpressionNode innerToken = expressionNodePool.next().of(LITERAL, alias, node.precedence, node.position);
                 QueryColumn innerColumn = queryColumnPool.next().of(alias, innerToken);
                 innerVirtualModel.addBottomUpColumn(innerColumn);
@@ -2990,10 +2991,6 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested);
         }
-    }
-
-    private QueryColumn nextColumn(CharSequence alias, CharSequence column, int position) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, position);
     }
 
     private QueryColumn nextColumn(CharSequence name) {
