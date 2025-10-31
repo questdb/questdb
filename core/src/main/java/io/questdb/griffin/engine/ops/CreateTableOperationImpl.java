@@ -31,6 +31,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CopyDataProgressReporter;
@@ -579,7 +580,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException {
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException {
         // This method must only be called in case of "create-as-select".
         // Here we remap data keyed on column names (from cast maps) to
         // data keyed on column index. We assume that "columnBits" are free to use
@@ -588,8 +589,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         assert this.selectText != null;
         this.columnBits.clear();
         if (this.timestampColumnName == null) {
-            this.timestampIndex = metadata.getTimestampIndex();
-            timestampType = metadata.getTimestampType();
+            int timestampIndex = metadata.getTimestampIndex();
+            if (timestampIndex > -1 && scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                this.timestampIndex = timestampIndex;
+                timestampType = metadata.getTimestampType();
+            }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
             if (this.timestampIndex == -1) {
