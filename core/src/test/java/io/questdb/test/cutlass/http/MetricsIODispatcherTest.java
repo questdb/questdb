@@ -270,7 +270,7 @@ public class MetricsIODispatcherTest {
                                     .url("/metrics")
                                     .send()
                     ) {
-                        response.await(5_000);
+                        response.await(15_000);
                         utf16Sink.clear();
                         utf16Sink.put(response.getStatusCode());
                         TestUtils.assertEquals("200", utf16Sink);

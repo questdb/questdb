@@ -512,8 +512,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken matViewToken = createTableOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
         try {
             if (matViewGraph.addView(matViewDefinition)) {
@@ -569,9 +568,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        final TableToken tableToken = createTableOrMatViewUnsecure(mem, null, path, ifNotExists, struct, keepLock, inVolume);
-        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken, tableKind);
-        return tableToken;
+        return createTableOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
     }
 
     // The reader will ignore close() calls until attached back.
@@ -1659,13 +1656,15 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @NotNull TableToken createTableOrMatViewUnsecure(
+            SecurityContext securityContext,
             MemoryMARW mem,
             @Nullable BlockFileWriter blockFileWriter,
             Path path,
             boolean ifNotExists,
             TableStructure struct,
             boolean keepLock,
-            boolean inVolume
+            boolean inVolume,
+            int tableKind
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
@@ -1713,6 +1712,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             locked = false;
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
+                        getDdlListener(tableToken).onTableOrMatViewCreated(securityContext, tableToken, tableKind);
                         tableNameRegistry.registerName(tableToken);
                     } catch (Throwable e) {
                         keepLock = false;
