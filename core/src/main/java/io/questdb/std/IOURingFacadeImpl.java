@@ -110,10 +110,9 @@ public class IOURingFacadeImpl implements IOURingFacade {
             // The only reliable way to confirm availability is to try to initialize a ring.
             if (usable) {
                 long ioUring = IOUringAccessor.create(8);
-                if (ioUring < 0) {
+                if (ioUring <= 0) {
                     usable = false;
                 } else {
-                    assert ioUring > 0;
                     IOUringAccessor.close(ioUring);
                 }
             }
