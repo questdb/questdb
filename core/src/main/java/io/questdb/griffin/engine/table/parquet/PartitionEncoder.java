@@ -184,6 +184,36 @@ public class PartitionEncoder {
             int version
     ) throws CairoException;
 
+    private static native long createStreamingParquetWriter(
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long destPathPtr,
+            int destPathLength,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version
+    ) throws CairoException;
+
+    private static native void writeStreamingParquetChunk(
+            long writerPtr,
+            long columnDataPtr,
+            long columnDataSize,
+            int timestampIndex,
+            long rowCount
+    ) throws CairoException;
+
+    private static native void finishStreamingParquetWrite(
+            long writerPtr
+    ) throws CairoException;
+
+    private static native void closeStreamingParquetWriter(
+            long writerPtr
+    ) throws CairoException;
+
     static {
         Os.init();
     }
