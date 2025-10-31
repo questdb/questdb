@@ -186,13 +186,13 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsofJoinColumnAccessHelper;
 import io.questdb.griffin.engine.join.ChainedSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -2800,15 +2800,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     valueTypes.clear();
                                                     valueTypes.add(ColumnType.LONG);
 
-                                                    return new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                    return new AsOfJoinDenseRecordCursorFactory(
                                                             configuration,
                                                             metadata,
                                                             master,
                                                             slave,
-                                                            keyTypes,
-                                                            valueTypes,
-                                                            joinColumnSplit,
                                                             slaveSymbolColumnIndex,
+                                                            joinColumnSplit,
                                                             columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
