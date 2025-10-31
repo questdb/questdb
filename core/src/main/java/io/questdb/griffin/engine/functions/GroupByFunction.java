@@ -43,6 +43,10 @@ public interface GroupByFunction extends Function, Mutable {
     default void clear() {
     }
 
+    default void computeBatch(MapValue mapValue, long ptr, int count) {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Performs the first aggregation within a group.
      * <p>
@@ -80,6 +84,10 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean earlyExit(MapValue mapValue) {
         return false;
+    }
+
+    default int getColumnIndex() {
+        throw new UnsupportedOperationException();
     }
 
     default int getSampleByFlags() {
@@ -186,6 +194,10 @@ public interface GroupByFunction extends Function, Mutable {
     // used when doing interpolation
     default void setShort(MapValue mapValue, short value) {
         throw new UnsupportedOperationException();
+    }
+
+    default boolean supportsBatchComputation() {
+        return false;
     }
 
     @Override

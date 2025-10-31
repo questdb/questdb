@@ -50,6 +50,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.DirectMapValue;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
@@ -74,6 +76,7 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 // TODO(puzpuzpuz): it's a quick and dirty prototype
 public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
+    private static final PageFrameReducer AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::aggregateVect;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::filterAndAggregate;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFastWindowJoinRecordCursor cursor;
@@ -156,7 +159,9 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                 configuration,
                 messageBus,
                 atom,
-                masterFilter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
+                masterFilter != null
+                        ? FILTER_AND_AGGREGATE
+                        : atom.isVectorized() ? AGGREGATE_VECT : AGGREGATE,
                 reduceTaskFactory,
                 workerCount,
                 PageFrameReduceTask.TYPE_WINDOW_JOIN
@@ -377,6 +382,175 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                             slaveTimeFrameHelper.recordAt(slaveRowId);
                             functionUpdater.updateExisting(value, joinRecord, slaveRowId);
                         }
+                    }
+                }
+            }
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    private static void aggregateVect(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            @NotNull PageFrameReduceTask task,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable PageFrameSequence<?> stealingFrameSequence
+    ) {
+        final long frameRowCount = task.getFrameRowCount();
+        assert frameRowCount > 0;
+        final AsyncFastWindowJoinAtom atom = task.getFrameSequence(AsyncFastWindowJoinAtom.class).getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+
+        // The list will hold only group by value slots.
+        final DirectLongList rows = task.getFilteredRows();
+        rows.clear();
+        task.setFilteredRowCount(frameRowCount);
+
+        final int masterTimestampIndex = atom.getMasterTimestampIndex();
+        final long joinWindowLo = atom.getJoinWindowLo();
+        final long joinWindowHi = atom.getJoinWindowHi();
+        final long valueSizeInBytes = atom.getValueSizeBytes();
+        assert valueSizeInBytes % Long.BYTES == 0 : "unexpected value size: " + valueSizeInBytes;
+        final long valueSizeInLongs = valueSizeInBytes / Long.BYTES;
+
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final DirectMapValue value = atom.getMapValue(slotId);
+        final AsyncTimeFrameHelper slaveTimeFrameHelper = atom.getSlaveTimeFrameHelper(slotId);
+        final Record slaveRecord = slaveTimeFrameHelper.getRecord();
+        final JoinRecord joinRecord = atom.getJoinRecord(slotId);
+        joinRecord.of(record, slaveRecord);
+
+        final ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(slotId);
+        final GroupByAllocator allocator = atom.getAllocator(slotId);
+        allocator.close();
+        final GroupByColumnSink columnSink = atom.getColumnSink(slotId);
+        columnSink.resetPtr();
+        final long[] columnSinkPtrs = atom.getColumnSinkPtrs(slotId);
+        Arrays.fill(columnSinkPtrs, 0);
+        final int[] columnIndexes = atom.getGroupByColumnIndexes();
+        final int columnCount = columnIndexes.length;
+
+        final long slaveTsScale = atom.getSlaveTsScale();
+        final long masterTsScale = atom.getMasterTsScale();
+
+        final int[] slaveSymbolLookupTable = atom.getSlaveSymbolLookupTable();
+
+        // Clean up the in-memory index.
+        final LongList[] slaveTimestamps = atom.getSlaveTimestamps(slotId);
+        for (LongList list : slaveTimestamps) {
+            Misc.clear(list);
+        }
+        final int[] slaveRowLos = atom.getSlaveRowLos(slotId);
+        Arrays.fill(slaveRowLos, 0);
+
+        try {
+            final int masterSymbolIndex = atom.getMasterSymbolIndex();
+            final int slaveSymbolIndex = atom.getSlaveSymbolIndex();
+            final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
+
+            // TODO(puzpuzpuz): scan master's page frame and collect a hash table
+            //  with the symbols that we actually need. Currently we build the index for
+            //  all slave's symbols that have a pair in master.
+
+            // First, build the in-memory index. For every master key in this page frame,
+            // it stores rowids and timestamps of the matching slave rows.
+            record.setRowIndex(0);
+            final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
+            record.setRowIndex(frameRowCount - 1);
+            final long masterTimestampHi = record.getTimestamp(masterTimestampIndex);
+            long slaveTimestampLo, slaveTimestampHi;
+
+            if (joinWindowLo == Long.MAX_VALUE) {
+                slaveTimestampLo = Long.MIN_VALUE;
+            } else {
+                slaveTimestampLo = scaleTimestamp(masterTimestampLo - joinWindowLo, masterTsScale);
+            }
+
+            if (joinWindowHi == Long.MAX_VALUE) {
+                slaveTimestampHi = Long.MAX_VALUE;
+            } else {
+                slaveTimestampHi = scaleTimestamp(masterTimestampHi + joinWindowHi, masterTsScale);
+            }
+
+            long slaveRowId = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+            if (slaveRowId != Long.MIN_VALUE) {
+                for (; ; ) {
+                    slaveTimeFrameHelper.recordAtRowIndex(slaveRowId);
+                    final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTsScale);
+                    if (slaveTimestamp > slaveTimestampHi) {
+                        break;
+                    }
+                    final int slaveKey = slaveRecord.getInt(slaveSymbolIndex);
+                    final int matchingMasterKey = slaveSymbolLookupTable[Math.max(slaveKey + 1, 0)];
+                    if (matchingMasterKey != StaticSymbolTable.VALUE_NOT_FOUND) {
+                        final int idx = Math.max(matchingMasterKey + 1, 0);
+                        LongList timestamps = slaveTimestamps[idx];
+                        if (timestamps == null) {
+                            timestamps = new LongList();
+                            slaveTimestamps[idx] = timestamps;
+                        }
+                        timestamps.add(slaveTimestamp);
+
+                        // now let's copy the column values to be aggregated
+                        for (int i = 0; i < columnCount; i++) {
+                            final int ptrIdx = idx * columnCount + i;
+                            long ptr = columnSinkPtrs[ptrIdx];
+                            columnSink.of(ptr).putDouble(joinRecord.getDouble(columnIndexes[i]));
+                            columnSinkPtrs[ptrIdx] = columnSink.ptr();
+                        }
+                    }
+                    if (++slaveRowId >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
+                        if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                            break;
+                        }
+                        slaveRowId = slaveTimeFrameHelper.getTimeFrameRowLo();
+                    }
+                }
+            }
+
+            // Next, iterate through the master rows looking into the index we've built.
+            for (long r = 0; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+
+                rows.ensureCapacity(valueSizeInLongs);
+                value.of(rows.getAppendAddress());
+                rows.skip(valueSizeInLongs);
+                for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                    groupByFunctions.getQuick(i).setEmpty(value);
+                }
+
+                final long masterTimestamp = record.getTimestamp(masterTimestampIndex);
+                if (joinWindowLo == Long.MAX_VALUE) {
+                    slaveTimestampLo = Long.MIN_VALUE;
+                } else {
+                    slaveTimestampLo = scaleTimestamp(masterTimestamp - joinWindowLo, masterTsScale);
+                }
+
+                if (joinWindowHi == Long.MAX_VALUE) {
+                    slaveTimestampHi = Long.MAX_VALUE;
+                } else {
+                    slaveTimestampHi = scaleTimestamp(masterTimestamp + joinWindowHi, masterTsScale);
+                }
+
+                final int masterKey = record.getInt(masterSymbolIndex);
+                final int idx = Math.max(masterKey + 1, 0);
+                LongList timestamps = slaveTimestamps[idx];
+                int rowLo = slaveRowLos[idx];
+
+                if (timestamps != null && timestamps.size() > 0) {
+                    rowLo = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampLo, Vect.BIN_SEARCH_SCAN_UP);
+                    rowLo = rowLo < 0 ? -rowLo - 1 : rowLo;
+                    slaveRowLos[idx] = rowLo;
+                    int rowHi = timestamps.binarySearch(rowLo, timestamps.size() - 1, slaveTimestampHi, Vect.BIN_SEARCH_SCAN_DOWN);
+                    rowHi = rowHi < 0 ? -rowHi - 1 : rowHi;
+                    for (int i = 0; i < columnCount; i++) {
+                        final int ptrIdx = idx * columnCount + i;
+                        final long ptr = columnSinkPtrs[ptrIdx];
+                        groupByFunctions.getQuick(i).computeBatch(value, ptr + 8L * rowLo, rowHi - rowLo);
                     }
                 }
             }

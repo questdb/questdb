@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.groupby.DirectMapValue;
 import io.questdb.griffin.engine.groupby.DirectMapValueFactory;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.groupby.GroupByColumnSink;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -67,10 +68,12 @@ import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactor
 // * LUTs assume up to LOOKUP_TABLE_SIZE symbols
 // * on-heap IntObjHashMaps and LongLists should be swapped with off-heap data structs
 public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
+    private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int LOOKUP_TABLE_SIZE = 1024;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
+    private final int[] groupByColumnIndexes;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
     private final long joinWindowLo;
@@ -78,6 +81,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final int masterTimestampIndex;
     private final long masterTsScale;
     private final GroupByAllocator ownerAllocator;
+    private final GroupByColumnSink ownerColumnSink;
+    private final long[] ownerColumnSinkPtrs;
     // Note: all function updaters should be used through a getFunctionUpdater() call
     // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
@@ -90,6 +95,8 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final AsyncTimeFrameHelper ownerSlaveTimeFrameHelper;
     private final LongList[] ownerSlaveTimestamps;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<long[]> perWorkerColumnSinkPtrs;
+    private final ObjList<GroupByColumnSink> perWorkerColumnSinks;
     private final ObjList<GroupByFunctionsUpdater> perWorkerFunctionUpdaters;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<DirectMapValue> perWorkerGroupByValues;
@@ -105,6 +112,7 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private final int[] slaveSymbolLookupTable;
     private final long slaveTsScale;
     private final long valueSizeInBytes;
+    private final boolean vectorized;
 
     public AsyncFastWindowJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -177,30 +185,28 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             }
 
             final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
-            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
+            this.ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
-                perWorkerFunctionUpdaters = new ObjList<>(slotCount);
+                this.perWorkerFunctionUpdaters = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
                     perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
-                perWorkerFunctionUpdaters = null;
+                this.perWorkerFunctionUpdaters = null;
             }
 
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
+            this.perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
 
-            ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
-            if (perWorkerGroupByFunctions != null) {
-                perWorkerAllocators = new ObjList<>(slotCount);
-                for (int i = 0; i < slotCount; i++) {
-                    GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
-                    perWorkerAllocators.extendAndSet(i, workerAllocator);
+            this.perWorkerAllocators = new ObjList<>(slotCount);
+            for (int i = 0; i < slotCount; i++) {
+                GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                perWorkerAllocators.extendAndSet(i, workerAllocator);
+                if (perWorkerGroupByFunctions != null) {
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
                 }
-            } else {
-                perWorkerAllocators = null;
             }
 
             ownerGroupByValue = DirectMapValueFactory.createDirectMapValue(valueTypes);
@@ -208,6 +214,34 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             perWorkerGroupByValues = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
+            }
+
+            this.vectorized = GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
+            if (vectorized) {
+                this.groupByColumnIndexes = new int[ownerGroupByFunctions.size()];
+                for (int i = 0, n = groupByColumnIndexes.length; i < n; i++) {
+                    groupByColumnIndexes[i] = ownerGroupByFunctions.getQuick(i).getColumnIndex();
+                }
+                this.ownerColumnSink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
+                ownerColumnSink.setAllocator(ownerAllocator);
+                this.perWorkerColumnSinks = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    GroupByColumnSink sink = new GroupByColumnSink(INITIAL_COLUMN_SINK_CAPACITY);
+                    sink.setAllocator(perWorkerAllocators.getQuick(i));
+                    perWorkerColumnSinks.extendAndSet(i, sink);
+                }
+
+                this.ownerColumnSinkPtrs = new long[LOOKUP_TABLE_SIZE * ownerGroupByFunctions.size()];
+                this.perWorkerColumnSinkPtrs = new ObjList<>(slotCount);
+                for (int i = 0; i < slotCount; i++) {
+                    perWorkerColumnSinkPtrs.extendAndSet(i, new long[LOOKUP_TABLE_SIZE * ownerGroupByFunctions.size()]);
+                }
+            } else {
+                this.groupByColumnIndexes = null;
+                this.ownerColumnSink = null;
+                this.perWorkerColumnSinks = null;
+                this.ownerColumnSinkPtrs = null;
+                this.perWorkerColumnSinkPtrs = null;
             }
         } catch (Throwable th) {
             close();
@@ -246,12 +280,33 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         }
     }
 
+    public GroupByAllocator getAllocator(int slotId) {
+        if (slotId == -1) {
+            return ownerAllocator;
+        }
+        return perWorkerAllocators.getQuick(slotId);
+    }
+
     public ObjList<Function> getBindVarFunctions() {
         return bindVarFunctions;
     }
 
     public MemoryCARW getBindVarMemory() {
         return bindVarMemory;
+    }
+
+    public GroupByColumnSink getColumnSink(int slotId) {
+        if (slotId == -1) {
+            return ownerColumnSink;
+        }
+        return perWorkerColumnSinks.getQuick(slotId);
+    }
+
+    public long[] getColumnSinkPtrs(int slotId) {
+        if (slotId == -1) {
+            return ownerColumnSinkPtrs;
+        }
+        return perWorkerColumnSinkPtrs.getQuick(slotId);
     }
 
     public CompiledFilter getCompiledMasterFilter() {
@@ -263,6 +318,17 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
             return ownerFunctionUpdater;
         }
         return perWorkerFunctionUpdaters.getQuick(slotId);
+    }
+
+    public int[] getGroupByColumnIndexes() {
+        return groupByColumnIndexes;
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     public JoinRecord getJoinRecord(int slotId) {
@@ -437,6 +503,10 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
         if (masterSymbolTable.containsNullValue() && slaveSymbolTable.containsNullValue()) {
             slaveSymbolLookupTable[0] = StaticSymbolTable.VALUE_IS_NULL;
         }
+    }
+
+    public boolean isVectorized() {
+        return vectorized;
     }
 
     /**
