@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
@@ -94,6 +95,13 @@ public final class SingleSymbolColumnAccessHelper implements AsofJoinColumnAcces
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
         this.slaveSymbolTable = slaveCursor.getSymbolTable(slaveSymbolIndex);
+        this.masterKeysExistingInSlaveCache.clear();
+        this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
+    }
+
+    @Override
+    public void of(RecordCursor slaveCursor) {
+        this.slaveSymbolTable = (StaticSymbolTable) slaveCursor.getSymbolTable(slaveSymbolIndex);
         this.masterKeysExistingInSlaveCache.clear();
         this.maxCacheSize = config.getSqlAsOfJoinShortCircuitCacheCapacity();
     }

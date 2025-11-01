@@ -80,14 +80,11 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
     }
 
     static RecordMetadata getMetadata(int timestampType) {
-        switch (timestampType) {
-            case ColumnType.TIMESTAMP_MICRO:
-                return METADATA_MICROS;
-            case ColumnType.TIMESTAMP_NANO:
-                return METADATA_NANOS;
-            default:
-                return null;
-        }
+        return switch (timestampType) {
+            case ColumnType.TIMESTAMP_MICRO -> METADATA_MICROS;
+            case ColumnType.TIMESTAMP_NANO -> METADATA_NANOS;
+            default -> null;
+        };
     }
 
     private static class GenerateSeriesTimestampStringRecordCursor extends AbstractGenerateSeriesRecordCursor {
@@ -205,13 +202,10 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         public boolean supportsRandomAccess() {
-            switch (unit) {
-                case 'M':
-                case 'y':
-                    return false;
-                default:
-                    return true;
-            }
+            return switch (unit) {
+                case 'M', 'y' -> false;
+                default -> true;
+            };
         }
 
         @Override
@@ -220,27 +214,17 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
         }
 
         private long adjustStride() {
-            switch (unit) {
-                case 'w':
-                    return timestampDriver.fromWeeks(stride);
-                case 'd':
-                    return timestampDriver.fromDays(stride);
-                case 'h':
-                    return timestampDriver.fromHours(stride);
-                case 'm':
-                    return timestampDriver.fromMinutes(stride);
-                case 's':
-                    return timestampDriver.fromSeconds(stride);
-                case 'T':
-                    return timestampDriver.fromMillis(stride);
-                case 'U':
-                case 'u':
-                    return timestampDriver.fromMicros(stride);
-                case 'n':
-                    return timestampDriver.fromNanos(stride);
-                default:
-                    throw new UnsupportedOperationException();
-            }
+            return switch (unit) {
+                case 'w' -> timestampDriver.fromWeeks(stride);
+                case 'd' -> timestampDriver.fromDays(stride);
+                case 'h' -> timestampDriver.fromHours(stride);
+                case 'm' -> timestampDriver.fromMinutes(stride);
+                case 's' -> timestampDriver.fromSeconds(stride);
+                case 'T' -> timestampDriver.fromMillis(stride);
+                case 'U', 'u' -> timestampDriver.fromMicros(stride);
+                case 'n' -> timestampDriver.fromNanos(stride);
+                default -> throw new UnsupportedOperationException();
+            };
         }
 
         public static class GenerateSeriesPeriod {
@@ -248,32 +232,21 @@ public class GenerateSeriesTimestampStringRecordCursorFactory extends AbstractGe
             public char unit = (char) 0;
 
             public static boolean isPotentiallyValidUnit(char c) {
-                switch (c) {
-                    case 'n':
-                        // nanos
-                    case 'u':  // compatibility
-                    case 'U':
-                        // micros
-                    case 'T':
-                        // millis
-                    case 's':
-                        // seconds
-                    case 'm':
-                        // minutes
-                    case 'h':
-                    case 'H': // compatibility
-                        // hours
-                    case 'd':
-                        // days
-                    case 'w':
-                        // weeks
-                    case 'M':
-                        // months
-                    case 'y':
-                        return true;
-                    default:
-                        return false;
-                }
+                return switch (c) {
+                    // nanos
+                    // compatibility
+                    // micros
+                    // millis
+                    // seconds
+                    // minutes
+                    // compatibility
+                    // hours
+                    // days
+                    // weeks
+                    // months
+                    case 'n', 'u', 'U', 'T', 's', 'm', 'h', 'H', 'd', 'w', 'M', 'y' -> true;
+                    default -> false;
+                };
             }
 
             public void clear() {

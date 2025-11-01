@@ -53,6 +53,5 @@ public class NoopColumnAccessHelper implements AsofJoinColumnAccessHelper {
 
     @Override
     public void of(TimeFrameRecordCursor slaveCursor) {
-
     }
 }
