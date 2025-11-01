@@ -3609,6 +3609,88 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "explain " + asofSQL
 
                     );
+
+                    // ensure algo is not triggered without hint
+                    assertSql(
+                            """
+                                    QUERY PLAN
+                                    GroupBy vectorized: false
+                                      values: [avg(bid)]
+                                        SelectedRecord
+                                            AsOf Join Memoized Scan
+                                              condition: p.sym=t.symbol
+                                              driveByCache: false
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t2
+                                    """,
+                            """
+                                    EXPLAIN SELECT avg(bid)\s
+                                    FROM t1 t\s
+                                    ASOF JOIN t2 p on (t.symbol=p.sym);
+                                    """
+                    );
+                }
+        );
+    }
+
+    @Test
+    public void testSingleSymbolAsOfWithDynamicSlaveSymbolThrows() throws Exception {
+        assertMemoryLeak(
+                (TestUtils.LeakProneCode) () -> {
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table dyn_master as (
+                                    select
+                                        rnd_symbol('A', 'B', 'C') as sym,
+                                        rnd_double() as val,
+                                        generate_series as timestamp
+                                    from generate_series('2025-01-01'::#TIMESTAMP, '2025-01-01T00:30', '300000000u')
+                                    ) timestamp(timestamp) partition by day
+                                    """,
+                            leftTableTimestampType.getTypeName()
+                    );
+
+                    executeWithRewriteTimestamp(
+                            """
+                                    create table dyn_slave_src as (
+                                    select
+                                        cast(sym as string) as sym_str,
+                                        cast(timestamp as #TIMESTAMP) as ts
+                                    from dyn_master
+                                    ) timestamp(ts) partition by day
+                                    """,
+                            rightTableTimestampType.getTypeName()
+                    );
+
+                    final String sql = """
+                            SELECT /*+ ASOF_LINEAR_SEARCH(m s) */m.sym, ts
+                            FROM dyn_master m
+                            ASOF JOIN (
+                                SELECT cast(sym_str as symbol) AS sym, ts
+                                FROM dyn_slave_src
+                            ) s ON m.sym = s.sym
+                            """;
+
+                    assertQueryNoLeakCheck(
+                            """
+                                    sym	ts
+                                    A	2025-01-01T00:00:00.000000Z
+                                    C	2025-01-01T00:05:00.000000Z
+                                    C	2025-01-01T00:10:00.000000Z
+                                    B	2025-01-01T00:15:00.000000Z
+                                    B	2025-01-01T00:20:00.000000Z
+                                    A	2025-01-01T00:25:00.000000Z
+                                    A	2025-01-01T00:30:00.000000Z
+                                    """,
+                            sql,
+                            null,
+                            false,
+                            true
+                    );
                 }
         );
     }

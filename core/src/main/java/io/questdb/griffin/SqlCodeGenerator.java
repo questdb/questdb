@@ -868,6 +868,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toleranceInterval;
     }
 
+    private static int validateAndGetSlaveTimestampIndex(RecordMetadata slaveMetadata, RecordCursorFactory slaveBase) {
+        int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
+
+        // slave.supportsFilterStealing() means slave is nothing but a filter.
+        // if slave is just a filter, then it must have the same metadata as its base,
+        // that includes the timestamp index.
+        assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+        return slaveTimestampIndex;
+    }
+
     private static RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) throws SqlException {
         int columnCount = typesA.getColumnCount();
         assert columnCount == typesB.getColumnCount();
@@ -2792,12 +2802,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 created = true;
                                             } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // if slave is just a filter, then it must have the same metadata as its base,
-                                                // that includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+                                                int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
@@ -2873,27 +2878,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             JoinContext slaveContext = slaveModel.getJoinContext();
                                             valueTypes.clear();
                                             valueTypes.add(LONG);
-                                            if (isSingleSymbolJoin(slaveMetadata)) {
+                                            if (hasLinearHint && isSingleSymbolJoin(slaveMetadata)) {
                                                 AsofJoinColumnAccessHelper columnAccessHelper = createAsofColumnAccessHelper(masterMetadata, slaveMetadata, selfJoin);
-                                                int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
-                                                keyTypes.clear();
-                                                keyTypes.add(ColumnType.INT);
+                                                boolean isOptimizable = columnAccessHelper != NoopColumnAccessHelper.INSTANCE;
+                                                if (isOptimizable) {
+                                                    int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                                                    keyTypes.clear();
+                                                    keyTypes.add(ColumnType.INT);
 
-                                                master = new AsOfJoinSingleSymbolRecordCursorFactory(
-                                                        configuration,
-                                                        joinMetadata,
-                                                        master,
-                                                        slave,
-                                                        keyTypes,
-                                                        valueTypes,
-                                                        joinColumnSplit,
-                                                        slaveSymbolColumnIndex,
-                                                        columnAccessHelper,
-                                                        slaveContext,
-                                                        asOfToleranceInterval
-                                                );
+                                                    master = new AsOfJoinSingleSymbolRecordCursorFactory(
+                                                            configuration,
+                                                            joinMetadata,
+                                                            master,
+                                                            slave,
+                                                            keyTypes,
+                                                            valueTypes,
+                                                            joinColumnSplit,
+                                                            slaveSymbolColumnIndex,
+                                                            columnAccessHelper,
+                                                            slaveContext,
+                                                            asOfToleranceInterval
+                                                    );
 
-                                            } else {
+                                                    created = true;
+                                                }
+                                            }
+
+                                            if (!created) {
                                                 master = new AsOfJoinLightRecordCursorFactory(
                                                         configuration,
                                                         joinMetadata,
@@ -2928,12 +2939,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 // selectivity is low. We don't have statistics to tell selectivity, so
                                                 // we allow the user to disable this with the asof_linear_search hint.
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-
-                                                // slave.supportsFilterStealing() means slave is nothing but a filter.
-                                                // If slave is just a filter, it must have the same metadata as its base,
-                                                // which includes the timestamp index.
-                                                assert slaveBase.getMetadata().getTimestampIndex() == slaveTimestampIndex;
+                                                int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
 
                                                 Function stolenFilter = slave.getFilter();
                                                 assert stolenFilter != null;
