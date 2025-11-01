@@ -65,7 +65,6 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.SimpleDateFormat;
@@ -97,7 +96,8 @@ public class SampleByTest extends AbstractCairoTest {
             x::boolean as t,\
             x::timestamp as n,\
             FROM long_sequence(480)
-            ) timestamp(ts)""";
+            ) timestamp(ts)
+            """;
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
     private static final String SYS_TELEMETRY_WAL_DDL = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
             "created TIMESTAMP, " +
@@ -344,13 +344,15 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
-            execute("insert into telem " +
-                    "select " +
-                    "generate_series as created," +
-                    " rnd_int() % 4," +
-                    " rnd_int() % 100," +
-                    " abs(rnd_double())" +
-                    " from generate_series('2025-01-20T13:57:14.000000Z', dateadd('u', 2500 * 100_000, '2025-01-20T13:57:14.000000Z') - 1, 2500)");
+            execute(
+                    "insert into telem " +
+                            "select " +
+                            "generate_series as created," +
+                            " rnd_int() % 4," +
+                            " rnd_int() % 100," +
+                            " abs(rnd_double())" +
+                            " from generate_series('2025-01-20T13:57:14.000000Z', dateadd('u', 2500 * 100_000, '2025-01-20T13:57:14.000000Z') - 1, 2500)"
+            );
 
             assertQueryNoLeakCheck(
                     """
@@ -520,7 +522,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeohashFillNull() throws Exception {
+    public void testGeoHashFillNull() throws Exception {
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3
@@ -555,7 +557,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeohashFillPrev() throws Exception {
+    public void testGeoHashFillPrev() throws Exception {
         assertQuery(
                 """
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3
@@ -590,7 +592,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeohashInterpolated() throws Exception {
+    public void testGeoHashInterpolated() throws Exception {
         assertException(
                 "select k, first(b) from x sample by 3h fill(linear)",
                 "create table x as " +
@@ -723,26 +725,25 @@ public class SampleByTest extends AbstractCairoTest {
                             last(Confirmed) Confirmed,\s
                             last(Recovered) Recovered,\s
                             last(Deaths) Deaths\s
+                        from (
+                            select\s
+                                LastUpdate,\s
+                                CountryRegion,\s
+                                sum(Confirmed) Confirmed,\s
+                                sum(Recovered) Recovered,\s
+                                sum(Deaths) Deaths
                             from (
                                 select\s
                                     LastUpdate,\s
+                                    ProvinceState,\s
                                     CountryRegion,\s
-                                    sum(Confirmed) Confirmed,\s
-                                    sum(Recovered) Recovered,\s
-                                    sum(Deaths) Deaths
-                                from (
-                                    select\s
-                                        LastUpdate,\s
-                                        ProvinceState,\s
-                                        CountryRegion,\s
-                                        last(Confirmed) Confirmed,\s
-                                        last(Recovered) Recovered,\s
-                                        last(Deaths) Deaths
-                                    from (covid where CountryRegion in ('China', 'Mainland China'))
-                                    sample by 1d fill(prev)
-                                ) timestamp(ProvinceState)
-                            ) sample by 1M
-                        ;
+                                    last(Confirmed) Confirmed,\s
+                                    last(Recovered) Recovered,\s
+                                    last(Deaths) Deaths
+                                from (covid where CountryRegion in ('China', 'Mainland China'))
+                                sample by 1d fill(prev)
+                            ) timestamp(ProvinceState)
+                        ) sample by 1M;
                         """,
                 "create table covid as " +
                         "(" +
@@ -756,7 +757,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(1000)" +
                         ") timestamp(LastUpdate) partition by NONE",
-                707,
+                635,
                 "not a TIMESTAMP"
         );
     }
@@ -852,34 +853,44 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByCount() throws Exception {
-        assertQuery("""
-                c\tcount
-                \t5
-                UU\t4
-                XY\t6
-                ZP\t5
-                """, "select c, count() from x order by c", "create table x as " +
-                "(" +
-                "select" +
-                " x," +
-                " rnd_symbol('XY','ZP', null, 'UU') c" +
-                " from" +
-                " long_sequence(20)" +
-                ")", null, "insert into x select * from (" +
-                "select" +
-                " x," +
-                " rnd_symbol('KK', 'PL') c" +
-                " from" +
-                " long_sequence(5)" +
-                ")", """
-                c\tcount
-                \t5
-                KK\t1
-                PL\t4
-                UU\t4
-                XY\t6
-                ZP\t5
-                """, true, true, false);
+        assertQuery(
+                """
+                        c\tcount
+                        \t5
+                        UU\t4
+                        XY\t6
+                        ZP\t5
+                        """,
+                "select c, count() from x order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " x," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                """
+                        c\tcount
+                        \t5
+                        KK\t1
+                        PL\t4
+                        UU\t4
+                        XY\t6
+                        ZP\t5
+                        """,
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -1066,24 +1077,30 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE 'trades' (
-                      symbol SYMBOL capacity 256 CACHE,
-                      price DOUBLE,
-                      amount DOUBLE,
-                      timestamp TIMESTAMP
-                    ) timestamp (timestamp) PARTITION BY DAY;""");
-            execute("""
-                    insert into trades\s
-                    select\s
-                    rnd_symbol('a', 'b', 'c'),
-                    rnd_double(),
-                    rnd_double(),
-                    timestamp_sequence('2022-02-24', 60* 1000000L)
-                    from long_sequence(10)
-                    """);
+            execute(
+                    """
+                            CREATE TABLE 'trades' (
+                              symbol SYMBOL capacity 256 CACHE,
+                              price DOUBLE,
+                              amount DOUBLE,
+                              timestamp TIMESTAMP
+                            ) timestamp (timestamp) PARTITION BY DAY;
+                            """
+            );
+            execute(
+                    """
+                            insert into trades\s
+                            select\s
+                            rnd_symbol('a', 'b', 'c'),
+                            rnd_double(),
+                            rnd_double(),
+                            timestamp_sequence('2022-02-24', 60* 1000000L)
+                            from long_sequence(10)
+                            """
+            );
 
-            assertSql("""
+            assertSql(
+                    """
                             symbol\tcolumn\tcolumn1
                             a\t1.3233848925042586\t1.6456500000000008E15
                             c\t0.8028725103024675\t1.6456500000000002E15
@@ -1095,25 +1112,30 @@ public class SampleByTest extends AbstractCairoTest {
                             "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
                             "from (" +
                             "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
-                            ")\n");
+                            ")\n"
+            );
 
-            assertSql("""
+            assertSql(
+                    """
                             symbol\tsum\ttimestamp_floor\tlast_timestamp
                             a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
                             c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
                             b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z
                             """,
                     "select symbol, sum(amount), timestamp_floor('1d', timestamp), last(timestamp) last_timestamp " +
-                            "from trades\n");
+                            "from trades\n"
+            );
 
-            assertSql("""
+            assertSql(
+                    """
                             symbol\tsum\ttimestamp\tlast_timestamp
                             a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
                             c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
                             b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z
                             """,
                     "select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
-                            "from trades\n");
+                            "from trades\n"
+            );
         });
     }
 
@@ -6648,10 +6670,14 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute("INSERT INTO x VALUES ('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x VALUES (1, '2010-01-01T01', '2010-01-01T01')," +
+                            "(2, '2020-01-01T01', '2020-01-01T02')," +
+                            "(3, '2030-01-01T01', '2030-01-01T03');"
+            );
 
-            final String query = """
+            String query = """
                     SELECT ts, count()::double / datediff('h', ts, dateadd('d', 1, ts, 'Europe/Copenhagen')) AS Coverage
                     FROM 'x'
                     SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Copenhagen';
@@ -6664,20 +6690,232 @@ public class SampleByTest extends AbstractCairoTest {
                             2029-12-31T23:00:00.000000Z\t0.041666666666666664
                             """,
                     query,
-                    "ts"
+                    "ts",
+                    true,
+                    true
             );
-
             assertPlanNoLeakCheck(
                     query,
                     """
                             VirtualRecord
-                              functions: [ts,count::double/datediff('h',ts1,dateadd('d',1,ts1,'Europe/Copenhagen'))]
-                                Sample By
-                                  fill: none
-                                  values: [count(*)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: x
+                              functions: [ts,count::double/datediff('h',ts,dateadd('d',1,ts,'Europe/Copenhagen'))]
+                                Radix sort light
+                                  keys: [ts]
+                                    VirtualRecord
+                                      functions: [to_utc(ts),count]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, count(), max(ts)::long / count() AS ts_divided
+                    FROM 'x'
+                    SAMPLE BY 1d;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcount\tts_divided
+                            2010-01-01T00:00:00.000000Z\t1\t1262307600000000
+                            2020-01-01T00:00:00.000000Z\t1\t1577840400000000
+                            2030-01-01T00:00:00.000000Z\t1\t1893459600000000
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,count,max::long/count]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [count(*),max(ts)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t1\t0
+                            2020-01-01T01:00:00.000000Z\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t58440\t2435
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, max(i) + datediff('m', ts, '2010-01-01')  diff1, MaX(i) + datediff('m', ts, '2010-01-01') diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t61\t61
+                            2020-01-01T01:00:00.000000Z\t5258942\t5258942
+                            2030-01-01T01:00:00.000000Z\t10519263\t10519263
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max+datediff('m',ts,1262304000000000),max+datediff('m',ts,1262304000000000)]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, max(i), datediff('h', ts, '2010-01-01') / max(i) diff1, datediff('d', ts, '2010-01-01') / MaX(i) diff2
+                    FROM 'x'
+                    SAMPLE BY 1h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tmax\tdiff1\tdiff2
+                            2010-01-01T01:00:00.000000Z\t1\t1\t0
+                            2020-01-01T01:00:00.000000Z\t2\t43824\t1826
+                            2030-01-01T01:00:00.000000Z\t3\t58440\t2435
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,max,datediff('h',ts,1262304000000000)/max,datediff('d',ts,1262304000000000)/max]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      values: [max(i)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff
+                            2010-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:00.000000Z\t2
+                            2030-01-01T00:00:00.000000Z\t3
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count]
+                                    Async Group By workers: 1
+                                      keys: [ts,ts2]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+
+            query = """
+                    SELECT ts, datediff('h', ts2, ts) / count() diff1, datediff('M', ts2, '2010-01-01T01') / count() diff2
+                    FROM 'x'
+                    SAMPLE BY 12h;
+                    """;
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tdiff1\tdiff2
+                            2010-01-01T00:00:00.000000Z\t1\t0
+                            2020-01-01T00:00:00.000000Z\t2\t120
+                            2030-01-01T00:00:00.000000Z\t3\t240
+                            """,
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Radix sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [ts,datediff('h',ts2,ts)/count,diff2]
+                                    VirtualRecord
+                                      functions: [ts,count,ts2,datediff('M',ts2,1262307600000000)/count]
+                                        Async Group By workers: 1
+                                          keys: [ts,ts2]
+                                          values: [count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """
             );
         });
@@ -7176,12 +7414,16 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithPredicate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    create table tab as (
-                    select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s
-                    from long_sequence(6) ) timestamp(ts)""");
+            execute(
+                    """
+                            create table tab as (
+                            select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s
+                            from long_sequence(6) ) timestamp(ts)
+                            """
+            );
 
-            assertQueryNoLeakCheck("""
+            assertQueryNoLeakCheck(
+                    """
                             ts\tv\ts
                             2022-12-01T01:11:00.000000Z\t1\tA
                             2022-12-01T01:22:00.000000Z\t2\tA
@@ -7190,7 +7432,10 @@ public class SampleByTest extends AbstractCairoTest {
                             2022-12-01T01:55:00.000000Z\t5\tB
                             2022-12-01T02:06:00.000000Z\t6\tB
                             """,
-                    "select * from tab", "ts", true, true
+                    "select * from tab",
+                    "ts",
+                    true,
+                    true
             );
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z' sample by 30m fill(prev) align to first observation";
@@ -7227,22 +7472,26 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE 'trades' (
-                      symbol SYMBOL capacity 256 CACHE,
-                      price DOUBLE,
-                      amount DOUBLE,
-                      timestamp TIMESTAMP
-                    ) timestamp (timestamp) PARTITION BY DAY;""");
-            execute("""
-                    insert into trades\s
-                    select\s
-                    rnd_symbol('a', 'b', 'c'),
-                    rnd_double(),
-                    rnd_double(),
-                    timestamp_sequence('2022-02-24', 60* 1000000L)
-                    from long_sequence(10)
-                    """);
+            execute(
+                    """
+                            CREATE TABLE 'trades' (
+                              symbol SYMBOL capacity 256 CACHE,
+                              price DOUBLE,
+                              amount DOUBLE,
+                              timestamp TIMESTAMP
+                            ) timestamp (timestamp) PARTITION BY DAY;"""
+            );
+            execute(
+                    """
+                            insert into trades\s
+                            select\s
+                            rnd_symbol('a', 'b', 'c'),
+                            rnd_double(),
+                            rnd_double(),
+                            timestamp_sequence('2022-02-24', 60* 1000000L)
+                            from long_sequence(10)
+                            """
+            );
 
             assertSampleByFlavours(
                     """
@@ -7256,10 +7505,12 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol,sum(amount), vwap(price, amount), to_timezone(timestamp,'EST') NYTime
                             from trades
-                            sample by 5m"""
+                            sample by 5m
+                            """
             );
 
-            assertSampleByFlavours("""
+            assertSampleByFlavours(
+                    """
                             symbol\tsum\tvwap\tNYTime
                             a\t0.6390492980774742\t0.3421677972133922\t2022-02-23T21:00:00.000000Z
                             c\t0.20447441837877756\t0.299199045961845\t2022-02-23T21:00:00.000000Z
@@ -7270,7 +7521,9 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol,sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) NYTime
                             from trades
-                            sample by 5m""");
+                            sample by 5m
+                            """
+            );
 
             assertSampleByFlavours(
                     """
@@ -7284,7 +7537,8 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol,sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime
                             from trades
-                            sample by 5m"""
+                            sample by 5m
+                            """
             );
 
             assertSampleByFlavours(
@@ -7299,7 +7553,8 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime
                             from trades
-                            sample by 5m"""
+                            sample by 5m
+                            """
             );
 
             assertSampleByFlavours(
@@ -7312,7 +7567,8 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol, sum(amount), last(price) price, last(timestamp) last_timestamp
                             from trades
-                            sample by 1h"""
+                            sample by 1h
+                            """
             );
 
             assertSampleByFlavours(
@@ -7325,46 +7581,55 @@ public class SampleByTest extends AbstractCairoTest {
                     """
                             select symbol, sum(amount), last(price) price, timestamp, max(timestamp) last_timestamp
                             from trades
-                            sample by 1d"""
+                            sample by 1d
+                            """
             );
         });
     }
 
-    // TODO: fix it, it's a bug
     @Test
-    @Ignore
-    // the sample-by to group-by rewrite does not extract aggregate expressions from timestamp
-    // arithmetic
     public void testSampleByWithProjection2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE 'trades' (
-                      symbol SYMBOL capacity 256 CACHE,
-                      price DOUBLE,
-                      amount DOUBLE,
-                      timestamp TIMESTAMP
-                    ) timestamp (timestamp) PARTITION BY DAY;""");
-            execute("""
-                    insert into trades\s
-                    select\s
-                    rnd_symbol('a', 'b', 'c'),
-                    rnd_double(),
-                    rnd_double(),
-                    timestamp_sequence('2022-02-24', 60* 1000000L)
-                    from long_sequence(10)
-                    """);
-
-            assertSql(
-                    "",
+            execute(
                     """
-                            select \
-                            symbol || 'abcd' as symbol\
-                            , sum(amount)\
-                            , vwap(price, amount)\
-                            , cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts\
-                            , cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime
-                            from trades
-                            sample by 5m"""
+                            CREATE TABLE 'trades' (
+                              symbol SYMBOL capacity 256 CACHE,
+                              price DOUBLE,
+                              amount DOUBLE,
+                              timestamp TIMESTAMP
+                            ) timestamp (timestamp) PARTITION BY DAY;
+                            """
+            );
+            execute(
+                    """
+                            insert into trades\s
+                            select\s
+                            rnd_symbol('a', 'b', 'c'),
+                            rnd_double(),
+                            rnd_double(),
+                            timestamp_sequence('2022-02-24', 60* 1000000L)
+                            from long_sequence(10)
+                            """
+            );
+
+            final String query = "select " +
+                    "symbol || 'abcd' as symbol" +
+                    ", sum(amount)" +
+                    ", vwap(price, amount)" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
+                    ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime " +
+                    "from trades\n" +
+                    "sample by 5m";
+            assertQueryNoLeakCheck(
+                    """
+                            symbol\tsum\tvwap\tts\tNYTime
+                            aabcd\t0.6390492980774742\t0.3421677972133922\t1.64565E15\t1.6456500000000008E15
+                            cabcd\t0.20447441837877756\t0.299199045961845\t1.64565E15\t1.6456500000000002E15
+                            babcd\t1.2527510748803818\t0.12497877004395191\t1.64565E15\t1.6456500000000012E15
+                            babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15
+                            cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15
+                            """,
+                    query
             );
 
             assertSampleByFlavours(
@@ -7376,12 +7641,7 @@ public class SampleByTest extends AbstractCairoTest {
                             babcd\t0.42215759939956354\t0.33181055449773833\t1.6456503E15\t1.6456503000000005E15
                             cabcd\t2.1714261356369606\t0.5397631964717502\t1.6456503E15\t1.6456503000000022E15
                             """,
-                    """
-                            select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), \
-                            cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts, \
-                            cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime
-                            from trades
-                            sample by 5m"""
+                    query
             );
         });
     }
