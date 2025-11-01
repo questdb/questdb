@@ -118,6 +118,27 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
+    public void execute(byte[] request, CharSequence expectedResponse) {
+        final long fd = nf.socketTcp(true);
+        try {
+            long sockAddrInfo = nf.sockaddr("127.0.0.1", port);
+            try {
+                Assert.assertTrue(fd > -1);
+                TestUtils.assertConnect(nf, fd, sockAddrInfo);
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                if (!expectReceiveDisconnect) {
+                    nf.configureNonBlocking(fd);
+                }
+
+                executeWithSocketBinary(request, expectedResponse, fd);
+            } finally {
+                nf.freeSockAddr(sockAddrInfo);
+            }
+        } finally {
+            nf.close(fd);
+        }
+    }
+
     public void executeExplicit(
             String request,
             long fd,
@@ -192,6 +213,111 @@ public class SendAndReceiveRequestBuilder {
             }
             if (!expectSendDisconnect && !expectTimeout) {
                 // expectSendDisconnect means that test expect disconnect during send or straight after
+                TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
+            }
+        } else {
+            LOG.info().$("received: ").$(new String(receivedBytes, Files.UTF_8)).$();
+        }
+
+        if (disconnected && !expectReceiveDisconnect && !expectSendDisconnect) {
+            LOG.error().$("disconnected?").$();
+            Assert.fail();
+        }
+
+        if (expectReceiveDisconnect) {
+            Assert.assertTrue("server disconnect was expected", disconnected);
+        }
+
+        if (timeoutExpired && !expectTimeout) {
+            LOG.error().$("timeout expired").$();
+            Assert.fail();
+        }
+
+        if (expectTimeout && !timeoutExpired) {
+            LOG.error().$("timeout was expected").$();
+            Assert.fail();
+        }
+    }
+
+    public void executeExplicitBinary(
+            byte[] request,
+            long fd,
+            CharSequence expectedResponse,
+            final int len,
+            long ptr,
+            HttpClientStateListener listener
+    ) {
+        long timestamp = System.currentTimeMillis();
+        int sent = 0;
+        int reqLen = request.length;
+
+        // Copy binary data directly to memory
+        for (int i = 0; i < reqLen; i++) {
+            Unsafe.getUnsafe().putByte(ptr + i, request[i]);
+        }
+
+        while (sent < reqLen) {
+            int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
+            if (n < 0 && expectSendDisconnect) {
+                return;
+            }
+            Assert.assertTrue(n > -1);
+            sent += n;
+        }
+
+        if (pauseBetweenSendAndReceive > 0) {
+            Os.sleep(pauseBetweenSendAndReceive);
+        }
+
+        // receive response
+        final int expectedToReceive = (expectedResponse instanceof String) ? ((String) expectedResponse).getBytes().length : expectedResponse.length();
+        int received = 0;
+        if (printOnly) {
+            System.out.println("expected");
+            System.out.println(expectedResponse);
+        }
+
+        boolean disconnected = false;
+        boolean timeoutExpired = false;
+        IntList receivedByteList = new IntList(expectedToReceive);
+        while (received < expectedToReceive || expectReceiveDisconnect || expectTimeout) {
+            int n = nf.recvRaw(fd, ptr + received, len - received);
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    receivedByteList.add(Unsafe.getUnsafe().getByte(ptr + received + i) & 0xff);
+                }
+                received += n;
+                if (listener != null) {
+                    listener.onReceived(received);
+                }
+            } else if (n < 0) {
+                LOG.error().$("server disconnected").$();
+                disconnected = true;
+                break;
+            } else {
+                if (System.currentTimeMillis() - timestamp > maxWaitTimeoutMs) {
+                    timeoutExpired = true;
+                    break;
+                } else {
+                    Os.pause();
+                }
+            }
+        }
+
+        int lim = Math.min(expectedToReceive, receivedByteList.size());
+        byte[] receivedBytes = new byte[lim];
+        for (int i = 0; i < lim; i++) {
+            receivedBytes[i] = (byte) receivedByteList.getQuick(i);
+        }
+
+        if (!printOnly) {
+            String actual = new String(receivedBytes, Files.UTF_8);
+            String expected = expectedResponse.toString();
+            if (compareLength > 0) {
+                expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
+                actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
+            }
+            if (!expectSendDisconnect && !expectTimeout) {
                 TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
         } else {
@@ -392,6 +518,18 @@ public class SendAndReceiveRequestBuilder {
         try {
             for (int j = 0; j < requestCount; j++) {
                 executeExplicit(request, fd, expectedResponse, len, ptr, null);
+            }
+        } finally {
+            Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private void executeWithSocketBinary(byte[] request, CharSequence expectedResponse, long fd) {
+        final int len = Math.max(expectedResponse.length(), request.length) * 2;
+        long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int j = 0; j < requestCount; j++) {
+                executeExplicitBinary(request, fd, expectedResponse, len, ptr, null);
             }
         } finally {
             Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);

@@ -199,6 +199,11 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long getLastModified(long fd) {
+        return ff.getLastModified(fd);
+    }
+
+    @Override
     public long getLastModified(LPSZ path) {
         return ff.getLastModified(path);
     }

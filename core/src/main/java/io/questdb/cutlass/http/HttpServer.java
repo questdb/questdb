@@ -35,6 +35,8 @@ import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
 import io.questdb.cutlass.http.processors.WarningsProcessor;
+import io.questdb.cutlass.http.processors.v1.ExportsRouter;
+import io.questdb.cutlass.http.processors.v1.ImportsRouter;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.HeartBeatException;
@@ -52,10 +54,11 @@ import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjList;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
@@ -63,6 +66,7 @@ import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -70,7 +74,6 @@ public class HttpServer implements Closeable {
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
-    private final ActiveConnectionTracker activeConnectionTracker;
 
     public HttpServer(
             HttpServerConfiguration configuration,
@@ -245,10 +248,34 @@ public class HttpServer implements Closeable {
             }
         });
 
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return ImportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ImportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjList<String> getUrls() {
+                return ExportsRouter.getRoutes(httpServerConfiguration.getContextPathApiV1());
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new ExportsRouter(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
         server.bind(new StaticContentProcessorFactory(httpServerConfiguration));
     }
 
-    public static Utf8Sequence normalizeUrl(DirectUtf8String url) {
+    public static DirectUtf8Sequence normalizeUrl(DirectUtf8String url) {
         long p = url.ptr();
         long shift = 0;
         boolean lastSlash = false;
@@ -362,7 +389,7 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
-
+        private static final ThreadLocal<DirectUtf8String> routingUrl = new ThreadLocal<>(DirectUtf8String::new);
         private final Utf8SequenceObjHashMap<HttpRequestHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 
@@ -377,8 +404,8 @@ public class HttpServer implements Closeable {
 
         @Override
         public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-            final Utf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
-            final HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
+            final DirectUtf8Sequence normalizedUrl = normalizeUrl(requestHeader.getUrl());
+            HttpRequestHandler requestHandler = requestHandlerMap.get(normalizedUrl);
             return requestHandler != null ? requestHandler.getProcessor(requestHeader) : defaultRequestProcessor;
         }
     }

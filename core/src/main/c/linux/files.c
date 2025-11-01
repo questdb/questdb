@@ -432,6 +432,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified
     return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
 }
 
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getLastModified0
+        (JNIEnv* e, jclass cl, jint fd) {
+    struct stat st;
+    int r = fstat(fd, &st);
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+}
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
         (JNIEnv *e, jclass cl) {
     struct rlimit limit;

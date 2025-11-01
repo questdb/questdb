@@ -127,11 +127,6 @@ public final class Files {
         return -1;
     }
 
-    public static int errnoInvalidParameter() {
-        return Os.type != Os.WINDOWS ? CairoException.ERRNO_INVALID_PARAMETER
-                : CairoException.ERRNO_INVALID_PARAMETER_WIN;
-    }
-
     public static boolean exists(long fd) {
         return exists(toOsFd(fd));
     }
@@ -227,6 +222,10 @@ public final class Files {
 
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.ptr());
+    }
+
+    public static long getLastModified0(long fd) {
+        return getLastModified0(toOsFd(fd));
     }
 
     /**
@@ -655,6 +654,8 @@ public final class Files {
     private static native int getFileSystemStatus(long lpszName);
 
     private native static long getLastModified(long lpszName);
+
+    private native static long getLastModified0(int fd);
 
     private native static long getPageSize();
 
