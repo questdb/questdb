@@ -3676,16 +3676,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             """;
 
                     assertQueryNoLeakCheck(
-                            """
-                                    sym	ts
-                                    A	2025-01-01T00:00:00.000000Z
-                                    C	2025-01-01T00:05:00.000000Z
-                                    C	2025-01-01T00:10:00.000000Z
-                                    B	2025-01-01T00:15:00.000000Z
-                                    B	2025-01-01T00:20:00.000000Z
-                                    A	2025-01-01T00:25:00.000000Z
-                                    A	2025-01-01T00:30:00.000000Z
-                                    """,
+                            replaceTimestampSuffix1("""
+                                            sym	ts
+                                            A	2025-01-01T00:00:00.000000Z
+                                            C	2025-01-01T00:05:00.000000Z
+                                            C	2025-01-01T00:10:00.000000Z
+                                            B	2025-01-01T00:15:00.000000Z
+                                            B	2025-01-01T00:20:00.000000Z
+                                            A	2025-01-01T00:25:00.000000Z
+                                            A	2025-01-01T00:30:00.000000Z
+                                            """,
+                                    rightTableTimestampType.getTypeName()
+                            ),
                             sql,
                             null,
                             false,
