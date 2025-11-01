@@ -330,6 +330,116 @@ public class WindowJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowJoinProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            prepareTable();
+            String expect = replaceTimestampSuffix("window_price\tcolumn\tsym\tts\n" +
+                    "303.5\t101.0\tAAPL\t2023-01-01T09:00:00.000000Z\n" +
+                    "204.0\t102.0\tAAPL\t2023-01-01T09:01:00.000000Z\n" +
+                    "103.5\t103.0\tAAPL\t2023-01-01T09:02:00.000000Z\n" +
+                    "402.0\t201.0\tMSFT\t2023-01-01T09:03:00.000000Z\n" +
+                    "202.5\t202.0\tMSFT\t2023-01-01T09:04:00.000000Z\n" +
+                    "602.0\t301.0\tGOOGL\t2023-01-01T09:05:00.000000Z\n" +
+                    "302.5\t302.0\tGOOGL\t2023-01-01T09:06:00.000000Z\n" +
+                    "104.5\t104.0\tAAPL\t2023-01-01T09:07:00.000000Z\n" +
+                    "203.5\t203.0\tMSFT\t2023-01-01T09:08:00.000000Z\n" +
+                    "303.5\t303.0\tGOOGL\t2023-01-01T09:09:00.000000Z\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sum+2,price+1,sym,ts]\n" +
+                            "        Async Window Fast Join workers: 1\n" +
+                            "          join filter: sym=sym\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select sum(p.price) + 2 window_price, t.price + 1, t.sym, t.ts " +
+                            "from trades t " +
+                            "left join prices p " +
+                            "on (t.sym = p.sym) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+
+            expect = replaceTimestampSuffix("window_price\tcolumn\tsym\tts\n" +
+                    "null\t101.0\tAAPL\t2023-01-01T09:00:00.000000Z\n" +
+                    "201.5\t102.0\tAAPL\t2023-01-01T09:01:00.000000Z\n" +
+                    "402.0\t103.0\tAAPL\t2023-01-01T09:02:00.000000Z\n" +
+                    "301.5\t201.0\tMSFT\t2023-01-01T09:03:00.000000Z\n" +
+                    "602.0\t202.0\tMSFT\t2023-01-01T09:04:00.000000Z\n" +
+                    "104.5\t301.0\tGOOGL\t2023-01-01T09:05:00.000000Z\n" +
+                    "306.0\t302.0\tGOOGL\t2023-01-01T09:06:00.000000Z\n" +
+                    "505.0\t104.0\tAAPL\t2023-01-01T09:07:00.000000Z\n" +
+                    "303.5\t203.0\tMSFT\t2023-01-01T09:08:00.000000Z\n" +
+                    "null\t303.0\tGOOGL\t2023-01-01T09:09:00.000000Z\n", leftTableTimestampType.getTypeName());
+            assertQueryAndPlan(
+                    expect,
+                    "Sort\n" +
+                            "  keys: [ts, sym]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sum+2,price+1,sym,ts]\n" +
+                            "        Async Window Join workers: 1\n" +
+                            "          join filter: (t.sym!=p.sym and 100<p.price)\n" +
+                            "          window lo: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " preceding\n" +
+                            "          window hi: " + (ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "60000000" : "60000000000") + " following\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: prices\n",
+                    "select sum(p.price) + 2 as window_price, t.price + 1, t.sym, t.ts " +
+                            "from trades t " +
+                            "window join prices p " +
+                            "on (t.sym != p.sym and p.price > 100) " +
+                            " range between 1 minute preceding and 1 minute following " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    false
+            );
+
+            // verify result
+            assertQuery(
+                    expect,
+                    "select sum(p.price) + 2 window_price, t.price + 1, t.sym, t.ts " +
+                            "from trades t " +
+                            "left join prices p " +
+                            "on (t.sym != p.sym and p.price > 100) " +
+                            " and p.ts >= dateadd('m', -1, t.ts) AND p.ts <= dateadd('m', 1, t.ts) " +
+                            "order by t.ts, t.sym;",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
     private void prepareTable(boolean extraData) throws SqlException {
         executeWithRewriteTimestamp(
                 "create table trades (" +

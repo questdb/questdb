@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncWindowJoinRecordCursor.class);
     private final int columnSplit;
+    private final @Nullable IntList crossIndex;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord groupByRecord;
     private final boolean isMasterFiltered;
@@ -99,6 +100,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.columnSplit = columnSplit;
         this.isMasterFiltered = isMasterFiltered;
         slaveTimeFrameAddressCache = new PageFrameAddressCache(configuration);
+        this.crossIndex = columnIndex;
         masterRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         groupByRecord = new VirtualRecord(groupByFunctions);
         JoinRecord jr = new JoinRecord(columnSplit);
@@ -155,6 +157,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
+        if (crossIndex != null) {
+            columnIndex = crossIndex.getQuick(columnIndex);
+        }
         if (columnIndex < columnSplit) {
             return masterFrameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
         }
@@ -173,6 +178,9 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
+        if (crossIndex != null) {
+            columnIndex = crossIndex.getQuick(columnIndex);
+        }
         if (columnIndex < columnSplit) {
             return masterFrameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
         }
