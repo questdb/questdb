@@ -333,7 +333,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ) timestamp(ts) partition by DAY""",
                 leftTableTimestampType.getTypeName());
 
-        assertQuery("tag\thi\tlo\n",
+        assertQuery(expected,
                 "select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq",
                 null,
                 false,
@@ -341,9 +341,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         );
         execute(
                 """
-                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,\s
-                                rnd_int() seq,\s
-                                timestamp_sequence(172800000000, 360000000) ts\s
+                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') tag,
+                                rnd_int() seq,
+                                timestamp_sequence(172800000000, 360000000) ts
                             from long_sequence(10)) timestamp (ts)"""
 
         );
@@ -1572,7 +1572,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testCursorToTop() throws Exception {
         assertMemoryLeak(() -> {
-            // This test verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
+            // Verifies that toTop() properly clears the memoization state in AsOfJoinMemoizedRecordCursor.
             // The CROSS JOIN forces the ASOF JOIN cursor to be reset via toTop() for each row in the multiplier table.
             // After toTop(), the memoization cache (rememberedSymbols map and scanned range tracking) must be cleared
             // so that the second iteration produces identical results to the first iteration.
@@ -1665,7 +1665,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Verify the plan uses Memoized scan
             sink.clear();
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Single Symbol");
+            TestUtils.assertContains(sink, "AsOf Join Dense");
         });
     }
 
