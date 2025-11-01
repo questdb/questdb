@@ -166,7 +166,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "CROSS JOIN nodts_tab AS T2",
                     null,
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -180,7 +180,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "CROSS JOIN nodts_tab AS T2",
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -1010,7 +1010,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true, // query is using cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -1039,7 +1039,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true,//query is using cached window factory
-                    false
+                    true
             );
 
             // separate test for first_value() only to use it with non-caching factory
@@ -2294,7 +2294,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "FROM x",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
         });
     }
@@ -2392,7 +2392,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -2420,7 +2420,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true,//cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -2476,7 +2476,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertSql(replaceTimestampSuffix("ts\ti\tj\td\ts\tc\n" +
@@ -2569,7 +2569,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true, //c ached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -2597,7 +2597,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -2625,7 +2625,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true,//cached window factory
-                    false
+                    true
             );
 
             String rowsResult1 = replaceTimestampSuffix("ts\ti\tj\tavg\tsum\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tcount\tcount1\tcount2\tcount3\tmax\tmin\n" +
@@ -3094,7 +3094,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3116,7 +3116,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3146,7 +3146,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by i, j",
                     null,
                     true,
-                    false
+                    true
             );
 
             executeWithRewriteTimestamp("create table tab1 (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
@@ -3389,7 +3389,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3413,7 +3413,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3437,7 +3437,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3517,7 +3517,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3557,7 +3557,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3597,7 +3597,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3637,7 +3637,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3753,7 +3753,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3833,7 +3833,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3873,7 +3873,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3913,7 +3913,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -3953,7 +3953,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts asc",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -4115,7 +4115,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "select ts, ts_ns, lead(ts, 2, ts_ns) over(), lead(ts_ns, 2, ts) over(), lag(ts, 2, ts_ns) over(), lag(ts_ns, 2, ts) over() from x;",
                             "ts",
                             true,
-                            false
+                            true
                     );
                 }
         );
@@ -4357,7 +4357,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             // Test with ORDER BY on non-designated timestamp with nulls
@@ -4397,7 +4397,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, max(other_ts) OVER () as max_other_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -4410,7 +4410,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, max(other_ts) OVER (PARTITION BY grp) as max_other_ts_by_grp FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -4565,7 +4565,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -4925,7 +4925,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5003,7 +5003,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as max_ts_whole_partition FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5059,7 +5059,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5074,7 +5074,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5116,7 +5116,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "FROM tab1 t1 JOIN tab2 t2 ON t1.grp = t2.grp ORDER BY t1.ts, t2.ts",
                     "t1_ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5192,7 +5192,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp1, grp2, max(ts) OVER (PARTITION BY grp1, grp2) as max_ts_by_grps FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5217,7 +5217,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, other_ts, max(other_ts) OVER () as max_other_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5292,7 +5292,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER (PARTITION BY grp) as max_ts_by_grp FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5411,7 +5411,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5589,7 +5589,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -5628,7 +5628,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, min(other_ts) OVER () as min_other_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -5641,7 +5641,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, other_ts, val, grp, min(other_ts) OVER (PARTITION BY grp) as min_other_ts_by_grp FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5666,7 +5666,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, min(ts) OVER () as min_ts FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5920,7 +5920,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as min_ts_whole_partition FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5945,7 +5945,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, min(ts) OVER (PARTITION BY grp) as min_ts_by_grp FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -5996,7 +5996,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -6047,7 +6047,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts desc",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -6064,7 +6064,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts desc",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertPlanNoLeakCheck(
@@ -6132,7 +6132,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     null,
                     true, // cached window factory
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -6168,7 +6168,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts desc",
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -6271,7 +6271,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by s, ts",
                     "",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -6296,7 +6296,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by s, ts",
                     "",
                     true,
-                    false
+                    true
             );
 
             // rank()/dense_rank() over(order by xxx)
@@ -6391,7 +6391,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryNoLeakCheck(
@@ -6414,7 +6414,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by s, ts",
                     "",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -6473,7 +6473,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6531,7 +6531,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -6560,7 +6560,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6589,7 +6589,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6618,7 +6618,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6676,7 +6676,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6705,7 +6705,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6734,7 +6734,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -6774,7 +6774,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t\t1970-01-01T00:00:00.000006Z\n"),
                     "ts",
                     true,
-                    false
+                    true
             );
 
             assertQueryAndPlan(
@@ -6807,7 +6807,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000007Z\t1\t2\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t\t1970-01-01T00:00:00.000002Z\n"),
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -6880,7 +6880,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "create table tab as (select x, x%2 y from long_sequence(10))",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -6967,7 +6967,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -7023,7 +7023,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by month",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -7081,7 +7081,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -7110,7 +7110,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -7139,7 +7139,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -7167,7 +7167,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by day",
                 "ts",
                 true,
-                false
+                true
         );
     }
 
@@ -7706,7 +7706,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from trades",
                     null,
                     true,
-                    false
+                    true
             );
 
             // WindowContext should be properly clean up when we try to execute the next query.

@@ -219,6 +219,7 @@ import io.questdb.griffin.engine.join.SingleStringColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleSymbolColumnAccessHelper;
 import io.questdb.griffin.engine.join.SingleVarcharColumnAccessHelper;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.TimestampLadderRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
@@ -433,6 +434,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    // Used to pass ORDER BY context from outer query down to join generation for timestamp ladder optimization
+    // Tracks the last model with non-empty ORDER BY as we descend through nested models
+    private QueryModel lastSeenOrderByModel;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -1600,6 +1604,111 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    /**
+     * Attempts to detect the "timestamp ladder" pattern in a cross-join with ORDER BY.
+     * <p>
+     * The pattern consists of:
+     * 1. A cross-join between a table with a designated timestamp and an arithmetic sequence
+     * 2. An ORDER BY clause on the sum of the timestamp and the sequence element
+     * <p>
+     * Detection isn't foolproof and can result in false positives. We do not attempt it unless
+     * the hint {@value SqlHints#TIMESTAMP_LADDER_JOIN_HINT} is present in the query.
+     *
+     * @param masterAlias        alias for the master LHS of the join
+     * @param masterModel        QueryModel for the LHS of the join
+     * @param masterMetadata     Metadata for the LHS of the join
+     * @param slaveModel         QueryModel for the RHS of the join
+     * @param slaveMetadata      Metadata for the RHS of the join (should be an arithmetic sequence)
+     * @param slaveCursorFactory The RHS cursor factory (should produce an arithmetic sequence)
+     * @return TimestampLadderInfo if pattern is detected, null otherwise
+     */
+    private TimestampLadderInfo detectTimestampLadderPattern(
+            CharSequence masterAlias,
+            QueryModel masterModel,
+            RecordMetadata masterMetadata,
+            QueryModel slaveModel,
+            RecordMetadata slaveMetadata,
+            RecordCursorFactory slaveCursorFactory
+    ) {
+        // Without the query hint, don't even try to detect the pattern
+        if (!SqlHints.hasTimestampLadderHint(masterModel, masterAlias, slaveModel.getName())) {
+            return null;
+        }
+
+        // Ensure the slave table is `long_sequence()`, or based on it
+        RecordCursorFactory sourceFac = slaveCursorFactory;
+        while (!sourceFac.getClass().getSimpleName().contains("LongSequence")) {
+            sourceFac = sourceFac.getBaseFactory();
+            if (sourceFac == null) {
+                return null;
+            }
+        }
+        // Ensure the master table has a designated timestamp column
+        int designatedTimestampIndex = masterMetadata.getTimestampIndex();
+        if (designatedTimestampIndex == -1) {
+            return null;
+        }
+
+        // Ensure we have an ORDER BY clause.
+        // lastSeenOrderByModel was captured as we were descending through nested models
+        if (lastSeenOrderByModel == null) {
+            return null;
+        }
+        ExpressionNode orderByNode = lastSeenOrderByModel.getOrderBy().getQuick(0);
+
+        // The ORDER BY node may be a column alias (LITERAL) - resolve it to the actual expression
+        ExpressionNode orderByExpr = orderByNode;
+        if (orderByNode.type == ExpressionNode.LITERAL) {
+            QueryColumn queryColumn = lastSeenOrderByModel.getAliasToColumnMap().get(orderByNode.token);
+            if (queryColumn != null) {
+                orderByExpr = queryColumn.getAst();
+            }
+        }
+        // Ensure that ORDER BY is an addition operation
+        if (orderByExpr.type != ExpressionNode.OPERATION || !"+".contentEquals(orderByExpr.token)) {
+            return null;
+        }
+        // The ORDER BY should be timestamp_column + offset_column, or vice versa
+        ExpressionNode lhs = orderByExpr.lhs;
+        ExpressionNode rhs = orderByExpr.rhs;
+        if (lhs == null || rhs == null) {
+            return null;
+        }
+
+        // Try to identify which operand is the timestamp from master and which is from slave
+        int timestampColumnIndex = -1;
+        ExpressionNode slaveColumnNode = null;
+
+        // Check if LHS is the designated timestamp column from master
+        if (lhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = rhs;
+            }
+        }
+
+        // If not found, check if RHS is the designated timestamp column from master and LHS is from slave
+        if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
+            int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
+            if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
+                timestampColumnIndex = colIndex;
+                slaveColumnNode = lhs;
+            }
+        }
+
+        if (slaveColumnNode == null || slaveColumnNode.type != ExpressionNode.LITERAL) {
+            return null;
+        }
+        int slaveColumnIndex = slaveMetadata.getColumnIndexQuiet(slaveColumnNode.token);
+        if (slaveColumnIndex == -1) {
+            return null; // Slave column not found
+        }
+        // Return the info needed to create the optimized factory.
+        // resultTimestampColumnIndex will be -1 if no SELECT column matches the ORDER BY expression.
+        return new TimestampLadderInfo(timestampColumnIndex, slaveColumnIndex);
+    }
+
     private @NotNull ObjList<Function> extractVirtualFunctionsFromProjection(ObjList<Function> projectionFunctions, IntList projectionFunctionFlags) {
         final ObjList<Function> result = new ObjList<>();
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
@@ -2696,50 +2805,80 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 assert slaveModel.getOuterJoinExpressionClause() != null;
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1);
                                 filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
-                                switch (joinType) {
-                                    case JOIN_CROSS_LEFT:
-                                        master = new NestedLoopLeftJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_RIGHT:
-                                        master = new NestedLoopRightJoinRecordCursorFactory(
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata)
-                                        );
-                                        break;
-                                    case JOIN_CROSS_FULL:
-                                        master = new NestedLoopFullJoinRecordCursorFactory(
-                                                configuration,
-                                                joinMetadata,
-                                                master,
-                                                slave,
-                                                masterMetadata.getColumnCount(),
-                                                filter,
-                                                NullRecordFactory.getInstance(masterMetadata),
-                                                NullRecordFactory.getInstance(slaveMetadata)
-                                        );
-                                        break;
-                                }
+                                master = switch (joinType) {
+                                    case JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    case JOIN_CROSS_RIGHT -> new NestedLoopRightJoinRecordCursorFactory(
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata)
+                                    );
+                                    case JOIN_CROSS_FULL -> new NestedLoopFullJoinRecordCursorFactory(
+                                            configuration,
+                                            joinMetadata,
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            filter,
+                                            NullRecordFactory.getInstance(masterMetadata),
+                                            NullRecordFactory.getInstance(slaveMetadata)
+                                    );
+                                    default -> master;
+                                };
                                 masterAlias = null;
                                 break;
                             case JOIN_CROSS:
                                 validateOuterJoinExpressions(slaveModel, "CROSS");
-                                master = new CrossJoinRecordCursorFactory(
-                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                        master,
-                                        slave,
-                                        masterMetadata.getColumnCount()
+
+                                // Try to detect the timestamp ladder pattern
+                                TimestampLadderInfo ladderInfo = detectTimestampLadderPattern(
+                                        masterAlias,
+                                        model,
+                                        masterMetadata,
+                                        slaveModel,
+                                        slaveMetadata,
+                                        slave
                                 );
+
+                                if (ladderInfo != null) {
+                                    // Create RecordSink for materializing slave records
+                                    entityColumnFilter.of(slaveMetadata.getColumnCount());
+                                    RecordSink slaveRecordSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
+
+                                    // Create RecordSink for materializing master records
+                                    entityColumnFilter.of(masterMetadata.getColumnCount());
+                                    RecordSink masterRecordSink = RecordSinkFactory.getInstance(asm, masterMetadata, entityColumnFilter);
+
+                                    // Use the optimized TimestampLadderRecordCursorFactory
+                                    master = new TimestampLadderRecordCursorFactory(
+                                            configuration,
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount(),
+                                            ladderInfo.masterTimestampColumnIndex,
+                                            ladderInfo.slaveSequenceColumnIndex,
+                                            slaveRecordSink,
+                                            masterRecordSink
+                                    );
+                                } else {
+                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    master = new CrossJoinRecordCursorFactory(
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                            master,
+                                            slave,
+                                            masterMetadata.getColumnCount()
+                                    );
+                                }
                                 masterAlias = null;
                                 break;
                             case JOIN_ASOF:
@@ -3887,26 +4026,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateLimit(
-                generateOrderBy(
-                        generateLatestBy(
-                                generateFilter(
-                                        generateSelect(
-                                                model,
-                                                executionContext,
-                                                processJoins
-                                        ),
-                                        model,
-                                        executionContext
-                                ),
-                                model
-                        ),
-                        model,
-                        executionContext
-                ),
-                model,
-                executionContext
-        );
+        // Remember the last model with non-empty ORDER BY as we descend through nested models.
+        // We need the ORDER BY clause in the Timestamp Ladder Join optimization, but it's stored
+        // several levels up from the model that holds the join clause.
+        final QueryModel savedOrderByModel = lastSeenOrderByModel;
+        try {
+            final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+            if (orderBy != null && orderBy.size() > 0) {
+                lastSeenOrderByModel = model;
+            }
+            RecordCursorFactory factory;
+
+            factory = generateSelect(model, executionContext, processJoins);
+            factory = generateFilter(factory, model, executionContext);
+            factory = generateLatestBy(factory, model);
+            factory = generateOrderBy(factory, model, executionContext);
+            factory = generateLimit(factory, model, executionContext);
+
+            return factory;
+        } finally {
+            lastSeenOrderByModel = savedOrderByModel;
+        }
     }
 
     @NotNull
@@ -4386,29 +4526,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSelect(
             QueryModel model,
             SqlExecutionContext executionContext,
-            boolean processJoins
+            boolean shouldProcessJoins
     ) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, executionContext);
-            case SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, executionContext);
-            case SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, executionContext);
-            case SELECT_MODEL_WINDOW:
-                return generateSelectWindow(model, executionContext);
-            case SELECT_MODEL_DISTINCT:
-                return generateSelectDistinct(model, executionContext);
-            case SELECT_MODEL_CURSOR:
-                return generateSelectCursor(model, executionContext);
-            case SELECT_MODEL_SHOW:
-                return model.getTableNameFunction();
-            default:
-                if (model.getJoinModels().size() > 1 && processJoins) {
-                    return generateJoins(model, executionContext);
-                }
-                return generateNoSelect(model, executionContext);
-        }
+        return switch (model.getSelectModelType()) {
+            case SELECT_MODEL_CHOOSE -> generateSelectChoose(model, executionContext);
+            case SELECT_MODEL_GROUP_BY -> generateSelectGroupBy(model, executionContext);
+            case SELECT_MODEL_VIRTUAL -> generateSelectVirtual(model, executionContext);
+            case SELECT_MODEL_WINDOW -> generateSelectWindow(model, executionContext);
+            case SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
+            case SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
+            case SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            default -> shouldProcessJoins && model.getJoinModels().size() > 1
+                    ? generateJoins(model, executionContext)
+                    : generateNoSelect(model, executionContext);
+
+        };
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -5323,12 +5455,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function f;
                     try {
                         f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                        if (!(f instanceof WindowFunction)) {
+                        if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
 
-                        WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
                         // sorting and/or multiple passes are required, so fall back to old implementation
@@ -7078,6 +7209,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory != null) {
                 sink.child(factory);
             }
+        }
+    }
+
+    /**
+     * Container class to hold the detected parameters of a timestamp ladder pattern.
+     */
+    private static class TimestampLadderInfo {
+        int masterTimestampColumnIndex;
+        int slaveSequenceColumnIndex;
+
+        TimestampLadderInfo(int masterTimestampColumnIndex, int slaveSequenceColumnIndex) {
+            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
+            this.slaveSequenceColumnIndex = slaveSequenceColumnIndex;
         }
     }
 

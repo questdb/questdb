@@ -45,7 +45,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -72,7 +72,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -168,7 +168,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(val) OVER () as max_val FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -187,7 +187,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab WHERE grp = 'A'",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -254,7 +254,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, grp, max(val) OVER (PARTITION BY grp) as max_val FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -282,7 +282,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
                     "SELECT ts, val, other_val, grp, max(other_val) OVER (PARTITION BY grp) as max_other_val FROM tab",
                     "ts",
                     true,
-                    false
+                    true
             );
 
             // Test with ORDER BY on long column with nulls

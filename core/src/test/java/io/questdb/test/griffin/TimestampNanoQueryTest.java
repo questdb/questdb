@@ -318,7 +318,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
             String query = "SELECT symbol, time, price, volume, " +
                     "sum(volume) over (PARTITION BY symbol ORDER BY time rows unbounded preceding) total_volume " +
                     "FROM prices ORDER BY symbol, time";
-            assertQuery(expected, query, null, true, false);
+            assertQuery(expected, query, null, true, true);
         });
     }
 
@@ -755,7 +755,7 @@ public class TimestampNanoQueryTest extends AbstractCairoTest {
                     "lag(value, 1) over (ORDER BY nano_time) lag_val, " +
                     "lead(value, 1) over (ORDER BY nano_time) lead_val " +
                     "FROM time_series ORDER BY nano_time";
-            assertQuery(expected, query, "nano_time", true, false);
+            assertQuery(expected, query, "nano_time", true, true);
         });
     }
 }
