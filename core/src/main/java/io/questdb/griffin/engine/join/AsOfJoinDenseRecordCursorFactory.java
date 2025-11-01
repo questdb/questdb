@@ -136,6 +136,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
         private long backwardRowId = -1;
         private boolean backwardScanDone;
         private long forwardRowId = -1;
+        private boolean forwardScanDone;
         private boolean slaveCursorReadyForForwardScan;
 
         public AsOfJoinDenseRecordCursor(
@@ -177,9 +178,10 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             int symbolKeyToFind = columnAccessHelper.getSlaveKey(masterRecord);
 
             if (forwardRowId == -1) {
-                // This is the first hasNext() call, initialize state of forward and backward scan
+                // No scanning done yet, initialize state of forward and backward scans
                 nextSlave(masterTimestamp);
                 if (!record.hasSlave()) {
+                    // There are no prevailing slave rows (in the past from master row)
                     isMasterHasNextPending = true;
                     return true;
                 }
@@ -195,31 +197,10 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 slaveCursorReadyForForwardScan = true;
             }
 
-            long frameRowHi = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowHi());
             MapKey key;
             MapValue value;
-            while (true) {
-                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
-                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                if (slaveTimestamp > masterTimestamp) {
-                    break;
-                }
-                if (slaveTimestamp >= minSlaveTimestamp) {
-                    key = fwdScanKeyToRowId.withKey();
-                    key.putInt(slaveRecB.getInt(slaveSymbolColumnIndex));
-                    value = key.createValue();
-                    value.putLong(0, slaveRecB.getRowId());
-                }
-                forwardRowId++;
-                if (forwardRowId > frameRowHi) {
-                    if (!slaveTimeFrameCursor.next()) {
-                        break;
-                    }
-                    slaveTimeFrameCursor.open();
-                    int frameIndex = slaveTimeFrame.getFrameIndex();
-                    frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
-                    forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                }
+            if (!forwardScanDone) {
+                scanForward(masterTimestamp, minSlaveTimestamp);
             }
 
             // Let's see if we saw a matching symbol in forward scan
@@ -230,7 +211,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
             // Symbol not found, let's see if we already saw it in backward scan
-            key = fwdScanKeyToRowId.withKey();
+            key = bwdScanKeyToRowId.withKey();
             key.putInt(symbolKeyToFind);
             value = key.findValue();
             if (value != null) {
@@ -302,9 +283,39 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             }
             isMasterHasNextPending = true;
             slaveCursorReadyForForwardScan = false;
-            backwardScanDone = false;
+            forwardScanDone = false;
             backwardRowId = -1;
             forwardRowId = -1;
+        }
+
+        private void scanForward(long masterTimestamp, long minSlaveTimestamp) {
+            MapValue value;
+            MapKey key;
+            long frameRowHi = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowHi());
+            while (true) {
+                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
+                long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                if (slaveTimestamp > masterTimestamp) {
+                    break;
+                }
+                if (slaveTimestamp >= minSlaveTimestamp) {
+                    key = fwdScanKeyToRowId.withKey();
+                    key.putInt(slaveRecB.getInt(slaveSymbolColumnIndex));
+                    value = key.createValue();
+                    value.putLong(0, slaveRecB.getRowId());
+                }
+                forwardRowId++;
+                if (forwardRowId == frameRowHi) {
+                    if (!slaveTimeFrameCursor.next()) {
+                        forwardScanDone = true;
+                        break;
+                    }
+                    slaveTimeFrameCursor.open();
+                    int frameIndex = slaveTimeFrame.getFrameIndex();
+                    frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
+                    forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                }
+            }
         }
 
         private boolean setupSlaveRec(long slaveRowId, long minSlaveTimestamp) {
