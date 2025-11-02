@@ -58,30 +58,26 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            int slaveSymbolColumnIndex,
             int columnSplit,
+            int slaveSymbolColumnIndex,
             AsofJoinColumnAccessHelper columnAccessHelper,
             JoinContext joinContext,
             long toleranceInterval
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.columnAccessHelper = columnAccessHelper;
+        this.toleranceInterval = toleranceInterval;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
-
         this.cursor = new AsOfJoinDenseRecordCursor(
+                configuration,
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead(),
-                MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE),
-                MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE)
-
+                slaveFactory.getMetadata().getTimestampType()
         );
-        this.columnAccessHelper = columnAccessHelper;
-        this.toleranceInterval = toleranceInterval;
     }
 
     @Override
@@ -140,19 +136,25 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
         private boolean slaveCursorReadyForForwardScan;
 
         public AsOfJoinDenseRecordCursor(
+                CairoConfiguration configuration,
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType,
-                int lookahead,
-                Map fwdScanKeyToRowId,
-                Map bwdScanKeyToRowId
+                int slaveTimestampType
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
-            this.fwdScanKeyToRowId = fwdScanKeyToRowId;
-            this.bwdScanKeyToRowId = bwdScanKeyToRowId;
+            super(
+                    columnSplit,
+                    nullRecord,
+                    masterTimestampIndex,
+                    masterTimestampType,
+                    slaveTimestampIndex,
+                    slaveTimestampType,
+                    configuration.getSqlAsOfJoinLookAhead())
+            ;
+            this.fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
+            this.bwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, TYPES_KEY, TYPES_VALUE);
         }
 
         @Override

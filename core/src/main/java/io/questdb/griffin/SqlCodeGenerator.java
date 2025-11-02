@@ -2795,18 +2795,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             asOfToleranceInterval
                                                     );
                                                 } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    keyTypes.clear();
-                                                    keyTypes.add(ColumnType.INT);
-                                                    valueTypes.clear();
-                                                    valueTypes.add(ColumnType.LONG);
-
-                                                    return new AsOfJoinDenseRecordCursorFactory(
+                                                    master = new AsOfJoinDenseRecordCursorFactory(
                                                             configuration,
                                                             metadata,
                                                             master,
                                                             slave,
-                                                            slaveSymbolColumnIndex,
                                                             joinColumnSplit,
+                                                            slaveSymbolColumnIndex,
                                                             columnAccessHelper,
                                                             slaveContext,
                                                             asOfToleranceInterval
