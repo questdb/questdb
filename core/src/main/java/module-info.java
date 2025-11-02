@@ -41,6 +41,7 @@ open module io.questdb {
     exports io.questdb.cairo.security;
 
     exports io.questdb.cutlass;
+    exports io.questdb.cutlass.binary;
     exports io.questdb.cutlass.http;
     exports io.questdb.cutlass.http.processors;
     exports io.questdb.cutlass.http.ex;
