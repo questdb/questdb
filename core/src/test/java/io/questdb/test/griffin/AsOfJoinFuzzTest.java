@@ -354,7 +354,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             long ts = leftTimestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z");
             ts += leftTimestampDriver.fromHours((int) (rnd.nextLong() % 48));
             for (int i = 0; i < table1Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
+                if (rnd.nextInt(100) < tsDuplicatePercentage) {
                     ts += leftTimestampDriver.fromHours((int) rnd.nextLong(24));
                 }
                 String symbol = "s_" + rnd.nextInt(10);
