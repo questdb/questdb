@@ -256,7 +256,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                     slaveTimeFrameCursor.open();
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                    backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
+                    backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
             }
             record.hasSlave(false);
