@@ -99,7 +99,7 @@ public class ColumnTypeConverter {
             assert symbolTable != null;
             convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
             return true;
-        } else if (ColumnType.isDecimal(dstColumnType)) {
+        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isDecimal(dstColumnType)) {
             return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
@@ -841,6 +841,46 @@ public class ColumnTypeConverter {
         }
     }
 
+    private static boolean convertToDecimal(
+            long skipRows,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            int dstColumnType,
+            FilesFacade ff,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
+        long srcMapAddress = 0;
+
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        long dstMapBytes = rowCount * dstColumnTypeSize;
+
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+        try {
+            srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            if (!ff.truncate(dstFixFd, dstMapBytes)) {
+                throw CairoException.critical(ff.errno()).put("Cannot allocate fd: ").put(dstFixFd).put(", size: ").put(dstMapBytes);
+            }
+
+            columnSizesSink.setDestSizes(dstMapBytes, -1);
+            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstColumnTypeSize, memoryTag);
+            dstFixMem.jumpTo(0);
+
+            return DecimalColumnTypeConverter.convertToDecimal(srcMapAddress, srcColumnType, dstFixMem, dstColumnType, srcColumnTypeSize, rowCount);
+        } finally {
+            if (srcMapAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+            }
+            dstFixMem.detachFdClose();
+        }
+    }
+
     private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
         return switch (ColumnType.tagOf(srcColumnType)) {
             case ColumnType.INT -> converterFromInt2String;
@@ -907,46 +947,6 @@ public class ColumnTypeConverter {
             }
         }
         mem.putInt(Numbers.INT_NULL);
-    }
-
-    private static boolean convertToDecimal(
-            long skipRows,
-            long rowCount,
-            long srcFixFd,
-            int srcColumnType,
-            long dstFixFd,
-            int dstColumnType,
-            FilesFacade ff,
-            ColumnConversionOffsetSink columnSizesSink
-    ) {
-        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
-        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
-        long srcMapAddress = 0;
-
-        long skipBytes = skipRows * srcColumnTypeSize;
-        long mapBytes = rowCount * srcColumnTypeSize;
-        long dstMapBytes = rowCount * dstColumnTypeSize;
-
-        MemoryCMARW dstFixMem = dstFixMemTL.get();
-        try {
-            srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
-            columnSizesSink.setSrcOffsets(skipBytes, -1);
-
-            if (!ff.truncate(dstFixFd, dstMapBytes)) {
-                throw CairoException.critical(ff.errno()).put("Cannot allocate fd: ").put(dstFixFd).put(", size: ").put(dstMapBytes);
-            }
-
-            columnSizesSink.setDestSizes(dstMapBytes, -1);
-            dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstColumnTypeSize, memoryTag);
-            dstFixMem.jumpTo(0);
-
-            return DecimalColumnTypeConverter.convertToDecimal(srcMapAddress, srcColumnType, dstFixMem, dstColumnType, srcColumnTypeSize, rowCount);
-        } finally {
-            if (srcMapAddress != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
-            }
-            dstFixMem.detachFdClose();
-        }
     }
 
     private static void str2IpV4(CharSequence str, MemoryA mem) {
