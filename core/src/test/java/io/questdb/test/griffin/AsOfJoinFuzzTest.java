@@ -269,6 +269,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             case FAST_SEARCH -> " /*+ ASOF_FAST_SEARCH(t1 t2) */ ";
             case INDEX_SEARCH -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
             case LINEAR_SEARCH -> " /*+ ASOF_LINEAR_SEARCH(t1 t2) */ ";
+            case DRIVEBY_CACHING -> " /*+ ASOF_DRIVEBY_CACHE(t1 t2) */ ";
             default -> "";
         };
         String query = "select " + hint + outerProjection + " from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
@@ -420,6 +421,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         INDEX_SEARCH,
         LINEAR_SEARCH,
         FAST_SEARCH,
+        DRIVEBY_CACHING
     }
 
     private enum JoinType {

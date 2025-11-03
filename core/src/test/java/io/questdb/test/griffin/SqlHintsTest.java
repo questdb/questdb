@@ -34,6 +34,28 @@ import org.junit.Test;
 public class SqlHintsTest extends AbstractTest {
 
     @Test
+    public void testAsOfJoinUseDrivebyCacheHint() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            QueryModel model = new QueryModel.QueryModelFactory().newInstance();
+            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+
+            model.addHint(SqlHints.ASOF_DRIVEBY_CACHE_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+
+            // case-insensitive
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEA", "TABLEB"));
+
+            // different order
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEB", "TABLEA"));
+
+            model.clear();
+            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
+        });
+    }
+
+    @Test
     public void testAsOfJoinUseIndexSearchHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();

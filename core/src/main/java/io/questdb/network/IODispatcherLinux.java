@@ -33,6 +33,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
     private final Epoll epoll;
+    private boolean pendingAccept;
 
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
@@ -381,14 +382,15 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         //  we should see if we can stay inside of this method until we have a completely idle iteration
         //  at the same time we should hog this thread in case we are always 'useful', we can probably
         //  introduce a loop count after which we always exit
-        boolean useful = false;
 
         final long timestamp = clock.getTicks();
-        processDisconnects(timestamp);
+        boolean useful = processDisconnects(timestamp);
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;
-        if (n > 0) {
+        if (n > 0 || pendingAccept) {
+            boolean acceptProcessed = false;
+
             // check all activated FDs
             LOG.debug().$("epoll [n=").$(n).I$();
             for (int i = 0; i < n; i++) {
@@ -397,18 +399,22 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    accept(timestamp);
+                    pendingAccept = !accept(timestamp);
+                    acceptProcessed = true;
                     useful = true;
-                    continue;
-                }
-                if (isEventId(id)) {
+                } else if (isEventId(id)) {
                     handleSuspendEvent(id);
-                    continue;
-                }
-                if (handleSocketOperation(id)) {
+                } else if (handleSocketOperation(id)) {
                     useful = true;
                     watermark--;
                 }
+            }
+
+            // pendingAccept is almost always false -> testing it as first to make the branch easy to predict
+            if (pendingAccept && !acceptProcessed && isListening()) {
+                // we have left-overs from a previous round, process them now
+                pendingAccept = !accept(timestamp);
+                useful = true;
             }
         }
 
