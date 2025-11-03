@@ -186,11 +186,11 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
-import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinSingleSymbolRecordCursorFactory;
@@ -2773,7 +2773,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             asOfToleranceInterval
                                                     );
                                                 } else if (isOptimizable && !hasFastHint && isSingleSymbolJoin(slaveMetadata)) {
-                                                    master = new AsOfJoinDenseRecordCursorFactory(
+                                                    master = new AsOfJoinMemoizedRecordCursorFactory(
                                                             configuration,
                                                             joinMetadata,
                                                             master,
@@ -2782,7 +2782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveSymbolColumnIndex,
                                                             columnAccessHelper,
                                                             slaveContext,
-                                                            asOfToleranceInterval
+                                                            asOfToleranceInterval,
+                                                            SqlHints.hasAsOfDrivebyCacheHint(model, masterAlias, slaveModel.getName())
                                                     );
                                                 } else {
                                                     master = new AsOfJoinFastRecordCursorFactory(
@@ -2884,6 +2885,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
                                                     keyTypes.clear();
                                                     keyTypes.add(ColumnType.INT);
+
                                                     master = new AsOfJoinSingleSymbolRecordCursorFactory(
                                                             configuration,
                                                             joinMetadata,
@@ -2897,9 +2899,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                             slaveContext,
                                                             asOfToleranceInterval
                                                     );
+
                                                     created = true;
                                                 }
                                             }
+
                                             if (!created) {
                                                 master = new AsOfJoinLightRecordCursorFactory(
                                                         configuration,
