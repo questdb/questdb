@@ -182,18 +182,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
 
-            final String expected =
-                    "tag\thi\tlo\tts\tts1\n" +
-                            "AA\t315515118\t315515118\t1970-01-03T00:00:00.000000" + leftSuffix + "\t1970-01-03T00:00:00.000000" + leftSuffix + "\n" +
-                            "BB\t-727724771\t-727724771\t1970-01-03T00:06:00.000000" + leftSuffix + "\t1970-01-03T00:06:00.000000" + leftSuffix + "\n" +
-                            "CC\t-948263339\t-948263339\t1970-01-03T00:12:00.000000" + leftSuffix + "\t1970-01-03T00:12:00.000000" + leftSuffix + "\n" +
-                            "CC\t592859671\t592859671\t1970-01-03T00:18:00.000000" + leftSuffix + "\t1970-01-03T00:18:00.000000" + leftSuffix + "\n" +
-                            "AA\t-847531048\t-847531048\t1970-01-03T00:24:00.000000" + leftSuffix + "\t1970-01-03T00:24:00.000000" + leftSuffix + "\n" +
-                            "BB\t-2041844972\t-2041844972\t1970-01-03T00:30:00.000000" + leftSuffix + "\t1970-01-03T00:30:00.000000" + leftSuffix + "\n" +
-                            "BB\t-1575378703\t-1575378703\t1970-01-03T00:36:00.000000" + leftSuffix + "\t1970-01-03T00:36:00.000000" + leftSuffix + "\n" +
-                            "BB\t1545253512\t1545253512\t1970-01-03T00:42:00.000000" + leftSuffix + "\t1970-01-03T00:42:00.000000" + leftSuffix + "\n" +
-                            "AA\t1573662097\t1573662097\t1970-01-03T00:48:00.000000" + leftSuffix + "\t1970-01-03T00:48:00.000000" + leftSuffix + "\n" +
-                            "AA\t339631474\t339631474\t1970-01-03T00:54:00.000000" + leftSuffix + "\t1970-01-03T00:54:00.000000" + leftSuffix + "\n";
+            final String expected = "tag\thi\tlo\tts\tts1\n" +
+                    "AA\t315515118\t315515118\t1970-01-03T00:00:00.000000" + leftSuffix + "\t1970-01-03T00:00:00.000000" + leftSuffix + "\n" +
+                    "BB\t-727724771\t-727724771\t1970-01-03T00:06:00.000000" + leftSuffix + "\t1970-01-03T00:06:00.000000" + leftSuffix + "\n" +
+                    "CC\t-948263339\t-948263339\t1970-01-03T00:12:00.000000" + leftSuffix + "\t1970-01-03T00:12:00.000000" + leftSuffix + "\n" +
+                    "CC\t592859671\t592859671\t1970-01-03T00:18:00.000000" + leftSuffix + "\t1970-01-03T00:18:00.000000" + leftSuffix + "\n" +
+                    "AA\t-847531048\t-847531048\t1970-01-03T00:24:00.000000" + leftSuffix + "\t1970-01-03T00:24:00.000000" + leftSuffix + "\n" +
+                    "BB\t-2041844972\t-2041844972\t1970-01-03T00:30:00.000000" + leftSuffix + "\t1970-01-03T00:30:00.000000" + leftSuffix + "\n" +
+                    "BB\t-1575378703\t-1575378703\t1970-01-03T00:36:00.000000" + leftSuffix + "\t1970-01-03T00:36:00.000000" + leftSuffix + "\n" +
+                    "BB\t1545253512\t1545253512\t1970-01-03T00:42:00.000000" + leftSuffix + "\t1970-01-03T00:42:00.000000" + leftSuffix + "\n" +
+                    "AA\t1573662097\t1573662097\t1970-01-03T00:48:00.000000" + leftSuffix + "\t1970-01-03T00:48:00.000000" + leftSuffix + "\n" +
+                    "AA\t339631474\t339631474\t1970-01-03T00:54:00.000000" + leftSuffix + "\t1970-01-03T00:54:00.000000" + leftSuffix + "\n";
 
             assertQuery(
                     "tag\thi\tlo\tts\tts1\n",
@@ -2104,16 +2103,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
 
-            String expected =
-                    "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
-                            "2021-07-26T02:36:02.566000" + leftSuffix + "\t1\tnull\tnull\n" +
-                            "2021-07-26T02:36:03.094000" + leftSuffix + "\t2\t1\t1\n" +
-                            "2021-07-26T02:36:03.097000" + leftSuffix + "\t3\t2\t1\n" +
-                            "2021-07-26T02:36:03.097000" + leftSuffix + "\t4\t2\t2\n" +
-                            "2021-07-26T02:36:03.097000" + leftSuffix + "\t5\t2\t3\n" +
-                            "2021-07-26T02:36:03.097000" + leftSuffix + "\t6\t2\t4\n" +
-                            "2021-07-26T02:36:03.098000" + leftSuffix + "\t7\t6\t1\n" +
-                            "2021-07-26T02:36:03.098000" + leftSuffix + "\t8\t6\t2\n";
+            String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
+                    "2021-07-26T02:36:02.566000" + leftSuffix + "\t1\tnull\tnull\n" +
+                    "2021-07-26T02:36:03.094000" + leftSuffix + "\t2\t1\t1\n" +
+                    "2021-07-26T02:36:03.097000" + leftSuffix + "\t3\t2\t1\n" +
+                    "2021-07-26T02:36:03.097000" + leftSuffix + "\t4\t2\t2\n" +
+                    "2021-07-26T02:36:03.097000" + leftSuffix + "\t5\t2\t3\n" +
+                    "2021-07-26T02:36:03.097000" + leftSuffix + "\t6\t2\t4\n" +
+                    "2021-07-26T02:36:03.098000" + leftSuffix + "\t7\t6\t1\n" +
+                    "2021-07-26T02:36:03.098000" + leftSuffix + "\t8\t6\t2\n";
             String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
@@ -2158,18 +2156,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            final String expected =
-                    "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                            "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000" + leftSuffix + "\t\n" +
-                            "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000" + leftSuffix + "\t2018-01-01T00:16:00.000000" + rightSuffix + "\n" +
-                            "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000" + leftSuffix + "\t2018-01-01T00:32:00.000000" + rightSuffix + "\n" +
-                            "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000" + leftSuffix + "\t2018-01-01T00:34:00.000000" + rightSuffix + "\n" +
-                            "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000" + leftSuffix + "\t2018-01-01T00:46:00.000000" + rightSuffix + "\n" +
-                            "6\tibm\t76.11\t0.9540000000000001\t2018-01-01T01:12:00.000000" + leftSuffix + "\t2018-01-01T00:56:00.000000" + rightSuffix + "\n" +
-                            "7\tmsft\t55.992000000000004\t0.545\t2018-01-01T01:24:00.000000" + leftSuffix + "\t2018-01-01T00:46:00.000000" + rightSuffix + "\n" +
-                            "8\tibm\t23.905\t0.9540000000000001\t2018-01-01T01:36:00.000000" + leftSuffix + "\t2018-01-01T00:56:00.000000" + rightSuffix + "\n" +
-                            "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000" + leftSuffix + "\t2018-01-01T01:00:00.000000" + rightSuffix + "\n" +
-                            "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000" + leftSuffix + "\t2018-01-01T01:00:00.000000" + rightSuffix + "\n";
+            final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                    "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000" + leftSuffix + "\t\n" +
+                    "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000" + leftSuffix + "\t2018-01-01T00:16:00.000000" + rightSuffix + "\n" +
+                    "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000" + leftSuffix + "\t2018-01-01T00:32:00.000000" + rightSuffix + "\n" +
+                    "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000" + leftSuffix + "\t2018-01-01T00:34:00.000000" + rightSuffix + "\n" +
+                    "5\tmsft\t50.938\t0.545\t2018-01-01T01:00:00.000000" + leftSuffix + "\t2018-01-01T00:46:00.000000" + rightSuffix + "\n" +
+                    "6\tibm\t76.11\t0.9540000000000001\t2018-01-01T01:12:00.000000" + leftSuffix + "\t2018-01-01T00:56:00.000000" + rightSuffix + "\n" +
+                    "7\tmsft\t55.992000000000004\t0.545\t2018-01-01T01:24:00.000000" + leftSuffix + "\t2018-01-01T00:46:00.000000" + rightSuffix + "\n" +
+                    "8\tibm\t23.905\t0.9540000000000001\t2018-01-01T01:36:00.000000" + leftSuffix + "\t2018-01-01T00:56:00.000000" + rightSuffix + "\n" +
+                    "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000" + leftSuffix + "\t2018-01-01T01:00:00.000000" + rightSuffix + "\n" +
+                    "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000" + leftSuffix + "\t2018-01-01T01:00:00.000000" + rightSuffix + "\n";
             executeWithRewriteTimestamp("""
                     CREATE TABLE 'x' (\s
                     \ti INT,
@@ -2306,18 +2303,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinKeyed() throws Exception {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-        final String expected =
-                "tag\thi\tlo\tts\tts1\n" +
-                        "AA\t315515118\tnull\t1970-01-03T00:00:00.000000" + leftSuffix + "\t\n" +
-                        "BB\t-727724771\tnull\t1970-01-03T00:06:00.000000" + leftSuffix + "\t\n" +
-                        "CC\t-948263339\tnull\t1970-01-03T00:12:00.000000" + leftSuffix + "\t\n" +
-                        "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000" + leftSuffix + "\t1970-01-03T00:12:00.000000" + leftSuffix + "\n" +
-                        "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000" + leftSuffix + "\t1970-01-03T00:00:00.000000" + leftSuffix + "\n" +
-                        "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000" + leftSuffix + "\t1970-01-03T00:06:00.000000" + leftSuffix + "\n" +
-                        "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000" + leftSuffix + "\t1970-01-03T00:30:00.000000" + leftSuffix + "\n" +
-                        "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000" + leftSuffix + "\t1970-01-03T00:36:00.000000" + leftSuffix + "\n" +
-                        "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000" + leftSuffix + "\t1970-01-03T00:24:00.000000" + leftSuffix + "\n" +
-                        "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000" + leftSuffix + "\t1970-01-03T00:48:00.000000" + leftSuffix + "\n";
+        final String expected = "tag\thi\tlo\tts\tts1\n" +
+                "AA\t315515118\tnull\t1970-01-03T00:00:00.000000" + leftSuffix + "\t\n" +
+                "BB\t-727724771\tnull\t1970-01-03T00:06:00.000000" + leftSuffix + "\t\n" +
+                "CC\t-948263339\tnull\t1970-01-03T00:12:00.000000" + leftSuffix + "\t\n" +
+                "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000" + leftSuffix + "\t1970-01-03T00:12:00.000000" + leftSuffix + "\n" +
+                "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000" + leftSuffix + "\t1970-01-03T00:00:00.000000" + leftSuffix + "\n" +
+                "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000" + leftSuffix + "\t1970-01-03T00:06:00.000000" + leftSuffix + "\n" +
+                "BB\t-1575378703\t-2041844972\t1970-01-03T00:36:00.000000" + leftSuffix + "\t1970-01-03T00:30:00.000000" + leftSuffix + "\n" +
+                "BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000" + leftSuffix + "\t1970-01-03T00:36:00.000000" + leftSuffix + "\n" +
+                "AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000" + leftSuffix + "\t1970-01-03T00:24:00.000000" + leftSuffix + "\n" +
+                "AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000" + leftSuffix + "\t1970-01-03T00:48:00.000000" + leftSuffix + "\n";
         executeWithRewriteTimestamp(
                 """
                         create table tab (
@@ -2477,19 +2473,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
                 String query = "SELECT * FROM bids LT JOIN asks";
-                String expected =
-                        "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
-                                "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\t\t\t\tnull\t\n" +
-                                "AAPL\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\t\t\t\tnull\t\n" +
-                                "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\t\t\t\tnull\t\n" +
-                                "MSFT\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t10\tUNKNOWN\t\t\t\tnull\t\n" +
-                                "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "AAPL\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "MSFT\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "AAPL\tLSE\t2002-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n" +
-                                "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n" +
-                                "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n";
+                String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\t\t\t\tnull\t\n" +
+                        "MSFT\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t10\tUNKNOWN\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "AAPL\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "MSFT\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "AAPL\tLSE\t2002-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n" +
+                        "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n" +
+                        "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t11\tSCAM\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -2536,19 +2531,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 );
 
                 String query = "SELECT * FROM bids LT JOIN asks ON (stock, exchange)";
-                String expected =
-                        "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
-                                "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\t\t\t\tnull\t\n" +
-                                "AAPL\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\t\t\t\tnull\t\n" +
-                                "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\t\t\t\tnull\t\n" +
-                                "MSFT\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t10\tUNKNOWN\t\t\t\tnull\t\n" +
-                                "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tAAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + rightSuffix + "\t1\tGOOD\n" +
-                                "AAPL\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tAAPL\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t4\tEXCELLENT\n" +
-                                "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tMSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + rightSuffix + "\t7\tEXCELLENT\n" +
-                                "MSFT\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
-                                "AAPL\tLSE\t2002-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t5\tEXCELLENT\n" +
-                                "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + rightSuffix + "\t8\tGOOD\n" +
-                                "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + rightSuffix + "\t2\tEXCELLENT\n";
+                String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
+                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tGOOD\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t4\tSCAM\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + leftSuffix + "\t7\tGOOD\t\t\t\tnull\t\n" +
+                        "MSFT\tLSE\t2000-01-01T00:00:00.000000" + leftSuffix + "\t10\tUNKNOWN\t\t\t\tnull\t\n" +
+                        "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t2\tGOOD\tAAPL\tNASDAQ\t2000-01-01T00:00:00.000000" + rightSuffix + "\t1\tGOOD\n" +
+                        "AAPL\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t5\tEXCELLENT\tAAPL\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t4\tEXCELLENT\n" +
+                        "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + leftSuffix + "\t8\tGOOD\tMSFT\tNASDAQ\t2000-01-01T00:00:00.000000" + rightSuffix + "\t7\tEXCELLENT\n" +
+                        "MSFT\tLSE\t2001-01-01T00:00:00.000000" + leftSuffix + "\t11\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000" + rightSuffix + "\t10\tGOOD\n" +
+                        "AAPL\tLSE\t2002-01-01T00:00:00.000000" + leftSuffix + "\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000" + rightSuffix + "\t5\tEXCELLENT\n" +
+                        "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000" + rightSuffix + "\t8\tGOOD\n" +
+                        "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000" + leftSuffix + "\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000" + rightSuffix + "\t2\tEXCELLENT\n";
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -3325,14 +3319,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             // ASOF JOIN
             String query = "SELECT * FROM trades t1 ASOF JOIN trades t2 ON (pair)";
-            String expected =
-                    "pair\tts\tprice\tpair1\tts1\tprice1\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\n";
+            String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // LT JOIN
@@ -3349,14 +3342,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             // SPLICE JOIN
             query = "SELECT * FROM trades t1 SPLICE JOIN trades t2 ON (pair)";
-            expected =
-                    "pair\tts\tprice\tpair1\tts1\tprice1\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\n";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
         });
     }
@@ -3382,40 +3374,37 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // ASOF JOIN
             String query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
                     "ASOF JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
-            String expected =
-                    "p1\tts\tprice\tts1\tprice1\tp2\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\n";
+            String expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // LT JOIN
             query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
                     "LT JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
-            expected =
-                    "p1\tts\tprice\tts1\tprice1\tp2\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t\tnull\t\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t\tnull\t\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n";
+            expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t\tnull\t\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t\tnull\t\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // SPLICE JOIN
             query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
                     "SPLICE JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
-            expected =
-                    "p1\tts\tprice\tts1\tprice1\tp2\n" +
-                            "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
-                            "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
-                            "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\n" +
-                            "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\n";
+            expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\t2000-01-01T00:00:00.000000" + leftSuffix + "\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\t2001-01-01T00:00:00.000000" + leftSuffix + "\t4\tETH-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\t2001-01-01T00:00:01.000000" + leftSuffix + "\t2\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\t2001-01-01T00:00:01.000000" + leftSuffix + "\t5\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\t2001-01-01T00:00:03.000000" + leftSuffix + "\t6\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\t2002-01-01T00:00:03.000000" + leftSuffix + "\t3\tBTC-USD\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
         });
     }
