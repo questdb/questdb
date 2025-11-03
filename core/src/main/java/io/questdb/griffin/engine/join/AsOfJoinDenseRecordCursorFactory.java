@@ -45,6 +45,29 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 
+/**
+ * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case of
+ * single-symbol JOIN ON condition, where the slave cursor is a TimeFrameRecordCursor.
+ * While the Light cursor only needs a forward-only scan of the slave cursor, the Dense
+ * cursor uses two scans: forward and backward. The both start at the slave row that matches
+ * the first master row by timestamp (as determined by nextSlave()).
+ * <p>
+ * When encountering another master row, we first resume the forward scan from the previous
+ * position until the master timestamp. While scanning, we memorize the symbol at each row
+ * in a hashmap. Then we check whether the symbol is in the hashmap. If yes, we're done.
+ * If not, we check whether it's in the backward scan's hashmap. If not, we resume the
+ * backward scan until we find the symbol or exhaust the backward scan. In the backward scan,
+ * we memorize only new symbols (not already encountered in backward scan).
+ * <p>
+ * Dense ASOF JOIN algo is the best choice when the master rows are densely interleaved with
+ * slave rows. For each master row, we only need to scan a few slave rows. If the interleaving
+ * is sparse, we'll still scan everything from the previous position, while the matching row
+ * could be only a few rows behind the master.
+ * <p>
+ * The Fast/Memoized algos are better for sparse interleaving because they use binary search to
+ * quickly zero in on the latest slave row ahead of master, and then search backward. In a
+ * typical case, this means they are able to entirely ignore most of the slave rows.
+ */
 public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_KEY = new ArrayColumnTypes();
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
@@ -183,7 +206,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 // No scanning done yet, initialize state of forward and backward scans
                 nextSlave(masterTimestamp);
                 if (!record.hasSlave()) {
-                    // There are no prevailing slave rows (in the past from master row)
+                    // There are no prevailing slave rows (all are more recent than master row)
                     isMasterHasNextPending = true;
                     return true;
                 }
@@ -212,19 +235,21 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
-            // Symbol not found, let's see if we already saw it in backward scan
+            // Symbol not found, see if we already saw it in backward scan
             key = bwdScanKeyToRowId.withKey();
             key.putInt(symbolKeyToFind);
             value = key.findValue();
             if (value != null) {
                 return setupSlaveRec(value.getLong(0), minSlaveTimestamp);
             }
-            // Symbol not seen before, let's resume the backward scan if it's not done
             if (backwardScanDone) {
+                // Symbol not found in backward scan, and the scan already reached the end, report no match
                 record.hasSlave(false);
                 isMasterHasNextPending = true;
                 return true;
             }
+
+            // Resume the backward scan
             slaveCursorReadyForForwardScan = false;
             slaveTimeFrameCursor.jumpTo(Rows.toPartitionIndex(backwardRowId));
             slaveTimeFrameCursor.open();
@@ -234,6 +259,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AbstractJoinRecordCu
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                 if (slaveTimestamp < minSlaveTimestamp) {
                     backwardScanDone = true;
+                    // minSlaveTimestamp will only get larger in later calls, it's safe to conclude backward scan now
                     break;
                 }
                 key = bwdScanKeyToRowId.withKey();
