@@ -12,7 +12,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	pgxdecimal "github.com/jackc/pgx-shopspring-decimal"
 	"github.com/shopspring/decimal"
 )
 
@@ -653,7 +652,6 @@ func (tr *TestRunner) main(yamlFile string) error {
 			if err := driver.Connect(ctx, connString); err != nil {
 				return fmt.Errorf("unable to connect to database: %v", err)
 			}
-			pgxdecimal.Register(conn.TypeMap())
 
 			tr.driver = driver
 			err = tr.runTest(ctx, test, config.Variables)
