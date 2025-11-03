@@ -27,52 +27,37 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class SingleVarcharSymbolShortCircuit implements SymbolShortCircuit {
-    private final int masterVarcharIndex;
+public final class SingleStringColumnAccessHelper implements AsofJoinColumnAccessHelper {
+    private final int masterStringIndex;
     private final int slaveSymbolIndex;
-    private final StringSink utf16Sink = new StringSink();
     private StaticSymbolTable slaveSymbolTable;
 
-    public SingleVarcharSymbolShortCircuit(int masterVarcharIndex, int slaveSymbolIndex) {
-        this.masterVarcharIndex = masterVarcharIndex;
+    public SingleStringColumnAccessHelper(int masterStringIndex, int slaveSymbolIndex) {
+        this.masterStringIndex = masterStringIndex;
         this.slaveSymbolIndex = slaveSymbolIndex;
     }
 
     @Override
     public CharSequence getMasterValue(Record masterRecord) {
-        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
-        if (masterVarchar == null) {
-            return null;
+        return masterRecord.getStrA(masterStringIndex);
+    }
+
+    @Override
+    public int getSlaveKey(Record masterRecord) {
+        CharSequence masterStr = masterRecord.getStrA(masterStringIndex);
+        if (masterStr == null) {
+            return slaveSymbolTable.containsNullValue()
+                    ? StaticSymbolTable.VALUE_IS_NULL
+                    : StaticSymbolTable.VALUE_NOT_FOUND;
         }
-        if (masterVarchar.isAscii()) {
-            return masterVarchar.asAsciiCharSequence();
-        }
-        utf16Sink.clear();
-        utf16Sink.put(masterVarchar);
-        return utf16Sink;
+        return slaveSymbolTable.keyOf(masterStr);
     }
 
     @Override
     public @NotNull StaticSymbolTable getSlaveSymbolTable() {
         return slaveSymbolTable;
-    }
-
-    @Override
-    public boolean isShortCircuit(Record masterRecord) {
-        Utf8Sequence masterVarchar = masterRecord.getVarcharA(masterVarcharIndex);
-        if (masterVarchar == null) {
-            return slaveSymbolTable.containsNullValue();
-        }
-        if (masterVarchar.isAscii()) {
-            return slaveSymbolTable.keyOf(masterVarchar.asAsciiCharSequence()) == StaticSymbolTable.VALUE_NOT_FOUND;
-        }
-        utf16Sink.clear();
-        utf16Sink.put(masterVarchar);
-        return slaveSymbolTable.keyOf(utf16Sink) == StaticSymbolTable.VALUE_NOT_FOUND;
     }
 
     @Override

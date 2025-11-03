@@ -164,6 +164,54 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return bytesWritten;
     }
 
+    /**
+     * Appends an array in compact format, used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * Layout:
+     * <pre>
+     * | dataSize  |   dim0  |  dim1  | ... |     dimN-1     | array data |
+     * +-----------+---------+--------+-----+----------------+------------+
+     * |  4 bytes  |                 N * 4 bytes             |     -      |
+     * +-----------+-----------------------------------------+------------+
+     * </pre>
+     * <p>
+     * This differs from {@link #appendPlainValue} which includes an 8-byte totalSize field
+     * and a 4-byte type field. This compact format omits the type (known from context) and
+     * uses a 4-byte dataSize instead of 8-byte totalSize.
+     *
+     * @param addr     the memory address to write to
+     * @param value    the array to append
+     * @param nDims    the number of dimensions
+     * @param elemSize the size of each element in bytes
+     */
+    public static void appendCompactPlainValue(long addr, ArrayView value, int nDims, int elemSize) {
+        if (value == null || value.isNull()) {
+            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
+            return;
+        }
+
+        int dataSize = value.getCardinality() * elemSize;
+
+        Unsafe.getUnsafe().putInt(addr, dataSize);
+        addr += Integer.BYTES;
+
+        for (int i = 0; i < nDims; i++) {
+            Unsafe.getUnsafe().putInt(addr, value.getDimLen(i));
+            addr += Integer.BYTES;
+        }
+
+        if (value.isVanilla()) {
+            short elemType = value.getElemType();
+            if (elemType == ColumnType.DOUBLE) {
+                value.flatView().appendPlainDoubleValue(addr, value.getFlatViewOffset(), value.getFlatViewLength());
+            } else {
+                throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        } else {
+            appendToMemRecursive(value, 0, 0, addr);
+        }
+    }
+
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -288,12 +336,59 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return value;
     }
 
+    /**
+     * Reads an array from compact format (see {@link #appendCompactPlainValue} for layout).
+     * <p>
+     * This is the counterpart to {@link #appendCompactPlainValue} and differs from {@link #getPlainValue}
+     * which expects an 8-byte size field and a type field in the layout.
+     *
+     * @param addr  the memory address to read from
+     * @param type  the encoded array type (provided from context)
+     * @param nDims the number of dimensions
+     * @param value the borrowed array to populate
+     * @return the populated array
+     */
+    public static BorrowedArray getCompactPlainValue(long addr, int type, int nDims, @NotNull BorrowedArray value) {
+        final int dataSize = Unsafe.getUnsafe().getInt(addr);
+        if (dataSize < 0) {
+            value.ofNull();
+            return value;
+        }
+
+        addr += Integer.BYTES;
+        int shapeLen = nDims * Integer.BYTES;
+        value.of(type, addr, addr + shapeLen, dataSize);
+        return value;
+    }
+
     public static long getPlainValueSize(long arrayAddress) {
         return Long.BYTES + Unsafe.getUnsafe().getLong(arrayAddress);
     }
 
     public static long getPlainValueSize(@NotNull ArrayView value) {
         return Long.BYTES + value.getVanillaMemoryLayoutSize();
+    }
+
+    /**
+     * Calculates the size needed to store an array in compact format.
+     * This is used by {@link io.questdb.griffin.engine.groupby.GroupByArraySink}.
+     * <p>
+     * The size includes:
+     * <ul>
+     *     <li>4 bytes for dataSize field</li>
+     *     <li>N * 4 bytes for shape (dimension lengths)</li>
+     *     <li>cardinality * elemSize bytes for array data</li>
+     * </ul>
+     * <p>
+     * This method uses {@link ArrayView#getCardinality()} which works for all array types.
+     *
+     * @param value the array to calculate size for (must not be null)
+     * @return the total size in bytes needed to store the array in compact format
+     */
+    public static long getCompactPlainValueSize(@NotNull ArrayView value) {
+        long elemSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(value.getType()));
+        long intBytes = Integer.BYTES;
+        return intBytes + value.getDimCount() * intBytes + value.getCardinality() * elemSize;
     }
 
     @Override

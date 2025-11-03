@@ -34,24 +34,24 @@ import org.junit.Test;
 public class SqlHintsTest extends AbstractTest {
 
     @Test
-    public void testAsOfJoinAvoidBinarySearchHint() throws Exception {
+    public void testAsOfJoinUseDrivebyCacheHint() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             QueryModel model = new QueryModel.QueryModelFactory().newInstance();
-            Assert.assertFalse(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
 
-            model.addHint(SqlHints.ASOF_JOIN_AVOID_BINARY_SEARCH_HINT, "tableA tableB");
-            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            model.addHint(SqlHints.ASOF_DRIVEBY_CACHE_HINT, "tableA tableB");
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
 
-            // case insensitive
-            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tablea", "tableb"));
-            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "TABLEA", "TABLEB"));
+            // case-insensitive
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tablea", "tableb"));
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEA", "TABLEB"));
 
             // different order
-            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableB", "tableA"));
-            Assert.assertTrue(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "TABLEB", "TABLEA"));
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "tableB", "tableA"));
+            Assert.assertTrue(SqlHints.hasAsOfDrivebyCacheHint(model, "TABLEB", "TABLEA"));
 
             model.clear();
-            Assert.assertFalse(SqlHints.hasAvoidAsOfJoinBinarySearchHint(model, "tableA", "tableB"));
+            Assert.assertFalse(SqlHints.hasAsOfDrivebyCacheHint(model, "tableA", "tableB"));
         });
     }
 
@@ -64,7 +64,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ASOF_INDEX_SEARCH_HINT, "tableA tableB");
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tableA", "tableB"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "tablea", "tableb"));
             Assert.assertTrue(SqlHints.hasAsOfIndexSearchHint(model, "TABLEA", "TABLEB"));
 
@@ -86,7 +86,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ASOF_LINEAR_SEARCH_HINT, "tableA tableB");
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tableA", "tableB"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "tablea", "tableb"));
             Assert.assertTrue(SqlHints.hasAsOfLinearSearchHint(model, "TABLEA", "TABLEB"));
 
@@ -108,7 +108,7 @@ public class SqlHintsTest extends AbstractTest {
             model.addHint(SqlHints.ENABLE_PRE_TOUCH_HINT, "myTable");
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "myTable"));
 
-            // case insensitive
+            // case-insensitive
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "mytable"));
             Assert.assertTrue(SqlHints.hasEnablePreTouchHint(model, "MYTABLE"));
 

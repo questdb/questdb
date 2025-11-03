@@ -1,0 +1,137 @@
+name: Build and Commit win64svc Service Wrapper
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: win64svc-${{ github.ref }}
+  cancel-in-progress: false
+# This workflow is triggered manually from the Actions tab.
+# It builds the win64svc Windows service wrapper from source using MinGW-w64
+# and commits it to the current branch, providing a full audit trail.
+#
+# The win64svc source is located at: win64svc/
+# The built binary will be placed at: core/src/main/bin/questdb.exe
+
+jobs:
+  build-win64svc:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get win64svc version info
+        id: version
+        shell: bash
+        run: |
+          set -eu
+          cd win64svc
+          # Get the git hash of the win64svc directory
+          WIN64SVC_SHA=$(git log -1 --format=%H --abbrev=8 -- .)
+          echo "sha=$WIN64SVC_SHA" >> "$GITHUB_OUTPUT"
+          echo "Building win64svc from commit: $WIN64SVC_SHA"
+
+      - name: Install MinGW-w64 UCRT toolchain via MSYS2
+        shell: bash
+        run: |
+          # Update package database
+          /c/msys64/usr/bin/pacman.exe -Sy --noconfirm
+
+          # Install MinGW-w64 UCRT GCC, CMake, and Ninja
+          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+
+      - name: Build win64svc with MinGW-w64 UCRT
+        shell: bash
+        run: |
+          export PATH="/c/msys64/ucrt64/bin:$PATH"
+          cd win64svc
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS='-static-libgcc -static-libstdc++ -static'
+          cmake --build .
+
+      - name: Verify built binary and Windows 7 compatibility
+        shell: bash
+        run: |
+          set -eu
+
+          # Check binary exists and get size
+          if [ ! -f "core/src/main/bin/questdb.exe" ]; then
+            echo "Error: Binary not found at core/src/main/bin/questdb.exe"
+            exit 1
+          fi
+
+          ls -lh core/src/main/bin/questdb.exe
+
+          # Check DLL dependencies using objdump
+          echo ""
+          echo "DLL Dependencies:"
+          objdump -p core/src/main/bin/questdb.exe | grep "DLL Name:" || echo "  (none - fully static)"
+
+          # Check PE subsystem version for Windows 7 compatibility
+          echo ""
+          echo "PE Header Information:"
+          objdump -p core/src/main/bin/questdb.exe | grep -i "subsystem" || true
+
+          # Extract and verify subsystem version
+          SUBSYS_MAJOR=$(objdump -p core/src/main/bin/questdb.exe | grep 'MajorSubsystemVersion' | awk '{print $2}' || echo "")
+          SUBSYS_MINOR=$(objdump -p core/src/main/bin/questdb.exe | grep 'MinorSubsystemVersion' | awk '{print $2}' || echo "")
+          if [ -n "$SUBSYS_MAJOR" ] && [ -n "$SUBSYS_MINOR" ]; then
+            echo "Subsystem version: $SUBSYS_MAJOR.$SUBSYS_MINOR"
+            if [ "$SUBSYS_MAJOR" -lt 6 ] || ([ "$SUBSYS_MAJOR" -eq 6 ] && [ "$SUBSYS_MINOR" -le 1 ]); then
+              echo "OK: Binary is compatible with Windows 7 (6.1) and later"
+            else
+              echo "Warning: Subsystem version may not support Windows 7"
+            fi
+          fi
+
+      - name: Commit and push changes
+        shell: bash
+        run: |
+          set -eu
+          # Configure git
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+          git add core/src/main/bin/questdb.exe
+
+          # Remove execute permission (Windows binary doesn't need +x in git)
+          git update-index --chmod=-x core/src/main/bin/questdb.exe
+
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          cat << EOF > commit_message.txt
+          chore(build): rebuild win64svc service wrapper for Windows [skip ci]
+
+          Built from win64svc commit: ${{ steps.version.outputs.sha }}
+          Build timestamp: ${TIMESTAMP}
+          Toolchain: MinGW-w64 on Windows Server 2022
+          GitHub Action: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          EOF
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit --author="${GITHUB_ACTOR} <${GITHUB_ACTOR}@users.noreply.github.com>" -F commit_message.txt
+
+          # Push to current branch
+          git push origin HEAD
+
+          echo "Successfully committed and pushed win64svc binary update"
+
+      - name: Summary
+        shell: bash
+        run: |
+          set -eu
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **win64svc service wrapper rebuilt and committed successfully**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ steps.version.outputs.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **File**: \`core/src/main/bin/questdb.exe\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Toolchain**: MinGW-w64 (GCC) on Windows Server 2022" >> $GITHUB_STEP_SUMMARY

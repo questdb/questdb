@@ -31,19 +31,28 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
+    public static final String ASOF_DRIVEBY_CACHE_HINT = "asof_driveby_cache";
+    public static final String ASOF_FAST_SEARCH_HINT = "asof_fast_search";
     public static final String ASOF_INDEX_SEARCH_HINT = "asof_index_search";
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static final String ASOF_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_asof_binary_search";
     public static final String ASOF_LINEAR_SEARCH_HINT = "asof_linear_search";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    public static final String LT_JOIN_AVOID_BINARY_SEARCH_HINT = "avoid_lt_binary_search";
+
+    public static boolean hasAsOfDrivebyCacheHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_DRIVEBY_CACHE_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfFastSearchHint(
+            @NotNull QueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_FAST_SEARCH_HINT, tableNameA, tableNameB);
+    }
 
     public static boolean hasAsOfIndexSearchHint(
             @NotNull QueryModel queryModel,
@@ -59,30 +68,6 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_LINEAR_SEARCH_HINT, tableNameA, tableNameB);
-    }
-
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static boolean hasAvoidAsOfJoinBinarySearchHint(
-            @NotNull QueryModel queryModel,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
-    ) {
-        return hasHintWithParams(queryModel, ASOF_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
-    }
-
-    /**
-     * Deprecated for removal, in favor of `asof_linear_search`.
-     */
-    @Deprecated(forRemoval = true)
-    public static boolean hasAvoidLtJoinBinarySearchHint(
-            @NotNull QueryModel queryModel,
-            @Nullable CharSequence tableNameA,
-            @Nullable CharSequence tableNameB
-    ) {
-        return hasHintWithParams(queryModel, LT_JOIN_AVOID_BINARY_SEARCH_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters

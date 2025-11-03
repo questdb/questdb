@@ -4,7 +4,7 @@ jobs:
     strategy:
       matrix:
         mac-griffin:
-          imageName: "macos-latest"
+          imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
@@ -13,7 +13,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo:
-          imageName: "macos-latest"
+          imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
@@ -23,7 +23,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo-fuzz:
-          imageName: "macos-latest"
+          imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
@@ -32,7 +32,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-pgwire:
-          imageName: "macos-latest"
+          imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
@@ -41,7 +41,7 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-other:
-          imageName: "macos-latest"
+          imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.17"
@@ -118,5 +118,6 @@ jobs:
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       DIFF_COVER_THRESHOLD_PCT: 50
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
     steps:
       - template: steps.yml

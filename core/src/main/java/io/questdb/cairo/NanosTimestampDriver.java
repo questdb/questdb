@@ -297,6 +297,23 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long from(long ts, byte unit) {
+        if (ts == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+
+        return switch (unit) {
+            case CommonUtils.TIMESTAMP_UNIT_NANOS -> ts;
+            case CommonUtils.TIMESTAMP_UNIT_MICROS -> Math.multiplyExact(ts, Nanos.MICRO_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_MILLIS -> Math.multiplyExact(ts, Nanos.MILLI_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_SECONDS -> Math.multiplyExact(ts, Nanos.SECOND_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_MINUTES -> Math.multiplyExact(ts, Nanos.MINUTE_NANOS);
+            case CommonUtils.TIMESTAMP_UNIT_HOURS -> Math.multiplyExact(ts, Nanos.HOUR_NANOS);
+            default -> throw new UnsupportedOperationException();
+        };
+    }
+
+    @Override
     public long fromDate(long date) {
         return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Nanos.MILLI_NANOS;
     }

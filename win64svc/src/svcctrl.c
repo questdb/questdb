@@ -24,19 +24,33 @@ int svcInstall(CONFIG *config) {
     }
 
     // put together service name
-    char szPath[MAX_PATH];
-    strcpy(szPath, "\"");
-    strcat(szPath, config->exeName);
-    strcat(szPath, "\"");
-    strcat(szPath, " service -d ");
-    strcat(szPath, config->dir);
-    if (config->forceCopy) {
-        strcat(szPath, " -f");
+    // calculate required buffer size first
+    int pathLen = snprintf(NULL, 0, "\"%s\" service -d %s%s -j \"%s\"",
+                           config->exeName,
+                           config->dir,
+                           config->forceCopy ? " -f" : "",
+                           config->javaExec);
+
+    if (pathLen < 0) {
+        eprintf("Failed to calculate service command path length\n");
+        CloseServiceHandle(hSCM);
+        return E_PATH_TOO_LONG;
     }
-    strcat(szPath, " -j ");
-    strcat(szPath, "\"");
-    strcat(szPath, config->javaExec);
-    strcat(szPath, "\"");
+
+    // allocate buffer with exact size needed (+1 for null terminator)
+    char *szPath = malloc((pathLen + 1) * sizeof(char));
+    if (szPath == NULL) {
+        eprintf("Failed to allocate memory for service command path\n");
+        CloseServiceHandle(hSCM);
+        return E_CREATE_SERVICE;
+    }
+
+    // Build the command string safely
+    snprintf(szPath, pathLen + 1, "\"%s\" service -d %s%s -j \"%s\"",
+             config->exeName,
+             config->dir,
+             config->forceCopy ? " -f" : "",
+             config->javaExec);
 
     // Create the service
 
@@ -62,6 +76,7 @@ int svcInstall(CONFIG *config) {
         } else {
             eprintf("Failed to create service %s (%lu)\n", config->serviceName, GetLastError());
         }
+        free(szPath);
         CloseServiceHandle(hSCM);
         return E_CREATE_SERVICE;
     }
@@ -71,6 +86,7 @@ int svcInstall(CONFIG *config) {
     ChangeServiceConfig2(hService, SERVICE_CONFIG_DESCRIPTION, &description);
 
     eprintf("Service installed: %s\n", config->serviceName);
+    free(szPath);
     CloseServiceHandle(hService);
     CloseServiceHandle(hSCM);
 
