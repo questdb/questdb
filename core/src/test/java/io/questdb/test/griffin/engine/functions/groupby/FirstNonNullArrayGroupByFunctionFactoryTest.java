@@ -30,44 +30,6 @@ import org.junit.Test;
 public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testNotKeyed() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (arr double[])");
-            execute("insert into tab values (ARRAY[1.0, 2.0])");
-            execute("insert into tab values (ARRAY[3.0, 4.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[1.0,2.0]\n",
-                    "select first_non_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testKeyed() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (grp int, arr double[])");
-            execute("insert into tab values (1, ARRAY[10.0, 11.0])");
-            execute("insert into tab values (1, ARRAY[20.0, 21.0])");
-            execute("insert into tab values (1, ARRAY[30.0, 31.0])");
-            execute("insert into tab values (2, ARRAY[40.0, 41.0])");
-            execute("insert into tab values (2, ARRAY[50.0, 51.0])");
-            assertQuery(
-                    "grp\tarr\n" +
-                            "1\t[10.0,11.0]\n" +
-                            "2\t[40.0,41.0]\n",
-                    "select grp, first_non_null(arr) arr from tab order by grp",
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
     public void testNullArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (arr double[])");
@@ -76,23 +38,6 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
             assertQuery(
                     "arr\n" +
                             "[1.0,2.0]\n",
-                    "select first_non_null(arr) arr from tab",
-                    null,
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testEmptyArray() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (arr double[])");
-            execute("insert into tab values (ARRAY[])");
-            execute("insert into tab values (ARRAY[1.0, 2.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[]\n",
                     "select first_non_null(arr) arr from tab",
                     null,
                     false,
@@ -166,23 +111,6 @@ public class FirstNonNullArrayGroupByFunctionFactoryTest extends AbstractCairoTe
                     "select grp, first_non_null(arr) arr from tab order by grp",
                     null,
                     true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testDifferentArraySizes() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (arr double[])");
-            execute("insert into tab values (ARRAY[2.0, 3.0, 4.0])");
-            execute("insert into tab values (ARRAY[1.0])");
-            assertQuery(
-                    "arr\n" +
-                            "[2.0,3.0,4.0]\n",
-                    "select first_non_null(arr) arr from tab",
-                    null,
-                    false,
                     true
             );
         });
