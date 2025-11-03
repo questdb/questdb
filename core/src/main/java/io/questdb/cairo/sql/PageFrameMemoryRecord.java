@@ -32,7 +32,19 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectByteSequenceView;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
@@ -70,7 +82,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private long rowIndex;
     private boolean stableStrings;
     private SymbolTableSource symbolTableSource;
-    private IntList projectionIndexes;
 
     public PageFrameMemoryRecord(byte letter) {
         this.letter = letter;
@@ -88,7 +99,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = other.auxPageSizes;
         this.stableStrings = other.stableStrings;
         this.letter = letter;
-        this.projectionIndexes = other.projectionIndexes;
     }
 
     @Override
@@ -100,7 +110,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
-        projectionIndexes = null;
     }
 
     @Override
@@ -113,9 +122,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public ArrayView getArray(int columnIndex, int columnType) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final BorrowedArray array = borrowedArray(columnIndex);
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
@@ -138,9 +144,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public BinarySequence getBin(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long dataPageAddress = pageAddresses.getQuick(columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
@@ -163,9 +166,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getBinLen(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long dataPageAddress = pageAddresses.getQuick(columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
@@ -196,9 +196,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public boolean getBool(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
@@ -208,9 +205,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public byte getByte(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
@@ -220,9 +214,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public char getChar(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
@@ -232,9 +223,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public double getDouble(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
@@ -244,9 +232,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public float getFloat(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
@@ -260,9 +245,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public byte getGeoByte(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
@@ -272,9 +254,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getGeoInt(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -284,9 +263,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getGeoLong(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
@@ -296,9 +272,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public short getGeoShort(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
@@ -308,9 +281,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getIPv4(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -320,9 +290,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getInt(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
@@ -337,9 +304,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
@@ -349,9 +313,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong128Hi(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
@@ -361,9 +322,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getLong128Lo(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
@@ -373,9 +331,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public void getLong256(int columnIndex, CharSink<?> sink) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             getLong256(address + rowIndex * Long256.BYTES, sink);
@@ -414,9 +369,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public short getShort(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
@@ -436,9 +388,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getStrLen(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long dataPageAddress = pageAddresses.getQuick(columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
@@ -469,9 +418,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public CharSequence getSymA(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         int key = NullMemoryCMR.INSTANCE.getInt(0);
         if (address != 0) {
@@ -482,9 +428,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public CharSequence getSymB(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long address = pageAddresses.getQuick(columnIndex);
         final int key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         return getSymbolTable(columnIndex).valueBOf(key);
@@ -507,9 +450,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public int getVarcharSize(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
             return VarcharTypeDriver.getValueSize(auxPageAddress, rowIndex);
@@ -529,7 +469,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
-        this.projectionIndexes = frameMemory.getProjectionIndexes();
     }
 
     @Override
@@ -547,9 +486,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull BorrowedArray borrowedArray(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         BorrowedArray array = arrayBuffers.getQuiet(columnIndex);
         if (array != null) {
             return array;
@@ -559,9 +495,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull DirectByteSequenceView bsView(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         DirectByteSequenceView view = bsViews.getQuiet(columnIndex);
         if (view != null) {
             return view;
@@ -571,9 +504,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         DirectString view = csViewsA.getQuiet(columnIndex);
         if (view != null) {
             return view;
@@ -583,9 +513,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull DirectString csViewB(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         DirectString view = csViewsB.getQuiet(columnIndex);
         if (view != null) {
             return view;
@@ -614,9 +541,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private void getLong256(int columnIndex, Long256Acceptor sink) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long columnAddress = pageAddresses.getQuick(columnIndex);
         if (columnAddress != 0) {
             sink.fromAddress(columnAddress + (rowIndex << 5));
@@ -649,9 +573,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private CharSequence getStr0(int columnIndex, DirectString csView) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long dataPageAddress = pageAddresses.getQuick(columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
@@ -683,9 +604,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Nullable
     private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
             final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
@@ -704,9 +622,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull Long256Impl long256A(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         Long256Impl long256 = longs256A.getQuiet(columnIndex);
         if (long256 != null) {
             return long256;
@@ -716,9 +631,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull Long256Impl long256B(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         Long256Impl long256 = longs256B.getQuiet(columnIndex);
         if (long256 != null) {
             return long256;
@@ -728,9 +640,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
         if (view != null) {
             return view;
@@ -740,9 +649,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
-        if (projectionIndexes != null) {
-            columnIndex = projectionIndexes.getQuick(columnIndex);
-        }
         Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
         if (view != null) {
             return view;
@@ -758,8 +664,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             LongList pageAddresses,
             LongList auxPageAddresses,
             LongList pageLimits,
-            LongList auxPageLimits,
-            @Nullable IntList projectionIndexes
+            LongList auxPageLimits
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
@@ -769,6 +674,5 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageAddresses = auxPageAddresses;
         this.pageSizes = pageLimits;
         this.auxPageSizes = auxPageLimits;
-        this.projectionIndexes = projectionIndexes;
     }
 }

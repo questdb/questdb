@@ -63,14 +63,12 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private long fileSize = 0;
     private long rowCount;
     private int rowGroupCount;
-    private final RecordMetadata projection;
 
-    public ReadParquetPageFrameCursor(FilesFacade ff, RecordMetadata metadata, RecordMetadata projection) {
+    public ReadParquetPageFrameCursor(FilesFacade ff, RecordMetadata metadata) {
         this.ff = ff;
         this.metadata = metadata;
         this.decoder = new PartitionDecoder();
         this.columnIndexes = new IntList();
-        this.projection = projection;
     }
 
     @Override
@@ -135,10 +133,8 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         columnIndexes.clear();
-        for (int i = 0, n = projection.getColumnCount(); i < n; i++) {
-            CharSequence projectionName = projection.getColumnName(i);
-            int parquetIndex = metadata.getColumnIndex(projectionName);
-            columnIndexes.add(parquetIndex);
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            columnIndexes.add(i);
         }
         this.rowCount = decoder.metadata().getRowCount();
         this.rowGroupCount = decoder.metadata().getRowGroupCount();

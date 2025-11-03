@@ -39,7 +39,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Provides addresses for page frames in both native and Parquet formats.
@@ -131,8 +130,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getPageAddresses(frameIndex),
                     addressCache.getAuxPageAddresses(frameIndex),
                     addressCache.getPageSizes(frameIndex),
-                    addressCache.getAuxPageSizes(frameIndex),
-                    addressCache.getColumnIndexes()
+                    addressCache.getAuxPageSizes(frameIndex)
             );
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
@@ -150,8 +148,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.pageAddresses,
                     parquetBuffers.auxPageAddresses,
                     parquetBuffers.pageSizes,
-                    parquetBuffers.auxPageSizes,
-                    addressCache.getColumnIndexes()
+                    parquetBuffers.auxPageSizes
             );
         }
     }
@@ -176,7 +173,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses(frameIndex);
             frameMemory.pageSizes = addressCache.getPageSizes(frameIndex);
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
-            frameMemory.projectionIndexes = addressCache.getColumnIndexes();
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
@@ -189,7 +185,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-            frameMemory.projectionIndexes = fromParquetColumnIndexes;
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -301,10 +296,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         parquetColumns.clear();
         fromParquetColumnIndexes.clear();
         fromParquetColumnIndexes.setAll(parquetMetadata.getColumnCount(), -1);
-        for (int i = 0, n = addressCache.getColumnIndexes().size(); i < n; i++) {
+        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
             final int columnIndex = addressCache.getColumnIndexes().getQuick(i);
             final int parquetColumnIndex = toParquetColumnIndexes.getQuick(columnIndex);
-            final int columnType = addressCache.getColumnTypes().getQuick(columnIndex);
+            final int columnType = addressCache.getColumnTypes().getQuick(i);
             parquetColumns.add(parquetColumnIndex);
             fromParquetColumnIndexes.setQuick(parquetColumnIndex, i);
             parquetColumns.add(columnType);
@@ -318,7 +313,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int frameIndex = -1;
         private LongList pageAddresses;
         private LongList pageSizes;
-        private IntList projectionIndexes;
 
         @Override
         public void clear() {
@@ -328,17 +322,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             auxPageAddresses = null;
             pageSizes = null;
             auxPageSizes = null;
-            projectionIndexes = null;
-        }
-
-        @Override
-        public @Nullable IntList getProjectionIndexes() {
-            return projectionIndexes;
-        }
-
-        @Override
-        public int getProjectionIndex(int columnIndex) {
-            return projectionIndexes.get(columnIndex);
         }
 
         @Override
