@@ -845,8 +845,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     leftTableTimestampType.getTypeName()
             );
 
-            executeWithRewriteTimestamp(
-                    "create table market_data as (\n" +
+            executeWithRewriteTimestamp("create table market_data as (\n" +
                             "  select \n" +
                             "    concat('sym_', rnd_int(0, 10, 0))::symbol as market_data_symbol,\n" +
                             "    rnd_double() bid,\n" +
@@ -871,8 +870,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String queryWithLinearHint = "select /*+ asof_linear(orders md) */ " + queryBody;
 
             // plan with the linear search hint should NOT use the FAST ASOF
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
+            assertQueryNoLeakCheck("QUERY PLAN\n" +
                             "SelectedRecord\n" +
                             "    Filter filter: oRdERS.price<MD.bid\n" +
                             "        AsOf Join\n" +
@@ -1396,18 +1394,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
 
-            String expected =
-                    "id\tts\tid1\tts1\n" +
-                            "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
-                            "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
-                            "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
-                            "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
-                            "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
-                            "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
-                            "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
-                            "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
-                            "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
-                            "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
+            String expected = "id\tts\tid1\tts1\n" +
+                    "1\t1970-01-01T00:00:01.000001" + leftSuffix + "\t1\t1970-01-01T00:00:00.000001" + rightSuffix + "\n" +
+                    "2\t1970-01-01T00:00:02.000002" + leftSuffix + "\tnull\t\n" +
+                    "3\t1970-01-01T00:00:03.000003" + leftSuffix + "\tnull\t\n" +
+                    "4\t1970-01-01T00:00:04.000004" + leftSuffix + "\tnull\t\n" +
+                    "5\t1970-01-01T00:00:05.000005" + leftSuffix + "\tnull\t\n" +
+                    "6\t1970-01-01T00:00:06.000006" + leftSuffix + "\tnull\t\n" +
+                    "7\t1970-01-01T00:00:07.000007" + leftSuffix + "\tnull\t\n" +
+                    "8\t1970-01-01T00:00:08.000008" + leftSuffix + "\tnull\t\n" +
+                    "9\t1970-01-01T00:00:09.000009" + leftSuffix + "\tnull\t\n" +
+                    "10\t1970-01-01T00:00:10.000010" + leftSuffix + "\tnull\t\n";
 
             String query = "SELECT * FROM t1 ASOF JOIN t2 ON id TOLERANCE 1000000U;";
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
@@ -1994,15 +1991,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // ASOF JOIN
             String queryBody = "* FROM x ASOF JOIN y ON(sym)";
             query = "SELECT " + queryBody;
-            expected =
-                    "sym\tts\tsym1\tts1\n" +
-                            "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
-                            "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
-                            "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t😊\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
-                            "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
-                            "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
-                            "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "😊\t2000-01-01T00:00:00.000000" + leftSuffix + "\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000" + leftSuffix + "\t\t\n" +
+                    "😊\t2000-01-01T00:00:02.000000" + leftSuffix + "\t😊\t2000-01-01T00:00:02.000000" + rightSuffix + "\n" +
+                    "\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "не-ASCII\t2000-01-01T00:00:03.000000" + leftSuffix + "\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000" + leftSuffix + "\t2\t2000-01-01T00:00:03.000000" + rightSuffix + "\n" +
+                    "4\t2000-01-01T00:00:04.000000" + leftSuffix + "\t4\t2000-01-01T00:00:01.000000" + rightSuffix + "\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             String hintedQuery = "SELECT /*+ asof_index_search(x y) */ " + queryBody;
