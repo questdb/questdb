@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2024 QuestDB
+ *  Copyright (c) 2019-2025 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,128 +28,85 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByArraySink;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class FirstArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
-    protected final Function arg;
-    protected final GroupByArraySink sink;
-    protected int valueIndex;
+public class FirstNonNullArrayGroupByFunction extends FirstArrayGroupByFunction {
 
-    public FirstArrayGroupByFunction(@NotNull Function arg) {
-        this.arg = arg;
-        this.type = arg.getType();
-        this.sink = new GroupByArraySink(type);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(arg);
-    }
-
-    @Override
-    public void clear() {
-        sink.of(0);
+    public FirstNonNullArrayGroupByFunction(@NotNull Function arg) {
+        super(arg);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, rowId);
-        sink.of(0);
-        sink.put(arg.getArray(record));
-        mapValue.putLong(valueIndex + 1, sink.ptr());
+        ArrayView array = arg.getArray(record);
+        if (array == null || array.isNull()) {
+            mapValue.putLong(valueIndex + 1, 0);
+            mapValue.putBool(valueIndex + 2, true);
+        } else {
+            sink.of(0);
+            sink.put(array);
+            mapValue.putLong(valueIndex + 1, sink.ptr());
+            mapValue.putBool(valueIndex + 2, false);
+        }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
+        if (mapValue.getBool(valueIndex + 2)) {
+            ArrayView array = arg.getArray(record);
+            if (array != null && !array.isNull()) {
+                mapValue.putLong(valueIndex, rowId);
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr);
+                sink.put(array);
+                mapValue.putLong(valueIndex + 1, sink.ptr());
+                mapValue.putBool(valueIndex + 2, false);
+            }
+        }
     }
 
     @Override
     public ArrayView getArray(Record rec) {
-        long ptr = rec.getLong(valueIndex + 1);
-        sink.of(ptr);
-        ArrayView array = sink.getArray();
-        if (array == null) {
+        if (rec.getBool(valueIndex + 2)) {
             return ArrayConstant.NULL;
         }
-        return array;
+        return super.getArray(rec);
     }
 
     @Override
     public String getName() {
-        return "first";
-    }
-
-    @Override
-    public int getValueIndex() {
-        return valueIndex;
-    }
-
-    @Override
-    public void initValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+        return "first_non_null";
     }
 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);    // row id
-        columnTypes.add(ColumnType.LONG);    // memory pointer
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public boolean isScalar() {
-        return false;
-    }
-
-    @Override
-    public boolean isThreadSafe() {
-        return false;
+        super.initValueTypes(columnTypes);
+        columnTypes.add(ColumnType.BOOLEAN);
     }
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
+        if (srcValue.getBool(valueIndex + 2)) {
+            return;
+        }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+            destValue.putBool(valueIndex + 2, false);
         }
-    }
-
-    @Override
-    public void setAllocator(GroupByAllocator allocator) {
-        sink.setAllocator(allocator);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
-    }
-
-    @Override
-    public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
+        mapValue.putBool(valueIndex + 2, true);
     }
 }
