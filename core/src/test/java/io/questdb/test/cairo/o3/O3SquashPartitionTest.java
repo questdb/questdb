@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -666,7 +665,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     private int getSquashCount(String tableName, String partitionDate) {
         try (TableReader reader = getReader(tableName)) {
-            long timestamp = IntervalUtils.parseFloorPartialTimestamp(partitionDate);
+            long timestamp = MicrosTimestampDriver.floor(partitionDate);
             int partitionIndex = reader.getPartitionIndexByTimestamp(timestamp);
             if (partitionIndex >= 0) {
                 return reader.getTxFile().getPartitionSquashCount(partitionIndex);
