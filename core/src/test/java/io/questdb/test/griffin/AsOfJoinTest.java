@@ -1670,7 +1670,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // Verify the plan uses Memoized scan
             sink.clear();
             printSql("EXPLAIN " + query);
-            TestUtils.assertContains(sink, "AsOf Join Dense");
+            TestUtils.assertContains(sink, "AsOf Join Memoized");
         });
     }
 
@@ -3581,13 +3581,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
             );
 
             String queryBody = "avg(bid) FROM t1 t ASOF JOIN t2 p on (t.symbol=p.sym)";
-            var queryWithLinearHint = "SELECT /*+ ASOF_LINEAR_SEARCH(t p) */ " + queryBody;
+            var queryWithLinearHint = "SELECT /*+ ASOF_LINEAR(t p) */ " + queryBody;
             var queryWithoutHint = "SELECT " + queryBody;
 
             printSql("EXPLAIN " + queryWithLinearHint);
             TestUtils.assertContains(sink, "AsOf Join Single Symbol");
             printSql("EXPLAIN " + queryWithoutHint);
-            TestUtils.assertContains(sink, "AsOf Join Memoized");
+            TestUtils.assertContains(sink, "AsOf Join Fast");
 
             assertQueryNoLeakCheck(
                     """
