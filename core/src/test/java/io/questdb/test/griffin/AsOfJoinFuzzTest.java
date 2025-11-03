@@ -266,9 +266,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String hint = switch (hintType) {
-            case FAST_SEARCH -> " /*+ ASOF_FAST_SEARCH(t1 t2) */ ";
-            case INDEX_SEARCH -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
-            case LINEAR_SEARCH -> " /*+ ASOF_LINEAR_SEARCH(t1 t2) */ ";
+            case MEMOIZED -> " /*+ ASOF_MEMOIZED(t1 t2) */ ";
+            case INDEX -> " /*+ ASOF_INDEX_SEARCH(t1 t2) */ ";
+            case LINEAR -> " /*+ ASOF_LINEAR(t1 t2) */ ";
             case DRIVEBY_CACHING -> " /*+ ASOF_DRIVEBY_CACHE(t1 t2) */ ";
             default -> "";
         };
@@ -294,7 +294,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         sink.clear();
         printSql("EXPLAIN " + query, false);
-        if (hintType == HintType.LINEAR_SEARCH) {
+        if (hintType == HintType.LINEAR) {
             TestUtils.assertNotContains(sink, "AsOf Join Indexed Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Fast Scan");
             TestUtils.assertNotContains(sink, "AsOf Join Memoized Scan");
@@ -303,9 +303,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             TestUtils.assertContains(sink, "AsOf Join Fast Scan");
         } else if (joinType == JoinType.ASOF && numIntervalsOpt != NumIntervals.MANY && !exerciseFilters) {
             String algo = switch (hintType) {
-                case INDEX_SEARCH -> "Indexed";
-                case FAST_SEARCH -> "Fast";
-                default -> "Memoized";
+                case INDEX -> "Indexed";
+                case MEMOIZED -> "Memoized";
+                default -> "Fast";
             };
             TestUtils.assertContains(sink, "AsOf Join " + algo + " Scan");
         }
@@ -418,9 +418,9 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
     private enum HintType {
         NONE,
-        INDEX_SEARCH,
-        LINEAR_SEARCH,
-        FAST_SEARCH,
+        INDEX,
+        LINEAR,
+        MEMOIZED,
         DRIVEBY_CACHING
     }
 
