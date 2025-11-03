@@ -1894,26 +1894,4 @@ public class CairoEngine implements Closeable, WriterSource {
     protected void restoreBackup() {
         // Hook for backup functionality. See enterprise subclass.
     }
-
-    private class EngineMaintenanceJob extends SynchronizedJob {
-
-        private final long checkInterval;
-        private final MicrosecondClock clock;
-        private long last = 0;
-
-        public EngineMaintenanceJob(CairoConfiguration configuration) {
-            this.clock = configuration.getMicrosecondClock();
-            this.checkInterval = configuration.getIdleCheckInterval() * 1000;
-        }
-
-        @Override
-        protected boolean runSerially() {
-            long t = clock.getTicks();
-            if (last + checkInterval < t) {
-                last = t;
-                return releaseInactive();
-            }
-            return false;
-        }
-    }
 }

@@ -10017,7 +10017,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
-        setPathForNativePartition(other.trimTo(pathSize), partitionBy, targetPartition, targetPartitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
         other.concat(TableUtils.PARTITION_LAST_SQUASH_TIMESTAMP_FILE);
         long squashCounterFileFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
         Unsafe.getUnsafe().putLong(tempMem16b, configuration.getMicrosecondClock().getTicks());
