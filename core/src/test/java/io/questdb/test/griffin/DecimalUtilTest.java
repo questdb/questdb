@@ -518,142 +518,142 @@ public class DecimalUtilTest extends AbstractCairoTest {
 
     @Test
     public void testLoadDecimalsFromByteConstant() {
-        assertLoadDecimals("0", ByteConstant.newInstance((byte) 0));
-        assertLoadDecimals("127", ByteConstant.newInstance((byte) 127));
-        assertLoadDecimals("-128", ByteConstant.newInstance((byte) -128));
+        assertLoadDecimal256("0", ByteConstant.newInstance((byte) 0));
+        assertLoadDecimal256("127", ByteConstant.newInstance((byte) 127));
+        assertLoadDecimal256("-128", ByteConstant.newInstance((byte) -128));
     }
 
     @Test
     public void testLoadDecimalsFromDateConstant() {
-        assertLoadDecimals("0", DateConstant.newInstance(0));
-        assertLoadDecimals("1234567890", DateConstant.newInstance(1234567890));
-        assertLoadDecimals("9223372036854775807", DateConstant.newInstance(Long.MAX_VALUE));
-        assertLoadDecimals("-9223372036854775807", DateConstant.newInstance(Long.MIN_VALUE + 1));
+        assertLoadDecimal256("0", DateConstant.newInstance(0));
+        assertLoadDecimal256("1234567890", DateConstant.newInstance(1234567890));
+        assertLoadDecimal256("9223372036854775807", DateConstant.newInstance(Long.MAX_VALUE));
+        assertLoadDecimal256("-9223372036854775807", DateConstant.newInstance(Long.MIN_VALUE + 1));
     }
 
     @Test
     public void testLoadDecimalsFromDateConstantNull() {
-        assertLoadDecimals("", DateConstant.NULL);
+        assertLoadDecimal256("", DateConstant.NULL);
     }
 
     @Test
     public void testLoadDecimalsFromDecimal128Constant() {
         // Decimal128: 19-38 digit precision
-        assertLoadDecimals("0", new Decimal128Constant(0L, 0L, ColumnType.getDecimalType(38, 0)));
-        assertLoadDecimals("1234567890123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 0)));
-        assertLoadDecimals("-1234567890123456789", new Decimal128Constant(-1L, -1234567890123456789L, ColumnType.getDecimalType(20, 0)));
-        assertLoadDecimals("1234567890.123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 9)));
-        assertLoadDecimals("", new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(38, 0)));
+        assertLoadDecimal256("0", new Decimal128Constant(0L, 0L, ColumnType.getDecimalType(38, 0)));
+        assertLoadDecimal256("1234567890123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 0)));
+        assertLoadDecimal256("-1234567890123456789", new Decimal128Constant(-1L, -1234567890123456789L, ColumnType.getDecimalType(20, 0)));
+        assertLoadDecimal256("1234567890.123456789", new Decimal128Constant(0L, 1234567890123456789L, ColumnType.getDecimalType(38, 9)));
+        assertLoadDecimal256("", new Decimal128Constant(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL, ColumnType.getDecimalType(38, 0)));
     }
 
     @Test
     public void testLoadDecimalsFromDecimal16Constant() {
-        assertLoadDecimals("0", new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 0)));
-        assertLoadDecimals("9999", new Decimal16Constant((short) 9999, ColumnType.getDecimalType(4, 0)));
-        assertLoadDecimals("-9999", new Decimal16Constant((short) -9999, ColumnType.getDecimalType(4, 0)));
-        assertLoadDecimals("123.4", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 1)));
-        assertLoadDecimals("1.234", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 3)));
-        assertLoadDecimals("", new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(3, 0)));
+        assertLoadDecimal256("0", new Decimal16Constant((short) 0, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimal256("9999", new Decimal16Constant((short) 9999, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimal256("-9999", new Decimal16Constant((short) -9999, ColumnType.getDecimalType(4, 0)));
+        assertLoadDecimal256("123.4", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 1)));
+        assertLoadDecimal256("1.234", new Decimal16Constant((short) 1234, ColumnType.getDecimalType(4, 3)));
+        assertLoadDecimal256("", new Decimal16Constant(Decimals.DECIMAL16_NULL, ColumnType.getDecimalType(3, 0)));
     }
 
     @Test
     public void testLoadDecimalsFromDecimal256Constant() {
         // Decimal256: 39-76 digit precision
-        assertLoadDecimals("0", new Decimal256Constant(0L, 0L, 0L, 0L, ColumnType.getDecimalType(76, 0)));
-        assertLoadDecimals("1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 0)));
-        assertLoadDecimals("-1234567890123456789", new Decimal256Constant(-1L, -1L, -1L, -1234567890123456789L, ColumnType.getDecimalType(40, 0)));
-        assertLoadDecimals("0.1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 19)));
-        assertLoadDecimals("", new Decimal256Constant(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, ColumnType.getDecimalType(76, 0)));
+        assertLoadDecimal256("0", new Decimal256Constant(0L, 0L, 0L, 0L, ColumnType.getDecimalType(76, 0)));
+        assertLoadDecimal256("1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 0)));
+        assertLoadDecimal256("-1234567890123456789", new Decimal256Constant(-1L, -1L, -1L, -1234567890123456789L, ColumnType.getDecimalType(40, 0)));
+        assertLoadDecimal256("0.1234567890123456789", new Decimal256Constant(0L, 0L, 0L, 1234567890123456789L, ColumnType.getDecimalType(40, 19)));
+        assertLoadDecimal256("", new Decimal256Constant(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL, ColumnType.getDecimalType(76, 0)));
     }
 
     @Test
     public void testLoadDecimalsFromDecimal32Constant() {
-        assertLoadDecimals("0", new Decimal32Constant(0, ColumnType.getDecimalType(9, 0)));
-        assertLoadDecimals("123456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 0)));
-        assertLoadDecimals("-123456789", new Decimal32Constant(-123456789, ColumnType.getDecimalType(9, 0)));
-        assertLoadDecimals("12345.6789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 4)));
-        assertLoadDecimals("1.23456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 8)));
-        assertLoadDecimals("", new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimal256("0", new Decimal32Constant(0, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimal256("123456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimal256("-123456789", new Decimal32Constant(-123456789, ColumnType.getDecimalType(9, 0)));
+        assertLoadDecimal256("12345.6789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 4)));
+        assertLoadDecimal256("1.23456789", new Decimal32Constant(123456789, ColumnType.getDecimalType(9, 8)));
+        assertLoadDecimal256("", new Decimal32Constant(Decimals.DECIMAL32_NULL, ColumnType.getDecimalType(9, 0)));
     }
 
     @Test
     public void testLoadDecimalsFromDecimal64Constant() {
-        assertLoadDecimals("0", new Decimal64Constant(0L, ColumnType.getDecimalType(18, 0)));
-        assertLoadDecimals("123456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 0)));
-        assertLoadDecimals("-123456789012345678", new Decimal64Constant(-123456789012345678L, ColumnType.getDecimalType(18, 0)));
-        assertLoadDecimals("12345678.9012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 10)));
-        assertLoadDecimals("1.23456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 17)));
-        assertLoadDecimals("", new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimal256("0", new Decimal64Constant(0L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimal256("123456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimal256("-123456789012345678", new Decimal64Constant(-123456789012345678L, ColumnType.getDecimalType(18, 0)));
+        assertLoadDecimal256("12345678.9012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 10)));
+        assertLoadDecimal256("1.23456789012345678", new Decimal64Constant(123456789012345678L, ColumnType.getDecimalType(18, 17)));
+        assertLoadDecimal256("", new Decimal64Constant(Decimals.DECIMAL64_NULL, ColumnType.getDecimalType(18, 0)));
     }
 
     @Test
     public void testLoadDecimalsFromDecimal8Constant() {
-        assertLoadDecimals("0", new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 0)));
-        assertLoadDecimals("9", new Decimal8Constant((byte) 9, ColumnType.getDecimalType(1, 0)));
-        assertLoadDecimals("99", new Decimal8Constant((byte) 99, ColumnType.getDecimalType(2, 0)));
-        assertLoadDecimals("-99", new Decimal8Constant((byte) -99, ColumnType.getDecimalType(2, 0)));
-        assertLoadDecimals("1.2", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 1)));
-        assertLoadDecimals("0.12", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 2)));
-        assertLoadDecimals("", new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)));
+        assertLoadDecimal256("0", new Decimal8Constant((byte) 0, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimal256("9", new Decimal8Constant((byte) 9, ColumnType.getDecimalType(1, 0)));
+        assertLoadDecimal256("99", new Decimal8Constant((byte) 99, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimal256("-99", new Decimal8Constant((byte) -99, ColumnType.getDecimalType(2, 0)));
+        assertLoadDecimal256("1.2", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 1)));
+        assertLoadDecimal256("0.12", new Decimal8Constant((byte) 12, ColumnType.getDecimalType(2, 2)));
+        assertLoadDecimal256("", new Decimal8Constant(Decimals.DECIMAL8_NULL, ColumnType.getDecimalType(2, 2)));
     }
 
     @Test
     public void testLoadDecimalsFromIntConstant() {
-        assertLoadDecimals("123", IntConstant.newInstance(123));
-        assertLoadDecimals("987654321", IntConstant.newInstance(987654321));
-        assertLoadDecimals("-3630", IntConstant.newInstance(-3630));
+        assertLoadDecimal256("123", IntConstant.newInstance(123));
+        assertLoadDecimal256("987654321", IntConstant.newInstance(987654321));
+        assertLoadDecimal256("-3630", IntConstant.newInstance(-3630));
     }
 
     @Test
     public void testLoadDecimalsFromIntConstantNull() {
-        assertLoadDecimals("", IntConstant.NULL);
+        assertLoadDecimal256("", IntConstant.NULL);
     }
 
     @Test
     public void testLoadDecimalsFromLongConstant() {
-        assertLoadDecimals("0", LongConstant.newInstance(0));
-        assertLoadDecimals("1234567890", LongConstant.newInstance(1234567890));
-        assertLoadDecimals("9223372036854775807", LongConstant.newInstance(Long.MAX_VALUE));
-        assertLoadDecimals("-9223372036854775807", LongConstant.newInstance(Long.MIN_VALUE + 1));
+        assertLoadDecimal256("0", LongConstant.newInstance(0));
+        assertLoadDecimal256("1234567890", LongConstant.newInstance(1234567890));
+        assertLoadDecimal256("9223372036854775807", LongConstant.newInstance(Long.MAX_VALUE));
+        assertLoadDecimal256("-9223372036854775807", LongConstant.newInstance(Long.MIN_VALUE + 1));
     }
 
     @Test
     public void testLoadDecimalsFromLongConstantNull() {
-        assertLoadDecimals("", LongConstant.NULL);
+        assertLoadDecimal256("", LongConstant.NULL);
     }
 
     @Test
     public void testLoadDecimalsFromShortConstant() {
-        assertLoadDecimals("0", ShortConstant.newInstance((short) 0));
-        assertLoadDecimals("12345", ShortConstant.newInstance((short) 12345));
-        assertLoadDecimals("32767", ShortConstant.newInstance(Short.MAX_VALUE));
-        assertLoadDecimals("-32768", ShortConstant.newInstance(Short.MIN_VALUE));
+        assertLoadDecimal256("0", ShortConstant.newInstance((short) 0));
+        assertLoadDecimal256("12345", ShortConstant.newInstance((short) 12345));
+        assertLoadDecimal256("32767", ShortConstant.newInstance(Short.MAX_VALUE));
+        assertLoadDecimal256("-32768", ShortConstant.newInstance(Short.MIN_VALUE));
     }
 
     @Test
     public void testLoadDecimalsFromTimestampMicroConstant() {
-        assertLoadDecimals("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_MICRO));
-        assertLoadDecimals("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_MICRO));
-        assertLoadDecimals("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_MICRO));
-        assertLoadDecimals("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimal256("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimal256("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimal256("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_MICRO));
+        assertLoadDecimal256("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_MICRO));
     }
 
     @Test
     public void testLoadDecimalsFromTimestampMicroConstantNull() {
-        assertLoadDecimals("", TimestampConstant.TIMESTAMP_MICRO_NULL);
+        assertLoadDecimal256("", TimestampConstant.TIMESTAMP_MICRO_NULL);
     }
 
     @Test
     public void testLoadDecimalsFromTimestampNanoConstant() {
-        assertLoadDecimals("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_NANO));
-        assertLoadDecimals("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_NANO));
-        assertLoadDecimals("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_NANO));
-        assertLoadDecimals("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimal256("0", TimestampConstant.newInstance(0, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimal256("1234567890", TimestampConstant.newInstance(1234567890, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimal256("9223372036854775807", TimestampConstant.newInstance(Long.MAX_VALUE, ColumnType.TIMESTAMP_NANO));
+        assertLoadDecimal256("-9223372036854775807", TimestampConstant.newInstance(Long.MIN_VALUE + 1, ColumnType.TIMESTAMP_NANO));
     }
 
     @Test
     public void testLoadDecimalsFromTimestampNanoConstantNull() {
-        assertLoadDecimals("", TimestampConstant.TIMESTAMP_NANO_NULL);
+        assertLoadDecimal256("", TimestampConstant.TIMESTAMP_NANO_NULL);
     }
 
     @Test
@@ -1247,28 +1247,10 @@ public class DecimalUtilTest extends AbstractCairoTest {
         Assert.assertEquals(value, actual);
     }
 
-    private void assertLoadDecimal128(CharSequence expected, Function value) {
-        Decimal128 decimal128 = new Decimal128();
-        DecimalUtil.load(decimal128, decimal256, value, null);
-        Assert.assertEquals(expected, decimal128.toString());
-    }
-
     private void assertLoadDecimal256(CharSequence expected, Function value) {
         Decimal256 decimal256 = new Decimal256();
         DecimalUtil.load(decimal256, decimal128, value, null);
         Assert.assertEquals(expected, decimal256.toString());
-    }
-
-    private void assertLoadDecimal64(CharSequence expected, Function value) {
-        Decimal64 decimal64 = new Decimal64();
-        DecimalUtil.load(decimal64, decimal128, decimal256, value, null);
-        Assert.assertEquals(expected, decimal64.toString());
-    }
-
-    private void assertLoadDecimals(CharSequence expected, Function value) {
-        assertLoadDecimal64(expected, value);
-        assertLoadDecimal128(expected, value);
-        assertLoadDecimal256(expected, value);
     }
 
     private void assertLoadNullDecimal(Decimal256 value, int type) {
