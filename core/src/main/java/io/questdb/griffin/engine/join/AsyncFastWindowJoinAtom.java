@@ -64,15 +64,31 @@ import java.util.Arrays;
 
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
-// TODOs:
-// * LUTs assume up to LOOKUP_TABLE_SIZE symbols
-// * on-heap IntObjHashMaps and LongLists should be swapped with off-heap data structs
+// TODO:
+// * Lookup tables assume up to LOOKUP_TABLE_SIZE symbols in master and slave. We should
+//   try using hash tables instead and see if it doesn't affect the performance (likely
+//   that it won't affect).
+//   These are slaveSymbolLookupTable, ownerSlaveTimestamps, ownerSlaveRowIds, ownerSlaveRowLos,
+//   ownerColumnSinkPtrs, and the corresponding perWorker* fields
+// * On-heap IntObjHashMaps and LongLists should be swapped with off-heap data structs:
+//   ownerSlaveTimestamps, ownerSlaveRowIds, ownerSlaveRowLos, ownerColumnSinkPtrs
+//   Our options here are the following:
+//   * Use on-heap hash tables with DirectLongList, i.e. IntObjHashMap<DirectLongList>;
+//     the downsides are some on-heap objects allocated per symbol key (DirectLongList)
+//     and more frequent allocations
+//   * Implement a specialized off-heap hash table similar to DirectIntIntHashMap to store
+//     int key and a few long values. The values would be pointers for GroupByLongList, i.e.
+//     GroupByAllocator will be used to accumulate row ids, timestamps, etc., similar to
+//     how it's done with column value copies (GroupByColumnSink). The downside is increased
+//     off-heap memory consumption, but the upside is less frequent small allocations, thanks
+//     to GroupByLongList.
 public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
     private static final int INITIAL_COLUMN_SINK_CAPACITY = 64;
     private static final int LOOKUP_TABLE_SIZE = 1024;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledMasterFilter;
+    // TODO: we could use IntList here, just for the sake of consistency
     private final int[] groupByColumnIndexes;
     private final JoinSymbolTableSource joinSymbolTableSource;
     private final long joinWindowHi;
@@ -216,8 +232,13 @@ public class AsyncFastWindowJoinAtom implements StatefulAtom, Plannable {
                 perWorkerGroupByValues.extendAndSet(i, DirectMapValueFactory.createDirectMapValue(valueTypes));
             }
 
+            // TODO: validate that all group by function support batch computation and that they
+            //  have slave table's columns as arguments; if that's not the case, we should not use
+            //  vectorized reducer
             this.vectorized = GroupByUtils.isBatchComputationSupported(ownerGroupByFunctions);
             if (vectorized) {
+                // TODO: deduplicate columns we have to copy, i.e. for min(int_col), max(int_col),
+                //  we should do a single copy of the int_col
                 this.groupByColumnIndexes = new int[ownerGroupByFunctions.size()];
                 for (int i = 0, n = groupByColumnIndexes.length; i < n; i++) {
                     groupByColumnIndexes[i] = ownerGroupByFunctions.getQuick(i).getColumnIndex();

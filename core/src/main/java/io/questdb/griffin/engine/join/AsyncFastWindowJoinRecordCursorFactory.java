@@ -77,7 +77,6 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
 // TODO(puzpuzpuz): support "small" page frame size mode in page frame cursor and use it for window join factories;
 //                  when it's on, separate min/max page frame config props should be used,
 //                  10x smaller than the current defaults, i.e. 10k/100k
-// TODO(puzpuzpuz): it's a quick and dirty prototype
 public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncFastWindowJoinRecordCursorFactory::aggregate;
     private static final PageFrameReducer AGGREGATE_VECT = AsyncFastWindowJoinRecordCursorFactory::aggregateVect;
@@ -460,7 +459,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
 
             // TODO(puzpuzpuz): scan master's page frame and collect a hash table
             //  with the symbols that we actually need. Currently we build the index for
-            //  all slave's symbols that have a pair in master.
+            //  all slave's symbols that have a pair in master. Then we can get rid of
+            //  slaveSymbolLookupTable
 
             // First, build the in-memory index. For every master key in this page frame,
             // it stores rowids and timestamps of the matching slave rows.
@@ -501,6 +501,8 @@ public class AsyncFastWindowJoinRecordCursorFactory extends AbstractRecordCursor
                         }
                         timestamps.add(slaveTimestamp);
 
+                        // TODO: support all fixed-size columns that may have aggregate functions
+                        //  with batch computation support
                         // now let's copy the column values to be aggregated
                         for (int i = 0; i < columnCount; i++) {
                             final int ptrIdx = idx * columnCount + i;

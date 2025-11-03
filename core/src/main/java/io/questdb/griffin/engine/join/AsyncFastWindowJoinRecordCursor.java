@@ -217,7 +217,7 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             slaveTimeFrameRowCounts.clear();
 
             // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
-            //                  we should open partitions lazily
+            //                  we should open partitions lazily (for now, it's ok)
             int frameCount = 0;
             PageFrame frame;
             while ((frame = slaveFrameCursor.next()) != null) {
@@ -251,7 +251,7 @@ class AsyncFastWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    // TODO(puzpuzpuz): skip aggregation for all new tasks we publish here
+    // TODO(puzpuzpuz): skip filter&aggregation for all new tasks we publish here
     private void calculateSizeFiltered(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (frameIndex == -1) {
             fetchNextFrame();

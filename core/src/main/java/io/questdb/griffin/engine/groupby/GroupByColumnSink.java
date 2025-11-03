@@ -73,6 +73,7 @@ public class GroupByColumnSink {
         return ptr;
     }
 
+    // TODO: support other fixed-size columns, not just double
     public void putDouble(double value) {
         int size = size();
         int newSize = size + 8;

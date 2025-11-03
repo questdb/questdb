@@ -45,6 +45,9 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
         this.arg = arg;
     }
 
+    // TODO: document the method in the GroupByFunction interface
+    // TODO: add more computeBatch implementations where appropriate;
+    //  candidates: avg, sum, count, min/max, first, last
     @Override
     public void computeBatch(MapValue mapValue, long ptr, int count) {
         if (count > 0) {
